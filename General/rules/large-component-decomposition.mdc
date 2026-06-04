@@ -1,0 +1,26 @@
+---
+description: Avoid adding new responsibilities to large orchestration components
+globs: src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Large Component Decomposition
+
+Large integration components are high-churn coordination points. Keep them as composition layers instead of adding more domain logic.
+
+## Rules
+
+- When touching a large component, avoid adding a new responsibility directly to the file if it can live in a route panel, custom hook, config module, or child component.
+- Keep route metadata, navigation metadata, modal orchestration, data fetching, and feature-specific state in separate modules when practical.
+- Split by ownership and behavior, not just by visual fragments. Example: prefer `ChatRoutePanel` over a generic `ChatBits` extraction.
+- Before refactoring a large component, add or update tests around public route/state behavior that must not change.
+- Do not mix broad decomposition with unrelated feature work unless the decomposition is necessary to make the feature safe.
+- If adding a temporary responsibility to a large component, leave the smallest possible footprint and note the follow-up extraction target.
+
+## Good Targets
+
+- Route config and lazy imports
+- Navigation link metadata and class helpers
+- Feature route panels
+- Modal/overlay coordinators
+- Reusable loading/error/empty shells

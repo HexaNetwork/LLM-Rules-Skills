@@ -1,0 +1,65 @@
+---
+description: Fix persistence in SQL.save paths and startup loaders; do not add one-off SELECT helpers on CivGlobal.
+alwaysApply: true
+---
+
+# No ad-hoc SQL loaders
+
+Do **not** add new `SELECT ... WHERE uuid = ?` (or similar) helpers on `CivGlobal`, `SQL`, or feature classes to paper over save/load bugs at call sites.
+
+Entities like **Resident**, **Town**, and **Civilization** already load at startup via `CivGlobal.load*()` and live in in-memory maps (`residents`, `towns`, `civs`). Runtime code should use those maps and normal `save()` / `saveNow()` paths.
+
+## When something is missing in memory
+
+Fix the **persistence layer**, not the caller:
+
+| Symptom | Fix here — not a new loader |
+|--------|-----------------------------|
+| Insert succeeded but async save retries INSERT (duplicate key) | `SQL.updateNamedObject`, `SQL.insertNow` — resolve generated id, handle duplicate key → UPDATE |
+| Object in DB but not in `CivGlobal` after restart | `CivGlobal.loadResidents()` (or the entity's startup load) — why did that row fail to load? |
+| New row created with `id <= 0` after save | Entity constructor / `saveNow()` — ensure `setId` runs before queuing `save()` |
+
+## Do not do this
+
+```java
+// ❌ BAD — parallel load path at login because save id was wrong
+public static Resident loadResidentByUuid(UUID uuid) throws SQLException {
+    // SELECT * FROM residents WHERE uuid = ?
+}
+
+if (resident == null) {
+    resident = CivGlobal.loadResidentByUuid(playerUUID);
+}
+```
+
+## Do this
+
+```java
+// ✅ GOOD — fix insert id resolution once in SQL.updateNamedObject
+if (obj.getId() <= 0) {
+    int insertedId = SQL.insertNow(hashmap, tablename);
+    if (insertedId <= 0) {
+        insertedId = SQL.lookupRowIdAfterInsert(tablename, hashmap);
+    }
+    if (insertedId > 0) {
+        obj.setId(insertedId);
+        return;
+    }
+    // duplicate key → lookup id and UPDATE
+}
+```
+
+```java
+// ✅ GOOD — runtime lookup uses the map populated at startup / addResident
+Resident resident = CivGlobal.getResident(playerUUID);
+```
+
+## UUID vs id
+
+- **In memory**: `CivGlobal.residents` is keyed by player UUID; use `getResident(UUID)`.
+- **In SQL**: rows use numeric `id`; `SQLObject.saveNow()` / `updateNamedObject` own insert vs update.
+- If you need UUID-based persistence end-to-end, change the **existing** save/load/repository code for that type — do not bolt on a second load path.
+
+## Agent behavior
+
+Before adding `loadXByUuid`, `fetchXFromDatabase`, or inline `SELECT` at a call site, ask: *Can this be fixed in `SQL.updateNamedObject`, the entity's `saveNow()`, or the existing startup loader?* If yes, fix there.

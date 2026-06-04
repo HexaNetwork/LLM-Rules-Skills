@@ -1,7 +1,7 @@
 ---
 description: Prefer single-line calls and expressions; avoid breaking arguments across lines.
 globs: **/*.java
-alwaysApply: false
+alwaysApply: true
 ---
 
 # Prefer Single-Line Formatting

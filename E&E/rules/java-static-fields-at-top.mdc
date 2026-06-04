@@ -1,0 +1,47 @@
+---
+description: Declare static fields at the top of the class, grouped with other static members — never mid-file.
+alwaysApply: true
+---
+
+# Static Fields at the Top of the File
+
+All `static` fields (constants, caches, counters) belong at the **top of the class**, immediately after the class declaration and together with other static members — **not** between instance fields and methods in the middle of the file.
+
+## Order (typical)
+
+1. `public static final` / `private static final` constants
+2. Other `static` fields (if any)
+3. Instance fields
+4. Constructors, methods, nested types (if allowed)
+
+## Do not do this
+
+```java
+public class Buildable {
+    private Template template;
+
+    public void build() { ... }
+
+    private static final int INSTANT_BUILD_EXTERIOR_MARGIN_BLOCKS = 4; // ❌ mid-file
+
+    protected void instantFinishBuildTask() { ... }
+}
+```
+
+## Do this
+
+```java
+public class Buildable {
+    private static final int INSTANT_BUILD_EXTERIOR_MARGIN_BLOCKS = 4;
+
+    private Template template;
+
+    public void build() { ... }
+
+    protected void instantFinishBuildTask() { ... }
+}
+```
+
+## Agent behavior
+
+When adding or moving a `static` field, place it with the existing static block at the top. If you touch a file that has a static constant buried mid-class, move it to the top in the same change.

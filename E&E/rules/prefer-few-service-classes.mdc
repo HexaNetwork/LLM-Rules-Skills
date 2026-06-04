@@ -1,0 +1,54 @@
+---
+description: Prefer extending existing classes over new Service/helper layers; avoid duplication without extra indirection.
+alwaysApply: true
+---
+
+# Prefer few Service classes
+
+Minimize new `*Service`, `*Helper`, `*Resources`, `*Utils`, and thin wrapper classes. Put behavior in **existing managers, commands, listeners, or repositories** — or in the **new class you are already adding** for the feature — unless a separate type clearly earns its place.
+
+Do **not** add a new type whose only job is a one-line static forward to an existing API (e.g. `cultureZone.getBiomes().getTotalResource(...)`). Call the existing method at the use site.
+
+## Default placement
+
+| Responsibility | Prefer |
+|----------------|--------|
+| Player-facing or admin commands | `*Command` (`CommandBase` subclasses) |
+| Domain lifecycle / track rules | Existing `*Manager` (e.g. `ResidentQuestManager`) |
+| Load/save | Existing `*Repository` + state POJOs |
+| One-off UI | Window/button classes already in the feature |
+| Shared logic used in **3+** unrelated call sites | Extract once (private method on manager, package-private util, or small focused class) |
+
+## Avoid
+
+- `FooAdminService` that only delegates to repositories and managers
+- “Service” classes with one public method used from a single command
+- Helpers that only wrap a few lines already clear at the call site
+- **`final` util types** (`CultureZoneResources`, `FooHelper`) with static methods that only null-check and delegate to one existing call — inline instead
+- Static helpers on a new class used from **1–2** call sites when the body is a single expression or obvious chain on a domain object
+- Duplicating the same 20+ line block in multiple commands — extract **that** block, not a whole new layer
+
+## When a separate class is OK
+
+- Real reuse across multiple modules (engine, managers, commands, tests)
+- Complex logic that would make a manager or command unreadable (e.g. `QuestStepEngine`)
+- A type that represents a clear boundary (config loader, persistence codec)
+
+## Balancing DRY vs indirection
+
+- **2 similar call sites**: tolerate small duplication or a `private` method on the class that owns the workflow.
+- **3+ call sites or non-trivial shared rules**: extract to the **most natural owner** (manager method, not a new Service package).
+- **Admin tooling**: implement in `Admin*Command` with small `private` helpers; do not add `*AdminService` unless the user asks.
+
+## Static helpers: where they go
+
+| Situation | Prefer |
+|-----------|--------|
+| One-liner on a domain object (`zone.getBiomes().getTotalResource(...)`) | Call inline at the command, window, or manager you are editing |
+| Same 2-line null-safe read in 2 places | `private static` on the **feature class** you already own (e.g. `HappinessPreview`), not a new `*Resources` file |
+| Real algorithm (percent, state thresholds, founding estimate) | Keep on the natural owner (`HappinessPreview`, existing `*Info`) — that is not a “random util” |
+| 3+ unrelated modules need the same non-trivial block | Extract once to the most natural **existing** domain type, or a focused class that owns a real concept |
+
+## Agent behavior
+
+Before adding `SomethingService`, `SomethingHelper`, or `SomethingResources`, ask: *Can this live on the manager, command, window, or repository I am already touching?* If yes, put it there. If the user prefers fewer classes, do not introduce a type “for cleanliness” or DRY on a one-line delegation alone.

@@ -1,0 +1,76 @@
+---
+description: Prefer single-line calls and expressions; avoid breaking arguments across lines.
+globs: **/*.java
+alwaysApply: false
+---
+
+# Prefer Single-Line Formatting
+
+Keep most statements on one line. Do not break method or constructor arguments onto separate lines unless the line would be unreasonably long.
+
+## Constructor Declarations
+
+Keep the full parameter list on the same line as the constructor name. Do not put each parameter on its own line.
+
+```java
+// ❌ BAD
+FoundingLocationSearchTask(
+        FoundingLocationFinder finder,
+        Resident resident,
+        SettlementStatPreference preference,
+        int radiusBlocks,
+        Consumer<FoundingLocationResult> onSuccess,
+        Consumer<String> onFailure) {
+
+// ✅ GOOD
+FoundingLocationSearchTask(FoundingLocationFinder finder, Resident resident, SettlementStatPreference preference, int radiusBlocks, Consumer<FoundingLocationResult> onSuccess, Consumer<String> onFailure) {
+```
+
+Same rule for method declarations: `void foo(Type a, Type b) {`, not one parameter per line.
+
+## Constructor and Method Calls
+
+```java
+// ❌ BAD
+return new PolicySelectionContext(
+        civ.hasTechnology(Tech.ANCIENT_ERA),
+        civ.getPolicies().size(),
+        civ.getCapitolTown().getCultureLevel(),
+        hasOracleBuff,
+        civ.getBonusPolicies().size()
+);
+
+// ✅ GOOD
+return new PolicySelectionContext(civ.hasTechnology(Tech.ANCIENT_ERA), civ.getPolicies().size(), civ.getCapitolTown().getCultureLevel(), hasOracleBuff, civ.getBonusPolicies().size());
+```
+
+```java
+// ❌ BAD
+someObject.doSomething(
+        arg1,
+        arg2,
+        arg3
+);
+
+// ✅ GOOD
+someObject.doSomething(arg1, arg2, arg3);
+```
+
+## Chained Calls
+
+Prefer one line when readable:
+
+```java
+// ❌ BAD
+return civ.getCapitolTown()
+        .getCultureLevel();
+
+// ✅ GOOD
+return civ.getCapitolTown().getCultureLevel();
+```
+
+## When Multi-Line Is Acceptable
+
+Use multiple lines only when a single line would be excessively long or harm readability (e.g. many string literals, complex lambdas, or large inline blocks). Default to single-line for typical calls with a handful of arguments.
+
+When editing existing code, collapse unnecessary multi-line argument lists you touch into single lines.

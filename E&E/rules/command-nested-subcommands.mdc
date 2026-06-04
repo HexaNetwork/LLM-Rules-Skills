@@ -1,0 +1,45 @@
+---
+description: Register nested CommandBase subcommands; never branch on args[0] in _cmd handlers
+globs: civcraft/src/main/java/com/avrgaming/civcraft/ui/command/**/*.java
+alwaysApply: false
+---
+
+# Nested subcommands on CommandBase
+
+When a command has distinct actions (e.g. `res` vs `res intro`), **register each action** in `init()` via `commands.put(...)`, either as a `*_cmd()` method or a nested `CommandBase` (`Supplier::new`).
+
+## Do this
+
+```java
+// Parent: AdminQuestCommand
+this.commands.put("res", "Resident quest admin.", AdminQuestResidentCommand::new);
+
+// Child: AdminQuestResidentCommand
+this.commands.put("intro", "[resident] - Start intro cinematic.", residents());
+
+public void intro_cmd() throws CivException {
+    Resident target = this.getNamedResidentOrSelf(1);
+    // ...
+}
+```
+
+Use `sendUnknownToDefault = true` when the default action should handle a **free argument** (e.g. `/ad quest res <resident>`) after registered subcommands are checked.
+
+## Do not do this
+
+```java
+// ❌ BAD — manual subcommand dispatch inside one _cmd
+public void res_cmd() throws CivException {
+    if (this.args.length >= 2 && "intro".equalsIgnoreCase(this.args[1])) {
+        this.startIntro(...);
+        return;
+    }
+    // ...
+}
+```
+
+## Routing rules
+
+- **Nested class** (`AdminQuestResidentCommand::new`): use for a whole branch (`/ad quest res …`).
+- **`*_cmd()` on the same class**: use for leaf actions (`intro_cmd`, `open_cmd`).
+- **Never** compare `args[1]`, `args[2]`, … to subcommand names when those names could be registered instead.

@@ -1,0 +1,58 @@
+---
+description: Require public, private, or protected on every Java method (no package-private).
+globs: **/*.java
+alwaysApply: false
+---
+
+# Explicit Access Modifiers on Methods
+
+Every method in a class must declare an access modifier: `public`, `private`, or `protected`.
+
+Do **not** rely on package-private (default) visibility by omitting the modifier.
+
+## Do this
+
+```java
+// ✅ GOOD — helper on a utility/final class
+private static Location resolve(CultureMap cultureMap, CultureZone zone, UUID excludeResidentId) {
+    // ...
+}
+
+// ✅ GOOD — API entry point
+public void scheduleFind(Resident resident, SettlementStatPreference preference) {
+    // ...
+}
+
+// ✅ GOOD — subclass hook
+protected void onCultureZoneReleased(CultureZone released) {
+    // ...
+}
+```
+
+## Do not do this
+
+```java
+// ❌ BAD — package-private (missing modifier)
+static Location resolve(CultureMap cultureMap, CultureZone zone, UUID excludeResidentId) {
+    // ...
+}
+
+// ❌ BAD
+void finish() {
+    // ...
+}
+```
+
+## Choosing visibility
+
+| Modifier | Use when |
+|----------|----------|
+| `private` | Internal to the class; helpers, callbacks, task logic |
+| `protected` | Shared with subclasses in the same hierarchy |
+| `public` | Part of the type’s external API (commands, managers, listeners wired from outside) |
+
+Prefer the **most restrictive** modifier that still works. Do not use `public` for helpers only called inside the same class.
+
+## Agent behavior
+
+When adding or editing Java methods, always include `public`, `private`, or `protected`. If you see a method without a modifier in a file you touch, add the correct one.

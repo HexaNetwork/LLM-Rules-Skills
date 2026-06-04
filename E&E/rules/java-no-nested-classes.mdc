@@ -1,0 +1,64 @@
+---
+description: Do not declare classes or enums inside other types; use separate top-level files.
+globs: **/*.java
+alwaysApply: false
+---
+
+# No Nested Types
+
+Do not declare classes, interfaces, records, or enums inside another class or interface. Every type gets its own top-level file in the same package.
+
+This includes:
+
+- Non-static inner classes
+- Static nested classes
+- Local classes (declared inside a method)
+- Nested enums
+
+```java
+// ❌ BAD — nested class and enum in Town.java
+public class Town {
+    public enum TownStatus { ACTIVE, RUINED }
+
+    private static class TownCache {
+        // ...
+    }
+}
+
+// ✅ GOOD — split into separate files
+// Town.java
+public class Town { /* ... */ }
+
+// TownStatus.java
+public enum TownStatus { ACTIVE, RUINED }
+
+// TownCache.java
+class TownCache { /* package-private or public as appropriate */ }
+```
+
+```java
+// ❌ BAD — local class inside a method
+public void process() {
+    class Helper { void run() { } }
+    new Helper().run();
+}
+
+// ✅ GOOD — top-level Helper.java (or a named utility class)
+public void process() {
+    new Helper().run();
+}
+```
+
+## Naming and Visibility
+
+- Use the same package as the parent type unless there is a strong reason to hide it elsewhere.
+- Prefer package-private for types only used within the package; use `public` when other packages need access.
+- Name files to match the type (`TownStatus.java` for `enum TownStatus`).
+
+## When Editing Existing Code
+
+If you touch code that contains a nested type, extract it to a new file in the same change rather than adding more nesting.
+
+## Anonymous Classes
+
+Avoid new anonymous classes when a named top-level type or a lambda would be clearer. Do not grow anonymous classes into multi-method mini-types—extract them instead.

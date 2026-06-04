@@ -1,0 +1,48 @@
+---
+description: Use String.format for any message or log text that includes variables or objects.
+globs: **/*.java
+alwaysApply: false
+---
+
+# String.format for Dynamic Text
+
+When building text for messages, logs, lore, titles, or any other user-facing or logged string, use `String.format` whenever the text includes a variable or object (player names, colors, numbers, exceptions, config paths, etc.). Do not concatenate with `+`.
+
+Applies to (non-exhaustive): `CivMessage.send`, `CivMessage.sendError`, `CivMessage.sendCiv`, `CivLog.error`, `CivLog.info`, GUI lore/titles, `Icon.buildBase` / `addLore`, and similar.
+
+## Examples
+
+```java
+// ❌ BAD — concatenation with color or variables
+CivMessage.sendError(player, CivColor.Red + "Thanatos is ready to be challenged. Use the uncorrupted abysswalker to teleport to his arena.");
+CivMessage.send(leader, CivColor.Red + "WARNING " + CivColor.LightBlue + "SpawnEmpire is flagged...");
+CivLog.error("Could not get configuration integer " + path + " defaulting to " + defaultValue);
+
+// ✅ GOOD — String.format with %s (or %d, %.2f, etc. as appropriate)
+CivMessage.sendError(player, String.format("%sThanatos is ready to be challenged. Use the uncorrupted abysswalker to teleport to his arena.", CivColor.Red));
+CivMessage.send(leader, String.format("%sWARNING %sSpawnEmpire is flagged to be a permanent admin civ to prevent issue.", CivColor.Red, CivColor.LightBlue));
+CivLog.error(String.format("Could not get configuration integer %s defaulting to %s", path, defaultValue));
+```
+
+```java
+// ❌ BAD
+"Not studying" with CivColor.Rose via concatenation elsewhere
+
+// ✅ GOOD
+String.format("%sNot studying", CivColor.Rose);
+```
+
+## Placeholders
+
+- `%s` — strings, `CivColor` / `ChatColor`, objects (calls `toString()`)
+- `%d` — integers
+- `%.2f` — floats with fixed precision (match existing call sites)
+
+Order placeholders to match argument order. Keep literal text inside the format string; pass dynamic values as arguments.
+
+## Exceptions
+
+- **Localization**: `CivSettings.LOCALIZE.localizedString(...)` already handles parameterized messages — keep using that API instead of ad-hoc `String.format` for localized keys.
+- **Pure literals**: A fixed string with no injected values needs no `String.format` (e.g. `"You must be in the Classical Era to study civics"`).
+
+When editing code, convert `+` chains that inject values to `String.format` in the same change.

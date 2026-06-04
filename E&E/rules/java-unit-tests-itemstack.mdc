@@ -1,0 +1,70 @@
+---
+description: Mockito patterns for ItemStack in CivCraft unit tests; production code under test must use ItemStackFactory.
+globs: civcraft/src/main/test/**/*.java
+alwaysApply: false
+---
+
+# ItemStack in Unit Tests
+
+Complements `java-unit-tests-no-bukkit.mdc`. CivCraft tests run without a Paper server — treat `ItemStack` as a Mockito stub, not a real Bukkit object.
+
+## Production seam (before writing tests)
+
+Code that creates vanilla stacks must go through injectable `utility.item.ItemStackFactory` (already used by `QuestMaterialLoader` / `MaterialParser`), not `new ItemStack(material)` inline.
+
+```java
+// ❌ BAD — cannot mock construction in unit tests
+return new ItemStack(material, amount);
+
+// ✅ GOOD — factory injected via constructor or parameter
+return this.itemStackFactory.create(material, amount);
+```
+
+Custom items: inject the lore/spawn collaborator (`ILoreItem`, registry interface) the same way — never reach for static `LoreItemRegistry` in new testable code.
+
+## Do not use in tests
+
+- `new ItemStack(...)` or `Material.matchMaterial` to build test data
+- `MockedConstruction<ItemStack>` — wrong seam; mock `ItemStackFactory` instead
+- MockBukkit / embedded server for stack behavior
+
+## Default: `mock(ItemStack.class)` + stub only what the SUT calls
+
+```java
+ItemStack stack = mock(ItemStack.class);
+when(stack.getType()).thenReturn(Material.IRON_INGOT);
+when(stack.getAmount()).thenReturn(5);
+```
+
+Inventory tests: mock `Inventory`, return `new ItemStack[]{ stack }` from `getContents()` / `getStorageContents()` — slots hold mocks, not real stacks (`ContainsInStorageTest`).
+
+## Mutable amount
+
+When the SUT calls `setAmount`, wire `getAmount` to follow (HexaCore `mockVirtualStack`):
+
+```java
+doAnswer(inv -> {
+    when(stack.getAmount()).thenReturn(inv.getArgument(0));
+    return null;
+}).when(stack).setAmount(anyInt());
+```
+
+Extract to a shared test helper (e.g. `ItemStackTestSupport.mockStack(Material, int)`) when three or more tests need it.
+
+## Factory and lore in tests
+
+```java
+ItemStackFactory factory = mock(ItemStackFactory.class);
+when(factory.create(Material.COAL)).thenReturn(coalStack);
+
+ILoreItem loreItem = mock(ILoreItem.class);
+when(loreItem.spawn()).thenReturn(customStack);
+```
+
+## Filters and similarity
+
+Stub `getType`, `getAmount`, `isSimilar`, `serializeAsBytes`, `asOne` as required. Use `InOrder` when the SUT temporarily mutates amount then restores it.
+
+## Prefer no stack at all
+
+When logic only needs refs, catalogs, or string ids, test without `ItemStack` (`QuestItemReferenceResolverTest`).

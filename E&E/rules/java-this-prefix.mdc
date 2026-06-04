@@ -1,0 +1,45 @@
+---
+description: Prefix instance field and method references with this.
+globs: **/*.java
+alwaysApply: false
+---
+
+# Use `this.` for Instance Members
+
+When referencing instance fields or instance methods that can be accessed via `this.`, always prefix them with `this.`.
+
+## Fields
+
+```java
+// ❌ BAD
+upgradingUnits = new UnitUpgradeContainer();
+if (unitsTimer != null) {
+    unitsTimer.abort();
+}
+
+// ✅ GOOD
+this.upgradingUnits = new UnitUpgradeContainer();
+if (this.unitsTimer != null) {
+    this.unitsTimer.abort();
+}
+```
+
+## Methods
+
+```java
+// ❌ BAD
+validateTownPermission(town, permission);
+return getClass().getMethod(name);
+
+// ✅ GOOD
+this.validateTownPermission(town, permission);
+return this.getClass().getMethod(name);
+```
+
+## When `this.` Is Not Required
+
+- Static members: use the class name or direct static access, not `this.`
+- Local variables and parameters: no `this.` prefix
+- `super` calls: use `super.method()`, not `this.super`
+
+When editing existing code, apply this convention to any instance member references you touch.

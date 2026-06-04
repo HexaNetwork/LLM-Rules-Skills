@@ -1,0 +1,37 @@
+---
+description: Consider /ad admin commands when building features or fixing bugs that change player-visible state.
+alwaysApply: true
+---
+
+# Admin commands for new features and fixes
+
+When implementing a **new feature** or **bug fix** that adds or changes gameplay state, progression, persistence, or operator workflows, **evaluate whether admin commands are needed** — and **ask the user** if it is not obvious from the request.
+
+## When admin commands are usually warranted
+
+- New persistence fields, quest tracks, seasons, or reset/lifecycle behavior
+- Features that are hard to test without forcing state (welcome prelude, branch choice, skip/abandon)
+- Bug fixes where operators need to repair or inspect bad data in production
+- Anything you would otherwise only test by editing the database or restarting the server
+
+## When to skip (or defer)
+
+- Pure refactors, copy/UI-only changes, or internal helpers with no runtime state
+- The user explicitly says no admin tooling for this slice
+- A follow-up issue already tracks admin commands
+
+## If admin commands are in scope
+
+Follow existing CivCraft patterns:
+
+- Register under `/ad` in `AdminCommand` (or a nested `Admin*Command` with subcommands)
+- Place handlers in `com.avrgaming.civcraft.ui.command.admin` (e.g. `AdminQuestResidentCommand` for quest tracks)
+- Use `CommandBase`: `init()` registers subcommands; `*_cmd()` methods implement them; `permissionCheck` enforces admin/op
+- Prefer tab completion via `residents()`, `civs()`, `towns()`, and `suggest(...)` for ids
+- Keep logic in the command class (or existing managers/repositories), not a separate “admin service” unless the user asks for one
+
+## Default agent behavior
+
+1. **During planning or before finishing**: note whether `/ad` support is included, deferred, or not needed.
+2. **If unclear**: ask once, e.g. “Should this include `/ad` commands to force/reset/inspect state for testing and ops?”
+3. **If yes**: implement the minimal set (force, reset, info, set progress) rather than waiting for a separate request.

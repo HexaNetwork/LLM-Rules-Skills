@@ -1,0 +1,61 @@
+---
+description: Capitalize CivCraft domain terms in player-facing text and docs; ask when unsure.
+alwaysApply: true
+---
+
+# Civ term capitalization
+
+In **player-facing text** (chat, GUI lore/titles, quest YAML, commands, admin messages, PRDs/issues) and **documentation about gameplay**, capitalize established CivCraft domain terms. Do not change Java identifiers, config keys, or file paths unless you are editing display strings.
+
+## Always capitalize (common terms)
+
+| Term | Notes |
+|------|--------|
+| **Civilization** / **Civ** | Game entity; not generic “civilization” in historical prose |
+| **Town** | Player settlement |
+| **City-State** | Hyphenated when used as the game concept |
+| **Resident** | Player account / member |
+| **Town Hall** | Seat of a Town; often the first structure in a new City-State |
+| **Capital** | A Town that is the seat of a Civilization (not generic “capital city” in history text) |
+| **Capitol** | The capitol Town or its Capitol structure when the game uses that spelling |
+| **Civics** | Civic research / unlock tree (`civics.yml`), not generic “civics lesson” |
+| **Structure** / **Wonder** | Buildables when referring to game objects |
+| **Culture** | Claim/border system |
+| **Policies** | Town or civ policy picks when referring to game systems |
+| **Hammers**, **Growth**, **Beakers** | Core town yields |
+| **SpawnEmpire** | Proper name of the spawn civ/town |
+| **Imperial Advisor** | Guide NPC |
+| **Backpack**, **Civ Manager** | UI systems |
+| **WarTime** | Scheduled conflict window |
+
+Use existing in-game spellings from nearby copy (`Found City-State`, `Shady Merchant`, structure display names from config) before inventing new casing.
+
+## Examples
+
+```yaml
+# ❌ BAD
+lore:
+  - "Join a civilization and build a town hall."
+
+# ✅ GOOD
+lore:
+  - "Join a Civilization and build a Town Hall."
+```
+
+```java
+// ❌ BAD
+CivMessage.send(resident, "Your town needs more hammers.");
+
+// ✅ GOOD
+CivMessage.send(resident, "Your Town needs more Hammers.");
+```
+
+## When unsure
+
+If a word might be a Civ term (e.g. **Civic** vs **Civics**, **Dungeon**, **Marketplace** as a structure name), **ask the user** once rather than guessing lowercase or over-capitalizing generic English. **Do not** leave **Capital**, **Capitol**, or **Civics** lowercase in player-facing copy when they refer to game concepts.
+
+## Exceptions
+
+- Ordinary English where the word is not the game concept (“walk from spawn”, “world map link”).
+- Third-party or Mojang terms (Minecraft, Shift key).
+- Code/API names follow Java/YAML conventions (`town`, `getTown()`).

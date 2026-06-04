@@ -1,0 +1,58 @@
+---
+description: CivColor layout for GUI lore, hover lines, and player-facing text (Gold labels, Gray body, White values).
+globs: **/*.java
+alwaysApply: false
+---
+
+# CivColor Formatting
+
+Use `CivColor` (not raw `ChatColor`) and `String.format` (see `java-string-format-messages`) for colored player-facing text.
+
+## Roles
+
+| Role | Color | Examples |
+|------|-------|----------|
+| Title / name | `CivColor.Gold` | Item title, section heading, label before `:` |
+| Body / description | `CivColor.Gray` | Lore paragraphs, help text, explanations |
+| Value / data | `CivColor.White` | Numbers, coords, player names, commands in prose |
+| Success | `CivColor.Green` | "Already completed.", enabled, confirmations |
+| Error / blocked | `CivColor.Rose` or `CivColor.ERROR` | Cannot build, denial reasons |
+| Warning | `CivColor.Rose` | Alerts; pair with `Gold` for the action to take |
+| Construction | `CivColor.CONSTRUCTION` / `Yellow` | Build-in-progress notices |
+
+## GUI lore (canonical pattern)
+
+Match `CivProjectWindow` — title, gray description, blank line between sections, gold label + white value:
+
+```java
+// ❌ BAD — concatenation, wrong colors, label and value same color
+icon.addLore(CivColor.Gold + "Coin Cost: " + config.coin_cost);
+icon.addLore(config.lore);
+
+// ✅ GOOD
+Icon icon = Icon.buildBase(material, String.format("%s%s", CivColor.Gold, config.getDisplayName()));
+icon.addLore(String.format("%s%s", CivColor.Gray, config.lore));
+icon.addLore("");
+icon.addLore(String.format("%sCoin Cost: %s%s", CivColor.Gold, CivColor.White, NumberFormatter.NO_DECIMALS.format(config.coin_cost)));
+icon.addLore(String.format("%sHammer Cost: %s%s", CivColor.Gold, CivColor.White, NumberFormatter.NO_DECIMALS.format(config.hammer_cost)));
+icon.addLore(String.format("%sAlready completed.", CivColor.Green));
+```
+
+**Label + value lines:** always `%sLabel: %s%s` with `Gold`, then `White`, then the value. Do not put values in `Gold` or labels in `Gray`.
+
+**Multi-line descriptions:** one `addLore` per sentence/line, each `String.format("%s…", CivColor.Gray, …)`.
+
+## Chat and hover
+
+Same label/value split. Warnings lead with `Rose`, highlight commands with `Gold`, trailing words with `White`:
+
+```java
+String.format("%sSome town structures are disabled due to limits. Use %s/t info disabled%s for the full list.",
+        CivColor.Rose, CivColor.Gold, CivColor.White);
+```
+
+List entries (e.g. disabled structures): `Gold` label + `White` value, or `Green` name + `Green` coord label + coord string when mirroring `/town info disabled`.
+
+## Section headers
+
+Optional emphasis: `String.format("%s%sSection Title", CivColor.Gold, CivColor.BOLD)` — use sparingly for GUI section titles only.

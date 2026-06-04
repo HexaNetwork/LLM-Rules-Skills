@@ -1,0 +1,85 @@
+---
+description: Scheduled tasks must store IDs, not live game objects
+globs: "**/*Task*.java,**/*Timer*.java,**/threading/**/*.java"
+alwaysApply: false
+---
+
+# Resolve Live Objects Inside run()
+
+`Runnable`, `BukkitRunnable`, and other deferred/scheduled work must not capture live CivCraft or Bukkit objects as fields. Store stable identifiers and resolve through `CivGlobal` (or `Bukkit.getPlayer(UUID)`) at the start of `run()`.
+
+## Why
+
+Town, Civilization, Resident, Player, Buildable, Structure, Farm, and Windmill instances can be removed, replaced, or mutated on other threads between scheduling and execution. A captured reference may be stale or unsafe.
+
+## Forbidden fields in scheduled tasks
+
+- `Town`, `Civilization`, `Resident`
+- `Player`, `OfflinePlayer`
+- `Buildable`, `Structure`, `Farm`, `Windmill`
+- Any holder that embeds them (`FarmZone`, `WindmillReport` with a live `Windmill`, etc.)
+
+## Allowed identifiers
+
+| Type | Store | Resolve in run() |
+|------|-------|------------------|
+| Town | `int townId` | `CivGlobal.getTownFromId(townId)` |
+| Civ | `int civId` or name | `CivGlobal.getCiv(civId)` |
+| Resident | `UUID` or `int id` | `CivGlobal.getResident(uuid)` |
+| Player | `UUID` | `Bukkit.getPlayer(uuid)` |
+| Buildable / Structure / Farm / Windmill | `int buildableId` | `CivGlobal.getBuildable(id)` + instanceof check |
+
+Immutable snapshots taken at schedule time (e.g. `ChunkSnapshot`, `Location`, `CropType`, copied `FarmBlock` slot state) are fine.
+
+## Examples
+
+```java
+// ❌ BAD — captures live Farm across async → sync handoff
+public class FarmAutoHarvestSync implements Runnable {
+    private final Farm farm;
+
+    public FarmAutoHarvestSync(Farm farm, List<FarmBlock> matureBlocks) {
+        this.farm = farm;
+    }
+}
+
+// ✅ GOOD — resolve when the task runs
+public class FarmAutoHarvestSync implements Runnable {
+    private final int farmId;
+
+    public FarmAutoHarvestSync(int farmId, List<FarmBlock> matureBlocks) {
+        this.farmId = farmId;
+    }
+
+    @Override
+    public void run() {
+        Buildable buildable = CivGlobal.getBuildable(this.farmId);
+        if (!(buildable instanceof Farm farm) || !farm.isActive()) {
+            return;
+        }
+        // use farm...
+    }
+}
+```
+
+```java
+// ❌ BAD — Player reference in delayed task
+private final Player player;
+
+// ✅ GOOD
+private final UUID playerId;
+// run(): Player player = Bukkit.getPlayer(this.playerId);
+```
+
+## Constructor parameters
+
+Constructors may accept live objects only to extract IDs and immutable data. Do not assign the live object to a field.
+
+```java
+// ✅ GOOD — extract id in constructor, same pattern as HourlyFarmingTask
+public HourlyFarmingTask(Town town) {
+    this.townId = town.getId();
+}
+```
+
+Always null-check after lookup; if the entity was removed, return early.

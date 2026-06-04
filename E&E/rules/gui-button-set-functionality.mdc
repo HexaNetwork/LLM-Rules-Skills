@@ -1,0 +1,39 @@
+---
+description: GUI buttons — use setFunctionality for click tooltips; do not duplicate "Click to…" lore.
+globs: civcraft/**/ui/gui/**/*.java
+alwaysApply: false
+---
+
+# GUI button click tooltips
+
+HexaCore `Button.setFunctionality(callback, description, clickTypes)` registers the handler **and** appends a how-to-use line via `Icon.addHowToUse`, e.g. `<Click to choose your path>`.
+
+Do **not** add manual lore that repeats the same instruction.
+
+## Use `setFunctionality` for the click hint
+
+```java
+// ❌ BAD — duplicate click instructions in lore and tooltip
+icon.addLore("");
+icon.addLore(String.format("%sClick to choose founder or friends.", CivColor.Gold));
+objectiveButton.setFunctionality(click -> openChoiceHandler.run(), "choose your path", ClickType.LEFT, ClickType.RIGHT);
+
+// ✅ GOOD — description is the action phrase; tooltip is generated once
+objectiveButton.setFunctionality(click -> openChoiceHandler.run(), "choose your path", ClickType.LEFT, ClickType.RIGHT);
+```
+
+Pass a short **verb phrase** as `description` (what the click does), not a full sentence with "Click to…". The framework prefixes it with the click type.
+
+## What still belongs in lore
+
+- Title, gray description, progress, status (completed / locked / optional)
+- Requirements, costs, errors — anything that is **not** the click action
+- Blank line between sections (see `java-civcolor-formatting`)
+
+## Non-clickable buttons
+
+If the button has **no** `setFunctionality`, there is no auto tooltip — use lore for any guidance the player needs.
+
+## Multiple click bindings
+
+Each `setFunctionality` call adds another how-to-use line for its `ClickType`s (e.g. left vs right). Do not mirror those in `addLore` either.

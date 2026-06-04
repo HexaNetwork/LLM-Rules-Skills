@@ -1,0 +1,43 @@
+---
+description: Put reusable command parsing and permission helpers on CommandBase, not per-command copies
+globs: civcraft/src/main/java/com/avrgaming/civcraft/ui/command/**/*.java
+alwaysApply: false
+---
+
+# CommandBase shared helpers
+
+Reuse `CommandBase` for argument resolution, sender checks, and admin permission. **Do not** copy the same private helper into each `*Command` class.
+
+## Prefer existing helpers
+
+| Need | Use |
+|------|-----|
+| Required Resident arg | `getNamedResident(index)` |
+| Optional Resident (default sender) | `getNamedResidentOrSelf(index)` |
+| Required Civ arg | `getNamedCiv(index)` |
+| Player sender | `getPlayer()` |
+| Sender's Resident | `getResident()` |
+| Admin permission | `requireAdminPermission()` or `requireAdminPlayer()` |
+| GUI context Resident for a Civ | `getResidentContextForCivilization(civilization)` |
+
+## Do this
+
+```java
+public void intro_cmd() throws CivException {
+    Player operator = this.requireAdminPlayer();
+    Resident target = this.getNamedResidentOrSelf(1);
+    // ...
+}
+```
+
+## Do not do this
+
+```java
+// ❌ BAD — duplicate helpers on every admin command
+private Resident resolveTargetResident(int index) throws CivException { ... }
+private Player requirePlayerOperator() throws CivException { ... }
+```
+
+## When to add to CommandBase
+
+Add a new `protected` method on `CommandBase` when **two or more** commands need the same behavior (optional named Resident, admin gate, Civ context Resident, etc.). Keep command classes thin: `init()` registrations + `*_cmd()` bodies that call shared helpers.

@@ -1,0 +1,41 @@
+---
+description: CivCraft unit tests run without Paper/Bukkit — do not add flaky or disabled Bukkit-dependent tests.
+globs: civcraft/src/main/test/**/*.java
+alwaysApply: false
+---
+
+# Unit Tests Without Bukkit
+
+CivCraft unit tests run in **plain JUnit** (`./gradlew :civcraft:test`). There is **no Paper/Bukkit server** in this harness yet. Do not add tests that require one.
+
+## Recognize init failures
+
+Stop and change approach when you see:
+
+- `ExceptionInInitializerError` / `NoClassDefFoundError` on `CivSettings`, `CivCraft`, or `org.bukkit.Bukkit`
+- Errors about missing plugin, scheduler, or server
+- `@BeforeAll` that assigns `CivSettings.*` or `mockStatic(Bukkit.class)` to boot the test class
+
+## Do not add
+
+- `@BeforeAll` Bukkit/CivSettings bootstraps (partial mocks, field assignment on `CivSettings`)
+- `@Disabled("Requires Bukkit…")` skeleton tests — **delete** them; they still clutter the suite
+- Tests that touch `CivGlobal` static fields unless init is already proven safe in this environment
+- Tests that construct types whose no-arg path reads `CivSettings` (e.g. `new StructureQuestGenerator()` → `CivSettings.cottageFoodCatalog`)
+- Tests through `TownStat` / `*Info` hierarchies when construction pulls config/Bukkit
+
+## Preferred alternatives (in order)
+
+1. **Extract testable logic** — pure helpers with plain inputs; production delegates to them.
+2. **Inject dependencies** — pass `CottageFoodCatalog`, repositories, resolvers, etc. instead of reading globals.
+3. **Test a shallower seam** — static pure methods, in-memory repositories, food-group paths that avoid `Material.matchMaterial`.
+4. **Skip entirely** — note the gap in the PR ("untested: requires Bukkit — …"). **No** failing, flaky, or `@Disabled` test left behind.
+
+## Examples that work today
+
+- `CottageStructureQuestGeneratorTest` — injects `CottageFoodCatalog` into `StructureQuestGenerator`
+- `StructureQuestCompletionServiceTest` — static helpers only (`isQuestDateExpired`, `isLayerLocked`)
+- `TownStructureLevelServiceTest.resolveFromSource` — tests via `StructureEffectiveLevelSource`, not `Town.getTownStat`
+- `FieldWindmillHarvestServiceTest` — `mock(Town.class)` with only `getId()` when town state is never touched
+
+When removing Bukkit-blocked tests, **keep** every test that still passes at a lower seam.

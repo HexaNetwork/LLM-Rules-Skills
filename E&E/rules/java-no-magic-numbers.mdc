@@ -1,0 +1,102 @@
+---
+description: Replace magic numbers with buff config, CivSettings, or named constants at the top of the class.
+globs: **/*.java
+alwaysApply: false
+---
+
+# No Magic Numbers
+
+Do not embed unexplained numeric literals in method bodies. Domain values (limits, counts, tiers, durations, thresholds) must be named and defined once.
+
+## Preferred: Buff Config (`buffs.yml`)
+
+When a value comes from a buff, read it from the buff's `ConfigBuff` entry via `getIntegerValue(BuffValue)` — not a separate YAML file or inline literal.
+
+Define values under `values` in `buffs.yml`, then resolve them at class scope:
+
+```java
+private static final ConfigBuff ORACLE_EXTRA_POLICIES_BUFF =
+        ConfigBuff.BUFFS_BY_ID.get(BuffName.ORACLE_EXTRA_POLICIES);
+
+private static int maxOracleBonusPolicies() {
+    return ORACLE_EXTRA_POLICIES_BUFF.getIntegerValue(BuffValue.QUANTITY);
+}
+```
+
+Reference pattern (from `GreatLibrary`):
+
+```java
+private static final ConfigBuff GREAT_LIBRARY_SIGNATURE =
+        ConfigBuff.BUFFS_BY_ID.get(BuffName.GREAT_LIBRARY_SIGNATURE);
+
+int level = library.getLevel() + GREAT_LIBRARY_SIGNATURE.getIntegerValue(BuffValue.INCREASE);
+```
+
+Use the `BuffValue` key that matches the YAML field (`quantity`, `increase`, `maximum`, `level`, `interval`, etc.). Reuse the same `ConfigBuff` reference everywhere that buff's numbers apply.
+
+### Do Not Wrap `getIntegerValue`
+
+`BuffFromConfig.getIntegerValue` already returns `0` when the key is missing or unparsable. Call it directly on the `ConfigBuff` — do not add helper methods that null-check the buff or substitute Java fallback defaults.
+
+```java
+// ❌ BAD — redundant wrapper; duplicates defaults getIntegerValue already implies
+private static int buffInt(BuffValue key, int defaultValue) {
+    if (ORACLE_EXTRA_POLICIES_BUFF == null) {
+        return defaultValue;
+    }
+    int value = ORACLE_EXTRA_POLICIES_BUFF.getIntegerValue(key);
+    return value != 0 ? value : defaultValue;
+}
+
+// ✅ GOOD — static final at class top, direct lookup
+private static final ConfigBuff ORACLE_EXTRA_POLICIES_BUFF =
+        ConfigBuff.BUFFS_BY_ID.get(BuffName.ORACLE_EXTRA_POLICIES);
+private static final int MAX_ORACLE_BONUS_POLICIES =
+        ORACLE_EXTRA_POLICIES_BUFF.getIntegerValue(BuffValue.QUANTITY);
+```
+
+Ensure the value exists in `buffs.yml`. If `0` is wrong for your domain, fix the YAML — do not paper over it in Java.
+
+## Also Acceptable: Other Config (`CivSettings`)
+
+When a value is not buff-backed but is game-tunable, read it from the appropriate existing config file:
+
+```java
+private static final int INITIAL_DISTANCE =
+        CivSettings.getIntegerOrDefault(CivSettings.happinessConfig, "unhappiness.distance_unhappiness_initial", 10);
+```
+
+Do not add a new YAML file when the value already belongs in `buffs.yml` or an existing config.
+
+## Acceptable: Class Constants
+
+When config is not appropriate (fixed protocol, array index, UI layout), declare `private static final` constants at the **top of the class**, grouped and named for meaning:
+
+```java
+// ❌ BAD
+if (viewedTier < 1 || viewedTier > 5) { ... }
+if (context.bonusPolicyCount() >= 3) { ... }
+
+// ✅ GOOD — buff-backed via PolicySelectionLimits, or named constants when not buff-related
+if (!PolicySelectionLimits.isOracleTierTab(viewedTier)) { ... }
+if (PolicySelectionLimits.areAllOracleBonusSlotsUsed(context.bonusPolicyCount())) { ... }
+```
+
+Reuse the same accessor or constant everywhere the same rule applies (including tests and GUI code).
+
+## Static Helpers
+
+If a limit is derived (e.g. `max + 1`, clamped range), use a `private static` method with a descriptive name instead of repeating arithmetic in callers.
+
+## Allowed Inline Literals
+
+These may stay inline without a constant:
+
+- `0` and `1` for obvious loop/index/boolean-style checks **only when** the meaning is immediately clear from context (e.g. `i < list.size()`)
+- Enum ordinals or generated API constants already named elsewhere
+
+When in doubt, extract a constant or buff/config lookup.
+
+## When Editing Existing Code
+
+If you touch a method that contains a domain magic number, extract it to buff config, existing config, or a class constant in the same change. Do not add new unexplained literals.

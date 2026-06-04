@@ -1,0 +1,135 @@
+---
+description: Register Bukkit events only through NewListener; use small handler classes, not new Listener types.
+alwaysApply: true
+---
+
+# Bukkit listeners → NewListener + handlers
+
+Do **not** add new classes that implement `Listener` and get registered with `registerEvents(...)` in `CivCraft` (or elsewhere) for normal gameplay events.
+
+The project pattern is: **one** `NewListener` (`com.avrgaming.civcraft.listener.NewListener`) owns `@EventHandler` methods; feature logic lives in small handler classes under `listener/<eventname>/`.
+
+**Copy `BlockBreakEvent` exactly.** Every event (dungeon, quest, guide NPC, etc.) uses the same shape: handler interface, one impl class per concern, `List<...Handler>` on `NewListener`, and a single `@EventHandler` that loops the list.
+
+## Required pattern (canonical: `BlockBreakEvent`)
+
+### 1. Handler interface in `listener/<eventname>/`
+
+Package name = Bukkit event name in lowercase, e.g. `blockbreakevent`, `playermoveevent`, `playerharvestblockevent`.
+
+```java
+// listener/blockbreakevent/BlockBreakHandler.java
+public interface BlockBreakHandler {
+    void handle(BlockBreakEvent event);
+
+    default boolean isCancelled(BlockBreakEvent event) {
+        return event.isCancelled();
+    }
+}
+```
+
+### 2. One focused impl per feature/concern
+
+```java
+// listener/blockbreakevent/BlockBreakDungeon.java
+public class BlockBreakDungeon implements BlockBreakHandler {
+    @Override
+    public void handle(BlockBreakEvent event) {
+        // logic here — not delegated to a *Listener class
+    }
+}
+```
+
+Naming: `<Feature><EventShortName>` or `<Domain><EventShortName>` (e.g. `BlockBreakDungeon`, `DungeonPlayerMove`, `QuestDailyBlockPlace`).
+
+### 3. Register in a `List<...Handler>` on `NewListener`
+
+```java
+private final List<BlockBreakHandler> blockBreakHandlers = List.of(
+        new BlockBreakTownClaimed(),
+        new BlockBreakStructure(),
+        new BlockBreakDungeon());
+```
+
+Use a **separate list** when priority differs (e.g. `blockBreakHandlers` at `HIGHEST`, `blockBreakMonitorHandlers` at `MONITOR`). Do not mix priorities in one loop unless every handler shares that priority.
+
+### 4. Exactly one `@EventHandler` per list (loop + optional early return)
+
+```java
+@EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+public void onBlockBreak(BlockBreakEvent event) {
+    for (BlockBreakHandler handler : this.blockBreakHandlers) {
+        if (handler.isCancelled(event)) {
+            return;
+        }
+        handler.handle(event);
+    }
+}
+```
+
+Match `priority` / `ignoreCancelled` to the handlers in that list (same as existing dungeon/quest handlers for that event).
+
+## Forbidden patterns
+
+```java
+// ❌ BAD — separate Listener + CivCraft.registerEvents
+public class DungeonListener implements Listener {
+    @EventHandler
+    public void onPlayerMove(PlayerMoveEvent event) { ... }
+}
+
+// ❌ BAD — “god” class with many onXxx methods, wired by direct calls from NewListener
+public class DungeonListener {
+    public void onMoveEvent(PlayerMoveEvent e) { ... }
+    public void onTeleportEvent(PlayerTeleportEvent e) { ... }
+}
+// NewListener:
+dungeonListener.onMoveEvent(event);  // NOT the BlockBreak pattern
+
+// ❌ BAD — handler that only forwards to a god class
+public class DungeonPlayerMove implements PlayerMoveEventHandler {
+    public DungeonPlayerMove(DungeonListener listener) { ... }
+    public void handle(PlayerMoveEvent e) { listener.onMoveEvent(e); }
+}
+
+// ❌ BAD — @EventHandler on NewListener with inline feature logic (belongs in handler impl)
+@EventHandler
+public void onPlayerMove(PlayerMoveEvent event) {
+    if (!event.getPlayer().getWorld().getName().equals("world")) { ... }
+}
+```
+
+```java
+// ✅ GOOD — same as BlockBreakDungeon
+public class DungeonPlayerMove implements PlayerMoveEventHandler {
+    @Override
+    public void handle(PlayerMoveEvent event) {
+        // move/teleport logic (or call a non-Listener domain helper)
+    }
+}
+```
+
+## Shared logic across handlers
+
+- **3+ handlers** or **non-trivial shared rules**: extract to an existing manager/repository or a **plain** domain type (e.g. `DungeonTeleportTransitions`) — **not** a class named `*Listener`, **not** `implements Listener`.
+- **2 call sites**: small duplication or a package-private helper on the natural owner is fine (`prefer-few-service-classes.mdc`).
+
+## Handler rules
+
+- Handlers are **not** `Listener` implementations; they only implement `*EventHandler` and `handle(Event)`.
+- Keep handlers small and single-purpose; **chain order matters** when handlers can cancel.
+- Call existing managers/repositories from handlers.
+- Never add `CivCraft.registerEvents(...)` for gameplay events covered by `NewListener`.
+
+## Checklist before finishing listener work
+
+1. New behavior is in `listener/<eventname>/<Name>.java` implementing `<Event>Handler`.
+2. Handler is added to the correct `List<...>` on `NewListener`.
+3. `NewListener` has one loop `@EventHandler` for that list (no direct calls to a `*Listener` god object).
+4. No new `implements Listener` types and no new `registerEvents` in `CivCraft`.
+
+## Exceptions
+
+Only skip `NewListener` when there is a clear, existing exception (deprecated legacy listener being migrated, or code outside `civcraft` main plugin). For new CivCraft features, use `NewListener` unless the user explicitly approves another approach.
+
+Third-party events (e.g. `CitizensEnableEvent`) still use the **same** handler list + loop on `NewListener`; only the handler package/interface name follows the event (e.g. `citizensenableevent`).

@@ -1,0 +1,77 @@
+---
+description: Never add empty constructors (including private ones on utility classes). Java already provides a default when needed.
+globs: **/*.java
+alwaysApply: true
+---
+
+# No empty constructors
+
+**Never add an empty constructor** — not `public`, not `protected`, and especially not `private ClassName() { }`.
+
+Do not add them to block instantiation, for “utility class” style, to satisfy IDE templates, or out of habit. They add noise and are not required in this codebase.
+
+## Omit the constructor
+
+If the class has no other constructors, **declare none**. Java supplies a default no-arg constructor when one is actually needed.
+
+```java
+// ❌ BAD — never add this pattern
+public final class QuestDialogCheckpoints {
+    private QuestDialogCheckpoints() {
+    }
+
+    public static List<QuestDialogCheckpoint> load(...) { ... }
+}
+
+// ✅ GOOD — static helpers only, no constructor at all
+public final class QuestDialogCheckpoints {
+    public static List<QuestDialogCheckpoint> load(...) { ... }
+}
+```
+
+Same for instance classes with no special construction needs:
+
+```java
+// ❌ BAD
+public class QuestStepEngine {
+    public QuestStepEngine() {
+    }
+}
+
+// ✅ GOOD
+public class QuestStepEngine {
+}
+```
+
+## Only exception: a framework or deserializer **requires** it
+
+Add an empty constructor **only** when you have confirmed the API will not work without it:
+
+| Case | Visibility | Example |
+|------|------------|---------|
+| Bukkit `JavaPlugin` subclass | `public` | Required by the plugin loader |
+| Deserializer needs no-arg **and** other constructors exist | `public` or `protected` | SnakeYAML bean with a typed constructor for scalars |
+
+If you are unsure, **do not add** a constructor — check how the type is loaded first.
+
+## Do not use private ctors on static-only types
+
+```java
+// ❌ BAD — private empty ctor “utility class” pattern
+public final class QuestLoreDisplay {
+    private QuestLoreDisplay() { }
+
+    public static void addQuestLore(...) { ... }
+}
+
+// ✅ GOOD — no constructor; put helpers on the natural owner when possible
+public final class QuestLoreDisplay {
+    public static void addQuestLore(...) { ... }
+}
+```
+
+Prefer moving static helpers to an existing manager, command, or window instead of a new `*Helper` / `*Display` type (see `prefer-few-service-classes.mdc`).
+
+## Agent checklist
+
+Before finishing a Java edit, search your diff for `() {\s*}` or `() {}` on constructors. **Delete** any empty constructor you added unless the exception above applies. **Do not** re-add `private Foo() {}` when touching utility classes.

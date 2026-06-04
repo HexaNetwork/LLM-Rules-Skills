@@ -1,0 +1,114 @@
+---
+description: GUI layout — colocate lore on windows/panels; prefer LoreBlock over custom lore types; prefer reusable HexaCore Panel types over scattered LayoutListViews.
+globs: civcraft/**/ui/gui/**/*.java,civcraft/**/quest/config/**/*.java
+alwaysApply: false
+---
+
+# GUI panels and lore
+
+When adding or changing CivCraft GUIs (HexaCore `Window`, `Panel`, `Button`), keep tooltip text on the type that owns the slot and prefer **reusable panel classes** over one-off list wiring in every window.
+
+See also: `gui-button-set-functionality.mdc` (click hints via `setFunctionality`, not duplicate lore).
+
+## Lore: build it on the owning GUI type
+
+Put `Icon.addLore` / `String.format` lore in the **window**, **panel subclass**, or a **private** `fillButtons` / `buildXButton` method on that same class — not a new `*Display`, `*Lore`, or `*LoreBuilder` type for one screen.
+
+Shared lore for a reusable region (e.g. town daily quest slots) belongs on that **panel** (`TownDailyQuestPanel.addDailyQuestBodyLore`), not a separate display class.
+
+```java
+// ❌ BAD — extra class only to format lore for one window
+GuideQuestLoreHelper.addObjectiveLore(icon, step);
+
+// ✅ GOOD — lore lives where the button is built (same pattern as CivProjectWindow)
+private Button buildObjectiveButton(QuestStepConfig step) {
+    Icon icon = Icon.buildBase(material, String.format("%s%s", CivColor.Gold, title));
+    icon.addLore(String.format("%s%s", CivColor.Gray, step.description));
+    icon.addLore("");
+    icon.addLore(String.format("%sProgress: %s%s/%s", CivColor.Gold, CivColor.White, current, total));
+    Button button = new Button(icon);
+    button.setFunctionality(click -> this.openChoice(), "choose your path", ClickType.LEFT, ClickType.RIGHT);
+    return button;
+}
+```
+
+Follow `java-civcolor-formatting` and `java-string-format-messages` for colors and dynamic text.
+
+## Prefer `LoreBlock` over `QuestLoreLines` and manual lore loops
+
+Do **not** add YAML wrapper types such as `QuestLoreLines extends ArrayList<String>`. Store plain lines on config beans and build HexaCore `LoreBlock` at the GUI boundary.
+
+| Layer | Prefer | Avoid |
+|-------|--------|-------|
+| YAML / config POJO | `List<String>` with `setLore(Object)` → `WordUtil.normalizeLines` | `QuestLoreLines`, other `ArrayList` subclasses for scalar/sequence YAML |
+| Icon tooltip | `icon.addLore(new LoreBlock(LoreType.LORE, lines))` | Per-line `icon.addLore(String.format("%s%s", CivColor.Gray, line))` or `QuestLoreDisplay.addDescriptionLore` for simple config text |
+| Chat / NPC / legacy export | `WordUtil.joinForChat(lines)` on the raw `List<String>` | Storing display-colored `LoreBlock` on config types |
+
+`LoreBlock` implements `Iterable<String>`; `Icon.addLore(Iterable)` uses `getSortedLore()`, which applies the block's `LoreType` default color. Use `LoreType.LORE` for plain gray YAML description lines; use `LoreType.DESCRIPTION` when the block is part of a structured title + body layout (same as `ShowBuildWindow`).
+
+```java
+// ❌ BAD — custom YAML list type + manual gray lore helper
+private QuestLoreLines lore;
+QuestLoreDisplay.addDescriptionLore(icon, track.getLore());
+
+// ✅ GOOD — normalize YAML once on the config bean; LoreBlock at the icon
+private List<String> lore;
+
+public void setLore(Object lore) {
+    this.lore = WordUtil.normalizeLines(lore);
+}
+
+public List<String> getLore() {
+    return this.lore;
+}
+
+if (WordUtil.hasContent(track.getLore())) {
+    icon.addLore(new LoreBlock(LoreType.LORE, track.getLore()));
+}
+```
+
+For mixed sections (summary, rewards, progress), compose one or more `LoreBlock`s with `addSubBlock` on the window/panel — same pattern as `ShowBuildWindow` and `BuildingWonderWikiWindow` — instead of a quest-specific lore display helper.
+
+### When a separate helper is OK
+
+- The same lore block is used in **3+ unrelated** windows or commands — colocate on the **panel** that owns those slots (`TownDailyQuestPanel`) or the most natural existing owner, not a new `*Display` / `*LoreBuilder` class.
+- **Do not add** new static methods to legacy `*Display` types (`QuestLoreDisplay`, …). Put new GUI lore on the window or panel you are changing.
+
+### Legacy `*Display` classes
+
+Do not add new `*Display` / `*LoreBuilder` types. When touching call sites of legacy helpers (`QuestLoreDisplay`, …), prefer moving lore onto the owning window or panel (`TownDailyQuestPanel`) over expanding the display class.
+
+## Layout: reusable `Panel` subclasses over ad-hoc lists
+
+Prefer a **generic `Panel` subclass** (HexaCore `gui.container.Panel`) that encapsulates dimension, fill, and list behavior. Reuse that panel wherever the same strip/grid is needed so layout and glass fill stay consistent.
+
+```java
+// ❌ BAD — bespoke LayoutListView + Panel wiring copy-pasted per window
+LayoutListView<Quest> list = new LayoutListView<>(new BasicLayout(new Dimension(7, 1)), this::fillButtons);
+Panel p = new Panel(this, new Dimension(7, 1));
+p.addUIElement(list, Anchors.TOP_LEFT);
+p.setFill(FILLING);
+this.addUIElement(p, Coordinate.ONE_ONE);
+
+// ✅ GOOD — one panel type, reused (see TemplatePanel, DepositPanel, GuideQuestObjectiveRow)
+TemplatePanel templates = new TemplatePanel(this, resident)
+        .setOwnedAction(this::applyTemplate, "apply template");
+this.addUIElement(templates, Anchors.TOP_LEFT);
+```
+
+Inside a reusable panel, a single `LayoutListView` (or `ListView`) is fine — the panel **is** the abstraction, not every window inventing its own list + layout pair.
+
+### Prefer panels when
+
+- A fixed-size region (toolbar, template grid, deposit area, objective column) appears in more than one place or may later.
+- You want the same `FILLING`, dimensions, and anchoring everywhere.
+
+### `LayoutListView` directly on the window is OK when
+
+- The list is **unique** to that window and unlikely to be reused — still build buttons with lore on the window (private methods), not a new display class.
+
+## Checklist for new GUIs
+
+1. Lore on the window/panel method that creates the `Button` / `Icon`.
+2. Click instructions via `setFunctionality` — not manual "Click to…" lore (`gui-button-set-functionality.mdc`).
+3. Reusable regions → `extends Panel` under `ui/gui/panel/` or next to the feature window; avoid N slightly different `LayoutListView` setups.

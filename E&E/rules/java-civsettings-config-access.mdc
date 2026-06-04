@@ -1,0 +1,46 @@
+---
+description: Read CivCraft YAML config inline via get*OrDefault; do not add thin CivSettings getter wrappers.
+alwaysApply: true
+---
+
+# CivSettings config access
+
+Do **not** add static getters on `CivSettings` that only forward to `getStringOrDefault`, `getDoubleOrDefault`, or `getIntegerOrDefault` on a `FileConfiguration`. Call those helpers **at the use site** with the right config object and YAML path.
+
+## Do this
+
+```java
+// ✅ GOOD — inline at call site
+double repositionDistance = CivSettings.getDoubleOrDefault(
+        CivSettings.questSettingsConfig, "guide.reposition_distance", 20.0);
+
+persistence.lastGuideSeasonId = CivSettings.getStringOrDefault(
+        CivSettings.questSettingsConfig, "season.id", "");
+
+// Supplier / constructor arg — same pattern
+() -> CivSettings.getStringOrDefault(CivSettings.questSettingsConfig, "season.id", "")
+```
+
+Use the static `FileConfiguration` field that owns the YAML (`questSettingsConfig`, `townSettingsConfig`, `civConfig`, etc.) and keep defaults in the **third argument** of `get*OrDefault`, matching `data/*.yml`.
+
+## Do not do this
+
+```java
+// ❌ BAD — thin wrapper on CivSettings
+public static double getGuideRepositionDistance() {
+    return getDoubleOrDefault(questSettingsConfig, "guide.reposition_distance", 20.0);
+}
+
+// ❌ BAD — call site still goes through wrapper
+CivSettings.getGuideRepositionDistance();
+```
+
+## When a CivSettings method is OK
+
+- Loads or parses config (e.g. `loadCivConfig`, storage `init` wiring)
+- Combines multiple keys, validates, or applies non-trivial defaults
+- Same path read in **many** places with **non-trivial** derived logic — prefer a `private` helper on the class that owns the workflow, not a new public `CivSettings` getter unless the user asks
+
+## Agent behavior
+
+When adding or changing tunables in `data/*.yml`, update the YAML and use `get*OrDefault` inline where the value is consumed. Remove existing thin getters if you touch their call sites.

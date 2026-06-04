@@ -1,0 +1,45 @@
+---
+description: Always use braces on control-flow bodies, even for one-liners.
+globs: **/*.java
+alwaysApply: false
+---
+
+# Always Use Braces
+
+Every control-flow body must use `{ }`, even when it is a single statement. Do not omit braces.
+
+Applies to: `if`, `else`, `for`, `while`, `do-while`.
+
+```java
+// ❌ BAD
+if (condition)
+    doSomething();
+if (x > 0) return false;
+for (Unit u : units) process(u);
+
+// ✅ GOOD
+if (condition) {
+    doSomething();
+}
+if (x > 0) {
+    return false;
+}
+for (Unit u : units) {
+    process(u);
+}
+```
+
+```java
+// ❌ BAD
+if (a) foo();
+else bar();
+
+// ✅ GOOD
+if (a) {
+    foo();
+} else {
+    bar();
+}
+```
+
+When editing existing code, add braces to any control-flow body you touch that omits them.

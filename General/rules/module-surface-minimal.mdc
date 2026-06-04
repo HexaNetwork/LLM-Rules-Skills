@@ -1,0 +1,22 @@
+---
+description: Keep exports and barrels intentional; avoid test-only production APIs
+globs: src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Minimal Module Surface
+
+Prefer private helpers and narrow public APIs. The audits found many exports that were only used in their own file, only re-exported from barrels, or kept alive by tests.
+
+## Rules
+
+- Do not export a symbol unless another production module imports it or it is a deliberate public API for the feature.
+- Keep file-local helpers, constants, types, and small components unexported by default.
+- Do not add barrel exports speculatively. Add to an `index.ts` only when there is an actual consumer or a clear public feature API.
+- Do not keep production exports solely so tests can import internals. Test public behavior, or move pure logic to a deliberately exported utility.
+- For service modules with an exported object API, avoid also exporting every implementation function unless direct named imports are intended.
+- Remove deprecated props/aliases instead of preserving unused compatibility inside app-local components.
+
+## Cleanup Check
+
+When touching a module, quickly check whether new or existing exports are consumed outside the file. If not, make them private unless there is a documented reason.

@@ -1,0 +1,69 @@
+---
+description: Single path per contract — no compat shims, dual branches, or deprecated aliases; ratchet cleanup eagerly
+alwaysApply: true
+---
+
+# No legacy fallback code
+
+Architecture summary: **`docs/DESIGN.md`** → [No legacy fallback code](../../docs/DESIGN.md#no-legacy-fallback-code).
+
+Prefer **one** code path for each superseded contract. Legacy compatibility branches add dead code, hide incomplete migrations, and make behavior hard to reason about.
+
+## Forbidden (compat / legacy)
+
+Do **not** add or keep code whose only purpose is supporting an **old** contract you have already moved away from:
+
+- **Dual code paths** — `if (useNewX) { … } else { …old… }` after migration is done
+- **Compatibility shims** — adapters mapping old prop/field/route names to new ones “for callers not updated yet”
+- **Old-shape fallbacks** — `data.newField ?? data.oldField`, `obj.legacy_id || obj.id`, or branching on presence of deprecated fields (non-runtime)
+- **Deprecated aliases** — re-exporting or wrapping under an old hook/component/function name alongside the new one
+- **Dead branches** — commented-out implementations, `if (false)`, TODO-stubs kept “just in case”
+
+Domain-specific rules (do not duplicate here — follow them when editing those areas):
+
+- **HTTP/API wire shapes** — `.cursor/rules/api-endpoints-openapi.mdc`, `.cursor/rules/openapi-field-changes-no-dual-shapes.mdc`
+- **i18n `t()` defaults** — `.cursor/rules/i18n-t-no-defaults.mdc`
+- **Module exports / deprecated props** — `.cursor/rules/module-surface-minimal.mdc`
+
+## Allowed (not legacy)
+
+These are **runtime** or **product** behavior, not superseded-contract compatibility:
+
+- Error boundaries, route error UI, network retry, graceful failure messaging
+- Loading, empty, and “no results” states
+- Optional chaining / nullish coalescing for **missing live data** (`user?.name`, optional API fields that are genuinely optional in the current spec)
+- **Dev-only gates** — e.g. `import.meta.env.DEV` routes and tooling
+- **Active feature flags** during rollout — dual paths only while the flag is intentionally toggling behavior (see below)
+
+## Feature flags
+
+Feature flags may temporarily keep two paths **only while rollout is active**. Once the decision is final (100% on, or old path permanently off):
+
+- Remove the flag and the dead branch in the **same PR** as the final flip, or the **immediately following PR** if the flip was driven elsewhere
+- Do not leave indefinite `if (flags.newFeature)` with both implementations
+
+## Documented exceptions
+
+A **time-bound** compatibility window is allowed only when product explicitly requires it:
+
+- **Tracker issue required** — link a migration/removal ticket (e.g. `#1234`); no self-granted exceptions
+- **Inline pointer** — `// compat: remove when #1234 closes` at the branch or shim
+- Default is **no** dual-reference patterns for ordinary drift
+
+## Cleanup — ratchet and eager
+
+When working in the codebase:
+
+1. **Ratchet** — files you touch for any task: remove clearly dead legacy in those files (expired flags, zero-caller deprecated exports, commented old impl) when removal is safe
+2. **Eager within feature** — if legacy lives in the same feature folder (`features/<area>/**`), trace callers within that feature and remove the full chain in the same PR
+3. **Shared symbols** — for exports in `lib/`, `components/ui/`, or barrels, grep callers and remove the whole chain when provably unused
+4. **Call out risk** — if removal needs cross-team coordination or behavior is ambiguous, stop and note the blocker; do not paper over with a shim
+
+Mention opportunistic legacy cleanup briefly in the PR when it expands beyond the original task scope.
+
+## Quick checklist
+
+1. Migrating X → update call sites to **one** path; delete the old path, do not branch
+2. Spec/contract changed → match **current** shape only (see API rules)
+3. Flag rollout complete → flag + dead branch gone
+4. Need temporary dual path → tracker issue + inline pointer; otherwise forbidden

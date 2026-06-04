@@ -1,0 +1,35 @@
+---
+description: Keep React state transitions pure and hook dependencies honest
+globs: src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# React Hooks and State Integrity
+
+When changing React components or hooks, preserve React 19 / StrictMode-safe state behavior.
+
+## Rules
+
+- Do not call one state setter from inside another setter's updater callback. Updaters must stay pure.
+- Do not write to refs during render, such as `ref.current = value` in the component or hook body. Sync latest values in an effect/layout effect or use a stable callback pattern.
+- Do not add or keep `react-hooks/exhaustive-deps` suppressions casually. Prefer restructuring the effect, memoizing helpers, or deriving values inside the callback.
+- When multiple state fields must change together, prefer one reducer/state object transition over several interdependent setters.
+- Prefer derived render values over effect-set state when the value can be computed from props/state.
+- Memoize context values and action callbacks when the provider is shared broadly or modeled after existing memoized providers.
+
+## Examples
+
+```tsx
+// Bad: nested side effects inside an updater
+setSelectedId((current) => {
+  setMenuPosition(nextPosition)
+  return current === id ? null : id
+})
+
+// Good: compute first, then set each value independently
+const nextSelectedId = selectedId === id ? null : id
+setSelectedId(nextSelectedId)
+setMenuPosition(nextSelectedId ? nextPosition : null)
+```
+
+If a dependency warning looks wrong, explain the stable invariant in the conversation before suppressing it.

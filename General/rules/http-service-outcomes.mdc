@@ -1,0 +1,24 @@
+---
+description: Feature HTTP services return ServiceOutcome; hooks branch on outcome.kind not ApiError
+alwaysApply: true
+---
+
+# HTTP service outcomes at the feature seam
+
+Migrated browse, template catalog, and my-stories **list/detail** paths use `ServiceOutcome<T>` — see `docs/DESIGN.md` → **HTTP service outcomes (feature seam)**.
+
+## In `features/**/hooks` and feature UI (migrated surfaces)
+
+- **Do** branch on `if (!outcome.ok)` and call `serviceFailureMessage(outcome, t)` (or check `outcome.kind === 'parse'` when copy differs).
+- **Do not** import `ApiError` or other transport types from `lib/http/httpClient` for those flows.
+- **Do not** re-throw service failures as generic `unknown` — pass `ServiceFailure` through or format with `serviceFailureMessage`.
+
+## In `features/**/services`
+
+- List/browse/detail: `return invokeJson(async () => { ... })` and normalize pagination via `normalizePaginatedList` / `paginatedListOutcomeOrThrow`.
+- Mutations/chat still throwing: keep documented in [TaleTailorBackend#210](https://github.com/TheHexaForge/TaleTailorBackend/issues/210) until follow-up issues migrate them.
+
+## New endpoints
+
+- Default: services return outcomes; hooks never import `ApiError`.
+- Paginated JSON: parse failures → `kind: 'parse'`, not silent empty lists.

@@ -1,0 +1,45 @@
+---
+description: No defaultValue on t() — it hides missing keys and breaks locale parity checks
+globs: src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Localization: no defaults on `t()`
+
+## Why
+
+`defaultValue` (and other inline user-visible fallbacks) make the UI look correct even when a key is **missing** from `en.ts`, `fr.ts`, or both. That masks incomplete translations and typos in key paths. Prefer letting the key surface (or fail visibly in dev) so gaps are fixed in locale files.
+
+## Rule
+
+When calling `t()` from `react-i18next` / `useTranslation()`:
+
+- **Do not** pass `defaultValue` in the options object.
+- **Do not** use other call forms that embed fallback copy at the call site (e.g. a second string argument as default text).
+- **Do not** wrap `t('key')` with `|| '…'` / `?? '…'` to supply English when the lookup fails.
+
+Every user-facing string must live in locale resources (`src/i18n/locales/en.ts` and every other active language). If a key is missing, add it to the locales — do not paper over it in components.
+
+## Examples
+
+```tsx
+// ❌ BAD — masks missing keys and duplicates source of truth
+t('auth.settingsTitle', { defaultValue: 'Settings' })
+t('explore.authorPage.loading', { defaultValue: 'Loading author.' })
+t('some.key') || 'Fallback'
+
+// ✅ GOOD — key only; strings defined in locale files
+t('auth.settingsTitle')
+t('explore.authorPage.loading')
+```
+
+Interpolation and options that are **data**, not default copy, are fine:
+
+```tsx
+// ✅ OK
+t('items.count', { count: n })
+```
+
+## Note
+
+This rule applies to **i18n `t()`** only. Other APIs may use a prop named `defaultValue` (inputs, Storybook, etc.) — forbid defaults only on translation calls.

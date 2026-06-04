@@ -1,0 +1,24 @@
+---
+description: Use the OpenAPI spec for up-to-date backend API endpoints
+alwaysApply: true
+---
+
+# API Endpoints – Source of Truth
+
+When you need **current or updated backend API endpoints**, request/response schemas, or auth requirements, use the project’s OpenAPI specification.
+
+**OpenAPI spec URL:**
+
+```
+https://api.storytailor.ink/api/docs/openapi.yaml?key=ostriches
+```
+
+- Prefer **fetching this URL** (e.g. with the fetch/web tool) over relying on local or cached endpoint definitions.
+- Use it when adding or changing API calls, fixing API errors, or implementing new backend integration.
+- The spec is the source of truth for available endpoints, request/response shapes, and authentication.
+
+## Single-contract boundary
+
+Treat OpenAPI as the **single long-lived HTTP contract**. Do **not** add long-lived **dual parsers** (extra parsers, normalization layers, or “old shape **or** new shape” branches) for ordinary spec drift—the client updates intentionally when the published spec moves. Prefer a **narrow public surface** and a **deep** mapping layer at the HTTP edge (see `docs/DESIGN.md` → **HTTP API single-contract policy**). Field-level expectations and exceptions: `.cursor/rules/openapi-field-changes-no-dual-shapes.mdc`.
+
+See also: `README.md` (API Documentation section).

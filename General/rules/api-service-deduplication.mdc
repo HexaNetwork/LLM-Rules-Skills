@@ -1,0 +1,28 @@
+---
+description: Reuse API service helpers instead of repeating pagination, unwrap, query, or coalescing logic
+globs: "src/**/services/**/*.ts,src/lib/http/**/*.ts,src/lib/utils/**/*.ts,src/lib/hooks/**/*.ts"
+alwaysApply: false
+---
+
+# API Service Deduplication
+
+Before adding API service logic, check for existing helpers and nearby patterns. The codebase has repeated pagination, envelope unwrap, query-param, engagement, and in-flight request code.
+
+## Rules
+
+- Reuse existing HTTP helpers in `src/lib/http` before creating feature-local variants.
+- Do not add another generic envelope/list parser unless the current OpenAPI shape requires it and existing helpers cannot model it cleanly.
+- For paginated responses, query param builders, engagement endpoints, and request coalescing, prefer extracting a small shared helper once a second or third copy appears.
+- Keep shared helpers aligned to the documented OpenAPI contract. Do not make them broad compatibility shims for undocumented shapes.
+- If two endpoints look similar but have different response meanings or field shapes, keep separate DTOs/mappers and call out the mismatch.
+- Avoid duplicating service object APIs and named function exports unless both import styles are intentionally supported.
+
+## Quick Check
+
+Search for similar helpers by purpose before adding a new one:
+
+- pagination response builders
+- `data` / single-resource unwrap helpers
+- `URLSearchParams` page/per-page builders
+- like/bookmark engagement methods
+- `Map<string, Promise<T>>` request coalescing

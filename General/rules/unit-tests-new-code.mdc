@@ -1,0 +1,36 @@
+---
+description: Add and update Vitest unit tests when implementing or changing app code
+globs: src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Unit tests for new and changed code
+
+## When to add or edit tests
+
+- **New** exported hooks, utilities, API clients, or React components: add a colocated test file in the same directory.
+- **Changed** behavior, props, public API, or edge cases: update the existing `*.test.ts` / `*.test.tsx`; do not leave tests asserting old behavior unless intentional.
+
+## Naming and placement
+
+- Mirror the module name: `FooBar.tsx` → `FooBar.test.tsx`; `useFoo.ts` → `useFoo.test.ts` (use `.tsx` only if the test renders React).
+- Keep tests next to the code they cover (same folder as in this repo).
+
+## Stack and patterns (this project)
+
+- **Runner**: Vitest (`globals: true`, `jsdom`). Import `describe`, `it`, `expect`, `vi` from `vitest` when not relying on globals.
+- **Components**: `@testing-library/react` + `@testing-library/user-event`. Prefer queries and assertions on what the user sees (roles, labels, text), not implementation details.
+- **Mocks**: `vi.fn()`, `vi.mock()` as needed; follow patterns in neighboring tests in the same feature.
+- **HTTP**: MSW is set up in `src/test/setup.ts` — reuse existing handlers/patterns from similar `*Api.test.ts` files.
+
+## Quality bar
+
+- Cover the **main success path** and at least one **meaningful edge or error** case when the code branches.
+- Avoid brittle snapshots for large UI unless the team already uses them for that component.
+- After adding or materially changing tests, run:
+
+```bash
+npm run test:run
+```
+
+(Use a focused filter if the change is narrow, e.g. `npm run test:run -- path/to/File.test.tsx`.)

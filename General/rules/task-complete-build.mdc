@@ -1,0 +1,16 @@
+---
+description: Run production build when a coding task is complete
+alwaysApply: true
+---
+
+# Task completion – run build
+
+When a coding task is finished (changes made, lints addressed, no follow-up edits pending), run the production build to confirm the project still compiles:
+
+```bash
+npm run build
+```
+
+- Run this **after** the task is complete, not during incremental edits.
+- If the build fails, fix the reported errors before considering the task done.
+- You may skip running the build if the user explicitly asks not to, or if the change was documentation-only and no code was modified.

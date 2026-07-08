@@ -8,7 +8,7 @@ alwaysApply: false
 
 Complements `java-unit-tests-no-bukkit.mdc`. CivCraft tests run without a Paper server — treat `ItemStack` as a Mockito stub, not a real Bukkit object.
 
-## Production seam (before writing tests)
+## Production requirement (before writing tests)
 
 Code that creates vanilla stacks must go through injectable `utility.item.ItemStackFactory` (already used by `QuestMaterialLoader` / `MaterialParser`), not `new ItemStack(material)` inline.
 
@@ -25,7 +25,7 @@ Custom items: inject the lore/spawn collaborator (`ILoreItem`, registry interfac
 ## Do not use in tests
 
 - `new ItemStack(...)` or `Material.matchMaterial` to build test data
-- `MockedConstruction<ItemStack>` — wrong seam; mock `ItemStackFactory` instead
+- `MockedConstruction<ItemStack>` — mock `ItemStackFactory` instead
 - MockBukkit / embedded server for stack behavior
 
 ## Default: `mock(ItemStack.class)` + stub only what the SUT calls
@@ -65,6 +65,6 @@ when(loreItem.spawn()).thenReturn(customStack);
 
 Stub `getType`, `getAmount`, `isSimilar`, `serializeAsBytes`, `asOne` as required. Use `InOrder` when the SUT temporarily mutates amount then restores it.
 
-## Prefer no stack at all
+## When ItemStack is not on the code path
 
-When logic only needs refs, catalogs, or string ids, test without `ItemStack` (`QuestItemReferenceResolverTest`).
+When the SUT only needs refs, catalogs, or string ids, no stack mock is required (`QuestItemReferenceResolverTest`).

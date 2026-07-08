@@ -1,5 +1,5 @@
 ---
-description: CivCraft unit tests run without Paper/Bukkit — do not add flaky or disabled Bukkit-dependent tests.
+description: CivCraft unit tests run without Paper/Bukkit — mock collaborators aggressively; skip only when truly impossible.
 globs: civcraft/src/main/test/**/*.java
 alwaysApply: false
 ---
@@ -8,9 +8,11 @@ alwaysApply: false
 
 CivCraft unit tests run in **plain JUnit** (`./gradlew :civcraft:test`). There is **no Paper/Bukkit server** in this harness yet. Do not add tests that require one.
 
+Test the **real public interface**. Mock every Bukkit collaborator the code touches. Do **not** drop to a shallower test target when more mocks can reach the behavior.
+
 ## Recognize init failures
 
-Stop and change approach when you see:
+Stop and mock more when you see:
 
 - `ExceptionInInitializerError` / `NoClassDefFoundError` on `CivSettings`, `CivCraft`, or `org.bukkit.Bukkit`
 - Errors about missing plugin, scheduler, or server
@@ -20,22 +22,18 @@ Stop and change approach when you see:
 
 - `@BeforeAll` Bukkit/CivSettings bootstraps (partial mocks, field assignment on `CivSettings`)
 - `@Disabled("Requires Bukkit…")` skeleton tests — **delete** them; they still clutter the suite
+- `mockStatic(Bukkit.class)` or MockBukkit / embedded server
 - Tests that touch `CivGlobal` static fields unless init is already proven safe in this environment
-- Tests that construct types whose no-arg path reads `CivSettings` (e.g. `new StructureQuestGenerator()` → `CivSettings.cottageFoodCatalog`)
-- Tests through `TownStat` / `*Info` hierarchies when construction pulls config/Bukkit
+- Tests that construct types whose no-arg path reads `CivSettings` (e.g. `new StructureQuestGenerator()` → `CivSettings.cottageFoodCatalog`) — inject the dependency instead
 
-## Preferred alternatives (in order)
+## Preferred approach (in order)
 
-1. **Extract testable logic** — pure helpers with plain inputs; production delegates to them.
-2. **Inject dependencies** — pass `CottageFoodCatalog`, repositories, resolvers, etc. instead of reading globals.
-3. **Test a shallower seam** — static pure methods, in-memory repositories, food-group paths that avoid `Material.matchMaterial`.
-4. **Skip entirely** — note the gap in the PR ("untested: requires Bukkit — …"). **No** failing, flaky, or `@Disabled` test left behind.
+1. **Mock more** — stub every Bukkit type and collaborator on the code path (`Town`, `ItemStack`, `Inventory`, `Player`, etc.).
+2. **Inject dependencies** — pass `CottageFoodCatalog`, `ItemStackFactory`, repositories, resolvers, etc. instead of reading globals.
+3. **Skip entirely** — only when mocking truly cannot reach the behavior. Note the gap in the PR ("untested: requires Bukkit server — …"). **No** failing, flaky, or `@Disabled` test left behind.
 
 ## Examples that work today
 
 - `CottageStructureQuestGeneratorTest` — injects `CottageFoodCatalog` into `StructureQuestGenerator`
-- `StructureQuestCompletionServiceTest` — static helpers only (`isQuestDateExpired`, `isLayerLocked`)
-- `TownStructureLevelServiceTest.resolveFromSource` — tests via `StructureEffectiveLevelSource`, not `Town.getTownStat`
 - `FieldWindmillHarvestServiceTest` — `mock(Town.class)` with only `getId()` when town state is never touched
-
-When removing Bukkit-blocked tests, **keep** every test that still passes at a lower seam.
+- `ContainsInStorageTest` — mocked `Inventory` with mocked stacks in slots

@@ -1,0 +1,16 @@
+tasks:
+  - id: example-task
+    title: Example AFK task
+    mode: AFK
+    body: |
+      Implement the example behavior described in acceptance criteria.
+    acceptanceCriteria:
+      - id: ac-1
+        text: Provide a public API that satisfies the stated example behavior
+    blockedBy: []
+    allowedGlobs:
+      - "src/**"
+      - "tests/**"
+    testSeams:
+      - public module exports
+    browserProbes: []

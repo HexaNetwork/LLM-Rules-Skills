@@ -1,0 +1,14 @@
+{
+  "name": "llm-rules-skills",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @hexanetwork/agent-harness",
+    "test": "npm run test -w @hexanetwork/agent-harness",
+    "test:run": "npm run test:run -w @hexanetwork/agent-harness",
+    "typecheck": "npm run typecheck -w @hexanetwork/agent-harness",
+    "lint": "npm run lint -w @hexanetwork/agent-harness"
+  }
+}

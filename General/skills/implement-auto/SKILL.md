@@ -1,13 +1,38 @@
 ---
 name: implement-auto
 description: >-
-  Automated frontend implementation pipeline built on implement: accepts local PRD/issues or tracker issues, runs one fresh agent per issue, commits after each issue, performs automated code-review (Standards + Spec) after each commit, runs a YAGNI review on the full branch when all issues are done, and fixes YAGNI findings. Use when the user says /implement-auto, implement-auto, or asks to automatically implement issues from a PRD, issue folder, or tracker.
+  Automated implementation entrypoint. Prefer the Agent Harness CLI for
+  contract-deterministic AFK runs (prepare/approve/execute/resume). Falls back
+  to a prose per-issue loop only when the harness is unavailable or the user
+  explicitly requests the legacy chat orchestrator. Use when the user says
+  /implement-auto, implement-auto, or asks to automatically implement issues
+  from a PRD, issue folder, or tracker.
 disable-model-invocation: true
 ---
 
 # Implement Auto (`/implement-auto`)
 
-Runs the `implement` workflow with an automated per-issue loop:
+## Preferred path — Agent Harness
+
+For AFK implementation queues, **do not re-implement the orchestration loop in chat**. Delegate to the executable harness:
+
+1. Ensure the target repo has `agent-harness.config.yaml` (`npx agent-harness init` if missing).
+2. `npx agent-harness prepare --local <bundle>` or `--github <issue>`.
+3. Fix any prepare validation errors with the user; do not invent product acceptance criteria.
+4. `npx agent-harness approve --draft <draft.json>`.
+5. `npx agent-harness execute --manifest <manifest.json>` (or `resume --run-id`).
+6. Report the harness final status, branch, PR URL, and blocked reasons.
+
+See `General/skills/agent-harness/SKILL.md` and `packages/agent-harness/README.md`.
+
+Use the legacy prose loop below only when:
+
+- the user explicitly asks for the chat orchestrator, or
+- Agent Harness is not installed / cannot run in this environment.
+
+## Legacy prose loop (fallback)
+
+Runs a chat-driven per-issue loop:
 
 1. Resolve the PRD and issue list.
 2. For each selected issue, launch a **new implementation agent**.
@@ -206,6 +231,7 @@ After YAGNI passes (or deferred items are noted), report briefly:
 
 ## Skill Index
 
+- `agent-harness` for the preferred executable AFK orchestration CLI.
 - `implement` for the underlying FE pipeline and gates.
 - `tdd` for issue implementation.
 - `code-review` for automated commit review (Standards + Spec).

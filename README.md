@@ -39,6 +39,8 @@ npx agent-harness benchmark --runs 3
 | `CURSOR_API_KEY` | Real Cursor SDK agents (omit with `--fake-agents`) |
 | `GITHUB_TOKEN` | `--github` prepare / GitHub publish adapter |
 
+Put these in the **project cwd** `.env` or `.env.local` (gitignored). The CLI auto-loads them; existing shell/CI env vars still win. Do not commit tokens.
+
 ### Security model
 
 v1 uses **strict Cursor Allowlist** (not Auto-review). Terminal/MCP/network allowlists live in project config and are written beside each run. Unlisted tool use should surface as a blocked permission outcome. Allowlists are a convenience layer—not a hard security boundary.

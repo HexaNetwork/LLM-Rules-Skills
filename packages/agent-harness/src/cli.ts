@@ -20,12 +20,15 @@ import {
   createFakeAgentPort,
 } from "./agents/cursor-sdk.js";
 import { ensureDir, pathExists, readJson, writeJson } from "./util/fs.js";
+import { loadDotEnvFiles } from "./util/dotenv.js";
 import {
   DraftManifestSchema,
   RunManifestSchema,
 } from "./schemas/manifest.js";
 import { loadRunState } from "./engine/state-machine.js";
 import { runBenchmark } from "./benchmark/repeatability.js";
+
+await loadDotEnvFiles();
 
 const program = new Command();
 

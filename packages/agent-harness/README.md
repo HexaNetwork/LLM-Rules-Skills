@@ -61,6 +61,10 @@ Issues labeled with `hitlLabel` are HITL; others default AFK when `afkLabel` is 
 
 `resume --run-id <id>` verifies manifest hash, worktree, branch, and HEAD before continuing. It never silently skips completed accepted tasks.
 
+## Credentials
+
+Set `CURSOR_API_KEY` (real agents) and `GITHUB_TOKEN` (`--github` prepare / publish) in the project cwd `.env` or `.env.local`. The CLI loads these automatically; shell/CI values are not overridden. Never commit tokens.
+
 ## Extension ports
 
 See [docs/roadmap.md](../../docs/roadmap.md) for deferred HITL triage, extra trackers, parallel tasks, auto-merge, and exact-code reproducibility.

@@ -8,19 +8,44 @@ import {
 } from "../schemas/reports.js";
 import type { AgentLaunchResult, AgentPort } from "./ports.js";
 import type { ManifestTask, RunManifest } from "../schemas/manifest.js";
-import type { ProjectConfig } from "../schemas/config.js";
 import { CONTRACT_VERSION } from "../schemas/common.js";
+import { formatDurationMs, harnessLog } from "../util/log.js";
+import { worktreeFingerprint } from "../util/git.js";
+
+const AGENT_WAIT_HEARTBEAT_MS = 30_000;
+export const DEFAULT_WORKER_NO_CODE_MS = 5 * 60 * 1000;
+
+export class WorkerStuckNoCodeError extends Error {
+  readonly code = "WORKER_STUCK_NO_CODE";
+  readonly isRetryable = true;
+
+  constructor(noCodeMs: number) {
+    super(
+      `Worker stuck: no worktree progress for ${formatDurationMs(noCodeMs)} (watchdog stays armed until testing gates)`,
+    );
+    this.name = "WorkerStuckNoCodeError";
+  }
+}
+
+export type CursorAgentPortOptions = {
+  /** Cancel worker if no code after this many ms. 0 disables. Default 5 minutes. */
+  workerNoCodeMs?: number;
+};
+
+type SdkRun = {
+  id: string;
+  wait: () => Promise<{
+    status: string;
+    result?: string;
+    usage?: { inputTokens?: number; outputTokens?: number };
+  }>;
+  cancel?: () => Promise<void>;
+  supports?: (operation: string) => boolean;
+};
 
 type SdkAgent = {
   agentId: string;
-  send: (prompt: string) => Promise<{
-    id: string;
-    wait: () => Promise<{
-      status: string;
-      result?: string;
-      usage?: { inputTokens?: number; outputTokens?: number };
-    }>;
-  }>;
+  send: (prompt: string) => Promise<SdkRun>;
   [Symbol.asyncDispose]?: () => Promise<void>;
 };
 
@@ -54,6 +79,10 @@ function extractJsonBlock(text: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function withSdkRetry<T>(
   attempts: number,
   fn: () => Promise<T>,
@@ -68,20 +97,159 @@ async function withSdkRetry<T>(
         error instanceof Error &&
         ("isRetryable" in error
           ? Boolean((error as { isRetryable?: boolean }).isRetryable)
-          : /network|timeout|429|5\d\d/i.test(error.message));
+          : /network|timeout|429|5\d\d|stuck/i.test(error.message));
       if (!retryable || i === attempts - 1) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** i));
+      harnessLog("agent.retry", `retrying after ${error.message}`, {
+        attempt: i + 2,
+        of: attempts,
+      });
+      await sleep(500 * 2 ** i);
     }
   }
   throw lastError;
 }
 
+async function cancelRun(run: SdkRun): Promise<void> {
+  try {
+    if (typeof run.supports === "function" && !run.supports("cancel")) {
+      harnessLog("agent.cancel", "cancel unsupported; disposing agent only", {
+        runId: run.id,
+      });
+      return;
+    }
+    if (typeof run.cancel === "function") {
+      harnessLog("agent.cancel", "cancelling stuck run", { runId: run.id });
+      await run.cancel();
+    }
+  } catch (error) {
+    harnessLog("agent.cancel", "cancel failed", {
+      runId: run.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Wait for a run with heartbeats. For workers, keep a stagnation watchdog
+ * armed until the run finishes (orchestrator then hits command/testing gates):
+ * if the worktree fingerprint is unchanged for `requireCodeAfterMs`, cancel.
+ */
+export async function waitWithHeartbeat(
+  run: SdkRun,
+  label: string,
+  options?: {
+    cwd?: string;
+    requireCodeAfterMs?: number;
+  },
+): Promise<{
+  status: string;
+  result?: string;
+  usage?: { inputTokens?: number; outputTokens?: number };
+}> {
+  const started = Date.now();
+  const requireCodeAfterMs = options?.requireCodeAfterMs;
+  const watchCode =
+    typeof requireCodeAfterMs === "number" &&
+    requireCodeAfterMs > 0 &&
+    Boolean(options?.cwd);
+
+  let lastFingerprint = watchCode
+    ? await worktreeFingerprint(options!.cwd!)
+    : null;
+  let lastProgressAt = started;
+
+  if (watchCode) {
+    harnessLog("agent.watchdog", "worktree-progress fail-safe armed until gates", {
+      label,
+      idleAfter: formatDurationMs(requireCodeAfterMs!),
+    });
+  }
+
+  type Settled =
+    | {
+        ok: true;
+        result: {
+          status: string;
+          result?: string;
+          usage?: { inputTokens?: number; outputTokens?: number };
+        };
+      }
+    | { ok: false; error: unknown };
+
+  let settled: Settled | undefined;
+  const waitPromise = run.wait().then(
+    (result) => {
+      settled = { ok: true, result };
+    },
+    (error: unknown) => {
+      settled = { ok: false, error };
+    },
+  );
+
+  while (!settled) {
+    const idleMs = Date.now() - lastProgressAt;
+    let sleepMs = AGENT_WAIT_HEARTBEAT_MS;
+    if (watchCode) {
+      const untilCheck = requireCodeAfterMs! - idleMs;
+      if (untilCheck <= 0) {
+        sleepMs = 0;
+      } else {
+        sleepMs = Math.min(AGENT_WAIT_HEARTBEAT_MS, untilCheck);
+      }
+    }
+    if (sleepMs > 0) {
+      await Promise.race([waitPromise, sleep(sleepMs)]);
+    } else {
+      // Threshold already elapsed — yield once so wait() can win the race.
+      await Promise.race([waitPromise, sleep(0)]);
+    }
+    if (settled) break;
+
+    const elapsed = Date.now() - started;
+    const idle = Date.now() - lastProgressAt;
+    harnessLog("agent.wait", `${label} still running`, {
+      runId: run.id,
+      elapsed: formatDurationMs(elapsed),
+      idle: formatDurationMs(idle),
+    });
+
+    if (!watchCode) continue;
+
+    const current = await worktreeFingerprint(options!.cwd!);
+    if (current !== lastFingerprint) {
+      lastFingerprint = current;
+      lastProgressAt = Date.now();
+      harnessLog("agent.code", "worktree progress; watchdog stays armed until gates", {
+        runId: run.id,
+        elapsed: formatDurationMs(elapsed),
+      });
+      continue;
+    }
+
+    if (idle >= requireCodeAfterMs!) {
+      harnessLog("agent.stuck", "no worktree progress; aborting worker", {
+        runId: run.id,
+        elapsed: formatDurationMs(elapsed),
+        idle: formatDurationMs(idle),
+        threshold: formatDurationMs(requireCodeAfterMs!),
+      });
+      await cancelRun(run);
+      throw new WorkerStuckNoCodeError(requireCodeAfterMs!);
+    }
+  }
+
+  if (!settled!.ok) throw settled!.error;
+  return settled!.result;
+}
+
 async function launchPrompt(input: {
+  role: string;
   model: string;
   cwd: string;
   prompt: string;
   resumeAgentId?: string;
   apiKey?: string;
+  workerNoCodeMs?: number;
 }): Promise<AgentLaunchResult> {
   const sdk = await loadSdk();
   const apiKey = input.apiKey ?? process.env.CURSOR_API_KEY;
@@ -89,7 +257,21 @@ async function launchPrompt(input: {
     throw new Error("CURSOR_API_KEY is required for Cursor SDK agents");
   }
 
+  const label = `${input.role}/${input.model}`;
+  const requireCodeAfterMs =
+    input.role === "worker" ? (input.workerNoCodeMs ?? DEFAULT_WORKER_NO_CODE_MS) : 0;
+
   return withSdkRetry(3, async () => {
+    const createStarted = Date.now();
+    harnessLog(
+      input.resumeAgentId ? "agent.resume" : "agent.create",
+      `starting ${label}`,
+      {
+        cwd: input.cwd,
+        resumeAgentId: input.resumeAgentId,
+      },
+    );
+
     const agent = input.resumeAgentId
       ? await sdk.Agent.resume(input.resumeAgentId, {
           apiKey,
@@ -102,9 +284,30 @@ async function launchPrompt(input: {
           local: { cwd: input.cwd },
         });
 
+    harnessLog("agent.ready", `${label} ready`, {
+      agentId: agent.agentId,
+      elapsed: formatDurationMs(Date.now() - createStarted),
+    });
+
     try {
       const run = await agent.send(input.prompt);
-      const result = await run.wait();
+      harnessLog("agent.send", `${label} prompt sent; waiting for result`, {
+        agentId: agent.agentId,
+        runId: run.id,
+      });
+      const waitStarted = Date.now();
+      const result = await waitWithHeartbeat(run, label, {
+        cwd: input.cwd,
+        requireCodeAfterMs,
+      });
+      harnessLog("agent.done", `${label} finished`, {
+        agentId: agent.agentId,
+        runId: run.id,
+        status: result.status,
+        elapsed: formatDurationMs(Date.now() - waitStarted),
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+      });
       if (result.status === "error") {
         throw new Error(`Cursor agent run failed: ${run.id}`);
       }
@@ -192,13 +395,18 @@ function verifierPrompt(input: {
     .join("\n");
 }
 
-export function createCursorAgentPort(): AgentPort {
+export function createCursorAgentPort(
+  options: CursorAgentPortOptions = {},
+): AgentPort {
+  const workerNoCodeMs = options.workerNoCodeMs ?? DEFAULT_WORKER_NO_CODE_MS;
   return {
     async runWorker(input) {
       const launch = await launchPrompt({
+        role: "worker",
         model: input.model,
         cwd: input.cwd,
         resumeAgentId: input.resumeAgentId,
+        workerNoCodeMs,
         prompt: workerPrompt(input.task, input.manifest, input.repairContext),
       });
       const parsed = WorkerReportSchema.parse({
@@ -211,6 +419,7 @@ export function createCursorAgentPort(): AgentPort {
 
     async runVerifier(input) {
       const launch = await launchPrompt({
+        role: "verifier",
         model: input.model,
         cwd: input.cwd,
         resumeAgentId: input.resumeAgentId,
@@ -226,6 +435,7 @@ export function createCursorAgentPort(): AgentPort {
 
     async runAdversarial(input) {
       const launch = await launchPrompt({
+        role: "adversarial",
         model: input.model,
         cwd: input.cwd,
         resumeAgentId: input.resumeAgentId,
@@ -253,6 +463,7 @@ export function createCursorAgentPort(): AgentPort {
 
     async runPrepareResearch(input) {
       const launch = await launchPrompt({
+        role: "prepare",
         model: input.model,
         cwd: input.cwd,
         prompt: [

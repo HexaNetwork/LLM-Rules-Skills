@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { sha256Text } from "./hash.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -83,6 +84,16 @@ export async function changedFiles(
         .filter(Boolean),
     ),
   ];
+}
+
+/**
+ * Fingerprint of dirty worktree state (porcelain + diff vs HEAD).
+ * Used by the worker no-code watchdog to detect whether an agent produced edits.
+ */
+export async function worktreeFingerprint(cwd: string): Promise<string> {
+  const porcelain = await git(cwd, ["status", "--porcelain"]);
+  const diff = await git(cwd, ["diff", "HEAD"]);
+  return sha256Text(`${porcelain.stdout}\n---\n${diff.stdout}`);
 }
 
 export async function commitAll(

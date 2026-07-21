@@ -17,6 +17,17 @@ export const RetryBudgetSchema = z.object({
 });
 export type RetryBudget = z.infer<typeof RetryBudgetSchema>;
 
+/** Runtime fail-safes while agents are in flight. */
+export const WatchdogsSchema = z.object({
+  /**
+   * If a worker produces no *new* worktree changes for this long, cancel it as stuck.
+   * Stays armed until the worker run finishes (then harness command/testing gates run).
+   * Set to 0 to disable. Default: 5 minutes.
+   */
+  workerNoCodeMs: z.number().int().nonnegative().default(5 * 60 * 1000),
+});
+export type Watchdogs = z.infer<typeof WatchdogsSchema>;
+
 export const ModelRolesSchema = z.object({
   prepare: z.string().min(1),
   worker: z.string().min(1),
@@ -75,6 +86,7 @@ export const ProjectConfigSchema = z.object({
   commandGates: z.array(CommandGateSchema).min(1),
   pathPolicy: PathPolicySchema.default({}),
   retries: RetryBudgetSchema.default({}),
+  watchdogs: WatchdogsSchema.default({}),
   allowlist: AllowlistPolicySchema.default({}),
   browser: BrowserSettingsSchema.default({}),
   github: GitHubLifecycleSchema.optional(),

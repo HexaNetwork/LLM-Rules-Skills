@@ -88,7 +88,9 @@ program
           });
       const agent = options.fakeAgents
         ? createFakeAgentPort()
-        : createCursorAgentPort();
+        : createCursorAgentPort({
+            workerNoCodeMs: config.watchdogs.workerNoCodeMs,
+          });
       const draft = await buildDraftManifest({
         config,
         source,
@@ -165,7 +167,10 @@ program
         deps: {
           agent: options.fakeAgents
             ? createFakeAgentPort()
-            : createCursorAgentPort(),
+            : createCursorAgentPort({
+                workerNoCodeMs:
+                  manifest.configSnapshot.watchdogs.workerNoCodeMs,
+              }),
           github:
             options.github === false
               ? undefined
@@ -210,7 +215,11 @@ program
         deps: {
           agent: options.fakeAgents
             ? createFakeAgentPort()
-            : createCursorAgentPort(),
+            : createCursorAgentPort({
+                workerNoCodeMs:
+                  manifest.configSnapshot.watchdogs?.workerNoCodeMs ??
+                  config.watchdogs.workerNoCodeMs,
+              }),
           github: config.github ? createGitHubApiPort() : undefined,
         },
       });

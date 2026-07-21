@@ -23,6 +23,7 @@ import { createRunWorktree } from "./worktree.js";
 import { changedFiles, commitAll, gitOk, revParse } from "../util/git.js";
 import { ensureDir, writeJson } from "../util/fs.js";
 import { FinalReportSchema } from "../schemas/reports.js";
+import { formatDurationMs, harnessLog } from "../util/log.js";
 
 export type OrchestratorDeps = {
   agent: AgentPort;
@@ -108,6 +109,11 @@ export async function executeRun(input: {
     type: "run.started",
     detail: { branchName: worktree.branchName, worktreePath: worktree.worktreePath },
   });
+  harnessLog("run.started", `run ${input.runId}`, {
+    branch: worktree.branchName,
+    worktree: worktree.worktreePath,
+    tasks: manifest.taskOrder.length,
+  });
 
   const allowlist = writeAllowlistFiles(config);
   await writeJson(path.join(directory, "permissions.json"), allowlist.permissions);
@@ -181,10 +187,23 @@ export async function executeRun(input: {
 
     state = updateTaskState(state, taskId, { status: "working" });
     state = await appendEvent(directory, state, { type: "task.working", taskId });
+    harnessLog("task.working", task.title, {
+      taskId,
+      model: manifest.models.worker,
+    });
 
     let accepted = false;
     while (!accepted) {
       runtime = getTaskState(state, taskId);
+      harnessLog("worker.start", `launching worker for ${taskId}`, {
+        resumeAgentId: runtime.workerAgentId,
+        repair: Boolean(
+          runtime.lastGateResults.some((g) => !g.passed) ||
+            (runtime.lastVerifierReport &&
+              blockingFindings(runtime.lastVerifierReport).length > 0),
+        ),
+      });
+      const workerStarted = Date.now();
       const worker = await deps.agent.runWorker({
         model: manifest.models.worker,
         cwd: worktree.worktreePath,
@@ -203,6 +222,13 @@ export async function executeRun(input: {
               })
             : undefined,
       });
+      harnessLog("worker.done", `worker returned for ${taskId}`, {
+        agentId: worker.launch.agentId,
+        runId: worker.launch.runId,
+        elapsed: formatDurationMs(Date.now() - workerStarted),
+        changedPaths: worker.report.changedPaths.length,
+        summary: worker.report.summary.slice(0, 120),
+      });
       state = {
         ...updateTaskState(state, taskId, {
           workerAgentId: worker.launch.agentId,
@@ -217,14 +243,28 @@ export async function executeRun(input: {
             state.cost.outputTokens + (worker.launch.outputTokens ?? 0),
         },
       };
+      state = await appendEvent(directory, state, {
+        type: "worker.finished",
+        taskId,
+        detail: {
+          agentId: worker.launch.agentId,
+          runId: worker.launch.runId,
+          changedPaths: worker.report.changedPaths,
+        },
+      });
 
       const dirtyPaths = await changedFiles(worktree.worktreePath);
+      harnessLog("paths.changed", `${dirtyPaths.length} dirty path(s)`, {
+        taskId,
+        sample: dirtyPaths.slice(0, 8),
+      });
       const scope = validatePathScope(
         dirtyPaths,
         task.allowedGlobs,
         config.pathPolicy.protectedGlobs,
       );
       if (!scope.ok) {
+        harnessLog("paths.fail", scope.detail, { taskId, reason: scope.reason });
         const repairs = runtime.commandRepairsUsed;
         if (repairs >= manifest.retries.commandOrSpecRepairs) {
           state = blockTask(state, taskId, scope.reason, scope.detail);
@@ -250,12 +290,20 @@ export async function executeRun(input: {
         continue;
       }
 
+      harnessLog("gates.start", `command gates for ${taskId}`, {
+        count: config.commandGates.length,
+      });
       const gateResults = await runCommandGates(
         config.commandGates,
         worktree.worktreePath,
       );
       state = updateTaskState(state, taskId, { lastGateResults: gateResults });
       if (!allGatesPassed(gateResults)) {
+        harnessLog("gates.fail", `gates failed for ${taskId}`, {
+          failed: gateResults
+            .filter((g) => !g.passed)
+            .map((g) => `${g.gateId}:${g.exitCode}`),
+        });
         const repairs = getTaskState(state, taskId).commandRepairsUsed;
         if (repairs >= manifest.retries.commandOrSpecRepairs) {
           state = blockTask(
@@ -281,8 +329,11 @@ export async function executeRun(input: {
         });
         continue;
       }
+      harnessLog("gates.pass", `all gates passed for ${taskId}`);
 
       state = updateTaskState(state, taskId, { status: "verifying" });
+      harnessLog("verifier.start", `launching verifier for ${taskId}`);
+      const verifierStarted = Date.now();
       const verifier = await deps.agent.runVerifier({
         model: manifest.models.verifier,
         cwd: worktree.worktreePath,
@@ -292,6 +343,12 @@ export async function executeRun(input: {
         repairFocus: getTaskState(state, taskId).lastVerifierReport
           ? blockingFindings(getTaskState(state, taskId).lastVerifierReport!)
           : undefined,
+      });
+      harnessLog("verifier.done", `verifier returned for ${taskId}`, {
+        agentId: verifier.launch.agentId,
+        elapsed: formatDurationMs(Date.now() - verifierStarted),
+        blocking: blockingFindings(verifier.report).length,
+        advisories: advisoryFindings(verifier.report).length,
       });
       state = {
         ...updateTaskState(state, taskId, {
@@ -308,6 +365,15 @@ export async function executeRun(input: {
             state.cost.outputTokens + (verifier.launch.outputTokens ?? 0),
         },
       };
+      state = await appendEvent(directory, state, {
+        type: "verifier.finished",
+        taskId,
+        detail: {
+          agentId: verifier.launch.agentId,
+          runId: verifier.launch.runId,
+          blocking: blockingFindings(verifier.report).map((f) => f.id),
+        },
+      });
 
       const blocking = blockingFindings(verifier.report);
       if (
@@ -320,6 +386,10 @@ export async function executeRun(input: {
           : !acceptanceComplete(task, verifier.report)
             ? "MISSING_ACCEPTANCE"
             : "BLOCKING_FINDING";
+        harnessLog("verifier.reject", `task ${taskId} needs repair`, {
+          reason,
+          blocking: blocking.map((f) => f.id),
+        });
         const repairs = getTaskState(state, taskId).reviewRepairsUsed;
         if (repairs >= manifest.retries.reviewRepairs) {
           state = blockTask(
@@ -338,6 +408,9 @@ export async function executeRun(input: {
         }
 
         // Fresh repair agent, then resume verifier
+        harnessLog("repair.start", `review repair for ${taskId}`, {
+          attempt: repairs + 1,
+        });
         const repair = await deps.agent.runWorker({
           model: manifest.models.repair,
           cwd: worktree.worktreePath,
@@ -363,6 +436,10 @@ export async function executeRun(input: {
         worktree.worktreePath,
         `feat(${task.id}): ${task.title}`,
       );
+      harnessLog("task.accepted", task.title, {
+        taskId,
+        commitSha: sha.slice(0, 12),
+      });
       state = updateTaskState(state, taskId, {
         status: "accepted",
         commitSha: sha,
@@ -536,6 +613,14 @@ export async function executeRun(input: {
   state = await appendEvent(directory, state, {
     type: "run.finished",
     detail: { status: state.status },
+  });
+  harnessLog("run.finished", `run ${input.runId} → ${state.status}`, {
+    duration: formatDurationMs(Date.now() - started),
+    agentLaunches: state.cost.agentLaunches,
+    accepted: state.tasks.filter((t) => t.status === "accepted").length,
+    blocked: state.tasks.filter(
+      (t) => t.status === "blocked" || t.status === "blocked_dependency",
+    ).length,
   });
   await persistRunState(directory, state);
 

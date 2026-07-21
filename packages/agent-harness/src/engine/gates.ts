@@ -2,6 +2,7 @@ import path from "node:path";
 import type { CommandGate, ProjectConfig } from "../schemas/config.js";
 import type { CommandGateResult } from "../schemas/reports.js";
 import { anyGlobMatches } from "../util/glob.js";
+import { formatDurationMs, harnessLog } from "../util/log.js";
 import { runShell } from "../util/shell.js";
 
 export async function runCommandGates(
@@ -11,10 +12,25 @@ export async function runCommandGates(
   const results: CommandGateResult[] = [];
   for (const gate of gates) {
     const gateCwd = gate.cwd ? path.resolve(cwd, gate.cwd) : cwd;
+    harnessLog("gate.start", `running ${gate.id}`, {
+      command: gate.command,
+      cwd: gateCwd,
+      timeoutMs: gate.timeoutMs ?? 10 * 60 * 1000,
+    });
     const shell = await runShell(gate.command, {
       cwd: gateCwd,
       timeoutMs: gate.timeoutMs ?? 10 * 60 * 1000,
     });
+    harnessLog(
+      shell.exitCode === 0 ? "gate.pass" : "gate.fail",
+      `${gate.id} exited ${shell.exitCode}`,
+      {
+        command: gate.command,
+        elapsed: formatDurationMs(shell.durationMs),
+        stdoutBytes: shell.stdout.length,
+        stderrBytes: shell.stderr.length,
+      },
+    );
     results.push({
       gateId: gate.id,
       command: gate.command,

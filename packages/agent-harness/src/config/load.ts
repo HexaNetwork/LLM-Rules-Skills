@@ -79,6 +79,9 @@ retries:
   commandOrSpecRepairs: 2
   reviewRepairs: 1
   finalBranchRepairs: 1
+watchdogs:
+  # Cancel worker if worktree idle (no new diffs) this long; stays armed until gates.
+  workerNoCodeMs: 300000
 allowlist:
   terminalAllowlist:
     - git

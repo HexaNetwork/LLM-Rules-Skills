@@ -28,6 +28,8 @@ describe("schemas", () => {
     });
     expect(config.retries.commandOrSpecRepairs).toBe(2);
     expect(config.pathPolicy.protectedGlobs.length).toBeGreaterThan(0);
+    expect(config.watchdogs.workerNoCodeMs).toBe(5 * 60 * 1000);
+    expect(config.watchdogs.workerMaxRunMs).toBe(30 * 60 * 1000);
   });
 
   it("rejects unknown contract version", () => {

@@ -90,6 +90,7 @@ program
         ? createFakeAgentPort()
         : createCursorAgentPort({
             workerNoCodeMs: config.watchdogs.workerNoCodeMs,
+            workerMaxRunMs: config.watchdogs.workerMaxRunMs,
           });
       const draft = await buildDraftManifest({
         config,
@@ -170,6 +171,8 @@ program
             : createCursorAgentPort({
                 workerNoCodeMs:
                   manifest.configSnapshot.watchdogs.workerNoCodeMs,
+              workerMaxRunMs:
+                manifest.configSnapshot.watchdogs.workerMaxRunMs,
               }),
           github:
             options.github === false
@@ -216,9 +219,8 @@ program
           agent: options.fakeAgents
             ? createFakeAgentPort()
             : createCursorAgentPort({
-                workerNoCodeMs:
-                  manifest.configSnapshot.watchdogs?.workerNoCodeMs ??
-                  config.watchdogs.workerNoCodeMs,
+                workerNoCodeMs: config.watchdogs.workerNoCodeMs,
+                workerMaxRunMs: config.watchdogs.workerMaxRunMs,
               }),
           github: config.github ? createGitHubApiPort() : undefined,
         },

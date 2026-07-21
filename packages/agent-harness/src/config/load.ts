@@ -82,6 +82,8 @@ retries:
 watchdogs:
   # Cancel worker if worktree idle (no new diffs) this long; stays armed until gates.
   workerNoCodeMs: 300000
+  # Cancel a worker that remains active beyond this absolute wall-clock limit.
+  workerMaxRunMs: 1800000
 allowlist:
   terminalAllowlist:
     - git

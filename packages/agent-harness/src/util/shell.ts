@@ -7,6 +7,33 @@ export type ShellResult = {
   durationMs: number;
 };
 
+async function terminateProcessTree(pid: number): Promise<void> {
+  if (process.platform === "win32") {
+    await new Promise<void>((resolve) => {
+      const killer = spawn(
+        "taskkill",
+        ["/pid", String(pid), "/t", "/f"],
+        { stdio: "ignore", windowsHide: true },
+      );
+      killer.once("close", () => resolve());
+      killer.once("error", () => resolve());
+    });
+    return;
+  }
+
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // The process group exited during the grace period.
+  }
+}
+
 export async function runShell(
   command: string,
   options: { cwd: string; timeoutMs?: number; env?: NodeJS.ProcessEnv },
@@ -18,6 +45,7 @@ export async function runShell(
       env: { ...process.env, ...options.env },
       shell: true,
       windowsHide: true,
+      detached: process.platform !== "win32",
     });
 
     let stdout = "";
@@ -28,13 +56,14 @@ export async function runShell(
       options.timeoutMs != null
         ? setTimeout(() => {
             if (!settled) {
-              child.kill("SIGTERM");
               settled = true;
-              resolve({
-                exitCode: 124,
-                stdout,
-                stderr: `${stderr}\nTimed out after ${options.timeoutMs}ms`,
-                durationMs: Date.now() - started,
+              void terminateProcessTree(child.pid!).finally(() => {
+                resolve({
+                  exitCode: 124,
+                  stdout,
+                  stderr: `${stderr}\nTimed out after ${options.timeoutMs}ms`,
+                  durationMs: Date.now() - started,
+                });
               });
             }
           }, options.timeoutMs)

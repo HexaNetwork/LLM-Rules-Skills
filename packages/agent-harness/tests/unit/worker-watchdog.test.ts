@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   waitWithHeartbeat,
+  WorkerRunTimeoutError,
   WorkerStuckNoCodeError,
 } from "../../src/agents/cursor-sdk.js";
 import * as git from "../../src/util/git.js";
@@ -108,5 +109,34 @@ describe("waitWithHeartbeat worktree-progress watchdog", () => {
 
     expect(result.status).toBe("finished");
     expect(fingerprint).not.toHaveBeenCalled();
+  });
+
+  it("cancels at the absolute worker runtime limit despite code progress", async () => {
+    let n = 0;
+    vi.spyOn(git, "worktreeFingerprint").mockImplementation(async () => {
+      n += 1;
+      return `fp-${n}`;
+    });
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    let resolveWait: (value: { status: string }) => void = () => {};
+    const run = {
+      id: "run-too-long",
+      wait: () =>
+        new Promise<{ status: string }>((resolve) => {
+          resolveWait = resolve;
+        }),
+      cancel,
+      supports: () => true,
+    };
+
+    const pending = waitWithHeartbeat(run, "worker/test", {
+      cwd: "/tmp/repo",
+      requireCodeAfterMs: 20,
+      maxRunMs: 70,
+    });
+
+    await expect(pending).rejects.toBeInstanceOf(WorkerRunTimeoutError);
+    expect(cancel).toHaveBeenCalledOnce();
+    resolveWait({ status: "cancelled" });
   });
 });

@@ -25,6 +25,11 @@ export const WatchdogsSchema = z.object({
    * Set to 0 to disable. Default: 5 minutes.
    */
   workerNoCodeMs: z.number().int().nonnegative().default(5 * 60 * 1000),
+  /**
+   * Absolute wall-clock limit for one worker run, including commands the worker
+   * launches itself. Set to 0 to disable. Default: 30 minutes.
+   */
+  workerMaxRunMs: z.number().int().nonnegative().default(30 * 60 * 1000),
 });
 export type Watchdogs = z.infer<typeof WatchdogsSchema>;
 

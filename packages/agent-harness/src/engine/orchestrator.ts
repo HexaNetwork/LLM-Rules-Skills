@@ -24,6 +24,7 @@ import { changedFiles, commitAll, gitOk, revParse } from "../util/git.js";
 import { ensureDir, writeJson } from "../util/fs.js";
 import { FinalReportSchema } from "../schemas/reports.js";
 import { formatDurationMs, harnessLog } from "../util/log.js";
+import { acquireRunLock } from "../util/run-lock.js";
 
 export type OrchestratorDeps = {
   agent: AgentPort;
@@ -63,13 +64,29 @@ function browserProbesPassed(
   return task.browserProbes.every((probe) => byId.get(probe.id)?.passed);
 }
 
-export async function executeRun(input: {
+type ExecuteRunInput = {
   runId: string;
   manifest: RunManifest;
   runRoot: string;
   deps: OrchestratorDeps;
   resumeState?: RunState;
-}): Promise<{ state: RunState; report: FinalReport }> {
+};
+
+export async function executeRun(
+  input: ExecuteRunInput,
+): Promise<{ state: RunState; report: FinalReport }> {
+  const directory = path.join(input.runRoot, input.runId);
+  const releaseLock = await acquireRunLock(directory);
+  try {
+    return await executeRunUnlocked(input);
+  } finally {
+    await releaseLock();
+  }
+}
+
+async function executeRunUnlocked(
+  input: ExecuteRunInput,
+): Promise<{ state: RunState; report: FinalReport }> {
   const started = Date.now();
   const { manifest, deps } = input;
   const config = manifest.configSnapshot;

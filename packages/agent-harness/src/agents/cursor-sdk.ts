@@ -14,6 +14,7 @@ import { worktreeFingerprint } from "../util/git.js";
 
 const AGENT_WAIT_HEARTBEAT_MS = 30_000;
 export const DEFAULT_WORKER_NO_CODE_MS = 5 * 60 * 1000;
+export const DEFAULT_WORKER_MAX_RUN_MS = 30 * 60 * 1000;
 
 export class WorkerStuckNoCodeError extends Error {
   readonly code = "WORKER_STUCK_NO_CODE";
@@ -27,9 +28,21 @@ export class WorkerStuckNoCodeError extends Error {
   }
 }
 
+export class WorkerRunTimeoutError extends Error {
+  readonly code = "WORKER_RUN_TIMEOUT";
+  readonly isRetryable = true;
+
+  constructor(maxRunMs: number) {
+    super(`Worker timed out after ${formatDurationMs(maxRunMs)}`);
+    this.name = "WorkerRunTimeoutError";
+  }
+}
+
 export type CursorAgentPortOptions = {
   /** Cancel worker if no code after this many ms. 0 disables. Default 5 minutes. */
   workerNoCodeMs?: number;
+  /** Cancel worker after this wall-clock duration. 0 disables. Default 30 minutes. */
+  workerMaxRunMs?: number;
 };
 
 type SdkRun = {
@@ -140,6 +153,7 @@ export async function waitWithHeartbeat(
   options?: {
     cwd?: string;
     requireCodeAfterMs?: number;
+    maxRunMs?: number;
   },
 ): Promise<{
   status: string;
@@ -148,10 +162,12 @@ export async function waitWithHeartbeat(
 }> {
   const started = Date.now();
   const requireCodeAfterMs = options?.requireCodeAfterMs;
+  const maxRunMs = options?.maxRunMs;
   const watchCode =
     typeof requireCodeAfterMs === "number" &&
     requireCodeAfterMs > 0 &&
     Boolean(options?.cwd);
+  const watchRuntime = typeof maxRunMs === "number" && maxRunMs > 0;
 
   let lastFingerprint = watchCode
     ? await worktreeFingerprint(options!.cwd!)
@@ -162,6 +178,12 @@ export async function waitWithHeartbeat(
     harnessLog("agent.watchdog", "worktree-progress fail-safe armed until gates", {
       label,
       idleAfter: formatDurationMs(requireCodeAfterMs!),
+    });
+  }
+  if (watchRuntime) {
+    harnessLog("agent.watchdog", "absolute worker timeout armed", {
+      label,
+      maxRun: formatDurationMs(maxRunMs!),
     });
   }
 
@@ -197,6 +219,10 @@ export async function waitWithHeartbeat(
         sleepMs = Math.min(AGENT_WAIT_HEARTBEAT_MS, untilCheck);
       }
     }
+    if (watchRuntime) {
+      const untilTimeout = maxRunMs! - (Date.now() - started);
+      sleepMs = Math.min(sleepMs, Math.max(0, untilTimeout));
+    }
     if (sleepMs > 0) {
       await Promise.race([waitPromise, sleep(sleepMs)]);
     } else {
@@ -212,6 +238,16 @@ export async function waitWithHeartbeat(
       elapsed: formatDurationMs(elapsed),
       idle: formatDurationMs(idle),
     });
+
+    if (watchRuntime && elapsed >= maxRunMs!) {
+      harnessLog("agent.stuck", "absolute worker timeout reached", {
+        runId: run.id,
+        elapsed: formatDurationMs(elapsed),
+        threshold: formatDurationMs(maxRunMs!),
+      });
+      await cancelRun(run);
+      throw new WorkerRunTimeoutError(maxRunMs!);
+    }
 
     if (!watchCode) continue;
 
@@ -250,6 +286,7 @@ async function launchPrompt(input: {
   resumeAgentId?: string;
   apiKey?: string;
   workerNoCodeMs?: number;
+  workerMaxRunMs?: number;
 }): Promise<AgentLaunchResult> {
   const sdk = await loadSdk();
   const apiKey = input.apiKey ?? process.env.CURSOR_API_KEY;
@@ -260,6 +297,8 @@ async function launchPrompt(input: {
   const label = `${input.role}/${input.model}`;
   const requireCodeAfterMs =
     input.role === "worker" ? (input.workerNoCodeMs ?? DEFAULT_WORKER_NO_CODE_MS) : 0;
+  const maxRunMs =
+    input.role === "worker" ? (input.workerMaxRunMs ?? DEFAULT_WORKER_MAX_RUN_MS) : 0;
 
   return withSdkRetry(3, async () => {
     const createStarted = Date.now();
@@ -299,6 +338,7 @@ async function launchPrompt(input: {
       const result = await waitWithHeartbeat(run, label, {
         cwd: input.cwd,
         requireCodeAfterMs,
+        maxRunMs,
       });
       harnessLog("agent.done", `${label} finished`, {
         agentId: agent.agentId,
@@ -336,6 +376,7 @@ function workerPrompt(
     "You are an Agent Harness Worker.",
     "Implement ONLY the current AFK task. Do not commit.",
     "Prefer test-first vertical slices. Outcomes are gated by the harness.",
+    "Run only targeted tests needed while implementing. Do not run the manifest command gates; the harness runs them after you return.",
     "Return a single JSON object matching WorkerReport (no prose outside JSON).",
     "",
     `Task ID: ${task.id}`,
@@ -399,6 +440,7 @@ export function createCursorAgentPort(
   options: CursorAgentPortOptions = {},
 ): AgentPort {
   const workerNoCodeMs = options.workerNoCodeMs ?? DEFAULT_WORKER_NO_CODE_MS;
+  const workerMaxRunMs = options.workerMaxRunMs ?? DEFAULT_WORKER_MAX_RUN_MS;
   return {
     async runWorker(input) {
       const launch = await launchPrompt({
@@ -407,6 +449,7 @@ export function createCursorAgentPort(
         cwd: input.cwd,
         resumeAgentId: input.resumeAgentId,
         workerNoCodeMs,
+        workerMaxRunMs,
         prompt: workerPrompt(input.task, input.manifest, input.repairContext),
       });
       const parsed = WorkerReportSchema.parse({

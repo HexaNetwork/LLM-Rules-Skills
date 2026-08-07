@@ -70,13 +70,42 @@ describe("dashboard document", () => {
     expect(html).toContain("preserveEditor && editorIsActive()");
   });
 
+  it("follows the ui-polling contract for silent refresh", () => {
+    const html = renderDashboard();
+
+    // Invariant 1: unchanged silent polls skip run re-render.
+    expect(html).toContain("detailFingerprint");
+    expect(html).toContain("fingerprint === state.detailFingerprint");
+
+    // Invariant 2: fingerprint advances only after a successful render.
+    expect(html).toMatch(/renderRun\(\);\s*state\.detailFingerprint = fingerprint;/);
+
+    // Invariant 3: focused HITL editors block silent rewrite.
+    expect(html).toContain("if (preserveEditor && editorIsActive()) return;");
+
+    // Invariant 4: silent rewrites capture/restore scroll + details chrome.
+    expect(html).toContain("captureScrolls");
+    expect(html).toContain("restoreScrolls");
+    expect(html).toContain('data-scroll-key="brief"');
+    expect(html).toContain("data-details-key");
+    expect(html).toContain("data-scroll-key=\"' + attr(taskKey + \"-evidence-\" + evidenceIndex)");
+
+    // Invariant 5: sidebar list scroll survives poll-driven rewrites.
+    expect(html).toContain("runList.scrollTop = scrollTop");
+
+    // Invariant 6: knowledge view is not replaced by run polling.
+    expect(html).toContain("if (state.view === 'runs' && state.selected) loadRun(state.selected,false,true,true)");
+
+    // Poll only while the tab is visible.
+    expect(html).toContain("document.visibilityState !== 'visible'");
+  });
+
   it("shows grill resolutions in the decisions tab", () => {
     const html = renderDashboard();
 
     expect(html).toContain("grillResolutions");
     expect(html).toContain("No grill resolutions yet");
   });
-
 
   it("submits an answer with Shift+Enter", () => {
     const html = renderDashboard();

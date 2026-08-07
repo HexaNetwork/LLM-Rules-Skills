@@ -88,6 +88,8 @@ agent-harness knowledge search "proration" --include-project billing-service
 
 The dependency-free browser UI is a read/write client of the same persisted state and engine used by the CLI. It does not keep a competing copy of lifecycle state. Mutating requests are serialized, while polling and artifact reads remain safe during long agent or command work. The top-bar gear opens schema-driven project settings; currently it controls grill questions per episode and the stale-answer threshold, and persists those values to the project config. Settings apply to new runs because active runs retain their frozen configuration snapshots.
 
+Background polling (~1.8s while the tab is visible) must not feel like a page reload: unchanged run detail skips re-render, focused HITL editors block silent rewrites, and scroll / `<details>` chrome is restored when a silent poll does rewrite the DOM. The full checklist lives in [docs/ui-polling.md](./docs/ui-polling.md).
+
 The server binds only to `127.0.0.1`, generates a fresh access token, rejects unauthenticated API calls, caps request bodies, and restricts artifact and knowledge paths to the configured workspace. Closing the process closes the UI; runs remain recoverable from disk.
 
 ## Durable artifacts

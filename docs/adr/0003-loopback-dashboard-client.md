@@ -23,3 +23,4 @@ Operators need one place to create and observe runs, answer human questions, ins
 - A CLI command and the dashboard observe the same checkpoints, events, questions, and evidence.
 - The server is intentionally local rather than a remotely deployable multi-user control plane.
 - Horizontal workers, remote authentication, and distributed queue semantics remain out of scope until there is a concrete need.
+- Visible-tab polling is an observation aid only. It must preserve operator chrome (scroll offsets, open disclosures, in-progress HITL drafts) so background refresh never masquerades as a full page reload; see `packages/agent-harness/docs/ui-polling.md`.

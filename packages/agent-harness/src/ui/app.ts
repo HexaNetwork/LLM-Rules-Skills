@@ -139,7 +139,8 @@ export function renderDashboard(): string {
     .answer-row .btn { height:43px; }
     .reflect-card { border-color:rgba(121,184,255,.28); background:linear-gradient(145deg,rgba(121,184,255,.08),var(--surface)); }
     .reflect-editor { display:grid; gap:12px; }
-    .reflect-editor textarea { min-height:280px; width:100%; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; line-height:1.45; }
+    .reflect-editor textarea { min-height:380px; width:100%; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; line-height:1.45; }
+    .brief-body { margin:8px 0 0; color:var(--muted); font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
     .alert { border:1px solid rgba(255,115,115,.3); background:rgba(255,115,115,.07); border-radius:var(--radius); padding:18px; display:flex; justify-content:space-between; align-items:flex-start; gap:18px; }
     .alert strong { color:#ffb3b3; }
     .alert.warning { border-color:rgba(255,176,96,.35); background:rgba(255,176,96,.08); }
@@ -326,7 +327,7 @@ export function renderDashboard(): string {
     var token = params.get("token") || sessionStorage.getItem("harnessToken") || "";
     if (token) sessionStorage.setItem("harnessToken", token);
     if (params.has("token")) history.replaceState(null, "", location.pathname);
-    var state = { bootstrap: null, runs: [], selected: null, detail: null, tab: "overview", view: "runs", busy: 0, filter: "", answerDrafts: {}, fogOpen: {}, resolutionOpen: {}, settings: null };
+    var state = { bootstrap: null, runs: [], selected: null, detail: null, detailFingerprint: "", scrolls: null, tab: "overview", view: "runs", busy: 0, filter: "", answerDrafts: {}, settings: null };
     var $ = function (id) { return document.getElementById(id); };
 
     function esc(value) {
@@ -359,6 +360,38 @@ export function renderDashboard(): string {
     function editorIsActive() {
       var active = document.activeElement;
       return Boolean(active && active.matches && active.matches("textarea,input,select") && active.closest("form"));
+    }
+    function captureScrolls() {
+      var nodes = {};
+      var details = {};
+      document.querySelectorAll("[data-scroll-key]").forEach(function (node) {
+        var key = node.getAttribute("data-scroll-key");
+        if (!key) return;
+        nodes[key] = { top: node.scrollTop, left: node.scrollLeft };
+      });
+      document.querySelectorAll("[data-details-key]").forEach(function (node) {
+        var key = node.getAttribute("data-details-key");
+        if (!key) return;
+        details[key] = node.open;
+      });
+      var runList = $("runList");
+      if (runList) nodes.runList = { top: runList.scrollTop, left: runList.scrollLeft };
+      state.scrolls = { windowX: window.scrollX, windowY: window.scrollY, nodes: nodes, details: details };
+    }
+    function restoreScrolls() {
+      var scrolls = state.scrolls;
+      if (!scrolls) return;
+      Object.keys(scrolls.nodes || {}).forEach(function (key) {
+        var node = key === "runList" ? $("runList") : document.querySelector('[data-scroll-key="' + key.replace(/"/g, "") + '"]');
+        if (!node) return;
+        node.scrollTop = scrolls.nodes[key].top;
+        node.scrollLeft = scrolls.nodes[key].left;
+      });
+      Object.keys(scrolls.details || {}).forEach(function (key) {
+        var node = document.querySelector('[data-details-key="' + key.replace(/"/g, "") + '"]');
+        if (node) node.open = scrolls.details[key];
+      });
+      if (scrolls.windowY != null) window.scrollTo(scrolls.windowX || 0, scrolls.windowY);
     }
     function toast(message, error) {
       var node = $("toast"); node.textContent = message; node.className = "toast show" + (error ? " error" : "");
@@ -404,24 +437,38 @@ export function renderDashboard(): string {
       } catch (error) { toast(error.message, true); renderAuthError(error.message); }
     }
     async function loadRun(runId, showSpinner, silent, preserveEditor) {
+      var sameRun = state.selected === runId;
       state.selected = runId; state.view = "runs";
       if (showSpinner !== false) $("content").innerHTML = '<div class="empty">Loading run…</div>';
       try {
-        state.detail = await api("/api/runs/" + encodeURIComponent(runId), undefined, silent);
+        var detail = await api("/api/runs/" + encodeURIComponent(runId), undefined, silent);
+        var fingerprint = JSON.stringify(detail);
+        // Fingerprint tracks the last *rendered* payload. Do not advance it when
+        // a poll skips render (active editor), or the next poll after blur can
+        // treat stale DOM as current and never paint the newer detail.
+        state.detail = detail;
         renderSidebar();
-        if (!(preserveEditor && editorIsActive())) renderRun();
+        if (silent && sameRun && fingerprint === state.detailFingerprint) return;
+        if (preserveEditor && editorIsActive()) return;
+        if (silent) captureScrolls();
+        renderRun();
+        state.detailFingerprint = fingerprint;
+        if (silent) restoreScrolls();
       } catch (error) { toast(error.message, true); }
     }
 
     function renderSidebar() {
+      var runList = $("runList");
+      var scrollTop = runList ? runList.scrollTop : 0;
       var needle = state.filter.toLowerCase();
       var runs = state.runs.filter(function (run) { return !needle || (run.idea + " " + (run.destination || "") + " " + run.runId).toLowerCase().includes(needle); });
-      $("runList").innerHTML = runs.length ? runs.map(function (run) {
+      runList.innerHTML = runs.length ? runs.map(function (run) {
         var phase = effectivePhase(run);
         var title = shortTitle(run.idea || run.destination || run.runId, 62);
         var progress = run.taskProgress && run.taskProgress.total ? run.taskProgress.completed + "/" + run.taskProgress.total : phaseLabel(phase);
         return '<button class="run-item ' + (run.runId === state.selected && state.view === "runs" ? "active" : "") + '" data-run="' + attr(run.runId) + '"><div class="run-title"><i class="dot ' + attr(phase) + '"></i><span>' + esc(title) + '</span></div><div class="run-meta"><span>' + esc(progress) + '</span><span>' + esc(ago(run.updatedAt)) + '</span></div></button>';
       }).join("") : '<div class="empty" style="padding:25px 10px">No matching runs</div>';
+      runList.scrollTop = scrollTop;
     }
 
     function renderHome() {
@@ -512,7 +559,7 @@ export function renderDashboard(): string {
       var brief = s.reflectBrief;
       var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");
       var briefBody = brief ? (brief.confirmed || brief.draft) : "The reflector will restate the idea for your confirmation before grilling begins.";
-      html += '<div class="card two-thirds"><div class="card-label">' + esc(briefTitle) + '</div><pre style="white-space:pre-wrap;margin:8px 0 0;color:var(--muted);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">' + esc(briefBody) + '</pre></div>';
+      html += '<div class="card two-thirds"><div class="card-label">' + esc(briefTitle) + '</div><pre class="brief-body" data-scroll-key="brief">' + esc(briefBody) + '</pre></div>';
       html += '<div class="card third"><div class="card-label">Delivery</div><div class="muted">Branch</div><div style="margin:4px 0 13px"><code>' + esc(s.branchName || "Not created yet") + '</code></div><div class="muted">TDD</div><div style="margin-top:4px"><strong>' + (s.tasks.length ? (s.tasks.some(function(t){return t.tdd;}) ? "Enabled" : "Disabled") : (state.bootstrap.project.defaults.tdd ? "Default on" : "Default off")) + '</strong></div></div>';
       html += '<div class="card"><div class="card-label">Recent activity</div><div class="timeline">' + (state.detail.events.slice(-10).reverse().map(renderEvent).join("") || '<div class="muted">No events yet.</div>') + '</div></div>';
       html += '</div>';
@@ -530,9 +577,10 @@ export function renderDashboard(): string {
 
     function renderTasks(s) {
       var html = s.tasks.length ? '<div class="list">' + s.tasks.map(function (task, index) {
+        var taskKey = task.id || ("task-" + index);
         var criteria = '<ul>' + task.acceptanceCriteria.map(function (criterion) { return '<li>' + esc(criterion) + '</li>'; }).join("") + '</ul>';
-        var evidence = task.evidence.length ? '<details><summary>' + task.evidence.length + ' command result(s)</summary>' + task.evidence.map(function (item) { var output = [item.stderr,item.stdout].filter(Boolean).join(String.fromCharCode(10)); return '<div class="evidence"><div class="evidence-head"><span>' + esc(item.purpose) + ' · <code>' + esc(item.command) + '</code></span><strong class="' + (item.passed ? "pass" : "fail") + '">' + (item.passed ? "PASS" : "FAIL") + ' / ' + item.exitCode + '</strong></div>' + (output ? '<pre>' + esc(output.slice(-8000)) + '</pre>' : '') + '</div>'; }).join("") + '</details>' : '';
-        return '<article class="item"><div class="item-head"><div><div class="card-label">Task ' + String(index + 1).padStart(2,"0") + '</div><div class="item-title">' + esc(task.title) + '</div><div class="muted" style="margin-top:5px">' + esc(task.description) + '</div></div><span class="badge ' + attr(task.status === "done" ? "completed" : task.status) + '">' + esc(task.status + " · " + task.step) + '</span></div><div class="tags"><span class="tag">TDD ' + (task.tdd ? "on" : "off") + '</span>' + (task.blockedBy.length ? '<span class="tag">after ' + esc(task.blockedBy.join(", ")) + '</span>' : '') + (task.commitSha ? '<span class="tag">' + esc(task.commitSha.slice(0,8)) + '</span>' : '') + '</div><details><summary>Acceptance criteria</summary>' + criteria + '</details>' + evidence + (task.failure ? '<div class="resolution" style="border-color:var(--red)">' + esc(task.failure) + '</div>' : '') + '</article>';
+        var evidence = task.evidence.length ? '<details data-details-key="' + attr(taskKey + "-evidence") + '"><summary>' + task.evidence.length + ' command result(s)</summary>' + task.evidence.map(function (item, evidenceIndex) { var output = [item.stderr,item.stdout].filter(Boolean).join(String.fromCharCode(10)); return '<div class="evidence"><div class="evidence-head"><span>' + esc(item.purpose) + ' · <code>' + esc(item.command) + '</code></span><strong class="' + (item.passed ? "pass" : "fail") + '">' + (item.passed ? "PASS" : "FAIL") + ' / ' + item.exitCode + '</strong></div>' + (output ? '<pre data-scroll-key="' + attr(taskKey + "-evidence-" + evidenceIndex) + '">' + esc(output.slice(-8000)) + '</pre>' : '') + '</div>'; }).join("") + '</details>' : '';
+        return '<article class="item"><div class="item-head"><div><div class="card-label">Task ' + String(index + 1).padStart(2,"0") + '</div><div class="item-title">' + esc(task.title) + '</div><div class="muted" style="margin-top:5px">' + esc(task.description) + '</div></div><span class="badge ' + attr(task.status === "done" ? "completed" : task.status) + '">' + esc(task.status + " · " + task.step) + '</span></div><div class="tags"><span class="tag">TDD ' + (task.tdd ? "on" : "off") + '</span>' + (task.blockedBy.length ? '<span class="tag">after ' + esc(task.blockedBy.join(", ")) + '</span>' : '') + (task.commitSha ? '<span class="tag">' + esc(task.commitSha.slice(0,8)) + '</span>' : '') + '</div><details data-details-key="' + attr(taskKey + "-criteria") + '"><summary>Acceptance criteria</summary>' + criteria + '</details>' + evidence + (task.failure ? '<div class="resolution" style="border-color:var(--red)">' + esc(task.failure) + '</div>' : '') + '</article>';
       }).join("") + '</div>' : '<div class="empty">Implementation tasks appear after grilling reaches shared understanding.</div>';
       $("tabBody").innerHTML = html;
     }
@@ -730,15 +778,6 @@ export function renderDashboard(): string {
     document.addEventListener('input', function (event) {
       if (event.target.name === 'answer' && event.target.closest('#answerForm')) state.answerDrafts[event.target.closest('#answerForm').dataset.question] = event.target.value;
     });
-    document.addEventListener('toggle', function (event) {
-      if (!(event.target.matches && event.target.matches('details'))) return;
-      if (event.target.matches('details[data-fog-disclosure]') && state.selected) {
-        state.fogOpen[state.selected] = event.target.open;
-      }
-      if (event.target.matches('details[data-resolution-disclosure]')) {
-        state.resolutionOpen[event.target.getAttribute('data-resolution-disclosure')] = event.target.open;
-      }
-    }, true);
     document.addEventListener('keydown', function (event) {
       var answerForm = event.target.closest && event.target.closest('#answerForm');
       if (event.target.name === 'answer' && answerForm && event.key === 'Enter' && event.shiftKey && !event.isComposing) {

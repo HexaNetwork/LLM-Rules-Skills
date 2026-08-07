@@ -1,50 +1,40 @@
 # Agent Harness roadmap
 
-This file records deliberate v1 exclusions and later extension ports. Do not silently reintroduce these into v1.
+## Shipped in v2
 
-## v1 boundary (shipped)
+- Durable idea-to-feature state machine with bounded transitions and explicit retry
+- Wayfinder destination, decision tickets, frontier, fog, and out-of-scope model
+- Local Markdown map/issues/tasks as the default tracker
+- Offline full-document storage and deterministic lexical retrieval
+- Optional fail-soft Graphify traversal for structural repository lookup
+- Complete work packets with bounded resumable wayfinding episodes and no provider-session dependency for recovery
+- Exact HITL question/answer persistence
+- Tracer-bullet task planning and sequential dependency execution
+- Per-run TDD toggle with harness-owned RED/GREEN evidence
+- Deterministic command gates and bounded implementation/review repair
+- Deterministic prompts by default, with optional small-model compilation and small-model commit/PR writing
+- Clean-tree, branch, commit, push, and optional `gh pr create` ownership
+- Frozen per-run configuration and non-waiting run locks
+- Authenticated loopback dashboard for runs, questions, evidence, artifacts, and local knowledge
 
-- Contract-deterministic orchestration (schema-valid artifacts, explicit gates, bounded retries)
-- Local YAML/Markdown and GitHub API source adapters
-- Mandatory project config + `prepare` → `approve` → `execute` / `resume`
-- AFK-only tasks
-- Sequential DAG scheduling in an isolated worktree/branch
-- One durable worker + one independent verifier per task
-- Strict Cursor Allowlist mode
-- Optional browser acceptance probes
-- GitHub tracker sync + verified PR open (no auto-merge / no direct issue close)
-- Crash-safe resume and repeatability benchmark
+## Deliberately deferred
 
-## Deferred extensions
+### External tracker adapters
 
-### HITL triage
-
-Promote `RESEARCHABLE` tasks to `AFK_READY` when missing facts can be resolved from code, contracts, or tests. Never promote `DECISION_REQUIRED` tasks; those remain human-gated.
-
-### Additional tracker adapters
-
-Linear, Jira, Azure DevOps, and other issue systems via the same frozen-manifest contract. Keep tracker-specific hierarchy and label mapping in project config, not core concepts.
+Implement GitHub, Linear, and Jira behind `TrackerPort`. Preserve the map-as-index rule and native blocking/claim semantics where available.
 
 ### Parallel task execution
 
-Run independent ready tasks concurrently with resource budgets and conflict detection. Requires stronger worktree or patch isolation than sequential v1.
+Use isolated worktrees or patch sandboxes per frontier task, with explicit conflict detection and an integration gate. Sequential execution remains the safe default.
 
-### Auto-merge and issue closure
+### Semantic retrieval
 
-Merge verified PRs and close issues after CI/human policy. v1 stops at opening a verified PR and synchronizing tracker status.
+Add an optional local embedding backend only when it demonstrably improves retrieval. The lexical index remains the offline, deterministic baseline and source store.
 
-### Exact-code reproducibility
+### CI observation and merge policy
 
-Require bit-identical source trees across repeated runs. v1 measures contract-level repeatability (gates, paths, retries, blocked reasons), not identical code.
+Observe remote checks after push and support explicit merge policies. v2 stops at an opened pull request and never auto-merges.
 
-### Silent model fallback / dynamic gate discovery
+### Additional agent providers
 
-Do not swap models or invent validation commands at runtime. Models and gates are pinned in project config and frozen into the run manifest.
-
-### Authoritative hook allow/deny
-
-When Cursor SDK hooks gain programmatic allow/deny verdicts, replace classifier-adjacent convenience with hard enforcement. Until then, Allowlist + sandbox + orchestrator-owned gates remain the security story.
-
-### Multi-repo / monorepo matrix runs
-
-Coordinate related tasks across multiple repositories with a shared manifest. v1 targets one repository root per run.
+Implement provider adapters behind `AgentBackend`. All must honor abort signals and the existing work-packet/session contract.

@@ -1,71 +1,51 @@
 # Agent Harness glossary
 
-Map user-facing words and requests to these canonical terms for code, reviews, and agent prompts.
+Use these terms consistently in code, prompts, artifacts, and operator messages.
 
-## Language
+**Run** — One durable idea-to-feature workflow identified by `runId`. Its `state.json` is authoritative.
 
-### Core
+**Destination** — The concrete end state that bounds a Wayfinder map. Every decision points toward it.
 
-**Agent Harness**:
-The executable orchestration system that prepares frozen implementation contracts, runs bounded Cursor SDK agent loops, verifies outcomes, and publishes verified results.
-_Avoid_: implement-auto (the legacy prose skill), orchestrator (the engine is one part of the harness)
+**Map** — The low-resolution index containing the destination, decision gists, unresolved fog, and out-of-scope notes. It does not duplicate full ticket answers.
 
-**Run manifest**:
-The frozen, approved execution contract for one run: tasks, acceptance criteria, models, retry budgets, gates, and source hashes. It must not change during execution.
-_Avoid_: plan, PRD, issue list (those are inputs that become a manifest)
+**Decision ticket** — One precise question whose answer clears part of the route. Types are `research`, `prototype`, `grilling`, and `task`.
 
-**Run**:
-One execution of an approved run manifest, including prepare/approve identity, worktree, events, and final report.
-_Avoid_: session, job (prefer Run)
+**Fog** — In-scope uncertainty that is not yet precise enough to become a decision ticket.
 
-**Task**:
-One independently accepted and committed change in a run, with acceptance criteria, dependencies, and allowed paths.
-_Avoid_: issue (tracker input), ticket, story
+**Frontier** — Open, unblocked, unclaimed tickets whose blockers are resolved.
 
-**Worker**:
-The durable code-mutating agent assigned to a task. It may be resumed for bounded command/spec repairs.
-_Avoid_: implementer, coding agent
+**AFK** — Work an agent may perform without human authority.
 
-**Verifier**:
-The independent evidence-producing agent that checks acceptance, correctness, and standards for a task or the full branch.
-_Avoid_: reviewer (alone), code-review skill
+**HITL** — Work requiring a human to speak for intent, preference, credentials, or another decision the model cannot own.
 
-**Gate**:
-A machine-evaluated pass/fail condition owned by the harness (path scope, commands, schema-valid evidence, permissions).
-_Avoid_: check, CI step (CI may implement a gate, but Gate is the harness concept)
+**Human question** — A persisted HITL prompt with decision context, two to four mutually exclusive options and their tradeoffs, plus one explicit recommendation and rationale. Free-form answers remain valid.
 
-**Repair attempt**:
-A bounded response to failed evidence or commands. Exhausting the budget yields a typed blocked state, never an unbounded loop.
-_Avoid_: retry (retry may mean infrastructure retry; repair attempt is product work)
+**Tracer-bullet task** — A narrow but complete implementation slice that is independently verifiable and fits one fresh model context.
 
-### Lifecycle
+**Work packet** — The complete, persisted input to exactly one model invocation: objective, constraints, task input, retrieved context, artifact pointers, and output contract.
 
-**Prepare**:
-The phase that researches implementation context, validates AFK readiness, and emits a draft run manifest without changing product acceptance criteria.
+**Session** — One bounded model invocation with its exact submitted prompt, provider identifiers, output, and available usage telemetry persisted under `sessions/`.
 
-**Approve**:
-The phase that freezes the draft into an immutable run manifest.
+**Wayfinding episode** — A bounded provider conversation reused across several navigation, AFK-decision, and human Q→A sessions. It is capped by model turns and may be resumed for context/cache efficiency; complete packets remain the recovery fallback.
 
-**Execute**:
-The phase that runs an approved manifest in an isolated worktree until success, partial completion, or a typed blocked state.
+**Handoff** — A complete packet plus explicit pointers to prior artifacts. It can seed a fresh context or recover an episode whose provider checkpoint is unavailable.
 
-**Resume**:
-Continue a crashed or stopped run after verifying worktree, branch, HEAD, manifest hash, and completed gate evidence.
+**Local tracker** — Human-readable `map.md`, `issues/*.md`, and `tasks/*.md` stored with a run when no external tracker is configured.
 
-### Outcomes
+**Local knowledge base** — Full local document storage plus a deterministic lexical chunk index used to retrieve relevant context into work packets. It may add bounded Graphify traversal output for repository relationships; the graph is a regenerable projection, not durable run state.
 
-**AFK task**:
-A task whose acceptance criteria and dependencies are complete enough for unattended execution.
-_Avoid_: automatic task, unsupervised task
+**Dashboard** — The authenticated loopback browser client for the harness engine and persisted artifacts. It may issue actions but never owns lifecycle state.
 
-**HITL task**:
-A task that requires human product or architectural authority before execution.
-_Avoid_: interactive task
+**RED evidence** — A harness-run targeted test command that fails meaningfully before implementation and does not time out or fail because no tests were found.
 
-**BLOCKING finding**:
-A schema-valid verifier finding that demonstrably violates acceptance, correctness, security, or an explicit repository rule and therefore triggers repair.
-_Avoid_: Critical, error
+**GREEN evidence** — A harness-run targeted test command that exits successfully after implementation.
 
-**ADVISORY finding**:
-A schema-valid improvement suggestion that is recorded but never triggers repair or blocks commit.
-_Avoid_: Suggestion, Nice-to-have, warning
+**Gate** — A configured command the harness runs and records. Agents may react to gate output but cannot self-attest that a gate passed.
+
+**Repair budget** — The finite number of test, implementation, review, schema, or fog-expansion attempts. Exhaustion creates a blocked run.
+
+**Blocked run** — A stopped, inspectable state with the failure and prior phase recorded. Retrying is explicit.
+
+**Prompt compiler** — Optional small-model session that turns a work packet into a downstream prompt without changing scope. Its failure falls back to the deterministic renderer.
+
+**Message writer** — Small-model role that drafts commit and pull-request text. The harness runs all git and `gh` commands.

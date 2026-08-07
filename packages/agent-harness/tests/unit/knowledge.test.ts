@@ -1,0 +1,457 @@
+import path from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { describe, expect, it, vi } from "vitest";
+import type { RepositoryLookup } from "../../src/graphify.js";
+import { LocalKnowledgeBase } from "../../src/knowledge.js";
+import { fixtureConfig, fixtureRoot } from "../helpers.js";
+
+describe("LocalKnowledgeBase", () => {
+  it("persists documents locally and returns deterministic lexical matches", async () => {
+    const root = await fixtureRoot();
+    await writeFile(
+      path.join(root, "docs", "payments.md"),
+      "# Payments\n\nA settlement window closes at midnight. Refunds use the original ledger entry.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "docs", "profiles.md"),
+      "# Profiles\n\nA display name belongs to a user profile.\n",
+      "utf8",
+    );
+    const config = fixtureConfig(root);
+    const knowledge = new LocalKnowledgeBase(config);
+
+    expect(await knowledge.refresh()).toBe(3);
+    const first = await knowledge.search("refund ledger", 2);
+    const second = await knowledge.search("refund ledger", 2);
+
+    expect(first).toEqual(second);
+    expect(first[0]?.source).toBe("docs/payments.md");
+    expect(first[0]?.excerpt).toContain("Refunds");
+    const stored = JSON.parse(
+      await readFile(path.join(root, ".agent-harness", "knowledge", "documents.json"), "utf8"),
+    ) as Array<{ content: string }>;
+    expect(stored.some((document) => document.content.includes("settlement window"))).toBe(true);
+  });
+
+  it("reports document indexing progress during refresh", async () => {
+    const root = await fixtureRoot();
+    await writeFile(path.join(root, "docs", "guide.md"), "# Guide\n", "utf8");
+    const progress: Array<{ stage: string; completed: number; total: number }> = [];
+
+    await new LocalKnowledgeBase(fixtureConfig(root)).refresh((update) => progress.push(update));
+
+    expect(progress).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: "discovering" }),
+      expect.objectContaining({ stage: "indexing", completed: 0 }),
+      expect.objectContaining({ stage: "complete" }),
+    ]));
+    expect(progress.find((update) => update.stage === "indexing")?.total).toBeGreaterThan(0);
+  });
+
+  it("removes stale configured documents when a private source list changes", async () => {
+    const root = await fixtureRoot();
+    await writeFile(path.join(root, "docs", "legacy.md"), "legacy source text", "utf8");
+    const initial = fixtureConfig(root);
+    await new LocalKnowledgeBase(initial).refresh();
+
+    const retained = fixtureConfig(root, {
+      knowledge: { ...initial.knowledge, sources: ["README.md"] },
+    });
+    const knowledge = new LocalKnowledgeBase(retained);
+    await knowledge.refresh();
+
+    expect(await knowledge.search("legacy source", 5, { repository: false })).toEqual([]);
+  });
+
+  it("puts structural repository context ahead of lexical matches within the result limit", async () => {
+    const root = await fixtureRoot();
+    await writeFile(
+      path.join(root, "docs", "architecture.md"),
+      "# Architecture\n\nThe AgentCoordinator loads bounded context before each fresh invocation.\n",
+      "utf8",
+    );
+    const lookup: RepositoryLookup = {
+      async refresh() {},
+      async rebuild() { return true; },
+      async search() {
+        return {
+          source: "graphify:graphify-out/graph.json",
+          title: "Repository relationships (Graphify)",
+          excerpt: "AgentCoordinator --calls--> LocalKnowledgeBase",
+          score: 1,
+        };
+      },
+    };
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root), lookup);
+    await knowledge.refresh();
+
+    const results = await knowledge.search("AgentCoordinator context", 2);
+
+    expect(results).toHaveLength(2);
+    expect(results[0]?.source).toBe("graphify:graphify-out/graph.json");
+    expect(results[1]?.source).toBe("docs/architecture.md");
+  });
+
+  it("retrieves global and active-project documents while isolating other projects by default", async () => {
+    const root = await fixtureRoot();
+    const knowledge = new LocalKnowledgeBase(
+      fixtureConfig(root, {
+        knowledge: {
+          ...fixtureConfig(root).knowledge,
+          projectId: "alpha",
+        },
+      }),
+    );
+    await knowledge.upsertText(
+      "General/auth.md",
+      "Universal authentication",
+      "taxonomy authentication applies everywhere",
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "alpha/auth.md",
+      "Alpha authentication",
+      "taxonomy alpha convention",
+    );
+    await knowledge.upsertText(
+      "beta/private.md",
+      "Beta private authentication",
+      "taxonomy beta secret",
+      { projectId: "beta", visibility: "private" },
+    );
+    await knowledge.upsertText(
+      "beta/shared.md",
+      "Beta shared authentication",
+      "taxonomy beta public contract",
+      { projectId: "beta", visibility: "shared" },
+    );
+
+    const defaultResults = await knowledge.search("taxonomy", 10, { repository: false });
+
+    expect(defaultResults.map((result) => result.title)).toEqual([
+      "Alpha authentication",
+      "Universal authentication",
+    ]);
+    expect(defaultResults.every((result) => result.projectId !== "beta")).toBe(true);
+  });
+
+  it("requires explicit inclusion and shared visibility for cross-project retrieval", async () => {
+    const root = await fixtureRoot();
+    const base = fixtureConfig(root);
+    const knowledge = new LocalKnowledgeBase(
+      fixtureConfig(root, {
+        knowledge: { ...base.knowledge, projectId: "alpha" },
+      }),
+    );
+    await knowledge.upsertText("beta/private.md", "Beta private", "proration formula private", {
+      projectId: "beta",
+      visibility: "private",
+    });
+    await knowledge.upsertText("beta/shared.md", "Beta shared", "proration formula shared", {
+      projectId: "beta",
+      visibility: "shared",
+    });
+
+    const defaultResults = await knowledge.search("proration formula", 10, { repository: false });
+    const crossProjectResults = await knowledge.search("proration formula", 10, {
+      repository: false,
+      includeProjects: ["beta"],
+    });
+
+    expect(defaultResults).toEqual([]);
+    expect(crossProjectResults.map((result) => result.title)).toEqual(["Beta shared"]);
+    expect(crossProjectResults[0]).toMatchObject({
+      scope: "project",
+      projectId: "beta",
+      visibility: "shared",
+    });
+  });
+
+  it("indexes prototype-named terms without corrupting lexical frequencies", async () => {
+    const root = await fixtureRoot();
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+    await knowledge.upsertText(
+      "docs/typescript.md",
+      "TypeScript guidance",
+      "A constructor should preserve explicit dependency boundaries.",
+    );
+
+    const results = await knowledge.search("constructor", 1, { repository: false });
+
+    expect(results[0]?.title).toBe("TypeScript guidance");
+  });
+
+  it("indexes Java source documents", async () => {
+    const root = await fixtureRoot();
+    const source = path.join(root, "docs", "GearChecker.java");
+    await writeFile(source, "class GearChecker { void validateArmor() {} }", "utf8");
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+
+    expect(await knowledge.upsertFile(source)).toBe(true);
+    expect((await knowledge.search("validateArmor", 1, { repository: false }))[0]?.title)
+      .toBe("GearChecker.java");
+  });
+
+  it("adds scoped semantic document matches when optional embeddings are enabled", async () => {
+    const root = await fixtureRoot();
+    const base = fixtureConfig(root);
+    const apiKeyEnv = "AGENT_HARNESS_TEST_EMBEDDING_KEY";
+    process.env[apiKeyEnv] = "test-key";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { input: string[] };
+      return new Response(JSON.stringify({
+        data: body.input.map((text, index) => ({
+          index,
+          embedding: text.includes("delivery charge") || text.includes("shipping fee correction")
+            ? [1, 0]
+            : [0, 1],
+        })),
+      }), { status: 200 });
+    });
+    try {
+      const knowledge = new LocalKnowledgeBase(fixtureConfig(root, {
+        knowledge: {
+          ...base.knowledge,
+          projectId: "alpha",
+          embeddings: {
+            ...base.knowledge.embeddings,
+            enabled: true,
+            endpoint: "https://embeddings.test/v1/embeddings",
+            apiKeyEnv,
+            minSimilarity: 0.5,
+          },
+        },
+      }));
+      await knowledge.upsertText(
+        "alpha/billing.md",
+        "Billing adjustments",
+        "A delivery charge adjustment is issued after carrier disputes.",
+      );
+      await knowledge.upsertText(
+        "beta/private.md",
+        "Private beta billing",
+        "A delivery charge adjustment is only for the beta project.",
+        { projectId: "beta", visibility: "private" },
+      );
+
+      const results = await knowledge.search("shipping fee correction", 5, { repository: false });
+
+      expect(results.map((result) => result.title)).toContain("Billing adjustments");
+      expect(results.map((result) => result.title)).not.toContain("Private beta billing");
+      const index = JSON.parse(
+        await readFile(path.join(root, ".agent-harness", "knowledge", "embeddings.json"), "utf8"),
+      ) as { model: string; entries: unknown[] };
+      expect(index.model).toBe("text-embedding-3-small");
+      expect(index.entries.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      fetchMock.mockRestore();
+      delete process.env[apiKeyEnv];
+    }
+  });
+
+  it("uses Ollama's local embedding protocol without an API key", async () => {
+    const root = await fixtureRoot();
+    const base = fixtureConfig(root);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { input: string[] };
+      expect(new Headers(init?.headers).has("Authorization")).toBe(false);
+      return new Response(JSON.stringify({
+        embeddings: body.input.map((text) =>
+          text.includes("order cancellation") || text.includes("void a purchase") ? [1, 0] : [0, 1],
+        ),
+      }), { status: 200 });
+    });
+    try {
+      const knowledge = new LocalKnowledgeBase(fixtureConfig(root, {
+        knowledge: {
+          ...base.knowledge,
+          embeddings: {
+            ...base.knowledge.embeddings,
+            enabled: true,
+            provider: "ollama",
+            endpoint: "http://localhost:11434/api/embed",
+            model: "qwen3-embedding",
+            minSimilarity: 0.5,
+          },
+        },
+      }));
+      await knowledge.upsertText(
+        "docs/orders.md",
+        "Order cancellation",
+        "An order cancellation releases the payment authorization.",
+      );
+
+      const results = await knowledge.search("how do I void a purchase", 1, { repository: false });
+
+      expect(results[0]?.title).toBe("Order cancellation");
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("selects only role- and path-applicable rules and skills", async () => {
+    const root = await fixtureRoot();
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+    await knowledge.upsertText(
+      "General/rules/typescript.mdc",
+      "TypeScript rule",
+      "---\ndescription: TypeScript implementation guidance\nglobs: src/**/*.{ts,tsx}\nalwaysApply: true\n---\n\nUse explicit TypeScript boundaries.",
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "General/rules/java.mdc",
+      "Java rule",
+      "---\ndescription: Java implementation guidance\nglobs: src/**/*.java\n---\n\nUse Java braces.",
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "General/skills/tdd/SKILL.md",
+      "TDD",
+      "---\nname: tdd\ndescription: Test-first behavior\nroles: [test-writer]\n---\n\nWrite a failing behavioral test first.",
+      { scope: "global" },
+    );
+
+    const implementation = await knowledge.selectGuidance("implement TypeScript behavior", {
+      role: "implementer",
+      knownPaths: ["src/feature.ts"],
+    });
+    const testWriting = await knowledge.selectGuidance("write a behavioral test", {
+      role: "test-writer",
+    });
+
+    expect(implementation.map((item) => item.source)).toEqual(["General/rules/typescript.mdc"]);
+    expect(implementation[0]).toMatchObject({ kind: "rule" });
+    expect(implementation[0]?.reason).toContain("path matches");
+    expect(testWriting.map((item) => item.source)).toEqual(["General/skills/tdd/SKILL.md"]);
+    expect(testWriting[0]).toMatchObject({ kind: "skill" });
+  });
+
+  it("prioritizes relevant always-apply guidance, respects budgets, and excludes guidance from generic context", async () => {
+    const root = await fixtureRoot();
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+    await knowledge.upsertText(
+      "General/rules/priority.mdc",
+      "Priority rule",
+      "---\ndescription: login validation\nalwaysApply: true\n---\n\nlogin validation must reject blank credentials.",
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "General/rules/normal.mdc",
+      "Normal rule",
+      "---\ndescription: login validation\n---\n\nlogin validation should be clear.",
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "docs/login.md",
+      "Login docs",
+      "The login endpoint validates credentials.",
+    );
+
+    const selected = await knowledge.selectGuidance("login validation", {
+      role: "implementer",
+      maxResults: 2,
+      maxCharacters: 35,
+    });
+    const generic = await knowledge.search("login validation", 10, {
+      repository: false,
+      excludeGuidance: true,
+    });
+
+    expect(selected[0]?.source).toBe("General/rules/priority.mdc");
+    expect(selected.reduce((total, item) => total + item.excerpt.length, 0)).toBeLessThanOrEqual(35);
+    expect(generic.map((item) => item.source)).toEqual(["docs/login.md"]);
+  });
+
+  it("does not select shared guidance from another project without explicit inclusion", async () => {
+    const root = await fixtureRoot();
+    const base = fixtureConfig(root);
+    const knowledge = new LocalKnowledgeBase(
+      fixtureConfig(root, { knowledge: { ...base.knowledge, projectId: "alpha" } }),
+    );
+    await knowledge.upsertText(
+      "beta/rules/security.mdc",
+      "Beta security",
+      "---\ndescription: payment authorization\n---\n\npayment authorization requires an audit trail.",
+      { projectId: "beta", visibility: "shared" },
+    );
+
+    expect(await knowledge.selectGuidance("payment authorization", { role: "reviewer" })).toEqual([]);
+    expect(
+      (await knowledge.selectGuidance("payment authorization", {
+        role: "reviewer",
+        includeProjects: ["beta"],
+      })).map((item) => item.source),
+    ).toEqual(["beta/rules/security.mdc"]);
+  });
+
+  it("audits relevantly omitted always-apply rules without injecting them", async () => {
+    const root = await fixtureRoot();
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+    await knowledge.upsertText(
+      "General/rules/a.mdc",
+      "First rule",
+      "---\ndescription: authorization\nalwaysApply: true\n---\n\nauthorization is required.",
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "General/rules/b.mdc",
+      "Second rule",
+      "---\ndescription: authorization\nalwaysApply: true\n---\n\nauthorization must be logged.",
+      { scope: "global" },
+    );
+
+    const audit = await knowledge.selectGuidanceWithAudit("authorization", {
+      role: "implementer",
+      maxResults: 1,
+    });
+
+    expect(audit.selected).toHaveLength(1);
+    expect(audit.omittedAlwaysApply).toEqual([
+      expect.objectContaining({
+        source: audit.selected[0]?.source === "General/rules/a.mdc"
+          ? "General/rules/b.mdc"
+          : "General/rules/a.mdc",
+        reason: "lower-ranked or omitted by the guidance budget",
+      }),
+    ]);
+  });
+
+  it("filters leftover run artifact chunks so only the active runId can retrieve them", async () => {
+    const root = await fixtureRoot();
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+    await knowledge.upsertText(
+      ".agent-harness/runs/run-a/map.md",
+      "map.md",
+      "# Map A\n\nDestination: Quiet interface for run A.\n",
+    );
+    await knowledge.upsertText(
+      ".agent-harness/runs/run-b/map.md",
+      "map.md",
+      "# Map B\n\nDestination: Quiet interface for run B.\n",
+    );
+    await knowledge.upsertText(
+      "docs/guide.md",
+      "guide.md",
+      "# Guide\n\nQuiet interface design notes live here.\n",
+    );
+
+    const withoutRun = await knowledge.search("Quiet interface", 10, { repository: false });
+    expect(withoutRun.every((result) => !result.source.includes(".agent-harness/runs/"))).toBe(true);
+    expect(withoutRun.some((result) => result.source === "docs/guide.md")).toBe(true);
+
+    const forA = await knowledge.search("Quiet interface", 10, {
+      repository: false,
+      runId: "run-a",
+    });
+    expect(forA.some((result) => result.source === ".agent-harness/runs/run-a/map.md")).toBe(true);
+    expect(forA.some((result) => result.source === ".agent-harness/runs/run-b/map.md")).toBe(false);
+
+    const forB = await knowledge.search("Quiet interface", 10, {
+      repository: false,
+      runId: "run-b",
+    });
+    expect(forB.some((result) => result.source === ".agent-harness/runs/run-b/map.md")).toBe(true);
+    expect(forB.some((result) => result.source === ".agent-harness/runs/run-a/map.md")).toBe(false);
+  });
+});

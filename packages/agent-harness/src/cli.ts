@@ -1,265 +1,447 @@
 #!/usr/bin/env node
-import { Command } from "commander";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
-import { defaultConfigYaml, loadProjectConfig } from "./config/load.js";
-import { loadLocalSource } from "./adapters/local.js";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { Command } from "commander";
+import { createCursorBackend } from "./agent.js";
 import {
-  createFakeGitHubPort,
-  createGitHubApiPort,
-  loadGitHubSource,
-} from "./adapters/github.js";
-import {
-  approveManifest,
-  buildDraftManifest,
-} from "./engine/prepare.js";
-import { executeRun } from "./engine/orchestrator.js";
-import {
-  createCursorAgentPort,
-  createFakeAgentPort,
-} from "./agents/cursor-sdk.js";
-import { ensureDir, pathExists, readJson, writeJson } from "./util/fs.js";
-import { loadDotEnvFiles } from "./util/dotenv.js";
-import {
-  DraftManifestSchema,
-  RunManifestSchema,
-} from "./schemas/manifest.js";
-import { loadRunState } from "./engine/state-machine.js";
-import { runBenchmark } from "./benchmark/repeatability.js";
+  defaultConfigYaml,
+  deploymentConfigYaml,
+  loadConfig,
+  loadRunConfig,
+  type HarnessConfig,
+} from "./config.js";
+import { HarnessEngine } from "./engine.js";
+import { LocalKnowledgeBase } from "./knowledge.js";
+import { startUiServer } from "./ui/server.js";
 
-await loadDotEnvFiles();
-
-const program = new Command();
-
-program
+const program = new Command()
   .name("agent-harness")
-  .description(
-    "Contract-deterministic Agent Harness for AFK implementation runs",
-  )
-  .version("0.1.0");
+  .description("Durable idea-to-feature orchestration with bounded, fresh agent sessions")
+  .version("0.3.2");
 
 program
   .command("init")
-  .description("Scaffold agent-harness.config.yaml in the current project")
-  .option("--name <name>", "Project name", path.basename(process.cwd()))
-  .option("--force", "Overwrite existing config", false)
-  .action(async (options: { name: string; force: boolean }) => {
+  .description("Create a v2 harness config and local artifact directory")
+  .option("--force", "replace an existing config", false)
+  .action(async (options: { force: boolean }) => {
     const target = path.join(process.cwd(), "agent-harness.config.yaml");
-    if ((await pathExists(target)) && !options.force) {
-      throw new Error(`${target} already exists (use --force to overwrite)`);
+    if (!options.force && (await exists(target))) {
+      throw new Error(`${target} already exists; use --force to replace it`);
     }
-    await writeFile(target, defaultConfigYaml(options.name), "utf8");
-    await ensureDir(path.join(process.cwd(), ".agent-harness", "runs"));
+    await writeFile(target, defaultConfigYaml(), "utf8");
+    await mkdir(path.join(process.cwd(), ".agent-harness"), { recursive: true });
+    await ensureIgnored(path.join(process.cwd(), ".gitignore"), ".agent-harness/");
+    await ensureIgnored(path.join(process.cwd(), ".gitignore"), "graphify-out/");
+    await writeGraphifySetupScripts(process.cwd(), false);
     console.log(`Wrote ${target}`);
   });
 
 program
-  .command("prepare")
-  .description("Prepare a draft run manifest from local or GitHub sources")
-  .option("--config <path>", "Path to project config")
-  .option("--local <path>", "Local YAML/JSON task bundle")
-  .option("--github <issue>", "GitHub issue number entry point")
-  .option("--enrich", "Run prepare research agent", false)
-  .option("--fake-agents", "Use fake agents (tests/dev)", false)
-  .option("--out <path>", "Draft output path")
-  .action(
-    async (options: {
-      config?: string;
-      local?: string;
-      github?: string;
-      enrich?: boolean;
-      fakeAgents?: boolean;
-      out?: string;
-    }) => {
-      const { config } = await loadProjectConfig(options.config);
-      if (!options.local && !options.github) {
-        throw new Error("Provide --local <file> or --github <issueNumber>");
-      }
-      if (options.github && !config.github) {
-        throw new Error("github section is required in config for --github");
-      }
-      const source = options.local
-        ? await loadLocalSource(options.local)
-        : await loadGitHubSource({
-            port: createGitHubApiPort(),
-            lifecycle: config.github!,
-            entryIssueNumber: Number(options.github),
-          });
-      const agent = options.fakeAgents
-        ? createFakeAgentPort()
-        : createCursorAgentPort({
-            workerNoCodeMs: config.watchdogs.workerNoCodeMs,
-            workerMaxRunMs: config.watchdogs.workerMaxRunMs,
-          });
-      const draft = await buildDraftManifest({
-        config,
-        source,
-        agent,
-        enrich: Boolean(options.enrich),
-      });
-      const out =
-        options.out ??
-        path.join(config.runDirectory, "drafts", `draft-${Date.now()}.json`);
-      await writeJson(path.resolve(out), draft);
-      console.log(`Draft written: ${path.resolve(out)}`);
-      if (draft.validationErrors.length > 0) {
-        console.error("Validation errors:");
-        for (const error of draft.validationErrors) console.error(`- ${error}`);
-        process.exitCode = 2;
-      }
-    },
-  );
-
-program
-  .command("approve")
-  .description("Approve a draft manifest into a frozen run manifest")
-  .requiredOption("--draft <path>", "Draft manifest path")
-  .option("--by <who>", "Approver identity", process.env.USER ?? "operator")
-  .option("--out <path>", "Approved manifest output path")
-  .action(async (options: { draft: string; by: string; out?: string }) => {
-    const draft = DraftManifestSchema.parse(
-      await readJson(path.resolve(options.draft)),
+  .command("deploy")
+  .description("Install harness configuration and optional local RAG in another project")
+  .requiredOption("--project <path>", "target project directory")
+  .option("--force", "replace an existing config", false)
+  .option("--sources <paths>", "comma-separated repository-relative source paths")
+  .option("--ollama", "configure local Ollama semantic retrieval", false)
+  .option("--model <name>", "Ollama embedding model", "qwen3-embedding")
+  .option("--no-graphify", "advanced: disable structural code retrieval")
+  .option("--install-graphify", "run the editable project-local Graphify setup script", false)
+  .option("--install-graphify-prerequisite", "allow the setup script to install uv if needed", false)
+  .option("--reset-graphify-scripts", "replace customized Graphify setup scripts with harness defaults", false)
+  .option("--refresh", "build the first knowledge index", false)
+  .action(async (options: {
+    project: string;
+    force: boolean;
+    sources?: string;
+    ollama: boolean;
+    model: string;
+    graphify: boolean;
+    installGraphify: boolean;
+    installGraphifyPrerequisite: boolean;
+    resetGraphifyScripts: boolean;
+    refresh: boolean;
+  }) => {
+    const project = path.resolve(options.project);
+    const info = await stat(project);
+    if (!info.isDirectory()) throw new Error(`${project} is not a directory`);
+    const target = path.join(project, "agent-harness.config.yaml");
+    if (!options.force && (await exists(target))) {
+      throw new Error(`${target} already exists; use --force to replace it`);
+    }
+    const sources = options.sources
+      ? options.sources.split(",").map((source) => source.trim()).filter(Boolean)
+      : await discoverDeploymentSources(project);
+    await writeFile(target, deploymentConfigYaml({
+      sources,
+      ollama: options.ollama,
+      model: options.model,
+      graphify: options.graphify,
+    }), "utf8");
+    await mkdir(path.join(project, ".agent-harness"), { recursive: true });
+    await ensureIgnored(path.join(project, ".gitignore"), ".agent-harness/");
+    await ensureIgnored(path.join(project, ".gitignore"), "graphify-out/");
+    const graphifyScripts = await writeGraphifySetupScripts(project, options.resetGraphifyScripts);
+    console.log(`Deployed harness config to ${target}`);
+    console.log(`Knowledge sources: ${sources.join(", ") || "none"}`);
+    if (options.ollama) console.log(`Semantic retrieval: Ollama / ${options.model}`);
+    console.log(
+      options.graphify
+        ? "Repository structure: Graphify (prepared before new runs and rebuilt after task commits)"
+        : "Repository structure: Graphify disabled (--no-graphify)",
     );
-    const approved = await approveManifest({
-      draft,
-      approvedBy: options.by,
-    });
-    const out =
-      options.out ??
-      path.join(
-        path.dirname(path.resolve(options.draft)),
-        `manifest-${approved.manifestHash.slice(0, 12)}.json`,
-      );
-    await writeJson(path.resolve(out), approved);
-    console.log(`Approved manifest: ${path.resolve(out)}`);
-    console.log(`manifestHash=${approved.manifestHash}`);
+    console.log(`Editable Graphify setup scripts: ${graphifyScripts}`);
+    if (options.installGraphify) {
+      await runGraphifySetupScript(project, options.installGraphifyPrerequisite);
+    }
+    if (options.refresh) {
+      const { config } = await loadConfig(target);
+      const changed = await new LocalKnowledgeBase(config).refresh();
+      console.log(`Indexed ${changed} changed document(s)`);
+    }
+  });
+
+const graphify = program
+  .command("graphify")
+  .description("Manage the editable project-local Graphify setup scripts");
+
+graphify
+  .command("scripts")
+  .description("create missing setup scripts, or reset customized scripts to harness defaults")
+  .requiredOption("--project <path>", "target project directory")
+  .option("--reset", "replace customized scripts with harness defaults", false)
+  .action(async (options: { project: string; reset: boolean }) => {
+    const project = path.resolve(options.project);
+    const info = await stat(project);
+    if (!info.isDirectory()) throw new Error(`${project} is not a directory`);
+    const directory = await writeGraphifySetupScripts(project, options.reset);
+    console.log(`${options.reset ? "Reset" : "Prepared"} Graphify setup scripts in ${directory}`);
+  });
+
+graphify
+  .command("install")
+  .description("run the project's editable Graphify setup script")
+  .requiredOption("--project <path>", "target project directory")
+  .option("--install-prerequisite", "allow the script to install uv if needed", false)
+  .action(async (options: { project: string; installPrerequisite: boolean }) => {
+    const project = path.resolve(options.project);
+    const info = await stat(project);
+    if (!info.isDirectory()) throw new Error(`${project} is not a directory`);
+    await writeGraphifySetupScripts(project, false);
+    await runGraphifySetupScript(project, options.installPrerequisite);
   });
 
 program
-  .command("execute")
-  .description("Execute an approved run manifest")
-  .requiredOption("--manifest <path>", "Approved manifest path")
-  .option("--run-id <id>", "Run id")
-  .option("--fake-agents", "Use fake agents", false)
-  .option("--no-github", "Skip GitHub output adapter")
+  .command("start")
+  .alias("run")
+  .description("Start a durable run from one idea")
+  .requiredOption("--idea <textOrAtFile>", "idea text, or @path")
+  .option("--run-id <id>", "stable run id")
+  .option("--config <path>", "config path")
+  .option("--tdd <mode>", "override TDD for this run: on or off")
+  .option("--no-advance", "create artifacts without launching agents")
   .action(
     async (options: {
-      manifest: string;
+      idea: string;
       runId?: string;
-      fakeAgents?: boolean;
-      github?: boolean;
+      config?: string;
+      tdd?: string;
+      advance: boolean;
     }) => {
-      const manifest = RunManifestSchema.parse(
-        await readJson(path.resolve(options.manifest)),
-      );
-      if (manifest.draft) {
-        throw new Error("Refusing to execute a draft manifest; approve first");
-      }
-      const runId = options.runId ?? randomUUID();
-      const runRoot = path.resolve(
-        manifest.configSnapshot.repositoryRoot,
-        manifest.configSnapshot.runDirectory,
-      );
-      const result = await executeRun({
-        runId,
-        manifest,
-        runRoot,
-        deps: {
-          agent: options.fakeAgents
-            ? createFakeAgentPort()
-            : createCursorAgentPort({
-                workerNoCodeMs:
-                  manifest.configSnapshot.watchdogs.workerNoCodeMs,
-              workerMaxRunMs:
-                manifest.configSnapshot.watchdogs.workerMaxRunMs,
-              }),
-          github:
-            options.github === false
-              ? undefined
-              : manifest.configSnapshot.github
-                ? createGitHubApiPort()
-                : undefined,
-        },
-      });
-      console.log(`Run ${runId} finished: ${result.state.status}`);
-      if (result.report.prUrl) console.log(`PR: ${result.report.prUrl}`);
-      if (result.state.status !== "succeeded") process.exitCode = 3;
+      const config = await resolvedConfig(options.config, options.tdd);
+      const engine = new HarnessEngine(config, { backend: createCursorBackend() });
+      const idea = options.idea.startsWith("@")
+        ? await readFile(path.resolve(options.idea.slice(1)), "utf8")
+        : options.idea;
+      let state = await engine.start(idea, options.runId ?? randomUUID());
+      if (options.advance) state = await engine.advance(state.runId);
+      printState(state);
     },
   );
 
 program
-  .command("resume")
-  .description("Resume a crashed or stopped run")
-  .requiredOption("--run-id <id>", "Run id")
-  .option("--config <path>", "Project config path")
-  .option("--fake-agents", "Use fake agents", false)
+  .command("continue")
+  .description("Advance a run from its persisted artifacts")
+  .requiredOption("--run-id <id>", "run id")
+  .option("--config <path>", "config path")
+  .option("--steps <count>", "maximum transitions before yielding")
+  .action(async (options: { runId: string; config?: string; steps?: string }) => {
+    const config = await runConfig(options.config, options.runId);
+    const engine = new HarnessEngine(config, { backend: createCursorBackend() });
+    const state = await engine.advance(
+      options.runId,
+      options.steps ? positiveInteger(options.steps, "steps") : undefined,
+    );
+    printState(state);
+  });
+
+program
+  .command("answer")
+  .description("Answer one persisted HITL question, then continue")
+  .requiredOption("--run-id <id>", "run id")
+  .requiredOption("--question <id>", "question id")
+  .requiredOption("--text <answer>", "answer text")
+  .option("--config <path>", "config path")
+  .option("--no-advance", "record the answer without launching agents")
   .action(
     async (options: {
       runId: string;
+      question: string;
+      text: string;
       config?: string;
-      fakeAgents?: boolean;
+      advance: boolean;
     }) => {
-      const { config } = await loadProjectConfig(options.config);
-      const directory = path.resolve(
-        config.repositoryRoot,
-        config.runDirectory,
-        options.runId,
-      );
-      const state = await loadRunState(directory);
-      const manifest = RunManifestSchema.parse(
-        await readJson(path.join(directory, "manifest.json")),
-      );
-      const result = await executeRun({
-        runId: options.runId,
-        manifest,
-        runRoot: path.resolve(config.repositoryRoot, config.runDirectory),
-        resumeState: state,
-        deps: {
-          agent: options.fakeAgents
-            ? createFakeAgentPort()
-            : createCursorAgentPort({
-                workerNoCodeMs: config.watchdogs.workerNoCodeMs,
-                workerMaxRunMs: config.watchdogs.workerMaxRunMs,
-              }),
-          github: config.github ? createGitHubApiPort() : undefined,
-        },
-      });
-      console.log(`Resumed run ${options.runId}: ${result.state.status}`);
-      if (result.state.status !== "succeeded") process.exitCode = 3;
+      const config = await runConfig(options.config, options.runId);
+      const engine = new HarnessEngine(config, { backend: createCursorBackend() });
+      let state = await engine.answer(options.runId, options.question, options.text);
+      if (options.advance) state = await engine.advance(options.runId);
+      printState(state);
     },
   );
 
 program
-  .command("status")
-  .description("Show run status")
-  .requiredOption("--run-id <id>", "Run id")
-  .option("--config <path>", "Project config path")
+  .command("retry")
+  .description("Explicitly retry a bounded step after inspecting a blocked run")
+  .requiredOption("--run-id <id>", "run id")
+  .option("--config <path>", "config path")
   .action(async (options: { runId: string; config?: string }) => {
-    const { config } = await loadProjectConfig(options.config);
-    const directory = path.resolve(
-      config.repositoryRoot,
-      config.runDirectory,
-      options.runId,
-    );
-    const state = await loadRunState(directory);
-    console.log(JSON.stringify(state, null, 2));
+    const config = await runConfig(options.config, options.runId);
+    const engine = new HarnessEngine(config, { backend: createCursorBackend() });
+    await engine.retry(options.runId);
+    printState(await engine.advance(options.runId));
   });
 
 program
-  .command("benchmark")
-  .description("Run contract-level repeatability benchmark on fixtures")
-  .option("--runs <n>", "Repetitions", "3")
-  .action(async (options: { runs: string }) => {
-    const summary = await runBenchmark(Number(options.runs));
-    console.log(JSON.stringify(summary, null, 2));
-    if (!summary.stable) process.exitCode = 4;
+  .command("status")
+  .description("Show persisted run state")
+  .requiredOption("--run-id <id>", "run id")
+  .option("--config <path>", "config path")
+  .option("--json", "print the full state", false)
+  .action(async (options: { runId: string; config?: string; json: boolean }) => {
+    const config = await runConfig(options.config, options.runId);
+    const engine = new HarnessEngine(config, { backend: createCursorBackend("unused") });
+    const state = await engine.status(options.runId);
+    if (options.json) console.log(JSON.stringify(state, null, 2));
+    else printState(state);
   });
 
-program.parseAsync(process.argv).catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-});
+program
+  .command("cancel")
+  .description("Mark a run cancelled; no process is left waiting")
+  .requiredOption("--run-id <id>", "run id")
+  .option("--config <path>", "config path")
+  .action(async (options: { runId: string; config?: string }) => {
+    const config = await runConfig(options.config, options.runId);
+    const engine = new HarnessEngine(config, { backend: createCursorBackend("unused") });
+    printState(await engine.cancel(options.runId));
+  });
 
-// silence unused import in case tree-shaking tools flag it
-void createFakeGitHubPort;
+program
+  .command("ui")
+  .description("Open the centralized loopback dashboard")
+  .option("--config <path>", "config path")
+  .option("--port <number>", "loopback port", "8787")
+  .option("--no-open", "do not open the browser automatically")
+  .action(async (options: { config?: string; port: string; open: boolean }) => {
+    const loaded = await loadConfig(options.config);
+    const ui = await startUiServer({
+      config: loaded.config,
+      configPath: loaded.path,
+      backend: createCursorBackend(),
+      port: positiveInteger(options.port, "port"),
+      openBrowser: options.open,
+    });
+    console.log(`Agent Harness UI: ${ui.url}`);
+    console.log("Loopback only. Press Ctrl+C to stop.");
+    await new Promise<void>((resolve) => {
+      const shutdown = (): void => {
+        void ui.close().finally(resolve);
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+    });
+  });
+
+const knowledge = program.command("knowledge").description("Manage local lexical and Graphify retrieval");
+
+knowledge
+  .command("refresh")
+  .option("--config <path>", "config path")
+  .action(async (options: { config?: string }) => {
+    const { config } = await loadConfig(options.config);
+    const count = await new LocalKnowledgeBase(config).refresh();
+    console.log(`Indexed ${count} changed document(s)`);
+  });
+
+knowledge
+  .command("add")
+  .argument("<path>", "local text file")
+  .option("--config <path>", "config path")
+  .action(async (file: string, options: { config?: string }) => {
+    const { config } = await loadConfig(options.config);
+    const base = new LocalKnowledgeBase(config);
+    const changed = await base.upsertFile(path.resolve(config.repositoryRoot, file));
+    console.log(changed ? "Indexed document" : "Document unchanged or unsupported");
+  });
+
+knowledge
+  .command("search")
+  .argument("<query>", "search terms")
+  .option("--limit <count>", "maximum results", "6")
+  .option("--project <id>", "active project id; defaults to knowledge.projectId")
+  .option(
+    "--include-project <ids>",
+    "comma-separated shared project ids to search explicitly",
+  )
+  .option("--max-characters <count>", "cap returned context characters")
+  .option("--config <path>", "config path")
+  .action(async (query: string, options: {
+    limit: string;
+    project?: string;
+    includeProject?: string;
+    maxCharacters?: string;
+    config?: string;
+  }) => {
+    const { config } = await loadConfig(options.config);
+    const results = await new LocalKnowledgeBase(config).search(
+      query,
+      positiveInteger(options.limit, "limit"),
+      {
+        projectId: options.project,
+        includeProjects: splitProjectIds(options.includeProject),
+        maxCharacters: options.maxCharacters
+          ? positiveInteger(options.maxCharacters, "max-characters")
+          : undefined,
+      },
+    );
+    console.log(JSON.stringify(results, null, 2));
+  });
+
+async function discoverDeploymentSources(project: string): Promise<string[]> {
+  const candidates = [
+    "README.md",
+    "GLOSSARY.md",
+    "docs",
+    "documentation",
+    "architecture",
+    "adr",
+  ];
+  const found: string[] = [];
+  for (const candidate of candidates) {
+    if (await exists(path.join(project, candidate))) found.push(candidate);
+  }
+  // Preserve the familiar minimal defaults when no conventional source root is
+  // present; refresh safely skips paths that have not been created yet.
+  return found.length > 0 ? found : ["README.md", "docs"];
+}
+
+async function resolvedConfig(configPath: string | undefined, tdd: string | undefined): Promise<HarnessConfig> {
+  const { config } = await loadConfig(configPath);
+  if (tdd == null) return config;
+  if (tdd !== "on" && tdd !== "off") throw new Error("--tdd must be 'on' or 'off'");
+  return { ...config, workflow: { ...config.workflow, tdd: tdd === "on" } };
+}
+
+async function runConfig(configPath: string | undefined, runId: string): Promise<HarnessConfig> {
+  const { config } = await loadConfig(configPath);
+  return loadRunConfig(config, runId);
+}
+
+function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {
+  console.log(`Run ${state.runId}: ${state.phase}`);
+  console.log(`Artifacts: ${state.runId}/state.json (under the configured state directory)`);
+  const question = state.questions.find((item) => item.id === state.activeQuestionId);
+  if (question) {
+    console.log(`Question ${question.id}: ${question.prompt}`);
+    if (question.context) console.log(`Why this matters: ${question.context}`);
+    for (const option of question.options) {
+      const recommended = option.id === question.recommendedOptionId ? " (recommended)" : "";
+      console.log(`- ${option.label}${recommended}: ${option.description}`);
+    }
+    if (question.recommendation) {
+      console.log(`Recommendation: ${question.recommendation}`);
+    }
+    console.log(`Answer with: agent-harness answer --run-id ${state.runId} --question ${question.id} --text "..."`);
+  }
+  if (state.failure) console.log(`Blocked: ${state.failure}`);
+  if (state.pullRequestUrl) console.log(`Pull request: ${state.pullRequestUrl}`);
+}
+
+async function exists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureIgnored(filePath: string, entry: string): Promise<void> {
+  const current = (await exists(filePath)) ? await readFile(filePath, "utf8") : "";
+  if (current.split(/\r?\n/).includes(entry)) return;
+  const separator = current.length > 0 && !current.endsWith("\n") ? "\n" : "";
+  await writeFile(filePath, `${current}${separator}${entry}\n`, "utf8");
+}
+
+const GRAPHIFY_SETUP_FILENAMES = ["setup-graphify.ps1", "setup-graphify.sh"] as const;
+
+/**
+ * Setup scripts deliberately live in the deployed project, not hidden harness
+ * state. Teams can review and customize them; reset is explicit and never
+ * overwrites a local edit during ordinary deployment.
+ */
+async function writeGraphifySetupScripts(project: string, reset: boolean): Promise<string> {
+  const destination = path.join(project, "agent-harness", "scripts");
+  const templateDirectory = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../templates/graphify",
+  );
+  await mkdir(destination, { recursive: true });
+  for (const filename of GRAPHIFY_SETUP_FILENAMES) {
+    const target = path.join(destination, filename);
+    if (!reset && (await exists(target))) continue;
+    const template = await readFile(path.join(templateDirectory, filename), "utf8");
+    await writeFile(target, template, "utf8");
+  }
+  return destination;
+}
+
+async function runGraphifySetupScript(project: string, installPrerequisite: boolean): Promise<void> {
+  const scripts = await writeGraphifySetupScripts(project, false);
+  const isWindows = process.platform === "win32";
+  const executable = isWindows ? "powershell.exe" : "bash";
+  const scriptPath = path.join(scripts, isWindows ? "setup-graphify.ps1" : "setup-graphify.sh");
+  const args = isWindows
+    ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-ProjectRoot", project]
+    : [scriptPath, "--project-root", project];
+  if (installPrerequisite) {
+    args.push(isWindows ? "-InstallUv" : "--install-uv");
+  }
+  console.log(`Running ${scriptPath}`);
+  await new Promise<void>((resolve, reject) => {
+    execFile(executable, args, { cwd: project, windowsHide: true }, (error, stdout, stderr) => {
+      if (stdout) process.stdout.write(stdout);
+      if (stderr) process.stderr.write(stderr);
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+function positiveInteger(value: string, name: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer`);
+  return parsed;
+}
+
+function splitProjectIds(value: string | undefined): string[] {
+  if (!value) return [];
+  return value.split(",").map((id) => id.trim()).filter(Boolean);
+}
+
+program.parseAsync(process.argv).catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});

@@ -1,7 +1,7 @@
 {
   "name": "@hexanetwork/agent-harness",
-  "version": "0.1.0",
-  "description": "Contract-deterministic agent orchestration CLI for AFK implementation runs",
+  "version": "0.3.2",
+  "description": "Durable idea-to-feature orchestration with a centralized local dashboard",
   "type": "module",
   "bin": {
     "agent-harness": "./dist/cli.js"
@@ -19,7 +19,8 @@
     "templates"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node ./scripts/clean.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest",
     "test:run": "vitest run",

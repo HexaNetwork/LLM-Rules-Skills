@@ -1,0 +1,840 @@
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import yaml from "js-yaml";
+import { z } from "zod";
+import type {
+  HarnessConfig,
+  KnowledgeScope,
+  KnowledgeVisibility,
+} from "./config.js";
+import { LocalEmbeddingIndex } from "./embeddings.js";
+import { GraphifyRepositoryLookup, type RepositoryLookup } from "./graphify.js";
+
+const GuidanceKindSchema = z.enum(["document", "rule", "skill"]);
+export type GuidanceKind = z.infer<typeof GuidanceKindSchema>;
+
+const GuidanceMetadataSchema = z.object({
+  kind: GuidanceKindSchema.default("document"),
+  description: z.string().default(""),
+  globs: z.array(z.string()).default([]),
+  alwaysApply: z.boolean().default(false),
+  roles: z.array(z.string()).default([]),
+});
+type GuidanceMetadata = z.infer<typeof GuidanceMetadataSchema>;
+
+const DocumentSchema = z.object({
+  id: z.string(),
+  source: z.string(),
+  title: z.string(),
+  content: z.string(),
+  hash: z.string(),
+  updatedAt: z.string(),
+  scope: z.enum(["global", "project"]).default("project"),
+  projectId: z.string().optional(),
+  visibility: z.enum(["private", "shared", "restricted"]).default("private"),
+  managedByConfig: z.boolean().default(true),
+  guidance: GuidanceMetadataSchema.default({}),
+});
+type KnowledgeDocument = z.infer<typeof DocumentSchema>;
+
+const TermFrequenciesSchema = z.record(
+  z.union([z.number(), z.string()]).transform((value) =>
+    typeof value === "number" ? value : (Number(value) || 0),
+  ),
+);
+
+const ChunkSchema = z.object({
+  id: z.string(),
+  documentId: z.string(),
+  source: z.string(),
+  title: z.string(),
+  text: z.string(),
+  terms: TermFrequenciesSchema,
+  scope: z.enum(["global", "project"]).default("project"),
+  projectId: z.string().optional(),
+  visibility: z.enum(["private", "shared", "restricted"]).default("private"),
+  kind: GuidanceKindSchema.default("document"),
+});
+type KnowledgeChunk = z.infer<typeof ChunkSchema>;
+
+export type KnowledgeClassification = {
+  scope?: KnowledgeScope;
+  projectId?: string;
+  visibility?: KnowledgeVisibility;
+};
+
+export type KnowledgeSearchOptions = {
+  repository?: boolean;
+  projectId?: string;
+  includeProjects?: string[];
+  maxCharacters?: number;
+  excludeGuidance?: boolean;
+  /** When set, only this run's `.agent-harness/runs/<id>/*` artifacts are visible. */
+  runId?: string;
+};
+
+export type SearchResult = {
+  source: string;
+  title: string;
+  excerpt: string;
+  score: number;
+  scope: KnowledgeScope;
+  projectId?: string;
+  visibility: KnowledgeVisibility;
+  kind?: GuidanceKind;
+};
+
+export type KnowledgeRefreshProgress = {
+  stage: "discovering" | "indexing" | "embedding" | "complete";
+  completed: number;
+  total: number;
+  message: string;
+};
+
+type IndexedSearchResult = SearchResult & { id: string };
+
+export type GuidanceSelection = {
+  source: string;
+  title: string;
+  kind: "rule" | "skill";
+  excerpt: string;
+  reason: string;
+  score: number;
+};
+
+export type GuidanceSelectionOptions = {
+  role: string;
+  knownPaths?: string[];
+  projectId?: string;
+  includeProjects?: string[];
+  maxResults?: number;
+  maxCharacters?: number;
+};
+
+export type GuidanceOmission = {
+  source: string;
+  title: string;
+  reason: string;
+};
+
+export type GuidanceSelectionAudit = {
+  selected: GuidanceSelection[];
+  omittedAlwaysApply: GuidanceOmission[];
+};
+
+const TEXT_EXTENSIONS = new Set([
+  ".md",
+  ".mdx",
+  ".mdc",
+  ".txt",
+  ".json",
+  ".yaml",
+  ".yml",
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".java",
+  ".kt",
+  ".kts",
+]);
+
+export class LocalKnowledgeBase {
+  private readonly directory: string;
+  private readonly documentsPath: string;
+  private readonly chunksPath: string;
+  private readonly embeddings: LocalEmbeddingIndex;
+
+  constructor(
+    private readonly config: HarnessConfig,
+    private readonly repositoryLookup: RepositoryLookup = new GraphifyRepositoryLookup(config),
+  ) {
+    this.directory = config.knowledge.sharedIndexDirectory
+      ? path.resolve(config.repositoryRoot, config.knowledge.sharedIndexDirectory)
+      : path.resolve(config.repositoryRoot, config.stateDirectory, "knowledge");
+    this.documentsPath = path.join(this.directory, "documents.json");
+    this.chunksPath = path.join(this.directory, "chunks.json");
+    this.embeddings = new LocalEmbeddingIndex(this.directory, config.knowledge.embeddings);
+  }
+
+  async refresh(onProgress?: (progress: KnowledgeRefreshProgress) => void): Promise<number> {
+    onProgress?.({ stage: "discovering", completed: 0, total: 0, message: "Discovering configured documents" });
+    const files: Array<{
+      filePath: string;
+      classification: { scope: KnowledgeScope; projectId?: string; visibility: KnowledgeVisibility };
+    }> = [];
+    for (const source of this.config.knowledge.sources) {
+      const resolved = path.resolve(this.config.repositoryRoot, source.path);
+      assertInside(this.config.repositoryRoot, resolved);
+      const discovered: string[] = [];
+      await collectFiles(resolved, discovered);
+      const classification = resolveClassification(this.config, source);
+      files.push(...discovered.map((filePath) => ({ filePath, classification })));
+    }
+    const sortedFiles = files.sort((a, b) =>
+      `${a.classification.scope}:${a.classification.projectId}:${a.filePath}`.localeCompare(
+        `${b.classification.scope}:${b.classification.projectId}:${b.filePath}`,
+      ),
+    );
+    let changed = 0;
+    onProgress?.({
+      stage: "indexing",
+      completed: 0,
+      total: sortedFiles.length,
+      message: `Indexing 0 of ${sortedFiles.length} configured documents`,
+    });
+    for (const [index, { filePath, classification }] of sortedFiles.entries()) {
+      if (await this.upsertFile(filePath, classification, false, true)) changed += 1;
+      onProgress?.({
+        stage: "indexing",
+        completed: index + 1,
+        total: sortedFiles.length,
+        message: `Indexing ${index + 1} of ${sortedFiles.length} configured documents`,
+      });
+    }
+    // Rebuild chunk terms even when source text is unchanged. This also repairs
+    // indexes created before term maps used null-prototype objects.
+    const configuredDocumentIds = new Set(sortedFiles.map(({ filePath, classification }) => hash(
+      `${classification.scope}:${classification.projectId}:${normalizePath(path.relative(this.config.repositoryRoot, filePath))}`,
+    )));
+    const documents = await this.loadDocuments();
+    // A shared index can be maintained by more than one project config, so it
+    // must never delete another project's configured sources. A private local
+    // index, on the other hand, drops stale automatically-managed entries when
+    // the source list changes (for example, when source code is removed from
+    // document retrieval in favour of Graphify).
+    const retained = this.config.knowledge.sharedIndexDirectory
+      ? documents
+      : documents.filter((document) => !document.managedByConfig || configuredDocumentIds.has(document.id));
+    await this.persist(retained);
+    await this.syncEmbeddings(onProgress);
+    await this.repositoryLookup.refresh();
+    onProgress?.({ stage: "complete", completed: sortedFiles.length, total: sortedFiles.length, message: "Knowledge index is ready" });
+    return changed;
+  }
+
+  /** Rebuild structural repository context after a verified source commit. */
+  async rebuildRepositoryGraph(): Promise<boolean> {
+    return this.repositoryLookup.rebuild();
+  }
+
+  async upsertFile(
+    filePath: string,
+    classification: KnowledgeClassification = {},
+    syncEmbeddings = true,
+    managedByConfig = false,
+  ): Promise<boolean> {
+    const info = await stat(filePath);
+    if (!info.isFile() || info.size > 2_000_000) return false;
+    if (!TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return false;
+    const content = await readFile(filePath, "utf8");
+    const source = normalizePath(path.relative(this.config.repositoryRoot, filePath));
+    return this.upsertText(
+      source,
+      path.basename(filePath),
+      content,
+      classification,
+      syncEmbeddings,
+      managedByConfig,
+    );
+  }
+
+  async upsertText(
+    source: string,
+    title: string,
+    content: string,
+    classification: KnowledgeClassification = {},
+    syncEmbeddings = true,
+    managedByConfig = false,
+  ): Promise<boolean> {
+    const documents = await this.loadDocuments();
+    const resolvedClassification = resolveClassification(this.config, classification);
+    const id = hash(
+      `${resolvedClassification.scope}:${resolvedClassification.projectId}:${normalizePath(source)}`,
+    );
+    const contentHash = hash(content);
+    const existing = documents.find((document) => document.id === id);
+    if (existing?.hash === contentHash) {
+      // Allow `knowledge add` to repair a missing/stale vector index after
+      // embeddings were enabled, even though the source document is unchanged.
+      if (syncEmbeddings) await this.syncEmbeddings();
+      return false;
+    }
+    const next: KnowledgeDocument = {
+      id,
+      source: normalizePath(source),
+      title,
+      content,
+      hash: contentHash,
+      updatedAt: new Date().toISOString(),
+      ...resolvedClassification,
+      managedByConfig,
+      guidance: guidanceMetadata(source, content),
+    };
+    const updated = [...documents.filter((document) => document.id !== id), next].sort((a, b) =>
+      `${a.scope}:${a.projectId ?? ""}:${a.source}`.localeCompare(
+        `${b.scope}:${b.projectId ?? ""}:${b.source}`,
+      ),
+    );
+    await this.persist(updated);
+    if (syncEmbeddings) await this.syncEmbeddings();
+    return true;
+  }
+
+  async search(
+    query: string,
+    limit = 6,
+    options: KnowledgeSearchOptions = {},
+  ): Promise<SearchResult[]> {
+    const terms = tokenize(query);
+    if (terms.length === 0 || limit <= 0) return [];
+    const activeProjectId = options.projectId ?? this.config.knowledge.projectId;
+    const [chunks, repositoryResult] = await Promise.all([
+      this.loadChunks(),
+      options.repository === false
+        ? Promise.resolve(undefined)
+        : this.repositoryLookup.search(query),
+    ]);
+    const stateDirectory = normalizePath(this.config.stateDirectory);
+    const allowedChunks = chunks.filter(
+      (chunk) =>
+        isVisibleToProject(chunk, activeProjectId, options.includeProjects ?? []) &&
+        isVisibleForRun(chunk.source, options.runId, stateDirectory) &&
+        (!options.excludeGuidance || chunk.kind === "document"),
+    );
+    if (allowedChunks.length === 0) {
+      return repositoryResult
+        ? [toCurrentProjectResult(repositoryResult, activeProjectId)]
+        : [];
+    }
+    const documentFrequency = new Map<string, number>();
+    for (const chunk of allowedChunks) {
+      for (const term of new Set(Object.keys(chunk.terms))) {
+        documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
+      }
+    }
+    const lexical: IndexedSearchResult[] = allowedChunks
+      .map((chunk) => {
+        let score = 0;
+        for (const term of terms) {
+          const frequency = chunk.terms[term] ?? 0;
+          if (frequency === 0) continue;
+          const inverseDocumentFrequency = Math.log(
+            1 + chunks.length / (1 + (documentFrequency.get(term) ?? 0)),
+          );
+          score += (1 + Math.log(frequency)) * inverseDocumentFrequency;
+        }
+        // Prefer the active project's conventions when lexical evidence is otherwise equal.
+        if (score > 0 && chunk.scope === "project" && chunk.projectId === activeProjectId) score += 0.001;
+        return {
+          source: chunk.source,
+          title: chunk.title,
+          excerpt: chunk.text,
+          score: Number(score.toFixed(6)),
+          id: chunk.id,
+          scope: chunk.scope,
+          projectId: chunk.projectId,
+          visibility: chunk.visibility,
+          kind: chunk.kind,
+        };
+      })
+      .filter((result) => result.score > 0)
+      .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+    const semanticScores = await this.embeddings.search(
+      query,
+      new Set(allowedChunks.filter((chunk) => chunk.kind === "document").map((chunk) => chunk.id)),
+    );
+    const semanticCandidates: IndexedSearchResult[] = allowedChunks
+      .filter((chunk) => chunk.kind === "document" && semanticScores.has(chunk.id))
+      .map((chunk) => ({
+        source: chunk.source,
+        title: chunk.title,
+        excerpt: chunk.text,
+        score: semanticScores.get(chunk.id) ?? 0,
+        id: chunk.id,
+        scope: chunk.scope,
+        projectId: chunk.projectId,
+        visibility: chunk.visibility,
+        kind: chunk.kind,
+      }))
+      .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+    const ranked = rankHybridResults(lexical, semanticCandidates, this.config);
+    const results = repositoryResult
+      ? [toCurrentProjectResult(repositoryResult, activeProjectId), ...ranked.slice(0, Math.max(0, limit - 1))]
+      : ranked.slice(0, limit);
+    return capResultCharacters(results, options.maxCharacters);
+  }
+
+  async selectGuidance(
+    query: string,
+    options: GuidanceSelectionOptions,
+  ): Promise<GuidanceSelection[]> {
+    return (await this.selectGuidanceWithAudit(query, options)).selected;
+  }
+
+  async selectGuidanceWithAudit(
+    query: string,
+    options: GuidanceSelectionOptions,
+  ): Promise<GuidanceSelectionAudit> {
+    const terms = tokenize(`${options.role} ${query}`);
+    const maxResults = options.maxResults ?? this.config.knowledge.guidance.maxResults;
+    const maxCharacters = options.maxCharacters ?? this.config.knowledge.guidance.maxCharacters;
+    if (terms.length === 0 || maxResults <= 0 || maxCharacters <= 0) {
+      return { selected: [], omittedAlwaysApply: [] };
+    }
+    const activeProjectId = options.projectId ?? this.config.knowledge.projectId;
+    const knownPaths = uniquePaths(options.knownPaths ?? []);
+    const documents = (await this.loadDocuments()).filter(
+      (document) =>
+        document.guidance.kind !== "document" &&
+        isVisibleToProject(document, activeProjectId, options.includeProjects ?? []),
+    );
+
+    const candidates = documents
+      .flatMap((document) => {
+        const guidance = document.guidance;
+        if (guidance.roles.length > 0 && !guidance.roles.includes(options.role)) return [];
+        const matchingGlobs = guidance.globs.filter((glob) =>
+          knownPaths.some((filePath) => matchesGlob(glob, filePath)),
+        );
+        // A file-scoped rule is not applicable when the worker has a known
+        // target set that does not match it. With no paths yet, lexical/RAG
+        // relevance may still surface it for planning and research workers.
+        if (guidance.kind === "rule" && knownPaths.length > 0 && guidance.globs.length > 0 && matchingGlobs.length === 0) {
+          return [];
+        }
+        const lexicalScore = scoreText(
+          `${document.title}\n${guidance.description}\n${document.content}`,
+          terms,
+        );
+        const roleMatch = guidance.roles.includes(options.role);
+        const globMatch = matchingGlobs.length > 0;
+        // `alwaysApply` preserves its authors' intent as a strong ranking
+        // signal, but never turns unrelated rules into universal prompt bloat.
+        if (!roleMatch && !globMatch && lexicalScore === 0) return [];
+        const score = lexicalScore + (roleMatch ? 100 : 0) + (globMatch ? 80 : 0) +
+          (guidance.alwaysApply ? 20 : 0);
+        const reason = [
+          ...(roleMatch ? ["role match"] : []),
+          ...(globMatch ? [`path matches ${matchingGlobs.join(", ")}`] : []),
+          ...(guidance.alwaysApply ? ["alwaysApply priority"] : []),
+          ...(lexicalScore > 0 ? ["lexical relevance"] : []),
+        ].join("; ");
+        return [{ document, score: Number(score.toFixed(6)), reason }];
+      })
+      .sort((a, b) => b.score - a.score || a.document.id.localeCompare(b.document.id));
+
+    let remaining = maxCharacters;
+    const selected: GuidanceSelection[] = [];
+    for (const candidate of candidates) {
+      if (selected.length >= maxResults || remaining <= 0) break;
+      const excerpt = bestGuidanceExcerpt(candidate.document.content, terms, this.config.knowledge.chunkCharacters)
+        .slice(0, remaining);
+      if (!excerpt) continue;
+      selected.push({
+        source: candidate.document.source,
+        title: candidate.document.title,
+        kind: candidate.document.guidance.kind as "rule" | "skill",
+        excerpt,
+        reason: candidate.reason,
+        score: candidate.score,
+      });
+      remaining -= excerpt.length;
+    }
+    const selectedSources = new Set(selected.map((item) => item.source));
+    const candidateSources = new Set(candidates.map((item) => item.document.source));
+    const omittedAlwaysApply = documents
+      .filter((document) => document.guidance.alwaysApply && !selectedSources.has(document.source))
+      .map((document) => ({
+        source: document.source,
+        title: document.title,
+        reason: candidateSources.has(document.source)
+          ? "lower-ranked or omitted by the guidance budget"
+          : omissionReason(document, options.role, knownPaths, terms),
+      }));
+    return { selected, omittedAlwaysApply };
+  }
+
+  private async loadDocuments(): Promise<KnowledgeDocument[]> {
+    try {
+      const raw: unknown = JSON.parse(await readFile(this.documentsPath, "utf8"));
+      return z.array(DocumentSchema)
+        .parse(raw)
+        .map((document) => ({
+          ...document,
+          projectId:
+            document.scope === "project"
+              ? (document.projectId ?? this.config.knowledge.projectId)
+              : undefined,
+        }));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  private async loadChunks(): Promise<KnowledgeChunk[]> {
+    try {
+      const raw: unknown = JSON.parse(await readFile(this.chunksPath, "utf8"));
+      return z.array(ChunkSchema)
+        .parse(raw)
+        .map((chunk) => ({
+          ...chunk,
+          projectId:
+            chunk.scope === "project" ? (chunk.projectId ?? this.config.knowledge.projectId) : undefined,
+        }));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  private async persist(documents: KnowledgeDocument[]): Promise<void> {
+    await mkdir(this.directory, { recursive: true });
+    const normalizedDocuments = documents.map((document) => ({
+      ...document,
+      guidance: guidanceMetadata(document.source, document.content),
+    }));
+    const chunks = normalizedDocuments.flatMap((document) =>
+      chunkText(document.content, this.config.knowledge.chunkCharacters).map((text, index) => ({
+        id: `${document.id}:${String(index).padStart(5, "0")}`,
+        documentId: document.id,
+        source: document.source,
+        title: document.title,
+        text,
+        terms: frequencies(tokenize(text)),
+        scope: document.scope,
+        projectId: document.projectId,
+        visibility: document.visibility,
+        kind: document.guidance.kind,
+      })),
+    );
+    await Promise.all([
+      writeFile(this.documentsPath, `${JSON.stringify(normalizedDocuments, null, 2)}\n`, "utf8"),
+      writeFile(this.chunksPath, `${JSON.stringify(chunks, null, 2)}\n`, "utf8"),
+    ]);
+  }
+
+  private async syncEmbeddings(onProgress?: (progress: KnowledgeRefreshProgress) => void): Promise<void> {
+    if (!this.config.knowledge.embeddings.enabled) return;
+    try {
+      const chunks = await this.loadChunks();
+      await this.embeddings.sync(
+        chunks
+          .filter((chunk) => chunk.kind === "document")
+          .map((chunk) => ({ id: chunk.id, text: chunk.text, textHash: hash(chunk.text) })),
+        (progress) => onProgress?.({
+          stage: "embedding",
+          completed: progress.completed,
+          total: progress.total,
+          message: progress.total === 0
+            ? "Embedding index is already current"
+            : `Embedding ${progress.completed} of ${progress.total} changed chunks`,
+        }),
+      );
+    } catch (error) {
+      // The durable lexical index has already been written. Retain it when an
+      // optional embedding service is unreachable or misconfigured.
+      console.warn(`Embedding index unavailable; continuing with lexical retrieval: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+function resolveClassification(
+  config: HarnessConfig,
+  classification: KnowledgeClassification,
+): { scope: KnowledgeScope; projectId?: string; visibility: KnowledgeVisibility } {
+  const scope = classification.scope ?? "project";
+  return {
+    scope,
+    projectId: scope === "project" ? (classification.projectId ?? config.knowledge.projectId) : undefined,
+    visibility: classification.visibility ?? "private",
+  };
+}
+
+function isVisibleToProject(
+  chunk: Pick<KnowledgeChunk, "scope" | "projectId" | "visibility">,
+  activeProjectId: string,
+  includedProjects: string[],
+): boolean {
+  if (chunk.scope === "global") return true;
+  if (chunk.projectId === activeProjectId) return true;
+  return chunk.visibility === "shared" && includedProjects.includes(chunk.projectId ?? "");
+}
+
+/**
+ * Defense in depth: run artifacts under `<stateDirectory>/runs/<id>/` are visible
+ * only when `runId` matches that id (leftover indexed chunks from older runs).
+ * New runs no longer upsert those paths into knowledge. Repo and docs stay global.
+ */
+export function isVisibleForRun(
+  source: string,
+  runId: string | undefined,
+  stateDirectory: string,
+): boolean {
+  const normalizedSource = normalizePath(source);
+  const prefix = `${normalizePath(stateDirectory).replace(/^\.\//, "")}/runs/`;
+  const relative = normalizedSource.startsWith("./")
+    ? normalizedSource.slice(2)
+    : normalizedSource;
+  if (!relative.startsWith(prefix)) return true;
+  const remainder = relative.slice(prefix.length);
+  const artifactRunId = remainder.split("/")[0];
+  if (!artifactRunId) return true;
+  return runId != null && artifactRunId === runId;
+}
+
+function rankHybridResults(
+  lexical: IndexedSearchResult[],
+  semantic: IndexedSearchResult[],
+  config: HarnessConfig,
+): SearchResult[] {
+  // Preserve legacy lexical scores and ordering exactly when semantic retrieval
+  // is unavailable, stale, or does not meet its configured similarity floor.
+  if (semantic.length === 0) {
+    return lexical.map(({ id: _id, ...result }) => result);
+  }
+  const byId = new Map<string, IndexedSearchResult>();
+  for (const result of [...lexical, ...semantic]) {
+    byId.set(result.id, byId.get(result.id) ?? result);
+  }
+  const lexicalRanks = new Map(lexical.map((result, index) => [result.id, index + 1]));
+  const semanticRanks = new Map(semantic.map((result, index) => [result.id, index + 1]));
+  const { lexicalWeight, semanticWeight } = config.knowledge.embeddings;
+  return [...byId.values()]
+    .map((result) => {
+      const score =
+        (lexicalRanks.has(result.id) ? lexicalWeight / (60 + (lexicalRanks.get(result.id) ?? 0)) : 0) +
+        (semanticRanks.has(result.id) ? semanticWeight / (60 + (semanticRanks.get(result.id) ?? 0)) : 0);
+      return { ...result, score: Number(score.toFixed(6)) };
+    })
+    .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
+    .map(({ id: _id, ...result }) => result);
+}
+
+function toCurrentProjectResult(
+  result: Omit<SearchResult, "scope" | "projectId" | "visibility" | "kind">,
+  projectId: string,
+): SearchResult {
+  return { ...result, scope: "project", projectId, visibility: "private", kind: "document" };
+}
+
+function capResultCharacters(results: SearchResult[], maxCharacters?: number): SearchResult[] {
+  if (maxCharacters == null) return results;
+  if (!Number.isInteger(maxCharacters) || maxCharacters <= 0) return [];
+  let remaining = maxCharacters;
+  const capped: SearchResult[] = [];
+  for (const result of results) {
+    if (remaining <= 0) break;
+    const excerpt = result.excerpt.slice(0, remaining);
+    if (!excerpt) continue;
+    capped.push({ ...result, excerpt });
+    remaining -= excerpt.length;
+  }
+  return capped;
+}
+
+function tokenize(value: string): string[] {
+  return value.toLocaleLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu) ?? [];
+}
+
+function scoreText(value: string, terms: string[]): number {
+  const termSet = new Set(terms);
+  let score = 0;
+  for (const term of tokenize(value)) {
+    if (termSet.has(term)) score += 1;
+  }
+  return score;
+}
+
+function bestGuidanceExcerpt(content: string, terms: string[], chunkSize: number): string {
+  const chunks = chunkText(content, chunkSize);
+  if (chunks.length === 0) return "";
+  return chunks
+    .map((text, index) => ({ text, index, score: scoreText(text, terms) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)[0]!.text;
+}
+
+function guidanceMetadata(source: string, content: string): GuidanceMetadata {
+  const normalized = source.toLowerCase();
+  const kind: GuidanceKind = normalized.endsWith(".mdc")
+    ? "rule"
+    : normalized.endsWith("/skill.md") || normalized === "skill.md"
+      ? "skill"
+      : "document";
+  if (kind === "document") return GuidanceMetadataSchema.parse({ kind });
+  const frontMatter = parseFrontMatter(content);
+  const globs = frontMatter.globs;
+  return GuidanceMetadataSchema.parse({
+    kind,
+    description: typeof frontMatter.description === "string" ? frontMatter.description : "",
+    globs: typeof globs === "string" ? splitGlobList(globs) : Array.isArray(globs)
+      ? globs.filter((value): value is string => typeof value === "string")
+      : [],
+    alwaysApply: frontMatter.alwaysApply === true,
+    roles: Array.isArray(frontMatter.roles)
+      ? frontMatter.roles.filter((value): value is string => typeof value === "string")
+      : typeof frontMatter.roles === "string" ? [frontMatter.roles] : [],
+  });
+}
+
+function omissionReason(
+  document: KnowledgeDocument,
+  role: string,
+  knownPaths: string[],
+  terms: string[],
+): string {
+  const guidance = document.guidance;
+  if (guidance.roles.length > 0 && !guidance.roles.includes(role)) {
+    return `worker role ${role} is outside declared roles`;
+  }
+  if (
+    guidance.kind === "rule" &&
+    knownPaths.length > 0 &&
+    guidance.globs.length > 0 &&
+    !guidance.globs.some((glob) => knownPaths.some((filePath) => matchesGlob(glob, filePath)))
+  ) {
+    return "known target paths do not match the rule globs";
+  }
+  if (scoreText(`${document.title}\n${guidance.description}\n${document.content}`, terms) === 0) {
+    return "no role, path, or lexical relevance signal";
+  }
+  return "not selected";
+}
+
+function parseFrontMatter(content: string): Record<string, unknown> {
+  const match = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) return {};
+  try {
+    const parsed: unknown = yaml.load(match[1]!);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    // A malformed optional header must not prevent ordinary knowledge indexing.
+    return {};
+  }
+}
+
+function splitGlobList(value: string): string[] {
+  const result: string[] = [];
+  let start = 0;
+  let braceDepth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === "{") braceDepth += 1;
+    if (value[index] === "}") braceDepth = Math.max(0, braceDepth - 1);
+    if (value[index] === "," && braceDepth === 0) {
+      result.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  result.push(value.slice(start).trim());
+  return result.filter(Boolean);
+}
+
+function matchesGlob(glob: string, filePath: string): boolean {
+  const pattern = glob.trim().replace(/^['"]|['"]$/g, "");
+  if (!pattern) return false;
+  const source = globToRegex(pattern);
+  return new RegExp(`^${source}$`, "i").test(filePath.replaceAll("\\", "/"));
+}
+
+function globToRegex(pattern: string): string {
+  let result = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index]!;
+    if (char === "*" && pattern[index + 1] === "*") {
+      if (pattern[index + 2] === "/") {
+        result += "(?:.*/)?";
+        index += 2;
+      } else {
+        result += ".*";
+        index += 1;
+      }
+    } else if (char === "*") {
+      result += "[^/]*";
+    } else if (char === "?") {
+      result += "[^/]";
+    } else if (char === "{") {
+      const end = pattern.indexOf("}", index + 1);
+      if (end >= 0) {
+        result += `(?:${pattern.slice(index + 1, end).split(",").map(escapeRegex).join("|")})`;
+        index = end;
+      } else {
+        result += "\\{";
+      }
+    } else {
+      result += escapeRegex(char);
+    }
+  }
+  return result;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return [...new Set(paths.map((item) => item.replaceAll("\\", "/").replace(/^\.\//, "").trim()).filter(Boolean))];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function frequencies(terms: string[]): Record<string, number> {
+  const result: Record<string, number> = Object.create(null) as Record<string, number>;
+  for (const term of terms) result[term] = (result[term] ?? 0) + 1;
+  return result;
+}
+
+function chunkText(content: string, size: number): string[] {
+  const normalized = content.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return [];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < normalized.length) {
+    let end = Math.min(normalized.length, start + size);
+    if (end < normalized.length) {
+      const boundary = normalized.lastIndexOf("\n", end);
+      if (boundary > start + Math.floor(size / 2)) end = boundary;
+    }
+    chunks.push(normalized.slice(start, end).trim());
+    if (end >= normalized.length) break;
+    start = Math.max(end - Math.min(200, Math.floor(size / 10)), start + 1);
+  }
+  return chunks;
+}
+
+async function collectFiles(target: string, output: string[]): Promise<void> {
+  let info;
+  try {
+    info = await stat(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (info.isFile()) {
+    output.push(target);
+    return;
+  }
+  if (!info.isDirectory()) return;
+  for (const entry of await readdir(target, { withFileTypes: true })) {
+    if (entry.name === ".git" || entry.name === "node_modules" || entry.name === "dist") continue;
+    await collectFiles(path.join(target, entry.name), output);
+  }
+}
+
+function hash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function normalizePath(value: string): string {
+  return value.split(path.sep).join("/");
+}
+
+function assertInside(root: string, target: string): void {
+  const relative = path.relative(path.resolve(root), target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Knowledge source escapes repository: ${target}`);
+  }
+}

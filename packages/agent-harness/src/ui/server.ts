@@ -1,393 +1,691 @@
-import http from "node:http";
-import { randomBytes, randomUUID } from "node:crypto";
+import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
-import { readdir } from "node:fs/promises";
-import type { ProjectConfig } from "../schemas/config.js";
-import type { AgentPort, GitHubPort } from "../agents/ports.js";
-import type { RunEvent, RunState } from "../schemas/reports.js";
-import { runLifecycle, type RunLifecycleInput } from "../engine/lifecycle.js";
-import { loadRunState } from "../engine/state-machine.js";
-import { ensureDir, pathExists, readJson, writeJson } from "../util/fs.js";
-import { harnessLog } from "../util/log.js";
-import { DASHBOARD_HTML } from "./dashboard.js";
+import { randomBytes, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import {
+  HarnessConfigSchema,
+  loadRunConfig,
+  writeProjectSettings,
+  type HarnessConfig,
+} from "../config.js";
+import type { AgentBackend } from "../agent.js";
+import { HarnessEngine } from "../engine.js";
+import { LocalKnowledgeBase } from "../knowledge.js";
+import { prepareGraphifyForRun } from "../graphify.js";
+import { RunStore } from "../store.js";
+import type { RunState, WorkPacket } from "../domain.js";
+import { renderPrompt, renderPromptBuilderPrompt } from "../prompts.js";
+import { renderDashboard } from "./app.js";
+
+export type UiJob = {
+  runId: string;
+  action: string;
+  status: "queued" | "running";
+  detail?: string;
+  queuedAt: string;
+  startedAt?: string;
+};
 
 export type UiServerOptions = {
-  config: ProjectConfig;
-  agent: AgentPort;
-  github?: GitHubPort;
-  host?: string;
+  config: HarnessConfig;
+  backend: AgentBackend;
+  configPath?: string;
   port?: number;
-  openBrowser?: boolean;
   token?: string;
-  /** Prefer binding the dashboard to this run on first paint. */
-  initialRunId?: string;
-  /** Disk poll interval for cross-process runs (CLI execute ↔ UI). */
-  pollIntervalMs?: number;
+  openBrowser?: boolean;
 };
 
-type SseClient = {
-  res: http.ServerResponse;
-  runId?: string;
-};
-
-function authOk(req: http.IncomingMessage, token: string): boolean {
-  const url = new URL(req.url ?? "/", "http://127.0.0.1");
-  const q = url.searchParams.get("token");
-  const header = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  return q === token || header === token;
-}
-
-function sendJson(
-  res: http.ServerResponse,
-  status: number,
-  body: unknown,
-): void {
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Cache-Control": "no-store",
-  });
-  res.end(JSON.stringify(body));
-}
-
-async function readBody(req: http.IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-function buildDashboardUrl(
-  host: string,
-  port: number,
-  token: string,
-  runId?: string,
-): string {
-  const url = new URL(`http://${host}:${port}/`);
-  url.searchParams.set("token", token);
-  if (runId) url.searchParams.set("runId", runId);
-  return url.toString();
-}
-
-async function listRunSummaries(
-  runRoot: string,
-): Promise<Array<{ runId: string; status: string; updatedAt: string }>> {
-  if (!(await pathExists(runRoot))) return [];
-  const entries = await readdir(runRoot, { withFileTypes: true });
-  const runs: Array<{ runId: string; status: string; updatedAt: string }> = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const statePath = path.join(runRoot, entry.name, "state.json");
-    if (!(await pathExists(statePath))) continue;
-    try {
-      const state = await loadRunState(path.join(runRoot, entry.name));
-      runs.push({
-        runId: state.runId,
-        status: state.status,
-        updatedAt: state.updatedAt,
-      });
-    } catch {
-      // skip corrupt / partial dirs
-    }
-  }
-  runs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  return runs;
-}
-
-async function readOptionalJson(
-  directory: string,
-  file: string,
-): Promise<unknown> {
-  const target = path.join(directory, file);
-  return (await pathExists(target)) ? readJson(target) : undefined;
-}
-
-export async function startUiServer(
-  options: UiServerOptions,
-): Promise<{
+export type UiServer = {
+  origin: string;
   url: string;
   token: string;
-  onEvent: (event: RunEvent, state: RunState) => void;
-  urlForRun: (runId: string) => string;
-  close: () => Promise<void>;
-}> {
-  const host = options.host ?? options.config.ui.host ?? "127.0.0.1";
-  if (host !== "127.0.0.1" && host !== "localhost") {
-    throw new Error("UI server is loopback-only (127.0.0.1 / localhost)");
-  }
-  const port = options.port ?? options.config.ui.port ?? 8787;
+  port: number;
+  close(): Promise<void>;
+};
+
+const PROJECT_SETTING_DEFINITIONS = [
+  {
+    key: "workflow.maxWayfindingTurnsPerEpisode",
+    category: "Context & cost",
+    label: "Wayfinding turns per episode",
+    description:
+      "Reuse one provider session for this many model turns before starting a fresh context.",
+    type: "integer",
+    minimum: 1,
+    maximum: 50,
+  },
+] as const;
+
+export async function startUiServer(options: UiServerOptions): Promise<UiServer> {
+  const host = "127.0.0.1";
   const token = options.token ?? randomBytes(24).toString("hex");
-  const runRoot = path.resolve(
-    options.config.repositoryRoot,
-    options.config.runDirectory,
-  );
-  await ensureDir(runRoot);
+  let projectConfig = options.config;
+  const store = new RunStore(projectConfig);
+  const knowledge = new LocalKnowledgeBase(projectConfig);
+  const agentReadiness = options.backend.readiness?.() ?? { ready: true };
+  const jobs = new Map<string, UiJob>();
+  let queue = Promise.resolve();
+  await store.initialize();
 
-  const clients = new Set<SseClient>();
-  const lastSeenUpdatedAt = new Map<string, string>();
-  const lastSeenEventCount = new Map<string, number>();
-  /** Lifecycle invocations currently executing inside this process. */
-  const inFlight = new Map<string, Promise<unknown>>();
-  /** Last background lifecycle failure per run, surfaced on GET detail. */
-  const lastErrors = new Map<string, string>();
-
-  const broadcast = (event: RunEvent, state: RunState) => {
-    lastSeenUpdatedAt.set(state.runId, state.updatedAt);
-    lastSeenEventCount.set(state.runId, state.events.length);
-    const payload = `data: ${JSON.stringify({ ...event, runId: state.runId })}\n\n`;
-    for (const client of clients) {
-      if (client.runId && client.runId !== state.runId) continue;
-      client.res.write(payload);
-    }
-  };
-
-  /**
-   * Start or resume a run without holding the HTTP request open: full runs
-   * take minutes, so API calls acknowledge immediately and clients follow
-   * progress over SSE / polling.
-   */
-  const launchLifecycle = (
+  const enqueue = (
     runId: string,
-    input: Omit<RunLifecycleInput, "config" | "deps">,
-  ): boolean => {
-    if (inFlight.has(runId)) return false;
-    lastErrors.delete(runId);
-    const promise = runLifecycle({
-      ...input,
+    action: string,
+    operation: () => Promise<unknown>,
+  ): void => {
+    if (jobs.has(runId)) throw new HttpError(409, `Run ${runId} already has queued work`);
+    const job: UiJob = {
       runId,
-      config: options.config,
-      deps: {
-        agent: options.agent,
-        github: options.github,
-        onEvent: broadcast,
-      },
-    })
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        lastErrors.set(runId, message);
-        harnessLog("ui.run", `run ${runId} failed: ${message}`);
-      })
-      .finally(() => {
-        inFlight.delete(runId);
-      });
-    inFlight.set(runId, promise);
-    return true;
-  };
-
-  const pollDisk = async () => {
-    if (clients.size === 0) return;
-    const subscribed = new Set(
-      [...clients].map((c) => c.runId).filter((id): id is string => Boolean(id)),
-    );
-    const watchAll = [...clients].some((c) => !c.runId);
-    const ids = watchAll
-      ? (await listRunSummaries(runRoot)).map((r) => r.runId)
-      : [...subscribed];
-    for (const runId of ids) {
-      const directory = path.join(runRoot, runId);
-      if (!(await pathExists(path.join(directory, "state.json")))) continue;
-      let state: RunState;
-      try {
-        state = await loadRunState(directory);
-      } catch {
-        continue;
-      }
-      const prevAt = lastSeenUpdatedAt.get(runId);
-      const prevCount = lastSeenEventCount.get(runId) ?? 0;
-      if (prevAt === state.updatedAt && prevCount === state.events.length) {
-        continue;
-      }
-      const fresh = state.events.slice(prevCount);
-      if (fresh.length === 0) {
-        broadcast(
-          {
-            at: state.updatedAt,
-            type: "run.created",
-            detail: { diskPoll: true, status: state.status },
-          },
-          state,
-        );
-      } else {
-        for (const event of fresh) broadcast(event, state);
-      }
-    }
-  };
-
-  const pollIntervalMs = options.pollIntervalMs ?? 1000;
-  const pollTimer = setInterval(() => {
-    void pollDisk();
-  }, pollIntervalMs);
-
-  const server = http.createServer(async (req, res) => {
-    try {
-      const url = new URL(req.url ?? "/", `http://${host}:${port}`);
-      if (url.pathname === "/" || url.pathname === "/index.html") {
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(DASHBOARD_HTML);
-        return;
-      }
-
-      if (!authOk(req, token)) {
-        sendJson(res, 401, { error: "unauthorized" });
-        return;
-      }
-
-      if (url.pathname === "/api/events" && req.method === "GET") {
-        res.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
+      action,
+      status: "queued",
+      queuedAt: new Date().toISOString(),
+    };
+    jobs.set(runId, job);
+    const scheduled = queue
+      .catch(() => undefined)
+      .then(async () => {
+        jobs.set(runId, {
+          ...job,
+          status: "running",
+          startedAt: new Date().toISOString(),
         });
-        const client: SseClient = {
-          res,
-          runId: url.searchParams.get("runId") ?? undefined,
-        };
-        clients.add(client);
-        res.write(
-          `data: ${JSON.stringify({ at: new Date().toISOString(), type: "run.created", detail: { hello: true } })}\n\n`,
-        );
-        // Catch up immediately from disk for CLI-started runs.
-        void pollDisk();
-        req.on("close", () => clients.delete(client));
-        return;
-      }
-
-      if (url.pathname === "/api/runs" && req.method === "GET") {
-        sendJson(res, 200, { runs: await listRunSummaries(runRoot) });
-        return;
-      }
-
-      if (url.pathname === "/api/runs" && req.method === "POST") {
-        const body = JSON.parse((await readBody(req)) || "{}") as {
-          idea?: string;
-          ideaFile?: string;
-        };
-        if (!body.idea?.trim() && !body.ideaFile) {
-          sendJson(res, 400, { error: "idea or ideaFile is required" });
-          return;
+        try {
+          await operation();
+        } finally {
+          jobs.delete(runId);
         }
-        const runId = randomUUID();
-        launchLifecycle(runId, { idea: body.idea, ideaFile: body.ideaFile });
-        sendJson(res, 202, { runId, status: "accepted" });
-        return;
-      }
-
-      const runMatch = url.pathname.match(
-        /^\/api\/runs\/([^/]+)(?:\/(decide|cancel|resume))?$/,
-      );
-      if (runMatch) {
-        const runId = decodeURIComponent(runMatch[1]!);
-        const action = runMatch[2];
-        const directory = path.join(runRoot, runId);
-
-        if (!action && req.method === "GET") {
-          if (!(await pathExists(path.join(directory, "state.json")))) {
-            sendJson(res, 404, { error: "run not found" });
-            return;
-          }
-          const state = await loadRunState(directory);
-          sendJson(res, 200, {
-            state,
-            intake: await readOptionalJson(directory, "intake.json"),
-            draft: await readOptionalJson(directory, "draft.json"),
-            policy: await readOptionalJson(directory, "policy-decision.json"),
-            manifest: await readOptionalJson(directory, "manifest.json"),
-            report: await readOptionalJson(directory, "report.json"),
-            busy: inFlight.has(runId),
-            error: lastErrors.get(runId),
-          });
-          return;
-        }
-
-        if (action === "cancel" && req.method === "POST") {
-          const result = await runLifecycle({
-            runId,
-            resume: true,
-            cancel: true,
-            config: options.config,
-            deps: {
-              agent: options.agent,
-              github: options.github,
-              onEvent: broadcast,
-            },
-          });
-          sendJson(res, 200, { runId, status: result.state.status });
-          return;
-        }
-
-        if (
-          (action === "decide" || action === "resume") &&
-          req.method === "POST"
-        ) {
-          if (!(await pathExists(path.join(directory, "state.json")))) {
-            sendJson(res, 404, { error: "run not found" });
-            return;
-          }
-          const body = JSON.parse((await readBody(req)) || "{}") as {
-            answers?: Array<{ questionId: string; answer: string }>;
-            approve?: boolean;
-          };
-          const started = launchLifecycle(runId, {
-            resume: true,
-            decisionAnswers: body.answers,
-            approveDecision: body.approve !== false,
-          });
-          if (!started) {
-            sendJson(res, 409, { error: "run is already in progress" });
-            return;
-          }
-          sendJson(res, 202, { runId, status: "accepted" });
-          return;
-        }
-      }
-
-      sendJson(res, 404, { error: "not found" });
-    } catch (error) {
-      sendJson(res, 500, {
-        error: error instanceof Error ? error.message : String(error),
       });
+    queue = scheduled.catch(() => undefined);
+  };
+
+  const server = http.createServer(async (request, response) => {
+    try {
+      setSecurityHeaders(response);
+      const url = new URL(request.url ?? "/", `http://${host}`);
+      if (url.pathname === "/health") {
+        return json(response, 200, { ok: true });
+      }
+      if (!authorized(request, url, token)) {
+        return json(response, 401, { error: "Invalid or missing dashboard token" });
+      }
+      if (!url.pathname.startsWith("/api/")) {
+        if (url.pathname !== "/") throw new HttpError(404, "Not found");
+        return html(response, renderDashboard());
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/bootstrap") {
+        const runs = await store.list();
+        return json(response, 200, {
+          project: {
+            name: path.basename(projectConfig.repositoryRoot),
+            root: projectConfig.repositoryRoot,
+            configPath: options.configPath,
+            models: projectConfig.models,
+            agent: { provider: projectConfig.agent.provider, ...agentReadiness },
+            graphify: { enabled: projectConfig.knowledge.graphify.enabled },
+            defaults: {
+              tdd: projectConfig.workflow.tdd,
+              push: projectConfig.git.push,
+              openPullRequest: projectConfig.git.openPullRequest,
+            },
+            settings: projectSettings(projectConfig, options.configPath),
+          },
+          runs: runs.map((state) => summarizeRun(state, jobs.get(state.runId))),
+          jobs: [...jobs.values()],
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/settings") {
+        return json(response, 200, { settings: projectSettings(projectConfig, options.configPath) });
+      }
+
+      if (request.method === "PUT" && url.pathname === "/api/settings") {
+        if (!options.configPath) {
+          throw new HttpError(409, "This dashboard was started without a writable config path");
+        }
+        const body = await readJsonBody(request);
+        const values = requiredRecord(body.values, "values");
+        const known = new Set<string>(PROJECT_SETTING_DEFINITIONS.map((setting) => setting.key));
+        const unknown = Object.keys(values).filter((key) => !known.has(key));
+        if (unknown.length) throw new HttpError(400, `Unknown setting: ${unknown.join(", ")}`);
+        const maxWayfindingTurnsPerEpisode = optionalInteger(
+          values["workflow.maxWayfindingTurnsPerEpisode"],
+          "workflow.maxWayfindingTurnsPerEpisode",
+          1,
+          50,
+        );
+        if (maxWayfindingTurnsPerEpisode == null) {
+          throw new HttpError(400, "workflow.maxWayfindingTurnsPerEpisode is required");
+        }
+        const updated = await writeProjectSettings(options.configPath, {
+          workflow: { maxWayfindingTurnsPerEpisode },
+        });
+        projectConfig = updated.config;
+        return json(response, 200, {
+          settings: projectSettings(projectConfig, options.configPath),
+          appliesTo: "new_runs",
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/runs") {
+        const runs = await store.list();
+        return json(response, 200, {
+          runs: runs.map((state) => summarizeRun(state, jobs.get(state.runId))),
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/runs") {
+        if (!agentReadiness.ready) {
+          throw new HttpError(503, agentReadiness.message ?? "The configured agent backend is unavailable");
+        }
+        const body = await readJsonBody(request);
+        const idea = requiredString(body.idea, "idea", 100_000);
+        const runId = optionalString(body.runId, "runId", 100) ?? randomUUID();
+        const tdd = optionalBoolean(body.tdd, "tdd") ?? projectConfig.workflow.tdd;
+        const push = optionalBoolean(body.push, "push") ?? projectConfig.git.push;
+        const openPullRequest =
+          optionalBoolean(body.openPullRequest, "openPullRequest") ??
+          projectConfig.git.openPullRequest;
+        const smallModel = optionalString(body.smallModel, "smallModel", 200);
+        const capableModel = optionalString(body.capableModel, "capableModel", 200);
+        const graphify = optionalBoolean(body.graphify, "graphify");
+        const runConfig = HarnessConfigSchema.parse({
+          ...projectConfig,
+          workflow: { ...projectConfig.workflow, tdd },
+          git: {
+            ...projectConfig.git,
+            push: push || openPullRequest,
+            openPullRequest,
+          },
+          models: {
+            ...projectConfig.models,
+            small: smallModel ?? projectConfig.models.small,
+            capable: capableModel ?? projectConfig.models.capable,
+          },
+          knowledge: {
+            ...projectConfig.knowledge,
+            graphify: {
+              ...projectConfig.knowledge.graphify,
+              enabled: graphify ?? projectConfig.knowledge.graphify.enabled,
+            },
+          },
+        });
+        const engine = new HarnessEngine(runConfig, { backend: options.backend });
+        // Creating the durable run must be quick. A first semantic index may
+        // take minutes for a large repository, so run it in the visible job
+        // queue rather than holding the browser request open.
+        const state = await engine.start(idea, runId, false);
+        enqueue(runId, "index knowledge and chart route", async () => {
+          const current = jobs.get(runId);
+          if (current) jobs.set(runId, { ...current, detail: "Checking Graphify for this project" });
+          const graphify = await prepareGraphifyForRun(runConfig);
+          const prepared = jobs.get(runId);
+          if (prepared && graphify.enabled) {
+            jobs.set(runId, {
+              ...prepared,
+              detail: graphify.setupRan
+                ? "Graphify installed and the repository graph is ready"
+                : "Graphify repository graph is ready",
+            });
+          }
+          await knowledge.refresh((progress) => {
+            const current = jobs.get(runId);
+            if (current) jobs.set(runId, { ...current, detail: progress.message });
+          });
+          await engine.advance(runId);
+        });
+        return json(response, 202, { run: summarizeRun(state, jobs.get(runId)) });
+      }
+
+      const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
+      if (request.method === "GET" && runMatch) {
+        const runId = decodeURIComponent(runMatch[1]!);
+        const state = await store.load(runId);
+        const [events, sessions, artifacts] = await Promise.all([
+          readEvents(store, runId),
+          readSessionSummaries(store, runId),
+          listArtifacts(store, runId),
+        ]);
+        return json(response, 200, {
+          state,
+          job: jobs.get(runId),
+          events,
+          sessions,
+          artifacts,
+        });
+      }
+
+      const actionMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/actions$/);
+      if (request.method === "POST" && actionMatch) {
+        const runId = decodeURIComponent(actionMatch[1]!);
+        const body = await readJsonBody(request);
+        const action = requiredString(body.action, "action", 40);
+        if (action !== "cancel" && !agentReadiness.ready) {
+          throw new HttpError(503, agentReadiness.message ?? "The configured agent backend is unavailable");
+        }
+        const runConfig = await loadRunConfig(projectConfig, runId);
+        const engine = new HarnessEngine(runConfig, { backend: options.backend });
+        if (action === "continue") {
+          enqueue(runId, action, () => engine.advance(runId));
+        } else if (action === "resume") {
+          // Jobs are intentionally process-local. A dashboard restart keeps the
+          // durable run state but cannot safely assume that an interrupted
+          // provider call should be retried. Make recovery an explicit action,
+          // and rebuild knowledge first in case the index was cleared while
+          // the dashboard was stopped.
+          enqueue(runId, "resume run", async () => {
+            await knowledge.refresh((progress) => {
+              const current = jobs.get(runId);
+              if (current) jobs.set(runId, { ...current, detail: progress.message });
+            });
+            await engine.advance(runId);
+          });
+        } else if (action === "answer") {
+          const questionId = requiredString(body.questionId, "questionId", 200);
+          const answer = requiredString(body.answer, "answer", 100_000);
+          enqueue(runId, action, async () => {
+            await engine.answer(runId, questionId, answer);
+            await engine.advance(runId);
+          });
+        } else if (action === "retry") {
+          enqueue(runId, action, async () => {
+            await engine.retry(runId);
+            await engine.advance(runId);
+          });
+        } else if (action === "cancel") {
+          enqueue(runId, action, () => engine.cancel(runId));
+        } else {
+          throw new HttpError(400, `Unsupported action: ${action}`);
+        }
+        return json(response, 202, { accepted: true, job: jobs.get(runId) });
+      }
+
+      const artifactMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/artifact$/);
+      if (request.method === "GET" && artifactMatch) {
+        const runId = decodeURIComponent(artifactMatch[1]!);
+        const artifactPath = url.searchParams.get("path") ?? "";
+        if (!allowedArtifact(artifactPath)) throw new HttpError(400, "Artifact path is not readable");
+        const content = await store.readText(runId, artifactPath);
+        return json(response, 200, { path: artifactPath, content: content.slice(0, 1_000_000) });
+      }
+
+      const sessionMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/session$/);
+      if (request.method === "GET" && sessionMatch) {
+        const runId = decodeURIComponent(sessionMatch[1]!);
+        const sessionPath = url.searchParams.get("path") ?? "";
+        if (!/^sessions\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/.test(sessionPath)) {
+          throw new HttpError(400, "Session path is not readable");
+        }
+        return json(response, 200, await readSessionDetail(store, runId, sessionPath));
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/knowledge/search") {
+        const body = await readJsonBody(request);
+        const query = requiredString(body.query, "query", 10_000);
+        const limit = optionalInteger(body.limit, "limit", 1, 20) ?? 8;
+        return json(response, 200, { results: await knowledge.search(query, limit) });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/knowledge/status") {
+        const embeddings = projectConfig.knowledge.embeddings;
+        return json(response, 200, {
+          lexical: true,
+          semantic: {
+            enabled: embeddings.enabled,
+            provider: embeddings.provider,
+            model: embeddings.model,
+            endpoint: embeddings.endpoint,
+          },
+          graphify: { enabled: projectConfig.knowledge.graphify.enabled },
+          sources: projectConfig.knowledge.sources.map((source) => source.path),
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/knowledge/refresh") {
+        return json(response, 200, { changed: await knowledge.refresh() });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/knowledge/add") {
+        const body = await readJsonBody(request);
+        const relativePath = requiredString(body.path, "path", 2_000);
+        const target = path.resolve(projectConfig.repositoryRoot, relativePath);
+        assertInside(projectConfig.repositoryRoot, target);
+        return json(response, 200, { changed: await knowledge.upsertFile(target) });
+      }
+
+      throw new HttpError(404, "Not found");
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 500;
+      const message = error instanceof Error ? error.message : String(error);
+      json(response, status, { error: message });
     }
   });
 
   await new Promise<void>((resolve, reject) => {
-    server.listen(port, host, () => resolve());
-    server.on("error", reject);
+    server.once("error", reject);
+    server.listen(options.port ?? 8787, host, () => resolve());
   });
-
-  const url = buildDashboardUrl(host, port, token, options.initialRunId);
-  harnessLog("ui.listen", `UI on ${url}`);
-  await writeJson(path.join(runRoot, "ui-session.json"), {
-    host,
-    port,
-    token,
-    url,
-    startedAt: new Date().toISOString(),
-  });
-
-  if (options.openBrowser) {
-    const open =
-      process.platform === "win32"
-        ? `start "" "${url}"`
-        : process.platform === "darwin"
-          ? `open "${url}"`
-          : `xdg-open "${url}"`;
-    const { runShell } = await import("../util/shell.js");
-    await runShell(open, { cwd: process.cwd(), timeoutMs: 5_000 });
-  }
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Dashboard did not bind a TCP port");
+  const origin = `http://${host}:${address.port}`;
+  const dashboardUrl = `${origin}/?token=${encodeURIComponent(token)}`;
+  if (options.openBrowser) openDashboard(dashboardUrl);
 
   return {
-    url,
+    origin,
+    url: dashboardUrl,
     token,
-    onEvent: broadcast,
-    urlForRun: (runId: string) => buildDashboardUrl(host, port, token, runId),
-    close: async () => {
-      clearInterval(pollTimer);
-      // Let in-flight lifecycles settle so their state is persisted.
-      await Promise.allSettled([...inFlight.values()]);
-      for (const client of clients) client.res.end();
-      await new Promise<void>((resolve, reject) => {
-        server.close((err) => (err ? reject(err) : resolve()));
-      });
+    port: address.port,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  };
+}
+
+function summarizeRun(state: RunState, job?: UiJob): Record<string, unknown> {
+  const activeQuestion = state.questions.find((question) => question.id === state.activeQuestionId);
+  const completedTasks = state.tasks.filter((task) => task.status === "done").length;
+  return {
+    runId: state.runId,
+    idea: state.idea,
+    destination: state.map?.destination,
+    phase: state.phase,
+    updatedAt: state.updatedAt,
+    createdAt: state.createdAt,
+    taskProgress: { completed: completedTasks, total: state.tasks.length },
+    decisions: {
+      resolved: state.decisionTickets.filter((ticket) => ticket.status === "resolved").length,
+      total: state.decisionTickets.length,
+    },
+    activeQuestion,
+    failure: state.failure,
+    branchName: state.branchName,
+    pullRequestUrl: state.pullRequestUrl,
+    job,
+  };
+}
+
+function projectSettings(config: HarnessConfig, configPath?: string): Record<string, unknown> {
+  return {
+    editable: configPath != null,
+    appliesTo: "new_runs",
+    definitions: PROJECT_SETTING_DEFINITIONS,
+    values: {
+      "workflow.maxWayfindingTurnsPerEpisode":
+        config.workflow.maxWayfindingTurnsPerEpisode,
     },
   };
+}
+
+async function readEvents(store: RunStore, runId: string): Promise<unknown[]> {
+  try {
+    const raw = await store.readText(runId, "events.jsonl");
+    return raw
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-200)
+      .map((line) => JSON.parse(line) as unknown);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function readSessionSummaries(store: RunStore, runId: string): Promise<unknown[]> {
+  const files = await store.listFiles(runId, "sessions");
+  const sessions = await Promise.all(
+    files.map(async (file) => {
+      const value = (await store.readJson(runId, file)) as Record<string, unknown>;
+      return {
+        path: file,
+        sessionId: value.sessionId,
+        role: value.role,
+        model: value.model,
+        status: value.status,
+        attempt: value.attempt,
+        startedAt: value.startedAt,
+        endedAt: value.endedAt,
+        providerSessionId: value.providerSessionId,
+        providerRunId: value.providerRunId,
+        providerSessionReused: value.providerSessionReused,
+        usage: value.usage,
+        handoff: value.handoff,
+        error: value.error,
+      };
+    }),
+  );
+  return sessions.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+}
+
+async function readSessionDetail(
+  store: RunStore,
+  runId: string,
+  sessionPath: string,
+): Promise<Record<string, unknown>> {
+  const session = (await store.readJson(runId, sessionPath)) as Record<string, unknown>;
+  const packetPath =
+    typeof session.packet === "string" &&
+    /^packets\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/.test(session.packet)
+      ? session.packet
+      : undefined;
+  const packet = packetPath
+    ? ((await store.readJson(runId, packetPath)) as WorkPacket)
+    : undefined;
+  const reconstructed = await submittedPrompt(store, runId, session, packet);
+  const handoff = isRecord(session.handoff) ? session.handoff : undefined;
+  const artifactRefs = Array.isArray(handoff?.artifactRefs)
+    ? handoff.artifactRefs.filter((value): value is string => typeof value === "string")
+    : [];
+
+  return {
+    session,
+    packet,
+    inputPrompt: reconstructed.prompt,
+    inputSource: reconstructed.source,
+    relatedArtifacts: [...new Set([sessionPath, packetPath, ...artifactRefs].filter(isString))],
+  };
+}
+
+async function submittedPrompt(
+  store: RunStore,
+  runId: string,
+  session: Record<string, unknown>,
+  packet: WorkPacket | undefined,
+): Promise<{ prompt?: string; source: string }> {
+  if (typeof session.prompt === "string") {
+    return { prompt: session.prompt, source: "stored exact input" };
+  }
+  if (!packet) return { source: "unavailable: packet missing" };
+
+  const role = String(session.role ?? "");
+  const files = await store.listFiles(runId, "sessions");
+  const related = await Promise.all(
+    files.map(async (file) => (await store.readJson(runId, file)) as Record<string, unknown>),
+  );
+  let prompt: string;
+  let source: string;
+  if (role === "prompt-builder") {
+    prompt = renderPromptBuilderPrompt(packet);
+    source = "reconstructed deterministic compiler input";
+  } else {
+    const compiler = related
+      .filter(
+        (candidate) =>
+          candidate.invocationId === session.invocationId &&
+          candidate.role === "prompt-builder" &&
+          candidate.status === "completed" &&
+          isRecord(candidate.output) &&
+          typeof candidate.output.prompt === "string",
+      )
+      .sort((a, b) => Number(b.attempt ?? 0) - Number(a.attempt ?? 0))[0];
+    if (compiler && isRecord(compiler.output) && typeof compiler.output.prompt === "string") {
+      prompt = compiler.output.prompt;
+      source = "reconstructed compiled input";
+    } else {
+      prompt = renderPrompt(packet);
+      source = "reconstructed deterministic input";
+    }
+  }
+
+  const attempt = Number(session.attempt ?? 0);
+  if (attempt > 0) {
+    const previous = related.find(
+      (candidate) =>
+        candidate.invocationId === session.invocationId &&
+        candidate.role === session.role &&
+        Number(candidate.attempt) === attempt - 1,
+    );
+    if (previous && typeof previous.error === "string") {
+      prompt = [
+        prompt,
+        "",
+        "Your previous response failed the required JSON contract.",
+        `Validation error: ${previous.error.slice(0, 4_000)}`,
+        "Return one corrected JSON object only.",
+      ].join("\n");
+      source += " with schema-repair suffix";
+    }
+  }
+  return { prompt, source };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+async function listArtifacts(store: RunStore, runId: string): Promise<string[]> {
+  const grouped = await Promise.all(
+    ["issues", "tasks", "packets", "sessions"].map((directory) =>
+      store.listFiles(runId, directory),
+    ),
+  );
+  const fixed = ["idea.md", "map.md", "events.jsonl", "state.json", "config.json"];
+  const available: string[] = [];
+  for (const file of fixed) {
+    try {
+      await store.readText(runId, file);
+      available.push(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return [...available, ...grouped.flat()];
+}
+
+function allowedArtifact(value: string): boolean {
+  return (
+    ["idea.md", "map.md", "events.jsonl", "state.json", "config.json"].includes(value) ||
+    /^(issues|tasks|packets|sessions)\/[A-Za-z0-9._-]+$/.test(value)
+  );
+}
+
+function authorized(request: IncomingMessage, url: URL, token: string): boolean {
+  return request.headers["x-harness-token"] === token || url.searchParams.get("token") === token;
+}
+
+async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > 1_000_000) throw new HttpError(413, "Request body is too large");
+    chunks.push(buffer);
+  }
+  if (chunks.length === 0) return {};
+  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new HttpError(400, "JSON body must be an object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function requiredRecord(value: unknown, field: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new HttpError(400, `${field} must be an object`);
+  return value;
+}
+
+function requiredString(value: unknown, field: string, max: number): string {
+  if (typeof value !== "string" || !value.trim()) throw new HttpError(400, `${field} is required`);
+  if (value.length > max) throw new HttpError(400, `${field} is too long`);
+  return value.trim();
+}
+
+function optionalString(value: unknown, field: string, max: number): string | undefined {
+  if (value == null || value === "") return undefined;
+  return requiredString(value, field, max);
+}
+
+function optionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "boolean") throw new HttpError(400, `${field} must be boolean`);
+  return value;
+}
+
+function optionalInteger(
+  value: unknown,
+  field: string,
+  minimum: number,
+  maximum: number,
+): number | undefined {
+  if (value == null) return undefined;
+  if (!Number.isInteger(value) || Number(value) < minimum || Number(value) > maximum) {
+    throw new HttpError(400, `${field} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return Number(value);
+}
+
+function assertInside(root: string, target: string): void {
+  const relative = path.relative(path.resolve(root), target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new HttpError(400, "Path escapes the repository");
+  }
+}
+
+function setSecurityHeaders(response: ServerResponse): void {
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Frame-Options", "DENY");
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+  );
+  response.setHeader("Cache-Control", "no-store");
+}
+
+function json(response: ServerResponse, status: number, value: unknown): void {
+  if (response.headersSent) return;
+  response.statusCode = status;
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.end(`${JSON.stringify(value)}\n`);
+}
+
+function html(response: ServerResponse, value: string): void {
+  response.statusCode = 200;
+  response.setHeader("Content-Type", "text/html; charset=utf-8");
+  response.end(value);
+}
+
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function openDashboard(url: string): void {
+  const [command, args] =
+    process.platform === "win32"
+      ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
+      : process.platform === "darwin"
+        ? ["open", [url]]
+        : ["xdg-open", [url]];
+  const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+  child.unref();
 }

@@ -8,7 +8,7 @@ Use these terms consistently in code, prompts, artifacts, and operator messages.
 
 **Map** — The low-resolution index containing the destination, decision gists, unresolved fog, and out-of-scope notes. It does not duplicate full ticket answers.
 
-**Decision ticket** — One precise question whose answer clears part of the route. Types are `research`, `prototype`, `grilling`, and `task`.
+**Decision ticket** — One precise question whose answer clears part of the route. Types are `research`, `prototype`, and `grilling`.
 
 **Fog** — In-scope uncertainty that is not yet precise enough to become a decision ticket.
 

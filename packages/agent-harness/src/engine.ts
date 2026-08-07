@@ -218,22 +218,32 @@ export class HarnessEngine {
     });
     state = invocation.state;
     const output = invocation.output;
-    const nextTickets = materializeDecisionTickets(
-      output,
+    const { tickets: nextTickets, deferredCount } = materializeProposedTickets(
+      output.tickets,
       expanding ? state.decisionTickets : [],
+      new Date().toISOString(),
+      this.config.workflow.maxOpenDecisionTickets,
     );
     assertAcyclic(nextTickets);
+    const capNote =
+      deferredCount > 0
+        ? `${deferredCount} proposed decision(s) deferred until open decisions resolve (cap ${this.config.workflow.maxOpenDecisionTickets}).`
+        : undefined;
     const map = expanding
       ? {
           ...state.map!,
-          notes: unique([...state.map!.notes, ...output.notes]),
+          notes: unique([
+            ...state.map!.notes,
+            ...output.notes,
+            ...(capNote ? [capNote] : []),
+          ]),
           notYetSpecified: unique(output.fog),
           outOfScope: unique([...state.map!.outOfScope, ...output.outOfScope]),
           readyToPlan: output.readyToPlan,
         }
       : {
           destination: output.destination,
-          notes: output.notes,
+          notes: capNote ? [...output.notes, capNote] : output.notes,
           decisionsSoFar: [],
           notYetSpecified: output.fog,
           outOfScope: output.outOfScope,
@@ -453,17 +463,28 @@ export class HarnessEngine {
       updatedAt: now,
     };
     let tickets = replaceTicket(state.decisionTickets, resolved);
-    tickets = materializeProposedTickets(output.newTickets, tickets, now);
+    const materialized = materializeProposedTickets(
+      output.newTickets,
+      tickets,
+      now,
+      this.config.workflow.maxOpenDecisionTickets,
+    );
+    tickets = materialized.tickets;
     assertAcyclic(tickets);
-    const cleared = new Set(output.clearFog);
+    const capNote =
+      materialized.deferredCount > 0
+        ? `${materialized.deferredCount} proposed decision(s) deferred until open decisions resolve (cap ${this.config.workflow.maxOpenDecisionTickets}).`
+        : undefined;
+    const cleared = new Set(output.clearFog.map(normalizeFog));
     const map = {
       ...state.map!,
+      notes: capNote ? unique([...state.map!.notes, capNote]) : state.map!.notes,
       decisionsSoFar: [
         ...state.map!.decisionsSoFar.filter((item) => item.ticketId !== ticket.id),
         { ticketId: ticket.id, title: ticket.title, gist: output.summary },
       ],
       notYetSpecified: unique([
-        ...state.map!.notYetSpecified.filter((item) => !cleared.has(item)),
+        ...state.map!.notYetSpecified.filter((item) => !cleared.has(normalizeFog(item))),
         ...output.newFog,
       ]),
       outOfScope: unique([...state.map!.outOfScope, ...output.outOfScope]),
@@ -775,15 +796,12 @@ export class HarnessEngine {
   }
 }
 
-function materializeDecisionTickets(output: NavigatorOutput, existing: DecisionTicket[]): DecisionTicket[] {
-  return materializeProposedTickets(output.tickets, existing, new Date().toISOString());
-}
-
 function materializeProposedTickets(
   proposals: NavigatorOutput["tickets"],
   existing: DecisionTicket[],
   now: string,
-): DecisionTicket[] {
+  maxOpen?: number,
+): { tickets: DecisionTicket[]; deferredCount: number } {
   const used = new Set(existing.map((ticket) => ticket.id));
   const idMap = new Map<string, string>();
   const existingProposalIds = new Set<string>();
@@ -804,32 +822,36 @@ function materializeProposedTickets(
     idMap.set(proposal.id, id);
   }
   const existingIds = new Set(existing.map((ticket) => ticket.id));
-  const created = proposals
-    .filter((proposal) => !existingProposalIds.has(proposal.id))
-    .map((proposal) => {
-      const question =
-        typeof proposal.question === "string"
-          ? proposal.question
-          : proposal.question.prompt;
-      const humanQuestion =
-        typeof proposal.question === "string" ? undefined : proposal.question;
-      return {
-        id: idMap.get(proposal.id)!,
-        title: proposal.title,
-        question,
-        humanQuestion,
-        kind: proposal.kind,
-        interaction: proposal.interaction,
-        status: "open" as const,
-        blockedBy: proposal.blockedBy.map((id) =>
-          idMap.get(id) ?? (existingIds.has(id) ? id : id),
-        ),
-        conversation: [],
-        createdAt: now,
-        updatedAt: now,
-      };
-    });
-  return [...existing, ...created];
+  const newProposals = proposals.filter((proposal) => !existingProposalIds.has(proposal.id));
+  const openCount = existing.filter((ticket) => !decisionClosed(ticket)).length;
+  const slots =
+    maxOpen === undefined ? newProposals.length : Math.max(0, maxOpen - openCount);
+  const accepted = newProposals.slice(0, slots);
+  const deferredCount = newProposals.length - accepted.length;
+  const created = accepted.map((proposal) => {
+    const question =
+      typeof proposal.question === "string"
+        ? proposal.question
+        : proposal.question.prompt;
+    const humanQuestion =
+      typeof proposal.question === "string" ? undefined : proposal.question;
+    return {
+      id: idMap.get(proposal.id)!,
+      title: proposal.title,
+      question,
+      humanQuestion,
+      kind: proposal.kind,
+      interaction: proposal.interaction,
+      status: "open" as const,
+      blockedBy: proposal.blockedBy.map((id) =>
+        idMap.get(id) ?? (existingIds.has(id) ? id : id),
+      ),
+      conversation: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+  });
+  return { tickets: [...existing, ...created], deferredCount };
 }
 
 function materializeTasks(
@@ -878,9 +900,7 @@ function materializeTasks(
 
 function decisionRole(ticket: DecisionTicket): AgentRole {
   if (ticket.kind === "prototype") return "decision-prototyper";
-  if (ticket.kind === "research" || (ticket.kind === "task" && ticket.interaction === "AFK")) {
-    return "decision-researcher";
-  }
+  if (ticket.kind === "research") return "decision-researcher";
   return "decision-facilitator";
 }
 
@@ -892,8 +912,22 @@ function replaceTicket(tickets: DecisionTicket[], replacement: DecisionTicket): 
   return tickets.map((ticket) => (ticket.id === replacement.id ? replacement : ticket));
 }
 
+function normalizeFog(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function unique(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const key = normalizeFog(trimmed);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
 }
 
 function safeId(value: string, fallback: string): string {

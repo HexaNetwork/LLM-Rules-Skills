@@ -5,7 +5,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "Name a concrete destination before charting work.",
     "Create decision tickets, not implementation slices.",
     "Put only precise questions into tickets; keep unshaped uncertainty in fog.",
-    "Ticket kind must be exactly one of: research, prototype, grilling, task.",
+    "Ticket kind must be exactly one of: research, prototype, grilling.",
     "Mark tickets HITL when a human must speak for preferences or intent.",
     "For every HITL ticket, give the human enough context to decide: a self-contained prompt, why it matters, 2-4 mutually exclusive options with concrete tradeoffs, and one recommended option with rationale.",
   ],

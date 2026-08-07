@@ -65,6 +65,7 @@ export const HarnessConfigSchema = z.object({
       maxImplementationAttempts: z.number().int().positive().max(10).default(3),
       maxReviewAttempts: z.number().int().positive().max(10).default(2),
       maxFogPasses: z.number().int().positive().max(10).default(3),
+      maxOpenDecisionTickets: z.number().int().min(1).max(50).default(8),
       // Wayfinding roles receive complete packets; reusing an autonomous
       // provider session across roles can compound hidden tool context.
       maxWayfindingTurnsPerEpisode: z.number().int().positive().max(50).default(1),
@@ -277,6 +278,7 @@ workflow:
   maxImplementationAttempts: 3
   maxReviewAttempts: 2
   maxFogPasses: 3
+  maxOpenDecisionTickets: 8
   maxWayfindingTurnsPerEpisode: 1
   contextResults: 6
   contextCharacters: 12000

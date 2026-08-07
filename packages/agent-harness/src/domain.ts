@@ -6,7 +6,6 @@ export const DecisionKindSchema = z.enum([
   "research",
   "prototype",
   "grilling",
-  "task",
 ]);
 export type DecisionKind = z.infer<typeof DecisionKindSchema>;
 

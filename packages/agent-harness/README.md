@@ -109,7 +109,7 @@ The map is an index, not a duplicate source of truth. Full decisions live in the
 
 ## Wayfinding and human questions
 
-The navigator names a destination, charts precise decision tickets, and leaves unshaped uncertainty in `Not yet specified`. Tickets use Wayfinder's `research`, `prototype`, `grilling`, and `task` types and declare AFK or HITL interaction.
+The navigator names a destination, charts precise decision tickets, and leaves unshaped uncertainty in `Not yet specified`. Tickets use Wayfinder's `research`, `prototype`, and `grilling` types and declare AFK or HITL interaction.
 
 HITL work writes one open, decision-ready question and returns control immediately. Each new question includes why the choice matters, two to four options with tradeoffs, and a clearly identified recommendation with rationale; the operator can still give a custom answer. `answer` persists the human's exact words, then the current wayfinding episode continues with a compact appended turn. The agent never fills in the human side of the exchange.
 

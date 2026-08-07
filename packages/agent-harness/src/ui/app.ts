@@ -139,6 +139,8 @@ export function renderDashboard(): string {
     .answer-row .btn { height:43px; }
     .alert { border:1px solid rgba(255,115,115,.3); background:rgba(255,115,115,.07); border-radius:var(--radius); padding:18px; display:flex; justify-content:space-between; align-items:flex-start; gap:18px; }
     .alert strong { color:#ffb3b3; }
+    .alert.warning { border-color:rgba(255,176,96,.35); background:rgba(255,176,96,.08); }
+    .alert.warning strong { color:#ffd4a8; }
     .form-feedback { margin-top:14px; padding:10px 12px; border-radius:10px; border:1px solid rgba(121,184,255,.25); background:rgba(121,184,255,.06); color:#c9ddf5; font-size:13px; line-height:1.4; }
     .form-feedback.error { border-color:rgba(255,115,115,.42); background:rgba(255,115,115,.08); color:#ffc1c1; }
     .list { display:grid; gap:10px; }
@@ -492,6 +494,11 @@ export function renderDashboard(): string {
       html += '<div class="card third"><div class="card-label">Decision route</div><div class="metric">' + decisionDone + '<span class="faint"> / ' + decisionTotal + '</span></div><div class="muted">questions resolved</div><div class="progress"><i style="width:' + (decisionTotal ? Math.round(decisionDone/decisionTotal*100) : 0) + '%"></i></div></div>';
       var episode = s.wayfindingEpisode;
       var tokenTotals = state.detail.sessions.reduce(function (acc, session) { var usage = session.usage || {}; var total = usage.totalTokens; if (total == null && (usage.inputTokens != null || usage.outputTokens != null)) total = Number(usage.inputTokens || 0) + Number(usage.outputTokens || 0); acc.tokens += Number(total || 0); acc.cached += Number(usage.cacheReadTokens || 0); return acc; }, { tokens: 0, cached: 0 });
+      var fogCount = s.map ? s.map.notYetSpecified.length : 0;
+      var isWayfinding = s.phase === "wayfinding" || s.phase === "navigating";
+      if (isWayfinding && (decisionTotal > 12 || fogCount > 8 || tokenTotals.tokens > 2000000)) {
+        html += '<div class="card"><div class="alert warning"><div><strong>Wayfinding may be over-decomposing</strong><div class="muted" style="margin-top:5px">Review this run — wayfinding is producing many decisions, fog items, or token usage and may be over-decomposing the feature. Consider cancelling and re-scoping.</div><div class="faint" style="margin-top:8px">' + decisionTotal + ' decision ticket(s) · ' + fogCount + ' fog item(s) · ' + number(tokenTotals.tokens) + ' recorded tokens</div></div></div></div>';
+      }
       var episodeDetail = episode ? ('wayfinding episode ' + episode.number + ' · ' + episode.turnCount + ' turn(s)' + (episode.closedAt ? ' · closed' : ' · active')) : 'bounded model turns';
       if (tokenTotals.tokens) episodeDetail += ' · ' + number(tokenTotals.tokens) + ' recorded tokens' + (tokenTotals.cached ? ' (' + number(tokenTotals.cached) + ' served from cache)' : '');
       html += '<div class="card third"><div class="card-label">Sessions</div><div class="metric">' + state.detail.sessions.length + '</div><div class="muted">' + esc(episodeDetail) + '</div><div class="faint" style="margin-top:12px">Updated ' + esc(ago(s.updatedAt)) + '</div></div>';

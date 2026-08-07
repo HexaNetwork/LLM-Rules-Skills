@@ -1,0 +1,87 @@
+version: 2
+repositoryRoot: .
+stateDirectory: .agent-harness
+
+models:
+  small: composer-2.5
+  capable: composer-2.5
+  roles: {}
+
+agent:
+  provider: cursor
+  timeoutMs: 1200000
+  promptBuilder: false
+  schemaRepairAttempts: 1
+
+workflow:
+  tdd: true
+  maxStepsPerRun: 25
+  maxTestAttempts: 2
+  maxImplementationAttempts: 3
+  maxReviewAttempts: 2
+  maxFogPasses: 3
+  maxWayfindingTurnsPerEpisode: 6
+  contextResults: 6
+  contextCharacters: 12000
+
+commands:
+  test: npm test -- --run
+  gates:
+    - id: typecheck
+      command: npm run typecheck
+    - id: test
+      command: npm test -- --run
+
+git:
+  enabled: true
+  baseBranch: main
+  branchPrefix: harness
+  remote: origin
+  push: false
+  openPullRequest: false
+
+tracker:
+  kind: local
+
+knowledge:
+  projectId: exploration-and-empire
+  sources:
+    - path: README.md
+      scope: global
+    - path: docs
+      scope: global
+    - path: General
+      scope: global
+    - path: E&E
+      scope: project
+  chunkCharacters: 2000
+  guidance:
+    enabled: true
+    maxResults: 6
+    maxCharacters: 6000
+  # Enable to merge semantic document matches with the local lexical index.
+  # The API key is read from apiKeyEnv, never stored in this file.
+  embeddings:
+    enabled: false
+    provider: openai-compatible
+    endpoint: https://api.openai.com/v1/embeddings
+    model: text-embedding-3-small
+    apiKeyEnv: OPENAI_API_KEY
+    batchSize: 32
+    timeoutMs: 30000
+    minSimilarity: 0.2
+    lexicalWeight: 1
+    semanticWeight: 1
+  # Fully local alternative after running setup-local-embeddings.ps1:
+  # embeddings:
+  #   enabled: true
+  #   provider: ollama
+  #   endpoint: http://localhost:11434/api/embed
+  #   model: qwen3-embedding
+  graphify:
+    enabled: true
+    command: graphify
+    updateOnRefresh: true
+    updateTimeoutMs: 120000
+    queryTimeoutMs: 15000
+    queryBudgetTokens: 1200

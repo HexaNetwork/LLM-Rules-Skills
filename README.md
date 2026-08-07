@@ -1,52 +1,32 @@
 # LLM Rules & Skills
 
-Shared Cursor/Claude skills and rules across HexaNetwork projects, plus the **Agent Harness** executable orchestration CLI.
-
-## Layout
+Shared engineering skills and rules, plus a durable Agent Harness for turning an idea into a verified feature.
 
 | Path | Purpose |
-|------|---------|
-| `General/` | Cross-project skills and rules (markdown) |
-| `E&E/` | Exploration & Empire–specific skills and rules |
-| `packages/agent-harness/` | TypeScript CLI for contract-deterministic AFK implementation runs |
-| `GLOSSARY.md` | Agent Harness domain language |
-| `docs/roadmap.md` | Deferred extensions outside v1 |
+| --- | --- |
+| `General/` | Cross-project skills and rules |
+| `E&E/` | Exploration & Empire-specific skills and rules |
+| `packages/agent-harness/` | TypeScript orchestration CLI |
+| `GLOSSARY.md` | Canonical harness vocabulary |
+| `docs/adr/` | Architecture decisions |
 
 ## Agent Harness
+
+The harness uses Wayfinder-style decision maps, local Markdown issues, offline lexical retrieval with optional Graphify repository traversal, bounded fresh agent sessions, optional TDD, deterministic command evidence, harness-owned git publication, and an authenticated local dashboard.
+
+Its knowledge index supports a scope gate: `General/` is indexed as universal guidance and `E&E/` as `exploration-and-empire` project guidance. For each worker step, the harness deterministically selects only relevant rules and skills by role, known paths, and lexical relevance, then uses the remaining context budget for repository documents. A normal query searches only global material plus the active project's documents; a different project's shared material must be named explicitly.
 
 ```bash
 npm install
 npm run build
 npm run test:run
-```
 
-CLI (after build):
-
-```bash
 npx agent-harness init
-npx agent-harness prepare --local tasks.yaml --fake-agents
-npx agent-harness approve --draft .agent-harness/runs/drafts/draft-….json
-npx agent-harness execute --manifest … --fake-agents --no-github
-npx agent-harness resume --run-id <id> --fake-agents
+npx agent-harness ui
+npx agent-harness start --idea "Add saved searches" # CLI alternative
 npx agent-harness status --run-id <id>
-npx agent-harness benchmark --runs 3
 ```
 
-### Credentials
+Set `CURSOR_API_KEY` for agent execution. Generated run state is local under `.agent-harness/` and should remain gitignored.
 
-| Variable | Required when |
-|----------|----------------|
-| `CURSOR_API_KEY` | Real Cursor SDK agents (omit with `--fake-agents`) |
-| `GITHUB_TOKEN` | `--github` prepare / GitHub publish adapter |
-
-Put these in the **project cwd** `.env` or `.env.local` (gitignored). The CLI auto-loads them; existing shell/CI env vars still win. Do not commit tokens.
-
-### Security model
-
-v1 uses **strict Cursor Allowlist** (not Auto-review). Terminal/MCP/network allowlists live in project config and are written beside each run. Unlisted tool use should surface as a blocked permission outcome. Allowlists are a convenience layer—not a hard security boundary.
-
-### Lifecycle
-
-`init` → `prepare` → `approve` → `execute` / `resume` → verified branch (+ optional GitHub PR)
-
-See `packages/agent-harness/README.md` for config fields, local/GitHub source formats, and recovery.
+See [the package guide](packages/agent-harness/README.md) and [`/harness-run`](General/skills/harness-run/SKILL.md).

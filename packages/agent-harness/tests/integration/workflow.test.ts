@@ -7,6 +7,7 @@ import {
   type AgentBackend,
   type AgentRequest,
 } from "../../src/agent.js";
+import { CONFIG_VERSION } from "../../src/config.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
@@ -63,7 +64,7 @@ describe("durable idea-to-feature workflow", () => {
         return {
           status: "needs_input",
           summary: "Need tone",
-          question: FIRST_GRILL_QUESTION,
+          questions: [FIRST_GRILL_QUESTION],
         };
       },
       planner: (request) => {
@@ -137,18 +138,20 @@ describe("durable idea-to-feature workflow", () => {
         requests.push(request);
         grillCalls += 1;
         if (grillCalls === 1) {
-          return { status: "needs_input", summary: "Q1", question: FIRST_GRILL_QUESTION };
+          return { status: "needs_input", summary: "Q1", questions: [FIRST_GRILL_QUESTION] };
         }
         if (grillCalls === 2) {
           return {
             status: "needs_input",
             summary: "Q2",
-            question: {
-              ...FIRST_GRILL_QUESTION,
-              prompt: "Should copy be short or long?",
-              recommendedOptionId: "formal",
-              recommendation: "Keep it short.",
-            },
+            questions: [
+              {
+                ...FIRST_GRILL_QUESTION,
+                prompt: "Should copy be short or long?",
+                recommendedOptionId: "formal",
+                recommendation: "Keep it short.",
+              },
+            ],
           };
         }
         return {
@@ -213,7 +216,7 @@ describe("durable idea-to-feature workflow", () => {
           return {
             status: "needs_input",
             summary: "first",
-            question: FIRST_GRILL_QUESTION,
+            questions: [FIRST_GRILL_QUESTION],
           };
         }
         if (String(request.prompt).includes("stale_answer") || String(request.prompt).includes("Casual")) {
@@ -227,7 +230,7 @@ describe("durable idea-to-feature workflow", () => {
         return {
           status: "needs_input",
           summary: "first",
-          question: FIRST_GRILL_QUESTION,
+          questions: [FIRST_GRILL_QUESTION],
         };
       },
       planner: () => ({
@@ -315,14 +318,14 @@ describe("durable idea-to-feature workflow", () => {
 
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
-    expect(state.configVersion).toBe(1);
+    expect(state.configVersion).toBe(CONFIG_VERSION);
     const events = await readFile(
       path.join(root, ".agent-harness", "runs", state.runId, "events.jsonl"),
       "utf8",
     );
     expect(events).toContain("run.config_migrated");
 
-    state = { ...state, configurationHash: "not-the-current-hash", configVersion: 1 };
+    state = { ...state, configurationHash: "not-the-current-hash", configVersion: CONFIG_VERSION };
     await engine.store.writeJson(state.runId, "state.json", state);
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("blocked");
@@ -362,7 +365,7 @@ describe("durable idea-to-feature workflow", () => {
             output: {
               status: "needs_input",
               summary: "Recovered",
-              question: FIRST_GRILL_QUESTION,
+              questions: [FIRST_GRILL_QUESTION],
             },
             providerSessionId: "grill-agent",
             providerRunId: "run-good",
@@ -569,5 +572,234 @@ describe("durable idea-to-feature workflow", () => {
     );
     expect(events).toContain("task.implementation_test_tamper");
     void red;
+  });
+
+  it("resolves a batch of independent questions in a single griller invocation", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, grillQuestionsPerBatch: 3 } as never,
+    });
+    let grillCalls = 0;
+    const batchQuestions = [
+      { ...FIRST_GRILL_QUESTION, prompt: "Q1: formal or casual?", unknownId: "tone" },
+      {
+        ...FIRST_GRILL_QUESTION,
+        prompt: "Q2: short or long?",
+        unknownId: "length",
+      },
+      {
+        ...FIRST_GRILL_QUESTION,
+        prompt: "Q3: emoji or plain?",
+        unknownId: "emoji",
+      },
+    ];
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: (request) => {
+        grillCalls += 1;
+        if (grillCalls === 1) {
+          return {
+            status: "needs_input",
+            summary: "Batching independent decisions",
+            questions: batchQuestions,
+            openUnknowns: [
+              { id: "tone", title: "Tone", impact: "shaping" },
+              { id: "length", title: "Length", impact: "shaping" },
+              { id: "emoji", title: "Emoji", impact: "minor" },
+            ],
+          };
+        }
+        const prompt = String(request.prompt);
+        expect(prompt).toContain("Formal");
+        expect(prompt).toContain("Short");
+        expect(prompt).toContain("Plain");
+        return { status: "ready_to_plan", summary: "All set", resolutions: [], openUnknowns: [] };
+      },
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render greeting.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: greet", body: "ok" }),
+    });
+
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    state = await engine.advance(state.runId);
+    expect(state.phase).toBe("awaiting_input");
+    const batchIds = state.questions.filter((q) => q.purpose === "grill").map((q) => q.id);
+    expect(batchIds).toHaveLength(3);
+    const batchId = state.questions.find((q) => q.id === batchIds[0])?.batchId;
+    expect(state.questions.every((q) => q.purpose !== "grill" || q.batchId === batchId)).toBe(true);
+
+    state = await engine.answerMany(state.runId, [
+      { questionId: batchIds[0]!, answer: "Formal" },
+      { questionId: batchIds[1]!, answer: "Short" },
+      { questionId: batchIds[2]!, answer: "Plain" },
+    ]);
+    state = await engine.advance(state.runId);
+
+    expect(state.phase).toBe("completed");
+    expect(grillCalls).toBe(2);
+    expect(state.grillResolutions).toHaveLength(3);
+    expect(state.grillEpisode?.questionsAnswered).toBe(3);
+  });
+
+  it("parks a skipped question without producing a resolution, keeping its unknown parked", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, grillQuestionsPerBatch: 3 } as never,
+    });
+    let grillCalls = 0;
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: (request) => {
+        grillCalls += 1;
+        if (grillCalls === 1) {
+          return {
+            status: "needs_input",
+            summary: "Two decisions",
+            questions: [
+              { ...FIRST_GRILL_QUESTION, prompt: "Keep: formal or casual?", unknownId: "keep" },
+              { ...FIRST_GRILL_QUESTION, prompt: "Skip: formal or casual?", unknownId: "skip" },
+            ],
+            openUnknowns: [
+              { id: "keep", title: "Keep decision", impact: "shaping" },
+              { id: "skip", title: "Skip decision", impact: "minor" },
+            ],
+          };
+        }
+        const prompt = String(request.prompt);
+        expect(prompt).toContain("Kept answer");
+        return {
+          status: "ready_to_plan",
+          summary: "Done, skip left for later",
+          resolutions: [],
+          // The griller still lists the skipped unknown; it was not re-asked.
+          openUnknowns: [{ id: "skip", title: "Skip decision", impact: "minor" }],
+        };
+      },
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render greeting.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: greet", body: "ok" }),
+    });
+
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    state = await engine.advance(state.runId);
+    const keepId = state.questions.find((q) => q.prompt.startsWith("Keep"))!.id;
+    const skipId = state.questions.find((q) => q.prompt.startsWith("Skip"))!.id;
+
+    state = await engine.answerMany(state.runId, [{ questionId: keepId, answer: "Kept answer" }], [
+      skipId,
+    ]);
+    expect(state.questions.find((q) => q.id === skipId)?.status).toBe("parked");
+    state = await engine.advance(state.runId);
+
+    expect(state.phase).toBe("completed");
+    expect(state.grillResolutions).toHaveLength(1);
+    expect(state.grillResolutions[0]?.id).toBe(keepId);
+    expect(state.openUnknowns.find((u) => u.id === "skip")?.status).toBe("parked");
+  });
+
+  it("computes staleness once per batch and cold-starts the next griller turn", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, staleAnswerMinutes: 30, grillQuestionsPerBatch: 3 } as never,
+    });
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: (request) => {
+        const prompt = String(request.prompt);
+        if (prompt.includes("\"answer\":\"One\"")) {
+          expect(request.providerSessionId).toBeUndefined();
+          return { status: "ready_to_plan", summary: "Recovered from stale batch", resolutions: [] };
+        }
+        return {
+          status: "needs_input",
+          summary: "first",
+          questions: [
+            { ...FIRST_GRILL_QUESTION, prompt: "One: formal or casual?" },
+            { ...FIRST_GRILL_QUESTION, prompt: "Two: formal or casual?" },
+          ],
+        };
+      },
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render greeting.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: greet", body: "ok" }),
+    });
+
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    state = await engine.advance(state.runId);
+
+    const grillIds = state.questions.filter((q) => q.purpose === "grill").map((q) => q.id);
+    expect(grillIds).toHaveLength(2);
+    const askedAt = new Date(Date.now() - 31 * 60_000).toISOString();
+    state = {
+      ...state,
+      questions: state.questions.map((item) =>
+        grillIds.includes(item.id) ? { ...item, askedAt } : item,
+      ),
+    };
+    await engine.store.writeJson(state.runId, "state.json", state);
+
+    state = await engine.answerMany(state.runId, [
+      { questionId: grillIds[0]!, answer: "One" },
+      { questionId: grillIds[1]!, answer: "Two" },
+    ]);
+    const events = await readFile(
+      path.join(root, ".agent-harness", "runs", state.runId, "events.jsonl"),
+      "utf8",
+    );
+    // One stale-reset event for the whole batch, not one per question.
+    expect(events.match(/grill\.episode_stale_reset/g)?.length).toBe(1);
+    state = await engine.advance(state.runId);
+    expect(["planning", "executing", "publishing", "completed"]).toContain(state.phase);
   });
 });

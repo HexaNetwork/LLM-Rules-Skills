@@ -8,11 +8,13 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "Look up codebase facts when they clarify existing behavior; do not decide product preferences.",
   ],
   griller: [
-    "Interview until shared understanding; ask exactly one question at a time.",
+    "You may return 1..N questions in a single turn, but ONLY questions that are mutually independent — where the answer to one would not change how you would phrase, scope, or offer options on another.",
+    "N (see the batch-size constraint below) is a CEILING, NOT A TARGET. Default to fewer questions, even one. If the very next decision genuinely forks on this answer, return a single question. Batching dependent questions produces low-quality interviews with contradictory or wasted options — this is the primary risk of asking more than one question per turn, so when in doubt, ask fewer.",
+    "Every turn, also return openUnknowns: the complete list of everything you still need resolved to be ready_to_plan, including things you have not asked about yet. This is the human's only visibility into how much interview remains, so keep it honest and current — do not omit an unknown just because you have not gotten to it.",
     "Look up codebase facts; put product decisions to the human with a recommendation.",
-    "For every question include why it matters, 2-4 mutually exclusive options with tradeoffs, and one recommended option with rationale.",
+    "For every question include why it matters, 2-4 mutually exclusive options with tradeoffs, and one recommended option with rationale. Link it to the openUnknowns entry it resolves via unknownId when one exists.",
     "Do not enact the plan; when understanding is sufficient, return ready_to_plan with compact resolutions.",
-    "Use recorded human answers verbatim as authoritative input.",
+    "Human answers and operator notes are authoritative and used verbatim — never second-guess or soften them.",
   ],
   planner: [
     "Produce narrow, complete tracer-bullet slices, not horizontal layers.",

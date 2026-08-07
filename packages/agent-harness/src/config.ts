@@ -13,7 +13,7 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
 ];
 
 /** Bumped when the frozen run-config shape changes in a way that needs migration. */
-export const CONFIG_VERSION = 1;
+export const CONFIG_VERSION = 2;
 
 export const KnowledgeScopeSchema = z.enum(["global", "project"]);
 export type KnowledgeScope = z.infer<typeof KnowledgeScopeSchema>;
@@ -70,6 +70,8 @@ export const HarnessConfigSchema = z.object({
       maxGrillQuestionsPerEpisode: z.number().int().positive().max(50).default(5),
       // Answers older than this force a cold agent with only question+answer.
       staleAnswerMinutes: z.number().int().positive().max(24 * 60).default(30),
+      // Ceiling on questions per griller turn, not a target: only mutually independent questions may be batched.
+      grillQuestionsPerBatch: z.number().int().min(1).max(6).default(3),
       contextResults: z.number().int().min(0).max(20).default(6),
       // Guidance + retrieved context ceiling for each work packet.
       contextCharacters: z.number().int().positive().default(12_000),
@@ -169,6 +171,7 @@ export const ProjectSettingsPatchSchema = z
       .object({
         maxGrillQuestionsPerEpisode: z.number().int().positive().max(50).optional(),
         staleAnswerMinutes: z.number().int().positive().max(24 * 60).optional(),
+        grillQuestionsPerBatch: z.number().int().min(1).max(6).optional(),
       })
       .strict()
       .optional(),
@@ -305,6 +308,7 @@ workflow:
   maxReviewAttempts: 2
   maxGrillQuestionsPerEpisode: 5
   staleAnswerMinutes: 30
+  grillQuestionsPerBatch: 3
   contextResults: 6
   # Guidance + retrieved context ceiling.
   contextCharacters: 12000

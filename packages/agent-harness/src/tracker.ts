@@ -1,4 +1,4 @@
-import type { BuildTask, GrillResolution, RunState } from "./domain.js";
+import type { BuildTask, GrillResolution, OpenUnknown, RunState } from "./domain.js";
 import { RunStore } from "./store.js";
 
 export interface TrackerPort {
@@ -23,6 +23,11 @@ export class LocalTracker implements TrackerPort {
           "grill.md",
           renderGrill(state.grillResolutions),
         ),
+      );
+    }
+    if (state.openUnknowns.length > 0) {
+      paths.push(
+        await this.store.writeText(state.runId, "unknowns.md", renderUnknowns(state.openUnknowns)),
       );
     }
     for (const task of state.tasks) {
@@ -102,6 +107,37 @@ ${resolutions
 `,
   )
   .join("\n")}`;
+}
+
+function renderUnknowns(unknowns: OpenUnknown[]): string {
+  const groups: Record<OpenUnknown["status"], OpenUnknown[]> = {
+    fog: [],
+    asked: [],
+    parked: [],
+    resolved: [],
+  };
+  for (const item of unknowns) groups[item.status].push(item);
+  const section = (title: string, items: OpenUnknown[]): string => {
+    if (items.length === 0) return `## ${title}\n\n_None._`;
+    return `## ${title}\n\n${items
+      .map(
+        (item) =>
+          `- **${escapeHeading(item.title)}** _(${item.impact})_${
+            item.whyItMatters ? ` — ${item.whyItMatters}` : ""
+          }`,
+      )
+      .join("\n")}`;
+  };
+  return `# Open unknowns
+
+${section("Fog (not yet asked)", groups.fog)}
+
+${section("Asked", groups.asked)}
+
+${section("Parked", groups.parked)}
+
+${section("Resolved", groups.resolved)}
+`;
 }
 
 function renderTask(task: BuildTask): string {

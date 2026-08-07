@@ -66,7 +66,9 @@ type InvokeBase<T> = {
   objective: string;
   input: unknown;
   expectedOutput: string;
-  schema: z.ZodType<T>;
+  // Input is intentionally loosened: schemas with `.default()` fields have an
+  // Input type narrower than parsed Output T, which a plain z.ZodType<T> would reject here.
+  schema: z.ZodType<T, z.ZodTypeDef, any>;
   constraints?: string[];
   priorArtifacts?: string[];
   /** Domain seed for Graphify when the primary query shapes to generic tokens. */

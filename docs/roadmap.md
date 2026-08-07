@@ -3,12 +3,12 @@
 ## Shipped in v2
 
 - Durable idea-to-feature state machine with bounded transitions and explicit retry
-- Wayfinder destination, decision tickets, frontier, fog, and out-of-scope model
-- Local Markdown map/issues/tasks as the default tracker
+- Editable reflect gate, then a grill-me interview over a visible open-unknowns register
+- Local Markdown brief/resolutions/unknowns/tasks as the default tracker
 - Offline full-document storage and deterministic lexical retrieval
 - Optional fail-soft Graphify traversal for structural repository lookup
-- Complete work packets with bounded resumable wayfinding episodes and no provider-session dependency for recovery
-- Exact HITL question/answer persistence
+- Complete work packets with bounded resumable grill episodes and no provider-session dependency for recovery
+- Exact HITL question/answer persistence, batched independent questions, skip/park, and operator notes
 - Tracer-bullet task planning and sequential dependency execution
 - Per-run TDD toggle with harness-owned RED/GREEN evidence
 - Deterministic command gates and bounded implementation/review repair

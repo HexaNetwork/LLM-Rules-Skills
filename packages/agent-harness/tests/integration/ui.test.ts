@@ -65,9 +65,10 @@ describe("central dashboard", () => {
       settings: { editable: boolean; definitions: unknown[]; values: Record<string, number> };
     };
     expect(initialBody.settings.editable).toBe(true);
-    expect(initialBody.settings.definitions).toHaveLength(2);
+    expect(initialBody.settings.definitions).toHaveLength(3);
     expect(initialBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(5);
     expect(initialBody.settings.values["workflow.staleAnswerMinutes"]).toBe(30);
+    expect(initialBody.settings.values["workflow.grillQuestionsPerBatch"]).toBe(3);
 
     const invalid = await request(ui, "/api/settings", {
       method: "PUT",
@@ -106,6 +107,214 @@ describe("central dashboard", () => {
     expect(
       bootstrapBody.project.settings.values["workflow.maxGrillQuestionsPerEpisode"],
     ).toBe(10);
+  });
+
+  it("reports unchanged for a matching ?since= signature and a fresh payload after a transition", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Poll for changes", "poll-run", false);
+
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+    const first = await request(ui, `/api/runs/${started.runId}`);
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { signature: string; state: { phase: string } };
+    expect(firstBody.signature).toBeTruthy();
+
+    const stillUnchanged = await request(
+      ui,
+      `/api/runs/${started.runId}?since=${encodeURIComponent(firstBody.signature)}`,
+    );
+    expect(stillUnchanged.status).toBe(200);
+    const unchangedBody = (await stillUnchanged.json()) as { unchanged?: boolean; signature: string };
+    expect(unchangedBody.unchanged).toBe(true);
+    expect(unchangedBody.signature).toBe(firstBody.signature);
+    expect((unchangedBody as { state?: unknown }).state).toBeUndefined();
+
+    await request(ui, `/api/runs/${started.runId}/actions`, {
+      method: "POST",
+      body: { action: "resume" },
+    });
+    const detail = await waitForPhase(ui, started.runId, "awaiting_input");
+    const changed = await request(
+      ui,
+      `/api/runs/${started.runId}?since=${encodeURIComponent(firstBody.signature)}`,
+    );
+    const changedBody = (await changed.json()) as { unchanged?: boolean; signature: string; state: unknown };
+    expect(changedBody.unchanged).toBeUndefined();
+    expect(changedBody.signature).not.toBe(firstBody.signature);
+    expect(changedBody.state).toBeTruthy();
+    void detail;
+  });
+
+  it("accepts the legacy single {questionId, answer} shape for the answer action", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, { workflow: { tdd: false } as never });
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => ({
+        status: "ready_to_plan",
+        summary: "Ready",
+        resolutions: [
+          { id: "tone", question: GRILL_QUESTION.prompt, answer: "Quiet", summary: "Quiet" },
+        ],
+      }),
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "dashboard",
+            title: "Deliver dashboard",
+            description: "Expose the feature.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: () => ({ summary: "Built", changedFiles: ["src/dashboard.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: dashboard", body: "ok" }),
+    });
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+
+    const created = await request(ui, "/api/runs", {
+      method: "POST",
+      body: { idea: "Legacy answer shape", tdd: false },
+    });
+    const runId = ((await created.json()) as { run: { runId: string } }).run.runId;
+    let detail = await waitForPhase(ui, runId, "awaiting_input");
+    const question = detail.state.questions.find(
+      (item: { id: string }) => item.id === detail.state.activeQuestionId,
+    )!;
+
+    const answered = await request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: { action: "answer", questionId: question.id, answer: "Confirmed legacy shape." },
+    });
+    expect(answered.status).toBe(202);
+    detail = await waitForPhase(ui, runId, "completed");
+    expect(detail.state.tasks[0]?.status).toBe("done");
+  });
+
+  it("accepts a structured reflect payload through the batched answers[] shape and stores it as confirmedStructured", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Structured reflect edit", "structured-reflect-run", false);
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+
+    await request(ui, `/api/runs/${started.runId}/actions`, {
+      method: "POST",
+      body: { action: "resume" },
+    });
+    const detail = await waitForPhase(ui, started.runId, "awaiting_input");
+    const question = detail.state.questions.find(
+      (item: { id: string }) => item.id === detail.state.activeQuestionId,
+    )!;
+    expect(question.purpose).toBe("reflect");
+
+    const editedStructured = {
+      summary: "Edited restated summary",
+      restatement: "The operator rewrote this restatement by hand.",
+      goal: "Ship the edited goal",
+      users: ["operators", "reviewers"],
+      inScope: ["editable list scope"],
+      outOfScope: [],
+      assumptions: ["nothing implicit"],
+      unknowns: [],
+    };
+    const answered = await request(ui, `/api/runs/${started.runId}/actions`, {
+      method: "POST",
+      body: {
+        action: "answer",
+        answers: [
+          {
+            questionId: question.id,
+            answer: editedStructured.restatement,
+            structured: editedStructured,
+          },
+        ],
+      },
+    });
+    expect(answered.status).toBe(202);
+
+    // The structured confirmation happens synchronously inside answerMany,
+    // before advance runs, so poll state instead of pinning a transient phase.
+    const deadline = Date.now() + 10_000;
+    let confirmedStructured: { goal?: string } | undefined;
+    let confirmedText: string | undefined;
+    for (;;) {
+      const response = await request(ui, `/api/runs/${started.runId}`);
+      const body = (await response.json()) as {
+        state?: { reflectBrief?: { confirmed?: string; confirmedStructured?: { goal?: string } } };
+      };
+      confirmedText = body.state?.reflectBrief?.confirmed;
+      confirmedStructured = body.state?.reflectBrief?.confirmedStructured;
+      if (confirmedStructured || Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(confirmedText).toContain("operator rewrote this restatement");
+    expect(confirmedStructured?.goal).toBe("Ship the edited goal");
+  });
+
+  it("rejects an invalid structured reflect payload with a 400 instead of silently dropping it", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Invalid structured reflect edit", "invalid-structured-run", false);
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+
+    await request(ui, `/api/runs/${started.runId}/actions`, { method: "POST", body: { action: "resume" } });
+    const detail = await waitForPhase(ui, started.runId, "awaiting_input");
+    const question = detail.state.questions.find(
+      (item: { id: string }) => item.id === detail.state.activeQuestionId,
+    )!;
+
+    const rejected = await request(ui, `/api/runs/${started.runId}/actions`, {
+      method: "POST",
+      body: {
+        action: "answer",
+        answers: [
+          {
+            questionId: question.id,
+            answer: "Confirmed.",
+            structured: { restatement: "missing required fields" },
+          },
+        ],
+      },
+    });
+    expect(rejected.status).toBe(400);
+  });
+
+  it("records an operator note without requiring the run to be awaiting input", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Note taking", "note-run", false);
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+
+    const noted = await request(ui, `/api/runs/${started.runId}/actions`, {
+      method: "POST",
+      body: { action: "note", text: "Remember to check the pricing tier.", asUnknown: true },
+    });
+    expect(noted.status).toBe(202);
+
+    const deadline = Date.now() + 5_000;
+    let body: { state: { operatorNotes: Array<{ text: string }>; openUnknowns: Array<{ title: string }> } };
+    for (;;) {
+      const detail = await request(ui, `/api/runs/${started.runId}`);
+      body = (await detail.json()) as typeof body;
+      if (body.state.operatorNotes.length > 0 || Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(body!.state.operatorNotes[0]?.text).toContain("pricing tier");
+    expect(body!.state.openUnknowns.some((item) => item.title.includes("pricing tier"))).toBe(true);
   });
 
   it("lets an explicitly resumed restored run rebuild knowledge before advancing", async () => {
@@ -159,7 +368,7 @@ describe("central dashboard", () => {
         return {
           status: "needs_input",
           summary: "Need tone",
-          question: GRILL_QUESTION,
+          questions: [GRILL_QUESTION],
         };
       },
       planner: () => ({

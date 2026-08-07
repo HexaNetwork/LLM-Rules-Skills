@@ -61,7 +61,7 @@ idea → reflect (editable confirm) → grill-me → implementation tickets
      → [RED → GREEN] → command gates → review → commit → pull request
 ```
 
-The process stops at `awaiting_input`, `blocked`, `cancelled`, or `completed`. It never waits indefinitely: agent calls, shell commands, locks, schema repair, implementation repair, review repair, fog expansion, and per-command advancement are all bounded.
+The process stops at `awaiting_input`, `blocked`, `cancelled`, or `completed`. It never waits indefinitely: agent calls, shell commands, locks, schema repair, implementation repair, review repair, grill episodes, and per-command advancement are all bounded.
 
 ## Commands
 
@@ -86,9 +86,13 @@ agent-harness knowledge search "proration" --include-project billing-service
 
 ## Centralized dashboard
 
-The dependency-free browser UI is a read/write client of the same persisted state and engine used by the CLI. It does not keep a competing copy of lifecycle state. Mutating requests are serialized, while polling and artifact reads remain safe during long agent or command work. The top-bar gear opens schema-driven project settings; currently it controls grill questions per episode and the stale-answer threshold, and persists those values to the project config. Settings apply to new runs because active runs retain their frozen configuration snapshots.
+The dependency-free browser UI is a read/write client of the same persisted state and engine used by the CLI. It does not keep a competing copy of lifecycle state. Mutating requests are serialized, while polling and artifact reads remain safe during long agent or command work. The top-bar gear opens schema-driven project settings; currently it controls grill questions per episode, questions per batch, and the stale-answer threshold, and persists those values to the project config. Settings apply to new runs because active runs retain their frozen configuration snapshots.
 
-Background polling (~1.8s while the tab is visible) must not feel like a page reload: unchanged run detail skips re-render, focused HITL editors block silent rewrites, and scroll / `<details>` chrome is restored when a silent poll does rewrite the DOM. The full checklist lives in [docs/ui-polling.md](./docs/ui-polling.md).
+Answering a batch is keyboard-driven: `1`–`4` pick an option for the focused question and advance, arrows move between questions, and `Escape` skips one. These fire only when the question container itself holds focus, so typing a digit in the free-text box is never swallowed. "Accept all recommendations" fills every unanswered question with its recommended option but never submits on its own.
+
+Blocked runs get pattern-matched remediation copy for the common causes (dirty tree, missing agent credential, missing Graphify graph, changed run configuration) with the raw failure kept in a collapsed section. A run that exhausted `workflow.maxStepsPerRun` reports budget exhaustion rather than the generic paused-after-restart message.
+
+Background polling (~1.8s while the tab is visible) must not feel like a page reload. The server returns a cheap change `signature`, and an unchanged poll short-circuits before any payload is serialized. Focused HITL editors — and half-filled batch cards with no control currently focused — block silent rewrites, and scroll / `<details>` chrome is restored when a silent poll does rewrite the DOM. The full checklist lives in [docs/ui-polling.md](./docs/ui-polling.md).
 
 The server binds only to `127.0.0.1`, generates a fresh access token, rejects unauthenticated API calls, caps request bodies, and restricts artifact and knowledge paths to the configured workspace. Closing the process closes the UI; runs remain recoverable from disk.
 
@@ -103,6 +107,7 @@ Each run lives under `.agent-harness/runs/<runId>/`:
 | `events.jsonl` | Append-only transition history |
 | `brief.md` | Confirmed (or draft) feature restatement |
 | `grill.md` | Locked grill resolutions |
+| `unknowns.md` | Open-unknowns register grouped by status |
 | `issues/*.md` | Legacy decision artifacts if present |
 | `tasks/*.md` | Tracer-bullet implementation tickets and evidence |
 | `packets/*.json` | Complete handoff supplied to one model invocation |
@@ -112,11 +117,21 @@ The map is an index, not a duplicate source of truth. Full decisions live in the
 
 ## Reflect, grill, and human questions
 
-New runs start with a **reflector** that restates the idea. The dashboard shows that draft in an editable textarea; confirming stores the exact edited brief and starts grilling.
+New runs start with a **reflector** that restates the idea. The dashboard renders that draft as a section-wise editor (goal, users, in/out of scope, assumptions, unknowns); confirming stores the edited brief and starts grilling. Runs created before structured reflect output fall back to the raw markdown editor.
 
-The **griller** asks one decision-ready HITL question at a time (context, 2–4 options, recommendation). `answer` persists the human's exact words, then the current grill episode continues with a compact appended turn when the answer is fresh. The agent never fills in the human side of the exchange.
+The **griller** asks 1–`workflow.grillQuestionsPerBatch` decision-ready HITL questions per turn (context, 2–4 options, recommendation each). The batch size is a **ceiling, not a target**: only mutually independent questions — where one answer would not change how another is phrased — may share a turn, so a genuinely forking decision is still asked alone. The dashboard collects the whole batch and submits it in one transition, so three independent decisions cost one model round-trip instead of three.
 
-An episode spans at most `workflow.maxGrillQuestionsPerEpisode` answered questions (five by default), then checkpoints and rolls to a new provider agent with the confirmed brief and resolutions so far. If an answer arrives more than `workflow.staleAnswerMinutes` (30 by default) after the question was asked, the harness discards the episode and continues with a cold packet containing only the question and answer. Planning, implementation tasks, and review retain clean boundaries. If the Cursor checkpoint cannot be resumed, the backend creates a fresh agent and submits the complete packet instead.
+`answer` persists the human's exact words plus the selected option id. Questions can be **skipped**, which parks them without producing a resolution. Partial submission is blocked rather than silently auto-parking, since dropping an interview answer implicitly is worse than asking for an explicit skip. The agent never fills in the human side of the exchange.
+
+### The open-unknowns register
+
+Every griller turn also returns what it still needs resolved, including questions it has not asked yet. The harness keeps this as a register on the run state with engine-owned status (`fog` → `asked` → `resolved`, or `parked` when the human skips). It is seeded from the reflector's `unknowns` before the first question is asked, written to `unknowns.md`, and surfaced in the dashboard as "N resolved · N open · N parked" — so the interview has an observable length instead of running until the griller happens to stop.
+
+Reconciliation is a re-projection, not an append: one answer often collapses several latent unknowns and opens new ones. Entries are never deleted, only transitioned, and `parked` is sticky until the griller re-asks. The register reflects the griller's current judgment; it is not a guarantee that the interview ends after the listed entries.
+
+Operators can also add a **note** mid-interview ("don't touch the auth module") without waiting for a question to attach it to. Notes are consumed as authoritative input on the next griller turn, and can optionally seed a human-authored register entry.
+
+An episode spans at most `workflow.maxGrillQuestionsPerEpisode` answered questions (five by default), then checkpoints and rolls to a new provider agent with the confirmed brief and resolutions so far. Staleness is measured once per batch from its shared `askedAt`: if a batch is submitted more than `workflow.staleAnswerMinutes` (30 by default) after it was asked, the harness discards the episode and continues with a cold packet containing only those questions and answers. Planning, implementation tasks, and review retain clean boundaries. If the Cursor checkpoint cannot be resumed, the backend creates a fresh agent and submits the complete packet instead.
 
 ## Scope-aware local retrieval
 
@@ -205,7 +220,7 @@ with an argument array rather than a shell, reads only
 
 `models.small` handles optional prompt compilation and commit/PR copy. `models.capable` handles decisions, planning, implementation, and review. Any role can be pinned independently under `models.roles`.
 
-Prompt compilation is disabled by default because the deterministic renderer is already complete. If explicitly enabled and the compiler fails or times out, the harness falls back to that renderer. Wayfinding episodes never invoke the prompt compiler.
+Prompt compilation is disabled by default because the deterministic renderer is already complete. If explicitly enabled and the compiler fails or times out, the harness falls back to that renderer. Grill episodes never invoke the prompt compiler.
 
 ## TDD and deterministic evidence
 

@@ -18,13 +18,18 @@ import {
   WorkerOutputSchema,
   createRunState,
   formatReflectRestatement,
+  seedUnknownsFromReflect,
   type BuildTask,
   type GrillEpisode,
   type GrillOutput,
   type GrillResolution,
   type HumanQuestionDraft,
   type MessageOutput,
+  type OpenUnknown,
+  type OpenUnknownDraft,
+  type OperatorNote,
   type QuestionPurpose,
+  type ReflectOutput,
   type RunPhase,
   type RunState,
 } from "./domain.js";
@@ -133,6 +138,9 @@ export class HarnessEngine {
       try {
         state = await this.ensureCompatibleConfiguration(state);
         if (terminal(state.phase) || state.phase === "awaiting_input") return state;
+        if (state.yieldedAt) {
+          state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
+        }
         let remaining = maxSteps;
         let iterations = 0;
         const maxIterations = Math.max(maxSteps * 8, 40);
@@ -144,7 +152,11 @@ export class HarnessEngine {
           if (step.consumedBudget) remaining -= 1;
           if (terminal(state.phase) || state.phase === "awaiting_input") return state;
         }
-        state = await this.store.record(state, "run.yielded", { maxSteps });
+        state = await this.store.record(
+          { ...state, yieldedAt: new Date().toISOString() },
+          "run.yielded",
+          { maxSteps },
+        );
         return state;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -180,58 +192,164 @@ export class HarnessEngine {
     return state;
   }
 
-  async answer(runId: string, questionId: string, answer: string): Promise<RunState> {
-    if (!answer.trim()) throw new Error("Answer cannot be empty");
+  /** Single-question path; delegates to the batch-aware answerMany. */
+  async answer(
+    runId: string,
+    questionId: string,
+    answer: string,
+    structured?: ReflectOutput,
+  ): Promise<RunState> {
+    return this.answerMany(runId, [{ questionId, answer, structured }]);
+  }
+
+  /**
+   * Answers and/or parks a batch of open questions in one state transition.
+   * Staleness is computed once per batch (shared askedAt), not per question.
+   */
+  async answerMany(
+    runId: string,
+    answers: Array<{
+      questionId: string;
+      answer: string;
+      optionId?: string;
+      structured?: ReflectOutput;
+    }> = [],
+    parkedQuestionIds: string[] = [],
+  ): Promise<RunState> {
+    if (answers.length === 0 && parkedQuestionIds.length === 0) {
+      throw new Error("At least one answer or parked question id is required");
+    }
+    for (const entry of answers) {
+      if (!entry.answer.trim()) throw new Error(`Answer for ${entry.questionId} cannot be empty`);
+    }
     return this.store.withLock(runId, async () => {
       let state = await this.store.load(runId);
-      const question = state.questions.find((item) => item.id === questionId);
-      if (!question || question.status !== "open") throw new Error(`Question ${questionId} is not open`);
       const now = new Date().toISOString();
-      const questions = state.questions.map((item) =>
-        item.id === questionId
-          ? { ...item, status: "answered" as const, answer: answer.trim(), answeredAt: now }
-          : item,
-      );
+      const byId = new Map(state.questions.map((item) => [item.id, item] as const));
 
-      if (question.purpose === "reflect") {
+      for (const entry of answers) {
+        const question = byId.get(entry.questionId);
+        if (!question || question.status !== "open") {
+          throw new Error(`Question ${entry.questionId} is not open`);
+        }
+      }
+      for (const id of parkedQuestionIds) {
+        const question = byId.get(id);
+        if (!question || question.status !== "open") throw new Error(`Question ${id} is not open`);
+      }
+
+      const reflectEntry = answers.find((entry) => byId.get(entry.questionId)?.purpose === "reflect");
+      if (reflectEntry) {
+        // Reflect always asks a single confirmable question; never batched with grill.
+        if (answers.length !== 1 || parkedQuestionIds.length !== 0) {
+          throw new Error("The reflect confirmation must be answered on its own");
+        }
+        const trimmed = reflectEntry.answer.trim();
+        const questions = state.questions.map((item) =>
+          item.id === reflectEntry.questionId
+            ? { ...item, status: "answered" as const, answer: trimmed, answeredAt: now }
+            : item,
+        );
+        const structured = reflectEntry.structured;
+        const confirmed = structured ? formatReflectRestatement(structured) : trimmed;
         state = await this.store.record(
           {
             ...state,
             questions,
             activeQuestionId: undefined,
             reflectBrief: {
-              draft: state.reflectBrief?.draft ?? answer.trim(),
-              confirmed: answer.trim(),
+              draft: state.reflectBrief?.draft ?? trimmed,
+              structured: state.reflectBrief?.structured,
+              confirmed,
+              confirmedStructured: structured ?? state.reflectBrief?.confirmedStructured,
               confirmedAt: now,
             },
             phase: "grilling",
           },
           "reflect.confirmed",
-          { questionId },
+          { questionId: reflectEntry.questionId },
         );
         await this.syncArtifacts(state);
         return state;
       }
 
+      const answerById = new Map(answers.map((entry) => [entry.questionId, entry] as const));
+      const parkedIds = new Set(parkedQuestionIds);
+      const questions = state.questions.map((item) => {
+        const entry = answerById.get(item.id);
+        if (entry) {
+          return {
+            ...item,
+            status: "answered" as const,
+            answer: entry.answer.trim(),
+            answerOptionId: entry.optionId,
+            answeredAt: now,
+          };
+        }
+        if (parkedIds.has(item.id)) {
+          return { ...item, status: "parked" as const, answeredAt: now };
+        }
+        return item;
+      });
+
+      const touchedBatchIds = new Set(
+        [...answerById.keys(), ...parkedIds]
+          .map((id) => byId.get(id)?.batchId)
+          .filter((id): id is string => Boolean(id)),
+      );
       const staleMs = this.config.workflow.staleAnswerMinutes * 60_000;
-      const askedAt = Date.parse(question.askedAt);
-      const stale = Number.isFinite(askedAt) && Date.parse(now) - askedAt > staleMs;
+      let stale = false;
+      for (const batchId of touchedBatchIds) {
+        const batchQuestion = state.questions.find((item) => item.batchId === batchId);
+        const askedAt = batchQuestion ? Date.parse(batchQuestion.askedAt) : NaN;
+        if (Number.isFinite(askedAt) && Date.parse(now) - askedAt > staleMs) stale = true;
+      }
 
       state = await this.store.record(
-        {
-          ...state,
-          questions,
-          activeQuestionId: undefined,
-          phase: "grilling",
-        },
+        { ...state, questions, activeQuestionId: undefined, phase: "grilling" },
         "question.answered",
-        { questionId, stale },
+        { questionIds: [...answerById.keys(), ...parkedIds], stale },
       );
 
       if (stale) {
         state = await this.closeGrillEpisode(state, "grill.episode_stale_reset");
       }
 
+      await this.syncArtifacts(state);
+      return state;
+    });
+  }
+
+  /** Records unprompted human input mid-grill for the next griller turn. */
+  async addNote(runId: string, text: string, asUnknown = false): Promise<RunState> {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error("Note text cannot be empty");
+    return this.store.withLock(runId, async () => {
+      let state = await this.store.load(runId);
+      const now = new Date().toISOString();
+      const note: OperatorNote = {
+        id: `note-${randomUUID()}`,
+        text: trimmed,
+        title: asUnknown ? trimmed.slice(0, 160) : undefined,
+        at: now,
+      };
+      const openUnknowns: OpenUnknown[] = asUnknown
+        ? [
+            ...state.openUnknowns,
+            {
+              id: `unknown-note-${randomUUID()}`,
+              title: trimmed.slice(0, 160),
+              whyItMatters: "Raised by an operator note.",
+              impact: "shaping",
+              status: "fog",
+            },
+          ]
+        : state.openUnknowns;
+      state = await this.store.record(
+        { ...state, operatorNotes: [...state.operatorNotes, note], openUnknowns },
+        "operator.note_added",
+        { noteId: note.id, asUnknown },
+      );
       await this.syncArtifacts(state);
       return state;
     });
@@ -304,33 +422,33 @@ export class HarnessEngine {
     state = await this.store.record(
       {
         ...state,
-        reflectBrief: { draft },
+        reflectBrief: { draft, structured: output },
+        openUnknowns: seedUnknownsFromReflect(output.unknowns),
       },
       "reflect.drafted",
       { summary: output.summary },
     );
-    return this.askQuestion(state, {
-      purpose: "reflect",
-      prompt: "Edit and confirm this restatement of the feature before grilling begins.",
-      context:
-        "Adjust anything that is wrong or incomplete. Confirming sends this exact text into the grill-me session.",
-      draftAnswer: draft,
-      options: [],
-    });
+    return this.askQuestions(state, "reflect", [
+      {
+        prompt: "Edit and confirm this restatement of the feature before grilling begins.",
+        context:
+          "Adjust anything that is wrong or incomplete. Confirming sends this exact text into the grill-me session.",
+        draftAnswer: draft,
+        options: [],
+      },
+    ]);
   }
 
   private async grill(state: RunState): Promise<RunState> {
     const brief = state.reflectBrief?.confirmed;
     if (!brief) throw new Error("Cannot grill without a confirmed reflect brief");
 
-    const pendingAnswer = [...state.questions]
-      .reverse()
-      .find(
-        (question) =>
-          question.purpose === "grill" &&
-          question.status === "answered" &&
-          !state.grillResolutions.some((item) => item.id === question.id),
-      );
+    const answeredQuestions = state.questions.filter(
+      (question) =>
+        question.purpose === "grill" &&
+        question.status === "answered" &&
+        !state.grillResolutions.some((item) => item.id === question.id),
+    );
     const openGrill = state.questions.find(
       (question) => question.purpose === "grill" && question.status === "open",
     );
@@ -348,71 +466,94 @@ export class HarnessEngine {
       state = await this.closeGrillEpisode(state, "grill.episode_rolled");
     }
 
+    // Batch-level staleness already closed the episode (see answerMany), so
+    // a cold start here is sufficient.
     const coldStart = !state.grillEpisode || Boolean(state.grillEpisode.closedAt);
-    const staleAnswer =
-      Boolean(pendingAnswer?.answeredAt) &&
-      Boolean(pendingAnswer?.askedAt) &&
-      Date.parse(pendingAnswer!.answeredAt!) - Date.parse(pendingAnswer!.askedAt) >
-        this.config.workflow.staleAnswerMinutes * 60_000;
 
-    const questionPayload = pendingAnswer
-      ? {
-          question: {
-            prompt: pendingAnswer.prompt,
-            context: pendingAnswer.context,
-            options: pendingAnswer.options,
-            recommendation: pendingAnswer.recommendation,
-          },
-          answer: pendingAnswer.answer,
-        }
-      : {};
+    const unconsumedNotes = state.operatorNotes.filter((note) => !note.consumedAt);
+    if (unconsumedNotes.length > 0) {
+      const consumedAt = new Date().toISOString();
+      const consumedIds = new Set(unconsumedNotes.map((note) => note.id));
+      state = await this.store.record(
+        {
+          ...state,
+          operatorNotes: state.operatorNotes.map((note) =>
+            consumedIds.has(note.id) ? { ...note, consumedAt } : note,
+          ),
+        },
+        "operator.notes_consumed",
+        { count: unconsumedNotes.length },
+      );
+    }
 
-    const input =
-      coldStart || staleAnswer
+    const questionsPayload =
+      answeredQuestions.length > 0
         ? {
-            mode: staleAnswer && pendingAnswer ? "stale_answer" : "fresh_episode",
-            confirmedBrief: brief,
-            resolutions: state.grillResolutions,
-            ...questionPayload,
+            questions: answeredQuestions.map((question) => ({
+              prompt: question.prompt,
+              context: question.context,
+              options: question.options,
+              recommendation: question.recommendation,
+              unknownId: question.unknownId,
+            })),
+            answers: answeredQuestions.map((question) => ({
+              questionId: question.id,
+              answer: question.answer,
+              optionId: question.answerOptionId,
+            })),
           }
-        : {
-            mode: "continue",
-            confirmedBrief: brief,
-            resolutions: state.grillResolutions,
-            ...questionPayload,
-          };
+        : {};
+    const notesPayload =
+      unconsumedNotes.length > 0
+        ? { operatorNotes: unconsumedNotes.map((note) => ({ text: note.text, title: note.title })) }
+        : {};
 
+    const input = {
+      mode: coldStart ? "fresh_episode" : "continue",
+      confirmedBrief: brief,
+      resolutions: state.grillResolutions,
+      openUnknowns: state.openUnknowns,
+      ...questionsPayload,
+      ...notesPayload,
+    };
+
+    const batchCeiling = this.config.workflow.grillQuestionsPerBatch;
     const invocation = await this.invokeGrill(state, {
       runId: state.runId,
       role: "griller",
-      objective: pendingAnswer
-        ? "Incorporate the human answer and either ask the next grill question or declare ready to plan"
-        : "Begin grilling from the confirmed feature brief; ask the first decision-ready question",
+      objective:
+        answeredQuestions.length > 0
+          ? "Incorporate the human answers and either ask the next batch of independent grill questions or declare ready to plan"
+          : "Begin grilling from the confirmed feature brief; ask the first batch of decision-ready questions",
       input,
+      constraints: [
+        `Ask at most ${batchCeiling} question(s) this turn, and only if they are mutually independent. This is a ceiling, not a target — prefer fewer, and ask exactly one whenever the next decision forks on its answer.`,
+      ],
       expectedOutput: GRILL_EXPECTED_OUTPUT,
       schema: GrillOutputSchema,
-      knowledgeQuery: [brief, pendingAnswer?.prompt, pendingAnswer?.answer]
+      knowledgeQuery: [brief, ...answeredQuestions.map((q) => `${q.prompt} ${q.answer ?? ""}`)]
         .filter(Boolean)
         .join(" "),
       knowledgeFallbackQuery: compactDomainSeed(state.idea, brief),
-      forceFresh: Boolean(coldStart || staleAnswer),
+      forceFresh: Boolean(coldStart),
     });
     state = invocation.state;
     const output = invocation.output;
 
-    if (pendingAnswer) {
-      const resolution: GrillResolution = {
-        id: pendingAnswer.id,
-        question: pendingAnswer.prompt,
-        answer: pendingAnswer.answer ?? "",
+    if (answeredQuestions.length > 0) {
+      const now = new Date().toISOString();
+      const resolutions: GrillResolution[] = answeredQuestions.map((question) => ({
+        id: question.id,
+        question: question.prompt,
+        answer: question.answer ?? "",
         summary: output.summary,
-        resolvedAt: new Date().toISOString(),
-      };
-      const questionsAnswered = (state.grillEpisode?.questionsAnswered ?? 0) + 1;
+        resolvedAt: now,
+      }));
+      const questionsAnswered = (state.grillEpisode?.questionsAnswered ?? 0) + answeredQuestions.length;
       state = await this.store.record(
         {
           ...state,
-          grillResolutions: mergeResolutions(state.grillResolutions, resolution),
+          grillResolutions: mergeResolutionLists(state.grillResolutions, resolutions),
           grillEpisode: state.grillEpisode
             ? {
                 ...state.grillEpisode,
@@ -421,10 +562,15 @@ export class HarnessEngine {
               }
             : state.grillEpisode,
         },
-        "grill.answer_incorporated",
-        { questionId: pendingAnswer.id, questionsAnswered },
+        "grill.answers_incorporated",
+        { questionIds: answeredQuestions.map((q) => q.id), questionsAnswered },
       );
     }
+
+    // Parked grill questions never produce resolutions; their unknown stays parked (sticky).
+    const parkedUnknownIds = state.questions
+      .filter((question) => question.purpose === "grill" && question.status === "parked" && question.unknownId)
+      .map((question) => question.unknownId!);
 
     if (output.status === "ready_to_plan") {
       const now = new Date().toISOString();
@@ -435,6 +581,12 @@ export class HarnessEngine {
       const closed = await this.closeGrillEpisode({
         ...state,
         grillResolutions: mergeResolutionLists(state.grillResolutions, fromOutput),
+        openUnknowns: reconcileUnknowns(
+          state.openUnknowns,
+          output.openUnknowns,
+          new Set(),
+          new Set(parkedUnknownIds),
+        ),
         phase: "planning",
       });
       return this.store.record(closed, "grill.completed", {
@@ -450,10 +602,23 @@ export class HarnessEngine {
       state = await this.closeGrillEpisode(state, "grill.episode_rolled");
     }
 
-    return this.askQuestion(state, {
-      purpose: "grill",
-      ...output.question,
-    });
+    // Defensive clamp: the configured ceiling may be lower than the schema's hard cap of 6.
+    const questions = output.questions.slice(0, batchCeiling);
+    const askedUnknownIds = questions
+      .map((question) => question.unknownId)
+      .filter((id): id is string => Boolean(id));
+    const openUnknowns = reconcileUnknowns(
+      state.openUnknowns,
+      output.openUnknowns,
+      new Set(askedUnknownIds),
+      new Set(parkedUnknownIds),
+    );
+
+    return this.askQuestions(
+      { ...state, openUnknowns },
+      "grill",
+      questions.map((question) => ({ ...question })),
+    );
   }
 
   private async invokeGrill(
@@ -525,43 +690,49 @@ export class HarnessEngine {
     });
   }
 
-  private async askQuestion(
+  /**
+   * Asks a batch of questions in one turn: one shared batchId and askedAt.
+   * Reflect always calls this with a single-item array.
+   */
+  private async askQuestions(
     state: RunState,
-    details: {
-      purpose: QuestionPurpose;
+    purpose: QuestionPurpose,
+    drafts: Array<{
       prompt: string;
       context?: string;
       options?: HumanQuestionDraft["options"];
       recommendedOptionId?: string;
       recommendation?: string;
       draftAnswer?: string;
-    },
+      unknownId?: string;
+    }>,
   ): Promise<RunState> {
+    if (drafts.length === 0) throw new Error("At least one question is required");
     const now = new Date().toISOString();
-    const questionId = `q-${randomUUID()}`;
+    const batchId = `batch-${randomUUID()}`;
+    const newQuestions = drafts.map((details) => ({
+      id: `q-${randomUUID()}`,
+      purpose,
+      prompt: details.prompt,
+      context: details.context ?? "",
+      options: details.options ?? [],
+      recommendedOptionId: details.recommendedOptionId,
+      recommendation: details.recommendation,
+      draftAnswer: details.draftAnswer,
+      unknownId: details.unknownId,
+      batchId,
+      status: "open" as const,
+      askedAt: now,
+    }));
     return this.store.record(
       {
         ...state,
-        questions: [
-          ...state.questions,
-          {
-            id: questionId,
-            purpose: details.purpose,
-            prompt: details.prompt,
-            context: details.context ?? "",
-            options: details.options ?? [],
-            recommendedOptionId: details.recommendedOptionId,
-            recommendation: details.recommendation,
-            draftAnswer: details.draftAnswer,
-            status: "open",
-            askedAt: now,
-          },
-        ],
-        activeQuestionId: questionId,
+        questions: [...state.questions, ...newQuestions],
+        activeQuestionId: newQuestions[0]!.id,
         phase: "awaiting_input",
       },
       "question.asked",
-      { questionId, purpose: details.purpose, prompt: details.prompt },
+      { questionIds: newQuestions.map((q) => q.id), purpose, batchId },
     );
   }
 
@@ -1009,6 +1180,41 @@ function materializeTasks(
     testPaths: [],
     changedFiles: [],
   }));
+}
+
+/**
+ * Reconciles the open-unknowns register against the griller's latest draft.
+ * An entry absent from `incoming` becomes "resolved"; "parked" is sticky
+ * until re-asked. Entries are never deleted, only transitioned.
+ */
+export function reconcileUnknowns(
+  previous: OpenUnknown[],
+  incoming: OpenUnknownDraft[],
+  askedIds: Set<string> = new Set(),
+  parkedIds: Set<string> = new Set(),
+): OpenUnknown[] {
+  const previousById = new Map(previous.map((item) => [item.id, item] as const));
+  const incomingIds = new Set(incoming.map((item) => item.id));
+  const reconciled: OpenUnknown[] = incoming.map((draft) => {
+    const prior = previousById.get(draft.id);
+    const status: OpenUnknown["status"] = askedIds.has(draft.id)
+      ? "asked"
+      : parkedIds.has(draft.id) || prior?.status === "parked"
+        ? "parked"
+        : "fog";
+    return {
+      id: draft.id,
+      title: draft.title,
+      whyItMatters: draft.whyItMatters ?? "",
+      impact: draft.impact ?? "shaping",
+      status,
+    };
+  });
+  for (const prior of previous) {
+    if (incomingIds.has(prior.id)) continue;
+    reconciled.push({ ...prior, status: "resolved" });
+  }
+  return reconciled;
 }
 
 function mergeResolutions(

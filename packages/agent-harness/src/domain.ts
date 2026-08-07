@@ -16,6 +16,7 @@ export const HumanQuestionDraftSchema = z
     options: z.array(QuestionOptionSchema).min(2).max(4),
     recommendedOptionId: z.string().min(1),
     recommendation: z.string().min(1),
+    unknownId: z.string().optional(),
   })
   .superRefine((question, context) => {
     const optionIds = question.options.map((option) => option.id);
@@ -50,16 +51,67 @@ export const QuestionSchema = z.object({
   recommendation: z.string().optional(),
   // Prefill for editable confirmations (reflect brief).
   draftAnswer: z.string().optional(),
-  status: z.enum(["open", "answered"]),
+  // Shared id for every question asked in the same griller turn.
+  batchId: z.string().optional(),
+  unknownId: z.string().optional(),
+  answerOptionId: z.string().optional(),
+  status: z.enum(["open", "answered", "parked"]),
   answer: z.string().optional(),
   askedAt: z.string(),
   answeredAt: z.string().optional(),
 });
 export type Question = z.infer<typeof QuestionSchema>;
 
+// The register of things still unknown to the interview.
+export const OpenUnknownSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  whyItMatters: z.string().default(""),
+  impact: z.enum(["blocking", "shaping", "minor"]).default("shaping"),
+  status: z.enum(["fog", "asked", "parked", "resolved"]).default("fog"),
+});
+export type OpenUnknown = z.infer<typeof OpenUnknownSchema>;
+
+// The griller's per-turn draft of the register; the engine owns `status`.
+export const OpenUnknownDraftSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  whyItMatters: z.string().default(""),
+  impact: z.enum(["blocking", "shaping", "minor"]).default("shaping"),
+});
+export type OpenUnknownDraft = z.infer<typeof OpenUnknownDraftSchema>;
+
+export const OperatorNoteSchema = z.object({
+  id: z.string().min(1),
+  text: z.string().min(1),
+  // Set only when the note also seeded a new fog entry.
+  title: z.string().optional(),
+  at: z.string(),
+  consumedAt: z.string().optional(),
+});
+export type OperatorNote = z.infer<typeof OperatorNoteSchema>;
+
+export const REFLECT_EXPECTED_OUTPUT =
+  "{summary:string,restatement:string,goal:string,users:[string],inScope:[string],outOfScope:[string],assumptions:[string],unknowns:[string]}";
+
+export const ReflectOutputSchema = z.object({
+  summary: z.string().min(1),
+  restatement: z.string().min(1),
+  goal: z.string().min(1),
+  users: z.array(z.string()),
+  inScope: z.array(z.string()),
+  outOfScope: z.array(z.string()),
+  assumptions: z.array(z.string()),
+  unknowns: z.array(z.string()),
+});
+export type ReflectOutput = z.infer<typeof ReflectOutputSchema>;
+
 export const ReflectBriefSchema = z.object({
   draft: z.string().min(1),
+  // The flat draft/confirmed strings stay authoritative for the griller.
+  structured: ReflectOutputSchema.optional(),
   confirmed: z.string().optional(),
+  confirmedStructured: ReflectOutputSchema.optional(),
   confirmedAt: z.string().optional(),
 });
 export type ReflectBrief = z.infer<typeof ReflectBriefSchema>;
@@ -160,6 +212,10 @@ export const RunStateSchema = z.object({
   reflectBrief: ReflectBriefSchema.optional(),
   grillResolutions: z.array(GrillResolutionSchema).default([]),
   questions: z.array(QuestionSchema).default([]),
+  // Never deleted, only transitioned, so the UI can show a stable history.
+  openUnknowns: z.array(OpenUnknownSchema).default([]),
+  // Unprompted human input the griller has not yet consumed.
+  operatorNotes: z.array(OperatorNoteSchema).default([]),
   tasks: z.array(BuildTaskSchema).default([]),
   activeQuestionId: z.string().optional(),
   branchName: z.string().optional(),
@@ -167,6 +223,8 @@ export const RunStateSchema = z.object({
   failure: z.string().optional(),
   blockedFrom: RunPhaseSchema.optional(),
   grillEpisode: GrillEpisodeSchema.optional(),
+  // Distinguishes a yielded run from one paused on human input.
+  yieldedAt: z.string().optional(),
   revision: z.number().int().nonnegative(),
   lastEventSequence: z.number().int().nonnegative(),
   createdAt: z.string(),
@@ -194,29 +252,15 @@ export const AgentRoleSchema = z.enum([
 ]);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 
-export const REFLECT_EXPECTED_OUTPUT =
-  "{summary:string,restatement:string,goal:string,users:[string],inScope:[string],outOfScope:[string],assumptions:[string],unknowns:[string]}";
-
-export const ReflectOutputSchema = z.object({
-  summary: z.string().min(1),
-  restatement: z.string().min(1),
-  goal: z.string().min(1),
-  users: z.array(z.string()),
-  inScope: z.array(z.string()),
-  outOfScope: z.array(z.string()),
-  assumptions: z.array(z.string()),
-  unknowns: z.array(z.string()),
-});
-export type ReflectOutput = z.infer<typeof ReflectOutputSchema>;
-
 export const GRILL_EXPECTED_OUTPUT =
-  "either {status:'needs_input',summary:string,question:{prompt,context,options:[{id,label,description}] (2-4),recommendedOptionId,recommendation}} or {status:'ready_to_plan',summary:string,resolutions:[{id,question,answer,summary}]}";
+  "either {status:'needs_input',summary:string,questions:[{prompt,context,options:[{id,label,description}] (2-4),recommendedOptionId,recommendation,unknownId?}] (1-N, N is a ceiling not a target; only mutually independent questions may share a turn),openUnknowns:[{id,title,whyItMatters,impact:'blocking'|'shaping'|'minor'}]} or {status:'ready_to_plan',summary:string,resolutions:[{id,question,answer,summary}],openUnknowns:[{id,title,whyItMatters,impact}]}";
 
 export const GrillOutputSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("needs_input"),
     summary: z.string().min(1),
-    question: HumanQuestionDraftSchema,
+    questions: z.array(HumanQuestionDraftSchema).min(1).max(6),
+    openUnknowns: z.array(OpenUnknownDraftSchema).default([]),
   }),
   z.object({
     status: z.literal("ready_to_plan"),
@@ -229,6 +273,7 @@ export const GrillOutputSchema = z.discriminatedUnion("status", [
         summary: z.string().min(1),
       }),
     ),
+    openUnknowns: z.array(OpenUnknownDraftSchema).default([]),
   }),
 ]);
 export type GrillOutput = z.infer<typeof GrillOutputSchema>;
@@ -321,6 +366,30 @@ export function formatReflectRestatement(output: ReflectOutput): string {
     "",
     section("Unknowns", output.unknowns),
   ].join("\n");
+}
+
+/** Uses stable ids so re-parsing the same reflector output does not churn entries. */
+export function seedUnknownsFromReflect(unknowns: string[]): OpenUnknown[] {
+  return unknowns
+    .map((title) => title.trim())
+    .filter((title) => title.length > 0)
+    .map((title, index) => ({
+      id: `unknown-seed-${index + 1}-${slugify(title)}`,
+      title,
+      whyItMatters: "",
+      impact: "shaping" as const,
+      status: "fog" as const,
+    }));
+}
+
+function slugify(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 40) || "item"
+  );
 }
 
 export function createRunState(

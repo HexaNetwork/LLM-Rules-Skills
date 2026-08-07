@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CONTRACT_VERSION,
   GrillOutputSchema,
   QuestionSchema,
   ReflectOutputSchema,
+  RunStateSchema,
 } from "../../src/domain.js";
 
 describe("human question contracts", () => {
@@ -31,9 +33,31 @@ describe("human question contracts", () => {
       GrillOutputSchema.parse({
         status: "needs_input",
         summary: "Need a tone decision",
-        question,
+        questions: [question],
       }).status,
     ).toBe("needs_input");
+  });
+
+  it("accepts a batch of up to six mutually independent questions", () => {
+    const parsed = GrillOutputSchema.parse({
+      status: "needs_input",
+      summary: "Need several decisions",
+      questions: [question, { ...question, prompt: "A second, independent question?" }],
+      openUnknowns: [{ id: "tone", title: "Tone", whyItMatters: "Sets voice", impact: "shaping" }],
+    });
+    if (parsed.status !== "needs_input") throw new Error("expected needs_input");
+    expect(parsed.questions).toHaveLength(2);
+    expect(parsed.openUnknowns[0]?.id).toBe("tone");
+  });
+
+  it("rejects more than six questions in a batch", () => {
+    expect(() =>
+      GrillOutputSchema.parse({
+        status: "needs_input",
+        summary: "Too many",
+        questions: Array.from({ length: 7 }, () => question),
+      }),
+    ).toThrow();
   });
 
   it("rejects an unknown recommended option", () => {
@@ -41,7 +65,7 @@ describe("human question contracts", () => {
       GrillOutputSchema.parse({
         status: "needs_input",
         summary: "Need a tone decision",
-        question: { ...question, recommendedOptionId: "missing" },
+        questions: [{ ...question, recommendedOptionId: "missing" }],
       }),
     ).toThrow(/recommended option/i);
   });
@@ -71,5 +95,39 @@ describe("human question contracts", () => {
       unknowns: ["PRD generation later"],
     });
     expect(parsed.restatement).toContain("editable reflect");
+  });
+
+  it("accepts a parked question status", () => {
+    const parsed = QuestionSchema.parse({
+      id: "q-parked",
+      purpose: "grill",
+      prompt: "Skipped for now",
+      status: "parked",
+      askedAt: new Date().toISOString(),
+    });
+    expect(parsed.status).toBe("parked");
+  });
+});
+
+describe("run state backward compatibility", () => {
+  it("parses a state.json written before openUnknowns/operatorNotes/yieldedAt existed", () => {
+    const legacy = {
+      contractVersion: CONTRACT_VERSION,
+      runId: "legacy-run",
+      configurationHash: "hash",
+      idea: "Ship it",
+      phase: "grilling",
+      questions: [],
+      tasks: [],
+      revision: 3,
+      lastEventSequence: 3,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      // No openUnknowns, operatorNotes, or yieldedAt fields at all.
+    };
+    const parsed = RunStateSchema.parse(legacy);
+    expect(parsed.openUnknowns).toEqual([]);
+    expect(parsed.operatorNotes).toEqual([]);
+    expect(parsed.yieldedAt).toBeUndefined();
   });
 });

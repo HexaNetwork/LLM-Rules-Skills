@@ -13,7 +13,7 @@ import { HarnessEngine } from "../engine.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { prepareGraphifyForRun } from "../graphify.js";
 import { RunStore } from "../store.js";
-import type { RunState, WorkPacket } from "../domain.js";
+import { ReflectOutputSchema, type ReflectOutput, type RunState, type WorkPacket } from "../domain.js";
 import { renderPrompt, renderPromptBuilderPrompt } from "../prompts.js";
 import { renderDashboard } from "./app.js";
 
@@ -63,6 +63,16 @@ const PROJECT_SETTING_DEFINITIONS = [
     type: "integer",
     minimum: 1,
     maximum: 1440,
+  },
+  {
+    key: "workflow.grillQuestionsPerBatch",
+    category: "Context & cost",
+    label: "Grill questions per batch",
+    description:
+      "Ceiling on how many mutually independent questions the griller may ask in one turn. A ceiling, not a target.",
+    type: "integer",
+    minimum: 1,
+    maximum: 6,
   },
 ] as const;
 
@@ -172,6 +182,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           1,
           1440,
         );
+        const grillQuestionsPerBatch = optionalInteger(
+          values["workflow.grillQuestionsPerBatch"],
+          "workflow.grillQuestionsPerBatch",
+          1,
+          6,
+        );
         if (maxGrillQuestionsPerEpisode == null) {
           throw new HttpError(400, "workflow.maxGrillQuestionsPerEpisode is required");
         }
@@ -179,7 +195,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           throw new HttpError(400, "workflow.staleAnswerMinutes is required");
         }
         const updated = await writeProjectSettings(options.configPath, {
-          workflow: { maxGrillQuestionsPerEpisode, staleAnswerMinutes },
+          workflow: {
+            maxGrillQuestionsPerEpisode,
+            staleAnswerMinutes,
+            ...(grillQuestionsPerBatch != null ? { grillQuestionsPerBatch } : {}),
+          },
         });
         projectConfig = updated.config;
         return json(response, 200, {
@@ -264,6 +284,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
       if (request.method === "GET" && runMatch) {
         const runId = decodeURIComponent(runMatch[1]!);
         const state = await store.load(runId);
+        const job = jobs.get(runId);
+        const signature = runSignature(state, job);
+        const since = url.searchParams.get("since");
+        if (since && since === signature) {
+          return json(response, 200, { unchanged: true, signature });
+        }
         const [events, sessions, artifacts] = await Promise.all([
           readEvents(store, runId),
           readSessionSummaries(store, runId),
@@ -271,10 +297,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         ]);
         return json(response, 200, {
           state,
-          job: jobs.get(runId),
+          job,
           events,
           sessions,
           artifacts,
+          signature,
         });
       }
 
@@ -283,7 +310,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         const runId = decodeURIComponent(actionMatch[1]!);
         const body = await readJsonBody(request);
         const action = requiredString(body.action, "action", 40);
-        if (action !== "cancel" && !agentReadiness.ready) {
+        if (action !== "cancel" && action !== "note" && !agentReadiness.ready) {
           throw new HttpError(503, agentReadiness.message ?? "The configured agent backend is unavailable");
         }
         const runConfig = await loadRunConfig(projectConfig, runId);
@@ -304,12 +331,15 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             await engine.advance(runId);
           });
         } else if (action === "answer") {
-          const questionId = requiredString(body.questionId, "questionId", 200);
-          const answer = requiredString(body.answer, "answer", 100_000);
+          const { answers, parked } = parseAnswerBody(body);
           enqueue(runId, action, async () => {
-            await engine.answer(runId, questionId, answer);
+            await engine.answerMany(runId, answers, parked);
             await engine.advance(runId);
           });
+        } else if (action === "note") {
+          const text = requiredString(body.text, "text", 20_000);
+          const asUnknown = optionalBoolean(body.asUnknown, "asUnknown") ?? false;
+          enqueue(runId, action, () => engine.addNote(runId, text, asUnknown));
         } else if (action === "retry") {
           enqueue(runId, action, async () => {
             await engine.retry(runId);
@@ -440,6 +470,14 @@ function summarizeRun(state: RunState, job?: UiJob): Record<string, unknown> {
   };
 }
 
+/**
+ * Cheap change signature for polling clients: state.revision plus job status
+ * plus lastEventSequence — no events.jsonl read needed to detect "nothing changed".
+ */
+function runSignature(state: RunState, job?: UiJob): string {
+  return `${state.revision}:${state.lastEventSequence}:${job ? `${job.status}:${job.detail ?? ""}` : "none"}`;
+}
+
 function projectSettings(config: HarnessConfig, configPath?: string): Record<string, unknown> {
   return {
     editable: configPath != null,
@@ -448,6 +486,7 @@ function projectSettings(config: HarnessConfig, configPath?: string): Record<str
     values: {
       "workflow.maxGrillQuestionsPerEpisode": config.workflow.maxGrillQuestionsPerEpisode,
       "workflow.staleAnswerMinutes": config.workflow.staleAnswerMinutes,
+      "workflow.grillQuestionsPerBatch": config.workflow.grillQuestionsPerBatch,
     },
   };
 }
@@ -613,7 +652,7 @@ async function listArtifacts(store: RunStore, runId: string): Promise<string[]> 
       store.listFiles(runId, directory),
     ),
   );
-  const fixed = ["idea.md", "brief.md", "grill.md", "events.jsonl", "state.json", "config.json"];
+  const fixed = ["idea.md", "brief.md", "grill.md", "unknowns.md", "events.jsonl", "state.json", "config.json"];
   const available: string[] = [];
   for (const file of fixed) {
     try {
@@ -628,7 +667,9 @@ async function listArtifacts(store: RunStore, runId: string): Promise<string[]> 
 
 function allowedArtifact(value: string): boolean {
   return (
-    ["idea.md", "brief.md", "grill.md", "events.jsonl", "state.json", "config.json"].includes(value) ||
+    ["idea.md", "brief.md", "grill.md", "unknowns.md", "events.jsonl", "state.json", "config.json"].includes(
+      value,
+    ) ||
     /^(issues|tasks|packets|sessions)\/[A-Za-z0-9._-]+$/.test(value)
   );
 }
@@ -652,6 +693,52 @@ async function readJsonBody(request: IncomingMessage): Promise<Record<string, un
     throw new HttpError(400, "JSON body must be an object");
   }
   return parsed as Record<string, unknown>;
+}
+
+const MAX_ANSWER_BATCH = 6;
+
+/**
+ * Accepts both the legacy CLI shape {questionId, answer} and the batched
+ * dashboard shape {answers: [{questionId, answer, optionId?, structured?}], parked?}.
+ * `structured` is validated here since it is untrusted client input.
+ */
+function parseAnswerBody(body: Record<string, unknown>): {
+  answers: Array<{ questionId: string; answer: string; optionId?: string; structured?: ReflectOutput }>;
+  parked: string[];
+} {
+  if (Array.isArray(body.answers)) {
+    if (body.answers.length > MAX_ANSWER_BATCH) {
+      throw new HttpError(400, `answers must include at most ${MAX_ANSWER_BATCH} entries`);
+    }
+    const parked = Array.isArray(body.parked)
+      ? body.parked.map((value, index) => requiredString(value, `parked[${index}]`, 200))
+      : [];
+    if (parked.length > MAX_ANSWER_BATCH) {
+      throw new HttpError(400, `parked must include at most ${MAX_ANSWER_BATCH} entries`);
+    }
+    const answers = body.answers.map((item, index) => {
+      const record = requiredRecord(item, `answers[${index}]`);
+      let structured: ReflectOutput | undefined;
+      if (record.structured != null) {
+        const parsed = ReflectOutputSchema.safeParse(record.structured);
+        if (!parsed.success) throw new HttpError(400, `answers[${index}].structured is invalid`);
+        structured = parsed.data;
+      }
+      return {
+        questionId: requiredString(record.questionId, `answers[${index}].questionId`, 200),
+        answer: requiredString(record.answer, `answers[${index}].answer`, 100_000),
+        optionId: optionalString(record.optionId, `answers[${index}].optionId`, 200),
+        structured,
+      };
+    });
+    if (answers.length === 0 && parked.length === 0) {
+      throw new HttpError(400, "answers must include at least one entry, or parked must be non-empty");
+    }
+    return { answers, parked };
+  }
+  const questionId = requiredString(body.questionId, "questionId", 200);
+  const answer = requiredString(body.answer, "answer", 100_000);
+  return { answers: [{ questionId, answer }], parked: [] };
 }
 
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {

@@ -58,7 +58,7 @@ describe("dashboard document", () => {
     const html = renderDashboard();
 
     expect(html).toContain("answerDrafts");
-    expect(html).toContain("preserveEditor && editorIsActive()");
+    expect(html).toContain("preserveEditor && (editorIsActive() || batchIsActive())");
     expect(html).toContain("loadRun(state.selected,false,true,true)");
   });
 
@@ -67,21 +67,24 @@ describe("dashboard document", () => {
 
     expect(html).toContain("answerDrafts");
     expect(html).toContain("draftAnswer");
-    expect(html).toContain("preserveEditor && editorIsActive()");
+    expect(html).toContain("preserveEditor && (editorIsActive() || batchIsActive())");
   });
 
   it("follows the ui-polling contract for silent refresh", () => {
     const html = renderDashboard();
 
-    // Invariant 1: unchanged silent polls skip run re-render.
-    expect(html).toContain("detailFingerprint");
-    expect(html).toContain("fingerprint === state.detailFingerprint");
+    // Invariant 1: unchanged silent polls skip run re-render entirely.
+    expect(html).toContain("detail.unchanged");
+    expect(html).toContain("state.signature");
+    expect(html).not.toContain("detailFingerprint");
+    expect(html).not.toContain("JSON.stringify(detail)");
 
-    // Invariant 2: fingerprint advances only after a successful render.
-    expect(html).toMatch(/renderRun\(\);\s*state\.detailFingerprint = fingerprint;/);
+    // Invariant 2: signature advances only after a successful render.
+    expect(html).toMatch(/renderRun\(\);\s*state\.signature = detail\.signature/);
 
     // Invariant 3: focused HITL editors block silent rewrite.
-    expect(html).toContain("if (preserveEditor && editorIsActive()) return;");
+    expect(html).toContain("if (preserveEditor && (editorIsActive() || batchIsActive())) return;");
+    expect(html).toContain("function batchIsActive()");
 
     // Invariant 4: silent rewrites capture/restore scroll + details chrome.
     expect(html).toContain("captureScrolls");
@@ -112,5 +115,157 @@ describe("dashboard document", () => {
 
     expect(html).toContain("event.key === 'Enter' && event.shiftKey");
     expect(html).toContain("answerForm.requestSubmit()");
+  });
+
+  it("never wires a Ctrl+Enter submit shortcut", () => {
+    const html = renderDashboard();
+
+    expect(html).not.toContain("ctrlKey");
+    expect(html).not.toContain("metaKey && event.key === 'Enter'");
+  });
+
+  it("renders every open question in a batch, not just the active one", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function renderQuestionBatch(s, activeQuestion)");
+    expect(html).toContain('item.status === "open" && item.batchId === batchId');
+    expect(html).toContain("renderBatchQuestion(q, i, batch.length)");
+    expect(html).toContain('data-batch-question="');
+  });
+
+  it("gives each batch question a skip/park control and a submit footer", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("data-batch-skip=");
+    expect(html).toContain("Skip for now");
+    expect(html).toContain('id="batchCount"');
+    expect(html).toContain('id="submitBatchBtn"');
+    expect(html).toContain("answered");
+  });
+
+  it("blocks submit on an unanswered, unparked question with an inline hint instead of silently auto-parking", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function submitBatch()");
+    expect(html).toContain("missing.push(qid)");
+    expect(html).toContain("still need an answer or a Skip");
+    // The block path must actually return without submitting.
+    expect(html).toMatch(/missing\.push\(qid\)[\s\S]*?if \(missing\.length\) \{[\s\S]*?return;\s*\}/);
+  });
+
+  it("offers accept-all-recommendations without auto-submitting", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain('id="acceptAllBtn"');
+    expect(html).toContain("function acceptAllRecommendations()");
+    // Accept-all must only fill state, never submit.
+    const fnBody = html.match(/function acceptAllRecommendations\(\) \{[\s\S]*?\n {6}\}/)?.[0] ?? "";
+    expect(fnBody).not.toContain("submitBatch(");
+    expect(fnBody).not.toContain("runAction(");
+  });
+
+  it("tracks a structured optionId selection per question instead of overwriting the textarea", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("data-batch-choice=");
+    expect(html).toContain("data-option-id=");
+    expect(html).toContain("function selectBatchOption(qid, optionId)");
+    expect(html).toContain("state.selectedOptions[qid] = optionId");
+    expect(html).toContain("question-option.selected");
+    expect(html).toContain("optionId: optionId || undefined");
+  });
+
+  it("wires rapid-fire keyboard shortcuts scoped to the focused question container", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("event.target !== container) return;");
+    expect(html).toContain("event.key >= '1' && event.key <= '4'");
+    expect(html).toContain("focusNextUnanswered(qid)");
+    expect(html).toContain("focusAdjacentQuestion(container, 1)");
+    expect(html).toContain("focusAdjacentQuestion(container, -1)");
+    expect(html).toContain("event.key === 'Escape'");
+    expect(html).toContain("toggleParked(container.getAttribute('data-batch-question'), true)");
+    expect(html).toContain("keyboard-hint");
+  });
+
+  it("renders the open-unknowns fog register with a resolved/open/parked headline", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function renderFogCard(s)");
+    expect(html).toContain("function fogSummaryLine(unknowns)");
+    expect(html).toContain('" resolved · "');
+    expect(html).toContain('" open · "');
+    expect(html).toContain('" parked"');
+    expect(html).toContain('data-details-key="fog-resolved"');
+    expect(html).toContain("fog-entry impact-");
+  });
+
+  it("folds the open-unknown count into the grill resolutions metric card", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("open unknown(s) remain");
+  });
+
+  it("renders a structured section-wise reflect editor when reflectBrief.structured is present, and falls back to raw markdown otherwise", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function renderReflectEditor(q, s)");
+    expect(html).toContain("s.reflectBrief && s.reflectBrief.structured");
+    expect(html).toContain('data-reflect-field="restatement"');
+    expect(html).toContain('data-reflect-field="goal"');
+    expect(html).toContain("reflectListSection(\"users\"");
+    expect(html).toContain("reflectListSection(\"inScope\"");
+    expect(html).toContain("reflectListSection(\"outOfScope\"");
+    expect(html).toContain("reflectListSection(\"assumptions\"");
+    expect(html).toContain("reflectListSection(\"unknowns\"");
+    expect(html).toContain("Runs created before the structured reflector output existed");
+    expect(html).toContain('id="answerForm"');
+  });
+
+  it("submits the edited structured reflect payload via the batched answers[] shape", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("event.target.id === 'reflectForm'");
+    expect(html).toContain("structured: cleaned");
+    expect(html).toContain("answers: [{ questionId: reflectQid, answer: cleaned.restatement, structured: cleaned }]");
+  });
+
+  it("shows an operator note box during grilling/awaiting_input with an ask-me-about-this toggle", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function renderNoteBox(s)");
+    expect(html).toContain('id="noteAsUnknown"');
+    expect(html).toContain("Ask me about this");
+    expect(html).toContain("will be sent with your next answer");
+    expect(html).toContain("action: 'note'");
+  });
+
+  it("shows pattern-matched remediation copy for common blocked-run causes, with the raw failure kept in a collapsed details", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function blockedRemediation(failureText)");
+    expect(html).toContain("dirty working tree|uncommitted changes");
+    expect(html).toContain("CURSOR_API_KEY");
+    expect(html).toContain("graphify-out");
+    expect(html).toContain("run configuration changed");
+    expect(html).toContain("<summary>Raw failure detail</summary>");
+  });
+
+  it("shows budget-exhaustion copy for a yielded run instead of the generic paused copy", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("s.yieldedAt");
+    expect(html).toContain("Run yielded to its step budget");
+    expect(html).toContain("maxStepsPerRun");
+    expect(html).not.toMatch(/s\.yieldedAt[\s\S]{0,400}Dashboard work does not continue automatically/);
+  });
+
+  it("drives the thinking strip's elapsed timer from job.startedAt/queuedAt without a full re-render", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function startElapsedTimer(sinceValue)");
+    expect(html).toContain('state.detail.job.startedAt || state.detail.job.queuedAt');
+    expect(html).toContain('id="thinkingElapsed"');
+    expect(html).toContain("setInterval(function () {");
   });
 });

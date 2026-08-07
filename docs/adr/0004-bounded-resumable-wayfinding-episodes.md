@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; interview interaction model amended by [ADR 0008](0008-visible-fog-and-batched-grill-questions.md)
 
 ## Context
 

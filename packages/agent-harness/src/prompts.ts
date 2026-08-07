@@ -1,31 +1,24 @@
 import type { AgentRole, WorkPacket } from "./domain.js";
 
 const ROLE_RULES: Record<AgentRole, string[]> = {
-  navigator: [
-    "Name a concrete destination before charting work.",
-    "Create decision tickets, not implementation slices.",
-    "Put only precise questions into tickets; keep unshaped uncertainty in fog.",
-    "Ticket kind must be exactly one of: research, prototype, grilling.",
-    "Mark tickets HITL when a human must speak for preferences or intent.",
-    "For every HITL ticket, give the human enough context to decide: a self-contained prompt, why it matters, 2-4 mutually exclusive options with concrete tradeoffs, and one recommended option with rationale.",
+  reflector: [
+    "Restate the idea in your own words without inventing requirements.",
+    "Separate goal, users, in-scope, out-of-scope, assumptions, and unknowns.",
+    "Do not ask grilling questions and do not plan implementation.",
+    "Look up codebase facts when they clarify existing behavior; do not decide product preferences.",
   ],
-  "decision-researcher": [
-    "Resolve only the named research question from evidence.",
-    "Do not invent product preferences.",
-  ],
-  "decision-prototyper": [
-    "Create only the cheapest artifact needed to make the decision concrete.",
-    "Ask for human reaction when preference determines the answer.",
-  ],
-  "decision-facilitator": [
-    "Use the recorded human conversation verbatim as authoritative input.",
-    "Ask exactly one follow-up when the decision is still ambiguous.",
-    "When asking, include why the decision matters, 2-4 mutually exclusive options with concrete tradeoffs, and one recommended option with rationale; leave room for a custom answer.",
+  griller: [
+    "Interview until shared understanding; ask exactly one question at a time.",
+    "Look up codebase facts; put product decisions to the human with a recommendation.",
+    "For every question include why it matters, 2-4 mutually exclusive options with tradeoffs, and one recommended option with rationale.",
+    "Do not enact the plan; when understanding is sufficient, return ready_to_plan with compact resolutions.",
+    "Use recorded human answers verbatim as authoritative input.",
   ],
   planner: [
     "Produce narrow, complete tracer-bullet slices, not horizontal layers.",
     "Each task must be verifiable in one fresh agent context.",
     "Declare only genuine blocking edges and use the agreed domain vocabulary.",
+    "Plan from the confirmed reflect brief and grill resolutions only.",
   ],
   "prompt-builder": [
     "Turn the packet into a precise prompt without changing scope or inventing facts.",
@@ -54,6 +47,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
 };
 
 export function renderPrompt(packet: WorkPacket): string {
+  const { guidance: _rendered, ...packetForJson } = packet;
   return [
     `You are the ${packet.role} worker in a deterministic software-delivery harness.`,
     "This is a fresh session. The work packet below is the complete handoff; do not assume hidden chat history.",
@@ -64,58 +58,60 @@ export function renderPrompt(packet: WorkPacket): string {
     `Expected output: ${packet.expectedOutput}`,
     "",
     "WORK PACKET",
-    JSON.stringify(packet, null, 2),
+    JSON.stringify(packetForJson),
   ].join("\n");
 }
 
 export function renderPromptBuilderPrompt(packet: WorkPacket): string {
+  const { guidance: _rendered, ...packetForJson } = packet;
   return [
     "You are a low-cost prompt compiler.",
     "Transform the work packet into the prompt for the named downstream worker.",
     "Do not solve the task, omit constraints, selected guidance block, or add requirements.",
     "Return only JSON shaped as {\"prompt\":\"...\"}.",
-    JSON.stringify(packet, null, 2),
+    ...renderGuidance(packet),
+    JSON.stringify(packetForJson),
   ].join("\n");
 }
 
-export function renderContinuationPrompt(packet: WorkPacket): string {
+export function renderContinuationPrompt(
+  packet: WorkPacket,
+  options: { includeGuidance?: boolean } = {},
+): string {
+  const includeGuidance = options.includeGuidance !== false;
   return [
-    `Continue the durable wayfinding episode. For this turn, act as the ${packet.role} worker.`,
+    `Continue the durable grill episode. For this turn, act as the ${packet.role} worker.`,
     "Use the existing conversation and repository findings; do not repeat exploration already completed unless the new input invalidates it.",
     ...ROLE_RULES[packet.role].map((rule) => `- ${rule}`),
     ...packet.constraints.map((constraint) => `- ${constraint}`),
-    ...renderGuidance(packet),
+    ...(includeGuidance ? renderGuidance(packet) : []),
     `Objective: ${packet.objective}`,
     "New authoritative input:",
-    JSON.stringify(packet.input, null, 2),
+    JSON.stringify(packet.input),
     ...outputContractLines(packet.role),
     `Expected output: ${packet.expectedOutput}`,
   ].join("\n");
 }
 
-const WAYFINDING_ROLES = new Set<AgentRole>([
-  "navigator",
-  "decision-researcher",
-  "decision-prototyper",
-  "decision-facilitator",
-]);
+const EPISODE_ROLES = new Set<AgentRole>(["griller"]);
 
 function outputContractLines(role: AgentRole): string[] {
-  if (WAYFINDING_ROLES.has(role)) {
-    return [
-      "Return exactly one JSON object matching the expected schema and no surrounding prose.",
-      "You may deliver that JSON as the assistant result text or as the CreatePlan body — same schema either way.",
-    ];
-  }
-  return ["Return exactly one JSON object and no surrounding prose."];
+  if (!EPISODE_ROLES.has(role)) return [];
+  return [
+    "Return exactly one JSON object matching the expected output contract.",
+    "You may deliver that JSON via CreatePlan or as the assistant result text.",
+  ];
 }
 
 function renderGuidance(packet: WorkPacket): string[] {
   if (packet.guidance.length === 0) return [];
   return [
-    "Apply this deterministic, scoped selection of repository rules and skills:",
-    ...packet.guidance.map(
-      (item) => `- [${item.kind}] ${item.source} (${item.reason}; score ${item.score}):\n${item.excerpt}`,
-    ),
+    "",
+    "SELECTED GUIDANCE",
+    ...packet.guidance.flatMap((item) => [
+      `### ${item.title} (${item.kind}: ${item.source})`,
+      `Reason: ${item.reason}`,
+      item.excerpt,
+    ]),
   ];
 }

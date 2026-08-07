@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import type { HarnessConfig } from "./config.js";
 import type { SearchResult } from "./knowledge.js";
 
@@ -13,13 +13,15 @@ export const GRAPH_PATH = "graphify-out/graph.json";
 const OUTPUT_LIMIT = 1_000_000;
 const GRAPHIFY_QUERY_TOKEN_CAP = 12;
 
-/** Boilerplate and filler that seed noisy Graphify matches. */
-const GRAPHIFY_STOPWORDS = new Set([
+/** Articles, pronouns, auxiliaries, prepositions, and conjunctions only. */
+export const ENGLISH_STOPWORDS = [
   "a",
   "an",
   "the",
   "and",
   "or",
+  "but",
+  "nor",
   "for",
   "to",
   "of",
@@ -30,6 +32,17 @@ const GRAPHIFY_STOPWORDS = new Set([
   "with",
   "from",
   "into",
+  "over",
+  "under",
+  "after",
+  "before",
+  "when",
+  "where",
+  "what",
+  "which",
+  "how",
+  "why",
+  "who",
   "this",
   "that",
   "these",
@@ -65,50 +78,6 @@ const GRAPHIFY_STOPWORDS = new Set([
   "our",
   "your",
   "their",
-  "change",
-  "want",
-  "way",
-  "ways",
-  "implementation",
-  "implement",
-  "tests",
-  "test",
-  "testing",
-  "architecture",
-  "acceptance",
-  "security",
-  "standards",
-  "standard",
-  "public",
-  "interface",
-  "seam",
-  "please",
-  "need",
-  "needs",
-  "using",
-  "use",
-  "used",
-  "make",
-  "made",
-  "add",
-  "added",
-  "new",
-  "also",
-  "just",
-  "like",
-  "about",
-  "into",
-  "over",
-  "under",
-  "after",
-  "before",
-  "when",
-  "where",
-  "what",
-  "which",
-  "how",
-  "why",
-  "who",
   "not",
   "no",
   "yes",
@@ -131,25 +100,117 @@ const GRAPHIFY_STOPWORDS = new Set([
   "so",
   "too",
   "very",
-]);
+  "also",
+  "just",
+  "about",
+  "between",
+  "among",
+  "against",
+  "without",
+  "within",
+  "across",
+  "through",
+  "during",
+  "while",
+  "until",
+  "once",
+  "again",
+  "further",
+  "each",
+  "every",
+  "both",
+  "either",
+  "neither",
+  "via",
+  "per",
+] as const;
+
+/** Harness process words that are noise in any project Graphify query. */
+export const HARNESS_META_STOPWORDS = [
+  "objective",
+  "acceptance",
+  "criteria",
+  "resolution",
+  "recommendation",
+  "ticket",
+  "grill",
+  "packet",
+] as const;
+
+const MIN_GRAPHIFY_TOKENS = 2;
+
+export function graphifyStopwordSet(extra: readonly string[] = []): Set<string> {
+  return new Set(
+    [...ENGLISH_STOPWORDS, ...HARNESS_META_STOPWORDS, ...extra].map((word) =>
+      word.toLocaleLowerCase(),
+    ),
+  );
+}
 
 /**
  * Shape a free-text knowledge query into distinctive Graphify seeds:
- * keep PascalCase / camelCase identifiers, dotted paths, and meaningful nouns.
+ * prefer PascalCase / camelCase identifiers and dotted paths, then nouns.
  */
-export function buildGraphifyQuery(raw: string, maxTokens = GRAPHIFY_QUERY_TOKEN_CAP): string {
-  const tokens: string[] = [];
+export function buildGraphifyQuery(
+  raw: string,
+  maxTokens = GRAPHIFY_QUERY_TOKEN_CAP,
+  extraStopwords: readonly string[] = [],
+): string {
+  const stopwords = graphifyStopwordSet(extraStopwords);
+  const distinctive: string[] = [];
+  const ordinary: string[] = [];
   const seen = new Set<string>();
-  const pattern = /[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+|[a-z]+(?:[A-Z][a-z0-9]+)+|[A-Za-z][A-Za-z0-9_-]{2,}/g;
+  const pattern =
+    /[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+|[a-z]+(?:[A-Z][a-z0-9]+)+|[A-Za-z][A-Za-z0-9_-]{2,}/g;
   for (const match of raw.matchAll(pattern)) {
     const token = match[0]!;
     const key = token.toLocaleLowerCase();
-    if (GRAPHIFY_STOPWORDS.has(key) || seen.has(key)) continue;
+    if (stopwords.has(key) || seen.has(key)) continue;
     seen.add(key);
-    tokens.push(token);
-    if (tokens.length >= maxTokens) break;
+    if (isDistinctiveGraphifyToken(token)) distinctive.push(token);
+    else ordinary.push(token);
   }
-  return tokens.join(" ");
+  return [...distinctive, ...ordinary].slice(0, maxTokens).join(" ");
+}
+
+export function shapeGraphifyQuery(
+  raw: string,
+  fallbackQuery?: string,
+  maxTokens = GRAPHIFY_QUERY_TOKEN_CAP,
+  extraStopwords: readonly string[] = [],
+): { query: string; usedFallback: boolean; skippedReason?: string } {
+  const primary = buildGraphifyQuery(raw, maxTokens, extraStopwords);
+  if (isUsableGraphifyQuery(primary)) {
+    return { query: primary, usedFallback: false };
+  }
+  const fallback = fallbackQuery?.trim()
+    ? buildGraphifyQuery(fallbackQuery, maxTokens, extraStopwords)
+    : "";
+  if (isUsableGraphifyQuery(fallback)) {
+    return { query: fallback, usedFallback: true };
+  }
+  return {
+    query: "",
+    usedFallback: Boolean(fallbackQuery?.trim()),
+    skippedReason: "generic-query",
+  };
+}
+
+function isDistinctiveGraphifyToken(token: string): boolean {
+  return (
+    /[A-Za-z][A-Za-z0-9]*\.[A-Za-z]/.test(token) ||
+    /[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+/.test(token) ||
+    /[a-z]+(?:[A-Z][a-z0-9]+)+/.test(token) ||
+    /_/.test(token) ||
+    /-[A-Za-z]/.test(token)
+  );
+}
+
+function isUsableGraphifyQuery(query: string): boolean {
+  const tokens = query.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  if (tokens.some(isDistinctiveGraphifyToken)) return true;
+  return tokens.length >= MIN_GRAPHIFY_TOKENS;
 }
 
 export type GraphifyCommandResult = {
@@ -177,15 +238,30 @@ export type GraphifyPreparation = {
   setupRan: boolean;
 };
 
+export type RepositoryLookupSearchOptions = {
+  fallbackQuery?: string;
+};
+
+export type RepositoryLookupSearch = {
+  result?: RepositorySearchResult;
+  shapedQuery: string;
+  usedFallback: boolean;
+  skippedReason?: string;
+};
+
 export interface RepositoryLookup {
   refresh(): Promise<void>;
   rebuild(): Promise<boolean>;
-  search(query: string): Promise<RepositorySearchResult | undefined>;
+  search(
+    query: string,
+    options?: RepositoryLookupSearchOptions,
+  ): Promise<RepositoryLookupSearch>;
 }
 
 export class GraphifyRepositoryLookup implements RepositoryLookup {
   private readonly graphPath: string;
   private readonly warned = new Set<string>();
+  private readonly searchCache = new Map<string, RepositoryLookupSearch>();
 
   constructor(
     private readonly config: HarnessConfig,
@@ -219,6 +295,7 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
         this.warn(`update failed: ${failureDetail(result)}`);
         return false;
       }
+      this.searchCache.clear();
       return true;
     } catch (error) {
       this.warn(`update failed: ${messageOf(error)}`);
@@ -226,23 +303,53 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
     }
   }
 
-  async search(query: string): Promise<RepositorySearchResult | undefined> {
+  async search(
+    query: string,
+    options: RepositoryLookupSearchOptions = {},
+  ): Promise<RepositoryLookupSearch> {
     const settings = this.config.knowledge.graphify;
-    const tightened = buildGraphifyQuery(query);
-    if (!settings.enabled || !tightened) return undefined;
+    if (!settings.enabled) {
+      return {
+        shapedQuery: "",
+        usedFallback: false,
+        skippedReason: "disabled",
+      };
+    }
+    const shaped = shapeGraphifyQuery(
+      query,
+      options.fallbackQuery,
+      GRAPHIFY_QUERY_TOKEN_CAP,
+      settings.stopwords,
+    );
+    if (!shaped.query) {
+      return {
+        shapedQuery: "",
+        usedFallback: shaped.usedFallback,
+        skippedReason: shaped.skippedReason ?? "generic-query",
+      };
+    }
+    let graphMtime = 0;
     try {
-      await access(this.graphPath);
+      graphMtime = (await stat(this.graphPath)).mtimeMs;
     } catch {
       this.warn(`lookup skipped because ${GRAPH_PATH} does not exist`);
-      return undefined;
+      return {
+        shapedQuery: shaped.query,
+        usedFallback: shaped.usedFallback,
+        skippedReason: "graph-missing",
+      };
     }
+
+    const cacheKey = `${shaped.query}\0${graphMtime}`;
+    const cached = this.searchCache.get(cacheKey);
+    if (cached) return cloneRepositoryLookupSearch(cached);
 
     try {
       const result = await this.runner(
         settings.command,
         [
           "query",
-          tightened,
+          shaped.query,
           "--budget",
           String(settings.queryBudgetTokens),
           "--graph",
@@ -260,17 +367,34 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
         if (result.exitCode !== 0 || result.timedOut) {
           this.warn(`query failed: ${failureDetail(result)}`);
         }
-        return undefined;
+        const miss: RepositoryLookupSearch = {
+          shapedQuery: shaped.query,
+          usedFallback: shaped.usedFallback,
+          skippedReason:
+            result.exitCode !== 0 || result.timedOut ? "query-failed" : "no-matches",
+        };
+        this.searchCache.set(cacheKey, miss);
+        return cloneRepositoryLookupSearch(miss);
       }
-      return {
-        source: `graphify:${GRAPH_PATH}`,
-        title: "Repository relationships (Graphify)",
-        excerpt,
-        score: 1,
+      const hit: RepositoryLookupSearch = {
+        result: {
+          source: `graphify:${GRAPH_PATH}`,
+          title: "Repository relationships (Graphify)",
+          excerpt,
+          score: 1,
+        },
+        shapedQuery: shaped.query,
+        usedFallback: shaped.usedFallback,
       };
+      this.searchCache.set(cacheKey, hit);
+      return cloneRepositoryLookupSearch(hit);
     } catch (error) {
       this.warn(`query failed: ${messageOf(error)}`);
-      return undefined;
+      return {
+        shapedQuery: shaped.query,
+        usedFallback: shaped.usedFallback,
+        skippedReason: "query-failed",
+      };
     }
   }
 
@@ -279,6 +403,13 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
     this.warned.add(detail);
     console.warn(`Graphify ${detail}; continuing with lexical retrieval`);
   }
+}
+
+function cloneRepositoryLookupSearch(value: RepositoryLookupSearch): RepositoryLookupSearch {
+  return {
+    ...value,
+    result: value.result ? { ...value.result } : undefined,
+  };
 }
 
 export const runGraphify: GraphifyRunner = (executable, args, options) =>

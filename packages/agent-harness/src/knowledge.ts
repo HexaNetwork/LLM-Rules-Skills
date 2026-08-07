@@ -9,7 +9,12 @@ import type {
   KnowledgeVisibility,
 } from "./config.js";
 import { LocalEmbeddingIndex } from "./embeddings.js";
-import { GraphifyRepositoryLookup, type RepositoryLookup } from "./graphify.js";
+import {
+  GraphifyRepositoryLookup,
+  GRAPH_PATH,
+  buildGraphifyQuery,
+  type RepositoryLookup,
+} from "./graphify.js";
 
 const GuidanceKindSchema = z.enum(["document", "rule", "skill"]);
 export type GuidanceKind = z.infer<typeof GuidanceKindSchema>;
@@ -72,6 +77,8 @@ export type KnowledgeSearchOptions = {
   excludeGuidance?: boolean;
   /** When set, only this run's `.agent-harness/runs/<id>/*` artifacts are visible. */
   runId?: string;
+  /** Domain seed tried when Graphify shaping of `query` is empty/generic. */
+  fallbackQuery?: string;
 };
 
 export type SearchResult = {
@@ -83,6 +90,39 @@ export type SearchResult = {
   projectId?: string;
   visibility: KnowledgeVisibility;
   kind?: GuidanceKind;
+};
+
+export type RetrievalOmission = {
+  source: string;
+  title: string;
+  score: number;
+  reason:
+    | "below-min-lexical"
+    | "below-floor"
+    | "per-source-cap"
+    | "limit"
+    | "graphify-skipped"
+    | "character-budget";
+};
+
+export type RetrievalAudit = {
+  query: string;
+  fallbackQuery?: string;
+  graphify: {
+    shapedQuery: string;
+    usedFallback: boolean;
+    included: boolean;
+    skippedReason?: string;
+  };
+  kept: Array<{ source: string; title: string; score: number; kind?: GuidanceKind }>;
+  omitted: RetrievalOmission[];
+  /** Present when the whole retrieval pass was skipped for this invocation. */
+  skipped?: string;
+};
+
+export type KnowledgeSearchAudit = {
+  results: SearchResult[];
+  audit: RetrievalAudit;
 };
 
 export type KnowledgeRefreshProgress = {
@@ -145,6 +185,12 @@ export class LocalKnowledgeBase {
   private readonly documentsPath: string;
   private readonly chunksPath: string;
   private readonly embeddings: LocalEmbeddingIndex;
+  private cachedDocuments?: KnowledgeDocument[];
+  private cachedChunks?: KnowledgeChunk[];
+  private indexGeneration = "";
+  private readonly searchResultCache = new Map<string, KnowledgeSearchAudit>();
+  private readonly guidanceResultCache = new Map<string, GuidanceSelectionAudit>();
+  private static readonly RESULT_CACHE_LIMIT = 64;
 
   constructor(
     private readonly config: HarnessConfig,
@@ -287,15 +333,80 @@ export class LocalKnowledgeBase {
     limit = 6,
     options: KnowledgeSearchOptions = {},
   ): Promise<SearchResult[]> {
-    const terms = tokenize(query);
-    if (terms.length === 0 || limit <= 0) return [];
+    return (await this.searchWithAudit(query, limit, options)).results;
+  }
+
+  async searchWithAudit(
+    query: string,
+    limit = 6,
+    options: KnowledgeSearchOptions = {},
+  ): Promise<KnowledgeSearchAudit> {
+    const generation = await this.ensureIndexGeneration();
+    const cacheKey = `${query}\0${JSON.stringify(options)}\0${limit}\0${generation}`;
+    const cached = this.searchResultCache.get(cacheKey);
+    if (cached) return cloneSearchAudit(cached);
+
+    const result = await this.searchWithAuditUncached(query, limit, options);
+    rememberFifo(this.searchResultCache, cacheKey, cloneSearchAudit(result), LocalKnowledgeBase.RESULT_CACHE_LIMIT);
+    return cloneSearchAudit(result);
+  }
+
+  private async searchWithAuditUncached(
+    query: string,
+    limit = 6,
+    options: KnowledgeSearchOptions = {},
+  ): Promise<KnowledgeSearchAudit> {
+    const omitted: RetrievalOmission[] = [];
+    const emptyGraphify = {
+      shapedQuery: "",
+      usedFallback: false,
+      included: false,
+      skippedReason: "not-requested" as string | undefined,
+    };
+    const terms = [...new Set(tokenize(query))];
+    if (terms.length === 0 || limit <= 0) {
+      return {
+        results: [],
+        audit: {
+          query,
+          fallbackQuery: options.fallbackQuery,
+          graphify: { ...emptyGraphify, skippedReason: "empty-query" },
+          kept: [],
+          omitted,
+        },
+      };
+    }
     const activeProjectId = options.projectId ?? this.config.knowledge.projectId;
-    const [chunks, repositoryResult] = await Promise.all([
+    const [chunks, repositoryLookup] = await Promise.all([
       this.loadChunks(),
       options.repository === false
-        ? Promise.resolve(undefined)
-        : this.repositoryLookup.search(query),
+        ? Promise.resolve({
+            result: undefined,
+            shapedQuery: "",
+            usedFallback: false,
+            skippedReason: "repository-disabled",
+          } satisfies Awaited<ReturnType<RepositoryLookup["search"]>>)
+        : this.repositoryLookup.search(query, { fallbackQuery: options.fallbackQuery }),
     ]);
+    const graphifyAudit = {
+      shapedQuery: repositoryLookup.shapedQuery,
+      usedFallback: repositoryLookup.usedFallback,
+      included: false,
+      skippedReason: repositoryLookup.skippedReason,
+    };
+    if (
+      repositoryLookup.skippedReason &&
+      !repositoryLookup.result &&
+      repositoryLookup.skippedReason !== "repository-disabled" &&
+      repositoryLookup.skippedReason !== "disabled"
+    ) {
+      omitted.push({
+        source: `graphify:${GRAPH_PATH}`,
+        title: "Repository relationships (Graphify)",
+        score: 0,
+        reason: "graphify-skipped",
+      });
+    }
     const stateDirectory = normalizePath(this.config.stateDirectory);
     const allowedChunks = chunks.filter(
       (chunk) =>
@@ -304,9 +415,22 @@ export class LocalKnowledgeBase {
         (!options.excludeGuidance || chunk.kind === "document"),
     );
     if (allowedChunks.length === 0) {
-      return repositoryResult
-        ? [toCurrentProjectResult(repositoryResult, activeProjectId)]
-        : [];
+      const repositoryResult = repositoryLookup.result
+        ? toCurrentProjectResult(repositoryLookup.result, activeProjectId)
+        : undefined;
+      const results = repositoryResult ? [repositoryResult] : [];
+      graphifyAudit.included = Boolean(repositoryResult);
+      if (repositoryResult) graphifyAudit.skippedReason = undefined;
+      return {
+        results: capResultCharacters(results, options.maxCharacters),
+        audit: {
+          query,
+          fallbackQuery: options.fallbackQuery,
+          graphify: graphifyAudit,
+          kept: results.map(toKeptEntry),
+          omitted,
+        },
+      };
     }
     const documentFrequency = new Map<string, number>();
     for (const chunk of allowedChunks) {
@@ -314,14 +438,14 @@ export class LocalKnowledgeBase {
         documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
       }
     }
-    const lexical: IndexedSearchResult[] = allowedChunks
+    const scoredLexical: IndexedSearchResult[] = allowedChunks
       .map((chunk) => {
         let score = 0;
         for (const term of terms) {
           const frequency = chunk.terms[term] ?? 0;
           if (frequency === 0) continue;
           const inverseDocumentFrequency = Math.log(
-            1 + chunks.length / (1 + (documentFrequency.get(term) ?? 0)),
+            1 + allowedChunks.length / (1 + (documentFrequency.get(term) ?? 0)),
           );
           score += (1 + Math.log(frequency)) * inverseDocumentFrequency;
         }
@@ -341,12 +465,51 @@ export class LocalKnowledgeBase {
       })
       .filter((result) => result.score > 0)
       .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+
+    const {
+      relevanceFloor,
+      minLexicalScore,
+      maxChunksPerSource,
+      maxForTopSource,
+    } = this.config.knowledge;
+    const topLexical = scoredLexical[0]?.score ?? 0;
+    const relativeFloor = topLexical > 0 ? topLexical * relevanceFloor : 0;
+    const lexical: IndexedSearchResult[] = [];
+    for (const result of scoredLexical) {
+      if (result.score < minLexicalScore) {
+        omitted.push({
+          source: result.source,
+          title: result.title,
+          score: result.score,
+          reason: "below-min-lexical",
+        });
+        continue;
+      }
+      if (result.score < relativeFloor) {
+        omitted.push({
+          source: result.source,
+          title: result.title,
+          score: result.score,
+          reason: "below-floor",
+        });
+        continue;
+      }
+      lexical.push(result);
+    }
+
     const semanticScores = await this.embeddings.search(
       query,
       new Set(allowedChunks.filter((chunk) => chunk.kind === "document").map((chunk) => chunk.id)),
     );
+    const scoredLexicalIds = new Set(scoredLexical.map((result) => result.id));
+    const acceptedLexicalIds = new Set(lexical.map((result) => result.id));
     const semanticCandidates: IndexedSearchResult[] = allowedChunks
-      .filter((chunk) => chunk.kind === "document" && semanticScores.has(chunk.id))
+      .filter((chunk) => {
+        if (chunk.kind !== "document" || !semanticScores.has(chunk.id)) return false;
+        // Embeddings must not resurrect lexical rows already refused by the floor.
+        if (scoredLexicalIds.has(chunk.id) && !acceptedLexicalIds.has(chunk.id)) return false;
+        return true;
+      })
       .map((chunk) => ({
         source: chunk.source,
         title: chunk.title,
@@ -360,10 +523,29 @@ export class LocalKnowledgeBase {
       }))
       .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
     const ranked = rankHybridResults(lexical, semanticCandidates, this.config);
-    const results = repositoryResult
-      ? [toCurrentProjectResult(repositoryResult, activeProjectId), ...ranked.slice(0, Math.max(0, limit - 1))]
-      : ranked.slice(0, limit);
-    return capResultCharacters(results, options.maxCharacters);
+    const documentSlots = repositoryLookup.result ? Math.max(0, limit - 1) : limit;
+    const diversified = diversifyBySource(
+      ranked,
+      documentSlots,
+      { maxPerSource: maxChunksPerSource, maxForTopSource },
+      omitted,
+    );
+    const merged = repositoryLookup.result
+      ? [toCurrentProjectResult(repositoryLookup.result, activeProjectId), ...diversified]
+      : diversified;
+    graphifyAudit.included = Boolean(repositoryLookup.result);
+    if (repositoryLookup.result) graphifyAudit.skippedReason = undefined;
+    const capped = capResultCharactersWithOmissions(merged, options.maxCharacters, omitted);
+    return {
+      results: capped,
+      audit: {
+        query,
+        fallbackQuery: options.fallbackQuery,
+        graphify: graphifyAudit,
+        kept: capped.map(toKeptEntry),
+        omitted,
+      },
+    };
   }
 
   async selectGuidance(
@@ -377,7 +559,26 @@ export class LocalKnowledgeBase {
     query: string,
     options: GuidanceSelectionOptions,
   ): Promise<GuidanceSelectionAudit> {
-    const terms = tokenize(`${options.role} ${query}`);
+    const generation = await this.ensureIndexGeneration();
+    const cacheKey = `${query}\0${JSON.stringify(options)}\0${generation}`;
+    const cached = this.guidanceResultCache.get(cacheKey);
+    if (cached) return cloneGuidanceAudit(cached);
+
+    const result = await this.selectGuidanceWithAuditUncached(query, options);
+    rememberFifo(
+      this.guidanceResultCache,
+      cacheKey,
+      cloneGuidanceAudit(result),
+      LocalKnowledgeBase.RESULT_CACHE_LIMIT,
+    );
+    return cloneGuidanceAudit(result);
+  }
+
+  private async selectGuidanceWithAuditUncached(
+    query: string,
+    options: GuidanceSelectionOptions,
+  ): Promise<GuidanceSelectionAudit> {
+    const terms = [...new Set(tokenize(`${options.role} ${query}`))];
     const maxResults = options.maxResults ?? this.config.knowledge.guidance.maxResults;
     const maxCharacters = options.maxCharacters ?? this.config.knowledge.guidance.maxCharacters;
     if (terms.length === 0 || maxResults <= 0 || maxCharacters <= 0) {
@@ -457,9 +658,11 @@ export class LocalKnowledgeBase {
   }
 
   private async loadDocuments(): Promise<KnowledgeDocument[]> {
+    await this.ensureIndexGeneration();
+    if (this.cachedDocuments) return this.cachedDocuments;
     try {
       const raw: unknown = JSON.parse(await readFile(this.documentsPath, "utf8"));
-      return z.array(DocumentSchema)
+      this.cachedDocuments = z.array(DocumentSchema)
         .parse(raw)
         .map((document) => ({
           ...document,
@@ -468,29 +671,71 @@ export class LocalKnowledgeBase {
               ? (document.projectId ?? this.config.knowledge.projectId)
               : undefined,
         }));
+      return this.cachedDocuments;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        this.cachedDocuments = [];
+        return this.cachedDocuments;
+      }
       throw error;
     }
   }
 
   private async loadChunks(): Promise<KnowledgeChunk[]> {
+    await this.ensureIndexGeneration();
+    if (this.cachedChunks) return this.cachedChunks;
     try {
       const raw: unknown = JSON.parse(await readFile(this.chunksPath, "utf8"));
-      return z.array(ChunkSchema)
+      this.cachedChunks = z.array(ChunkSchema)
         .parse(raw)
         .map((chunk) => ({
           ...chunk,
           projectId:
             chunk.scope === "project" ? (chunk.projectId ?? this.config.knowledge.projectId) : undefined,
         }));
+      return this.cachedChunks;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        this.cachedChunks = [];
+        return this.cachedChunks;
+      }
       throw error;
     }
   }
 
+  private async ensureIndexGeneration(): Promise<string> {
+    const generation = await this.readIndexGeneration();
+    if (generation !== this.indexGeneration) {
+      this.cachedDocuments = undefined;
+      this.cachedChunks = undefined;
+      this.searchResultCache.clear();
+      this.guidanceResultCache.clear();
+      this.indexGeneration = generation;
+    }
+    return this.indexGeneration;
+  }
+
+  private async readIndexGeneration(): Promise<string> {
+    const [documentsStat, chunksStat] = await Promise.all([
+      stat(this.documentsPath).catch(() => undefined),
+      stat(this.chunksPath).catch(() => undefined),
+    ]);
+    return [
+      documentsStat ? `${documentsStat.mtimeMs}:${documentsStat.size}` : "missing-docs",
+      chunksStat ? `${chunksStat.mtimeMs}:${chunksStat.size}` : "missing-chunks",
+    ].join("|");
+  }
+
+  private invalidateCaches(): void {
+    this.cachedDocuments = undefined;
+    this.cachedChunks = undefined;
+    this.indexGeneration = "";
+    this.searchResultCache.clear();
+    this.guidanceResultCache.clear();
+  }
+
   private async persist(documents: KnowledgeDocument[]): Promise<void> {
+    this.invalidateCaches();
     await mkdir(this.directory, { recursive: true });
     const normalizedDocuments = documents.map((document) => ({
       ...document,
@@ -613,6 +858,92 @@ function rankHybridResults(
     .map(({ id: _id, ...result }) => result);
 }
 
+function diversifyBySource(
+  results: SearchResult[],
+  limit: number,
+  options: { maxPerSource: number; maxForTopSource: number },
+  omitted: RetrievalOmission[],
+): SearchResult[] {
+  const topSource = results[0]?.source;
+  const counts = new Map<string, number>();
+  const kept: SearchResult[] = [];
+  for (const result of results) {
+    if (kept.length >= limit) {
+      omitted.push({
+        source: result.source,
+        title: result.title,
+        score: result.score,
+        reason: "limit",
+      });
+      continue;
+    }
+    const count = counts.get(result.source) ?? 0;
+    const cap =
+      result.source === topSource ? options.maxForTopSource : options.maxPerSource;
+    if (count >= cap) {
+      omitted.push({
+        source: result.source,
+        title: result.title,
+        score: result.score,
+        reason: "per-source-cap",
+      });
+      continue;
+    }
+    counts.set(result.source, count + 1);
+    kept.push(result);
+  }
+  return kept;
+}
+
+function rememberFifo<T>(cache: Map<string, T>, key: string, value: T, limit: number): void {
+  cache.set(key, value);
+  while (cache.size > limit) {
+    const oldest = cache.keys().next().value;
+    if (oldest == null) break;
+    cache.delete(oldest);
+  }
+}
+
+function cloneSearchAudit(value: KnowledgeSearchAudit): KnowledgeSearchAudit {
+  return {
+    results: value.results.map((result) => ({ ...result })),
+    audit: {
+      ...value.audit,
+      graphify: { ...value.audit.graphify },
+      kept: value.audit.kept.map((item) => ({ ...item })),
+      omitted: value.audit.omitted.map((item) => ({ ...item })),
+    },
+  };
+}
+
+function cloneGuidanceAudit(value: GuidanceSelectionAudit): GuidanceSelectionAudit {
+  return {
+    selected: value.selected.map((item) => ({ ...item })),
+    omittedAlwaysApply: value.omittedAlwaysApply.map((item) => ({ ...item })),
+  };
+}
+
+function toKeptEntry(result: SearchResult): RetrievalAudit["kept"][number] {
+  return {
+    source: result.source,
+    title: result.title,
+    score: result.score,
+    kind: result.kind,
+  };
+}
+
+/**
+ * Compact a bounded domain seed from idea / destination text: prefer
+ * identifier-like and distinctive tokens, drop harness meta-language.
+ */
+export function compactDomainSeed(
+  ...parts: Array<string | undefined | null>
+): string {
+  const text = parts.filter((part): part is string => Boolean(part?.trim())).join(" ");
+  if (!text) return "";
+  return buildGraphifyQuery(text, 8);
+}
+
 function toCurrentProjectResult(
   result: Omit<SearchResult, "scope" | "projectId" | "visibility" | "kind">,
   projectId: string,
@@ -621,12 +952,28 @@ function toCurrentProjectResult(
 }
 
 function capResultCharacters(results: SearchResult[], maxCharacters?: number): SearchResult[] {
+  return capResultCharactersWithOmissions(results, maxCharacters, []);
+}
+
+function capResultCharactersWithOmissions(
+  results: SearchResult[],
+  maxCharacters: number | undefined,
+  omitted: RetrievalOmission[],
+): SearchResult[] {
   if (maxCharacters == null) return results;
   if (!Number.isInteger(maxCharacters) || maxCharacters <= 0) return [];
   let remaining = maxCharacters;
   const capped: SearchResult[] = [];
   for (const result of results) {
-    if (remaining <= 0) break;
+    if (remaining <= 0) {
+      omitted.push({
+        source: result.source,
+        title: result.title,
+        score: result.score,
+        reason: "character-budget",
+      });
+      continue;
+    }
     const excerpt = result.excerpt.slice(0, remaining);
     if (!excerpt) continue;
     capped.push({ ...result, excerpt });

@@ -1,37 +1,44 @@
-import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import type { z } from "zod";
-import type { HarnessConfig } from "./config.js";
+import path from "node:path";
+import { CONFIG_VERSION, type HarnessConfig } from "./config.js";
 import {
   AgentCoordinator,
   type AgentBackend,
   type InvokeInput,
 } from "./agent.js";
-import { commandEvidence, evidenceOutput, runCommand } from "./commands.js";
+import { commandEvidence, recentEvidenceOutput, runCommand } from "./commands.js";
 import {
-  DECISION_EXPECTED_OUTPUT,
-  DecisionOutputSchema,
+  GRILL_EXPECTED_OUTPUT,
+  GrillOutputSchema,
   MessageOutputSchema,
-  NAVIGATOR_EXPECTED_OUTPUT,
-  NavigatorOutputSchema,
+  REFLECT_EXPECTED_OUTPUT,
+  ReflectOutputSchema,
   PlannerOutputSchema,
   ReviewOutputSchema,
   WorkerOutputSchema,
   createRunState,
-  type AgentRole,
+  formatReflectRestatement,
   type BuildTask,
-  type DecisionOutput,
-  type DecisionTicket,
+  type GrillEpisode,
+  type GrillOutput,
+  type GrillResolution,
   type HumanQuestionDraft,
   type MessageOutput,
-  type NavigatorOutput,
+  type QuestionPurpose,
   type RunPhase,
   type RunState,
 } from "./domain.js";
 import { GitService } from "./git.js";
-import { LocalKnowledgeBase } from "./knowledge.js";
+import {
+  GraphifyRepositoryLookup,
+  prepareGraphifyForRun,
+  runGraphify,
+  type GraphifyRunner,
+  type GraphifySetupRunner,
+} from "./graphify.js";
+import { LocalKnowledgeBase, compactDomainSeed } from "./knowledge.js";
 import { RunStore } from "./store.js";
-import { LocalTracker, assertAcyclic, decisionFrontier, taskFrontier, type TrackerPort } from "./tracker.js";
+import { LocalTracker, assertAcyclic, taskFrontier, type TrackerPort } from "./tracker.js";
 
 export type HarnessDependencies = {
   backend: AgentBackend;
@@ -39,7 +46,11 @@ export type HarnessDependencies = {
   store?: RunStore;
   knowledge?: LocalKnowledgeBase;
   git?: GitService;
+  graphifyRunner?: GraphifyRunner;
+  graphifySetupRunner?: GraphifySetupRunner;
 };
+
+type StepResult = { state: RunState; consumedBudget: boolean };
 
 export class HarnessEngine {
   readonly store: RunStore;
@@ -47,13 +58,22 @@ export class HarnessEngine {
   readonly tracker: TrackerPort;
   readonly git: GitService;
   readonly agents: AgentCoordinator;
+  private readonly graphifyRunner: GraphifyRunner;
+  private readonly graphifySetupRunner?: GraphifySetupRunner;
 
   constructor(
     readonly config: HarnessConfig,
     dependencies: HarnessDependencies,
   ) {
     this.store = dependencies.store ?? new RunStore(config);
-    this.knowledge = dependencies.knowledge ?? new LocalKnowledgeBase(config);
+    this.graphifyRunner = dependencies.graphifyRunner ?? runGraphify;
+    this.graphifySetupRunner = dependencies.graphifySetupRunner;
+    this.knowledge =
+      dependencies.knowledge ??
+      new LocalKnowledgeBase(
+        config,
+        new GraphifyRepositoryLookup(config, this.graphifyRunner),
+      );
     this.tracker = dependencies.tracker ?? new LocalTracker(this.store);
     this.git = dependencies.git ?? new GitService(config);
     this.agents = new AgentCoordinator(config, dependencies.backend, this.store, this.knowledge);
@@ -63,19 +83,46 @@ export class HarnessEngine {
     idea: string,
     runId: string = randomUUID(),
     refreshKnowledge = true,
+    prepareGraphify = true,
   ): Promise<RunState> {
     if (!idea.trim()) throw new Error("Idea cannot be empty");
     await this.store.initialize();
-    if (refreshKnowledge) await this.knowledge.refresh();
     let state = createRunState(
       runId,
       idea,
       new Date().toISOString(),
       configurationHash(this.config),
+      CONFIG_VERSION,
     );
     await this.store.create(state);
-    await this.store.writeJson(runId, "config.json", this.config);
+    await this.store.writeJson(runId, "config.json", {
+      ...this.config,
+      configVersion: CONFIG_VERSION,
+    });
     state = await this.store.record(state, "run.created", { idea: idea.trim() });
+    try {
+      if (prepareGraphify && this.config.knowledge.graphify.enabled) {
+        if (this.graphifySetupRunner) {
+          await prepareGraphifyForRun(
+            this.config,
+            this.graphifyRunner,
+            this.graphifySetupRunner,
+          );
+        } else {
+          await prepareGraphifyForRun(this.config, this.graphifyRunner);
+        }
+      }
+      if (refreshKnowledge) await this.knowledge.refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      state = await this.store.record(
+        { ...state, phase: "blocked", blockedFrom: "new", failure: message },
+        "run.blocked",
+        { blockedFrom: "new", error: message },
+      );
+      await this.syncArtifacts(state);
+      return state;
+    }
     await this.syncArtifacts(state);
     return state;
   }
@@ -83,23 +130,24 @@ export class HarnessEngine {
   async advance(runId: string, maxSteps = this.config.workflow.maxStepsPerRun): Promise<RunState> {
     return this.store.withLock(runId, async () => {
       let state = await this.store.load(runId);
-      if (terminal(state.phase) || state.phase === "awaiting_input") return state;
       try {
-        if (!configurationHashes(this.config).has(state.configurationHash)) {
-          throw new Error("Run configuration changed; resume with the persisted run config");
-        }
-        for (let step = 0; step < maxSteps; step += 1) {
-          state = await this.advanceOne(state);
+        state = await this.ensureCompatibleConfiguration(state);
+        if (terminal(state.phase) || state.phase === "awaiting_input") return state;
+        let remaining = maxSteps;
+        let iterations = 0;
+        const maxIterations = Math.max(maxSteps * 8, 40);
+        while (remaining > 0 && iterations < maxIterations) {
+          iterations += 1;
+          const step = await this.advanceOne(state);
+          state = step.state;
           await this.syncArtifacts(state);
+          if (step.consumedBudget) remaining -= 1;
           if (terminal(state.phase) || state.phase === "awaiting_input") return state;
         }
         state = await this.store.record(state, "run.yielded", { maxSteps });
         return state;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        // A transition may have checkpointed immediately before an external
-        // call failed. Reload so retry resumes from durable truth, not the
-        // caller's older in-memory snapshot.
         state = await this.store.load(runId).catch(() => state);
         const blockedFrom = state.phase;
         state = await this.store.record(
@@ -111,6 +159,25 @@ export class HarnessEngine {
         return state;
       }
     });
+  }
+
+  private async ensureCompatibleConfiguration(state: RunState): Promise<RunState> {
+    if (state.configVersion < CONFIG_VERSION) {
+      return this.store.record(
+        { ...state, configVersion: CONFIG_VERSION },
+        "run.config_migrated",
+        { from: state.configVersion, to: CONFIG_VERSION },
+      );
+    }
+    if (state.configVersion > CONFIG_VERSION) {
+      throw new Error(
+        `Run configVersion ${state.configVersion} is newer than harness ${CONFIG_VERSION}`,
+      );
+    }
+    if (configurationHash(this.config) !== state.configurationHash) {
+      throw new Error("Run configuration changed; resume with the persisted run config");
+    }
+    return state;
   }
 
   async answer(runId: string, questionId: string, answer: string): Promise<RunState> {
@@ -125,29 +192,46 @@ export class HarnessEngine {
           ? { ...item, status: "answered" as const, answer: answer.trim(), answeredAt: now }
           : item,
       );
-      const decisionTickets = state.decisionTickets.map((ticket) =>
-        ticket.id === question.ticketId
-          ? {
-              ...ticket,
-              conversation: [
-                ...ticket.conversation,
-                { speaker: "human" as const, text: answer.trim(), at: now },
-              ],
-              updatedAt: now,
-            }
-          : ticket,
-      );
+
+      if (question.purpose === "reflect") {
+        state = await this.store.record(
+          {
+            ...state,
+            questions,
+            activeQuestionId: undefined,
+            reflectBrief: {
+              draft: state.reflectBrief?.draft ?? answer.trim(),
+              confirmed: answer.trim(),
+              confirmedAt: now,
+            },
+            phase: "grilling",
+          },
+          "reflect.confirmed",
+          { questionId },
+        );
+        await this.syncArtifacts(state);
+        return state;
+      }
+
+      const staleMs = this.config.workflow.staleAnswerMinutes * 60_000;
+      const askedAt = Date.parse(question.askedAt);
+      const stale = Number.isFinite(askedAt) && Date.parse(now) - askedAt > staleMs;
+
       state = await this.store.record(
         {
           ...state,
           questions,
-          decisionTickets,
           activeQuestionId: undefined,
-          phase: "wayfinding",
+          phase: "grilling",
         },
         "question.answered",
-        { questionId, ticketId: question.ticketId },
+        { questionId, stale },
       );
+
+      if (stale) {
+        state = await this.closeGrillEpisode(state, "grill.episode_stale_reset");
+      }
+
       await this.syncArtifacts(state);
       return state;
     });
@@ -171,7 +255,7 @@ export class HarnessEngine {
     return this.store.withLock(runId, async () => {
       const state = await this.store.load(runId);
       if (terminal(state.phase)) return state;
-      const cancelled = await this.closeWayfindingEpisode({ ...state, phase: "cancelled" });
+      const cancelled = await this.closeGrillEpisode({ ...state, phase: "cancelled" });
       return this.store.record(cancelled, "run.cancelled");
     });
   }
@@ -180,263 +264,295 @@ export class HarnessEngine {
     return this.store.load(runId);
   }
 
-  private async advanceOne(state: RunState): Promise<RunState> {
+  private async advanceOne(state: RunState): Promise<StepResult> {
     switch (state.phase) {
       case "new":
-      case "navigating":
-        return this.navigate(state, false);
-      case "wayfinding":
-        return this.wayfind(state);
+      case "reflecting":
+        return { state: await this.reflect(state), consumedBudget: true };
+      case "grilling":
+        return { state: await this.grill(state), consumedBudget: true };
       case "planning":
-        return this.plan(state);
+        return { state: await this.plan(state), consumedBudget: true };
       case "executing":
         return this.execute(state);
       case "publishing":
-        return this.publish(state);
+        return { state: await this.publish(state), consumedBudget: true };
       case "awaiting_input":
       case "completed":
       case "blocked":
       case "cancelled":
-        return state;
+        return { state, consumedBudget: false };
     }
   }
 
-  private async navigate(state: RunState, expanding: boolean): Promise<RunState> {
-    if (!expanding && state.phase !== "navigating") {
-      state = await this.store.record({ ...state, phase: "navigating" }, "navigation.started");
+  private async reflect(state: RunState): Promise<RunState> {
+    if (state.phase !== "reflecting") {
+      state = await this.store.record({ ...state, phase: "reflecting" }, "reflect.started");
     }
-    const invocation = await this.invokeWayfinding(state, {
+    const output = await this.agents.invoke({
       runId: state.runId,
-      role: "navigator",
-      objective: expanding
-        ? "Advance the existing decision map by graduating only newly precise fog into tickets"
-        : "Name the destination and chart the first decision frontier for this idea",
-      input: expanding ? { idea: state.idea, map: state.map, tickets: state.decisionTickets } : { idea: state.idea },
-      expectedOutput: NAVIGATOR_EXPECTED_OUTPUT,
-      schema: NavigatorOutputSchema,
-      knowledgeQuery: `${state.idea} ${state.map?.notYetSpecified.join(" ") ?? ""}`,
+      role: "reflector",
+      objective: "Restate the feature idea so the operator can confirm shared understanding",
+      input: { idea: state.idea },
+      expectedOutput: REFLECT_EXPECTED_OUTPUT,
+      schema: ReflectOutputSchema,
+      knowledgeQuery: state.idea,
+      knowledgeFallbackQuery: compactDomainSeed(state.idea),
+      buildPrompt: false,
     });
-    state = invocation.state;
-    const output = invocation.output;
-    const { tickets: nextTickets, deferredCount } = materializeProposedTickets(
-      output.tickets,
-      expanding ? state.decisionTickets : [],
-      new Date().toISOString(),
-      this.config.workflow.maxOpenDecisionTickets,
-    );
-    assertAcyclic(nextTickets);
-    const capNote =
-      deferredCount > 0
-        ? `${deferredCount} proposed decision(s) deferred until open decisions resolve (cap ${this.config.workflow.maxOpenDecisionTickets}).`
-        : undefined;
-    const map = expanding
-      ? {
-          ...state.map!,
-          notes: unique([
-            ...state.map!.notes,
-            ...output.notes,
-            ...(capNote ? [capNote] : []),
-          ]),
-          notYetSpecified: unique(output.fog),
-          outOfScope: unique([...state.map!.outOfScope, ...output.outOfScope]),
-          readyToPlan: output.readyToPlan,
-        }
-      : {
-          destination: output.destination,
-          notes: capNote ? [...output.notes, capNote] : output.notes,
-          decisionsSoFar: [],
-          notYetSpecified: output.fog,
-          outOfScope: output.outOfScope,
-          readyToPlan: output.readyToPlan,
-        };
-    const routeClear = output.readyToPlan && nextTickets.every(decisionClosed) && map.notYetSpecified.length === 0;
-    let nextState: RunState = {
-      ...state,
-      map,
-      decisionTickets: nextTickets,
-      navigationPasses: state.navigationPasses + 1,
-      phase: routeClear ? "planning" : "wayfinding",
-    };
-    if (routeClear) nextState = await this.closeWayfindingEpisode(nextState);
-    return this.store.record(
-      nextState,
-      expanding ? "navigation.expanded" : "navigation.charted",
-      { tickets: nextTickets.length, fog: map.notYetSpecified.length, routeClear },
-    );
-  }
-
-  private async wayfind(state: RunState): Promise<RunState> {
-    const resumed = state.decisionTickets.find(
-      (ticket) => ticket.status === "claimed" && ticket.claimedBy === state.runId,
-    );
-    const ticket = resumed ?? decisionFrontier(state.decisionTickets)[0];
-    if (!ticket) {
-      const open = state.decisionTickets.filter((item) => !decisionClosed(item));
-      if (open.length > 0) throw new Error("Decision frontier is empty while unresolved tickets remain");
-      if ((state.map?.notYetSpecified.length ?? 0) > 0) {
-        if (state.navigationPasses >= this.config.workflow.maxFogPasses) {
-          throw new Error("Fog did not converge within the configured navigation pass budget");
-        }
-        return this.navigate(state, true);
-      }
-      const nextState = await this.closeWayfindingEpisode({
+    const draft = formatReflectRestatement(output);
+    state = await this.store.record(
+      {
         ...state,
-        phase: "planning",
-        map: { ...state.map!, readyToPlan: true },
-      });
+        reflectBrief: { draft },
+      },
+      "reflect.drafted",
+      { summary: output.summary },
+    );
+    return this.askQuestion(state, {
+      purpose: "reflect",
+      prompt: "Edit and confirm this restatement of the feature before grilling begins.",
+      context:
+        "Adjust anything that is wrong or incomplete. Confirming sends this exact text into the grill-me session.",
+      draftAnswer: draft,
+      options: [],
+    });
+  }
+
+  private async grill(state: RunState): Promise<RunState> {
+    const brief = state.reflectBrief?.confirmed;
+    if (!brief) throw new Error("Cannot grill without a confirmed reflect brief");
+
+    const pendingAnswer = [...state.questions]
+      .reverse()
+      .find(
+        (question) =>
+          question.purpose === "grill" &&
+          question.status === "answered" &&
+          !state.grillResolutions.some((item) => item.id === question.id),
+      );
+    const openGrill = state.questions.find(
+      (question) => question.purpose === "grill" && question.status === "open",
+    );
+    if (openGrill) {
       return this.store.record(
-        nextState,
-        "wayfinding.completed",
+        { ...state, activeQuestionId: openGrill.id, phase: "awaiting_input" },
+        "question.reopened",
+        { questionId: openGrill.id },
       );
     }
 
-    let claimed = ticket;
-    if (ticket.status === "open") {
-      claimed = { ...ticket, status: "claimed", claimedBy: state.runId, updatedAt: new Date().toISOString() };
-      state = await this.store.record(
-        { ...state, decisionTickets: replaceTicket(state.decisionTickets, claimed) },
-        "decision.claimed",
-        { ticketId: ticket.id, title: ticket.title },
-      );
+    const episodeLimit = this.config.workflow.maxGrillQuestionsPerEpisode;
+    const episode = state.grillEpisode;
+    if (episode && !episode.closedAt && episode.questionsAnswered >= episodeLimit) {
+      state = await this.closeGrillEpisode(state, "grill.episode_rolled");
     }
 
-    const hasHumanAnswer = claimed.conversation.some((turn) => turn.speaker === "human");
-    if (claimed.interaction === "HITL" && !hasHumanAnswer) {
-      return this.askQuestion(state, claimed, claimed.humanQuestion ?? claimed.question);
-    }
+    const coldStart = !state.grillEpisode || Boolean(state.grillEpisode.closedAt);
+    const staleAnswer =
+      Boolean(pendingAnswer?.answeredAt) &&
+      Boolean(pendingAnswer?.askedAt) &&
+      Date.parse(pendingAnswer!.answeredAt!) - Date.parse(pendingAnswer!.askedAt) >
+        this.config.workflow.staleAnswerMinutes * 60_000;
 
-    const role = decisionRole(claimed);
-    const invocation = await this.invokeWayfinding(state, {
+    const questionPayload = pendingAnswer
+      ? {
+          question: {
+            prompt: pendingAnswer.prompt,
+            context: pendingAnswer.context,
+            options: pendingAnswer.options,
+            recommendation: pendingAnswer.recommendation,
+          },
+          answer: pendingAnswer.answer,
+        }
+      : {};
+
+    const input =
+      coldStart || staleAnswer
+        ? {
+            mode: staleAnswer && pendingAnswer ? "stale_answer" : "fresh_episode",
+            confirmedBrief: brief,
+            resolutions: state.grillResolutions,
+            ...questionPayload,
+          }
+        : {
+            mode: "continue",
+            confirmedBrief: brief,
+            resolutions: state.grillResolutions,
+            ...questionPayload,
+          };
+
+    const invocation = await this.invokeGrill(state, {
       runId: state.runId,
-      role,
-      objective: `Resolve the decision named “${claimed.title}”`,
-      input: { destination: state.map?.destination, ticket: claimed },
-      expectedOutput: DECISION_EXPECTED_OUTPUT,
-      schema: DecisionOutputSchema,
-      priorArtifacts: [`issues/${claimed.id}`],
-      knowledgeQuery: `${claimed.title} ${claimed.question}`,
+      role: "griller",
+      objective: pendingAnswer
+        ? "Incorporate the human answer and either ask the next grill question or declare ready to plan"
+        : "Begin grilling from the confirmed feature brief; ask the first decision-ready question",
+      input,
+      expectedOutput: GRILL_EXPECTED_OUTPUT,
+      schema: GrillOutputSchema,
+      knowledgeQuery: [brief, pendingAnswer?.prompt, pendingAnswer?.answer]
+        .filter(Boolean)
+        .join(" "),
+      knowledgeFallbackQuery: compactDomainSeed(state.idea, brief),
+      forceFresh: Boolean(coldStart || staleAnswer),
     });
     state = invocation.state;
     const output = invocation.output;
-    if (output.status === "needs_input") return this.askQuestion(state, claimed, output.question);
-    return this.resolveDecision(state, claimed, output);
-  }
 
-  private async invokeWayfinding<T>(
-    state: RunState,
-    input: InvokeInput<T>,
-  ): Promise<{ state: RunState; output: T }> {
-    let episode = state.wayfindingEpisode;
-    const limit = this.config.workflow.maxWayfindingTurnsPerEpisode;
-    if (episode && !episode.closedAt && episode.turnCount >= limit) {
-      await this.agents.releaseProviderSession(episode.providerSessionId).catch(() => undefined);
-      const now = new Date().toISOString();
-      const nextNumber = episode.number + 1;
+    if (pendingAnswer) {
+      const resolution: GrillResolution = {
+        id: pendingAnswer.id,
+        question: pendingAnswer.prompt,
+        answer: pendingAnswer.answer ?? "",
+        summary: output.summary,
+        resolvedAt: new Date().toISOString(),
+      };
+      const questionsAnswered = (state.grillEpisode?.questionsAnswered ?? 0) + 1;
       state = await this.store.record(
         {
           ...state,
-          wayfindingEpisode: {
-            number: nextNumber,
-            turnCount: 0,
-            startedAt: now,
-            updatedAt: now,
-          },
+          grillResolutions: mergeResolutions(state.grillResolutions, resolution),
+          grillEpisode: state.grillEpisode
+            ? {
+                ...state.grillEpisode,
+                questionsAnswered,
+                updatedAt: new Date().toISOString(),
+              }
+            : state.grillEpisode,
         },
-        "wayfinding.episode_rolled",
-        {
-          previousEpisode: episode.number,
-          previousTurns: episode.turnCount,
-          nextEpisode: nextNumber,
-        },
+        "grill.answer_incorporated",
+        { questionId: pendingAnswer.id, questionsAnswered },
       );
-      episode = state.wayfindingEpisode;
-    } else if (!episode || episode.closedAt) {
+    }
+
+    if (output.status === "ready_to_plan") {
       const now = new Date().toISOString();
+      const fromOutput = output.resolutions.map((item) => ({
+        ...item,
+        resolvedAt: now,
+      }));
+      const closed = await this.closeGrillEpisode({
+        ...state,
+        grillResolutions: mergeResolutionLists(state.grillResolutions, fromOutput),
+        phase: "planning",
+      });
+      return this.store.record(closed, "grill.completed", {
+        resolutions: closed.grillResolutions.length,
+      });
+    }
+
+    if (
+      state.grillEpisode &&
+      !state.grillEpisode.closedAt &&
+      state.grillEpisode.questionsAnswered >= episodeLimit
+    ) {
+      state = await this.closeGrillEpisode(state, "grill.episode_rolled");
+    }
+
+    return this.askQuestion(state, {
+      purpose: "grill",
+      ...output.question,
+    });
+  }
+
+  private async invokeGrill(
+    state: RunState,
+    input: InvokeInput<GrillOutput> & { forceFresh?: boolean },
+  ): Promise<{ state: RunState; output: GrillOutput }> {
+    let episode = state.grillEpisode;
+    const now = new Date().toISOString();
+    if (input.forceFresh || !episode || episode.closedAt) {
+      if (episode && !episode.closedAt) {
+        await this.agents.releaseProviderSession(episode.providerSessionId).catch(() => undefined);
+      }
       const nextNumber = (episode?.number ?? 0) + 1;
       state = await this.store.record(
         {
           ...state,
-          wayfindingEpisode: {
+          grillEpisode: {
             number: nextNumber,
-            turnCount: 0,
+            questionsAnswered: 0,
             startedAt: now,
             updatedAt: now,
           },
         },
-        "wayfinding.episode_started",
-        { episode: nextNumber },
+        "grill.episode_started",
+        { episode: nextNumber, forceFresh: Boolean(input.forceFresh) },
       );
-      episode = state.wayfindingEpisode;
+      episode = state.grillEpisode;
     }
 
     const invocation = await this.agents.invokeInEpisode({
       ...input,
       buildPrompt: false,
       providerSessionId: episode?.providerSessionId,
+      previousGuidanceFingerprint: episode?.guidanceFingerprint,
     });
-    const now = new Date().toISOString();
+    const updatedAt = new Date().toISOString();
     return {
       state: {
         ...state,
-        wayfindingEpisode: {
+        grillEpisode: {
           number: episode?.number ?? 1,
           providerSessionId: invocation.providerSessionId,
-          turnCount: (episode?.turnCount ?? 0) + invocation.providerTurns,
-          startedAt: episode?.startedAt ?? now,
-          updatedAt: now,
+          questionsAnswered: episode?.questionsAnswered ?? 0,
+          guidanceFingerprint: invocation.guidanceFingerprint ?? episode?.guidanceFingerprint,
+          startedAt: episode?.startedAt ?? updatedAt,
+          updatedAt,
         },
       },
       output: invocation.value,
     };
   }
 
-  private async closeWayfindingEpisode(state: RunState): Promise<RunState> {
-    const episode = state.wayfindingEpisode;
+  private async closeGrillEpisode(
+    state: RunState,
+    event = "grill.episode_closed",
+  ): Promise<RunState> {
+    const episode = state.grillEpisode;
     if (!episode || episode.closedAt) return state;
     await this.agents.releaseProviderSession(episode.providerSessionId).catch(() => undefined);
     const now = new Date().toISOString();
-    return {
-      ...state,
-      wayfindingEpisode: {
-        ...episode,
-        updatedAt: now,
-        closedAt: now,
-      },
+    const closed: GrillEpisode = {
+      ...episode,
+      updatedAt: now,
+      closedAt: now,
     };
+    return this.store.record({ ...state, grillEpisode: closed }, event, {
+      episode: episode.number,
+      questionsAnswered: episode.questionsAnswered,
+    });
   }
 
   private async askQuestion(
     state: RunState,
-    ticket: DecisionTicket,
-    question: HumanQuestionDraft | string,
+    details: {
+      purpose: QuestionPurpose;
+      prompt: string;
+      context?: string;
+      options?: HumanQuestionDraft["options"];
+      recommendedOptionId?: string;
+      recommendation?: string;
+      draftAnswer?: string;
+    },
   ): Promise<RunState> {
     const now = new Date().toISOString();
     const questionId = `q-${randomUUID()}`;
-    const details =
-      typeof question === "string"
-        ? { prompt: question, context: "", options: [] }
-        : question;
-    const updatedTicket = {
-      ...ticket,
-      status: "claimed" as const,
-      claimedBy: state.runId,
-      humanQuestion: typeof question === "string" ? ticket.humanQuestion : question,
-      conversation: [
-        ...ticket.conversation,
-        { speaker: "agent" as const, text: details.prompt, at: now },
-      ],
-      updatedAt: now,
-    };
     return this.store.record(
       {
         ...state,
-        decisionTickets: replaceTicket(state.decisionTickets, updatedTicket),
         questions: [
           ...state.questions,
           {
             id: questionId,
-            ticketId: ticket.id,
-            ...details,
+            purpose: details.purpose,
+            prompt: details.prompt,
+            context: details.context ?? "",
+            options: details.options ?? [],
+            recommendedOptionId: details.recommendedOptionId,
+            recommendation: details.recommendation,
+            draftAnswer: details.draftAnswer,
             status: "open",
             askedAt: now,
           },
@@ -445,55 +561,7 @@ export class HarnessEngine {
         phase: "awaiting_input",
       },
       "question.asked",
-      { questionId, ticketId: ticket.id, ...details },
-    );
-  }
-
-  private async resolveDecision(
-    state: RunState,
-    ticket: DecisionTicket,
-    output: Extract<DecisionOutput, { status: "resolved" }>,
-  ): Promise<RunState> {
-    const now = new Date().toISOString();
-    const resolved: DecisionTicket = {
-      ...ticket,
-      status: "resolved",
-      resolution: output.resolution,
-      resolutionSummary: output.summary,
-      updatedAt: now,
-    };
-    let tickets = replaceTicket(state.decisionTickets, resolved);
-    const materialized = materializeProposedTickets(
-      output.newTickets,
-      tickets,
-      now,
-      this.config.workflow.maxOpenDecisionTickets,
-    );
-    tickets = materialized.tickets;
-    assertAcyclic(tickets);
-    const capNote =
-      materialized.deferredCount > 0
-        ? `${materialized.deferredCount} proposed decision(s) deferred until open decisions resolve (cap ${this.config.workflow.maxOpenDecisionTickets}).`
-        : undefined;
-    const cleared = new Set(output.clearFog.map(normalizeFog));
-    const map = {
-      ...state.map!,
-      notes: capNote ? unique([...state.map!.notes, capNote]) : state.map!.notes,
-      decisionsSoFar: [
-        ...state.map!.decisionsSoFar.filter((item) => item.ticketId !== ticket.id),
-        { ticketId: ticket.id, title: ticket.title, gist: output.summary },
-      ],
-      notYetSpecified: unique([
-        ...state.map!.notYetSpecified.filter((item) => !cleared.has(normalizeFog(item))),
-        ...output.newFog,
-      ]),
-      outOfScope: unique([...state.map!.outOfScope, ...output.outOfScope]),
-      readyToPlan: output.routeClear,
-    };
-    return this.store.record(
-      { ...state, map, decisionTickets: tickets, phase: "wayfinding" },
-      "decision.resolved",
-      { ticketId: ticket.id, title: ticket.title, newTickets: output.newTickets.length },
+      { questionId, purpose: details.purpose, prompt: details.prompt },
     );
   }
 
@@ -501,18 +569,29 @@ export class HarnessEngine {
     const output = await this.agents.invoke({
       runId: state.runId,
       role: "planner",
-      objective: "Turn the clear decision map into dependency-ordered tracer-bullet implementation tickets",
+      objective:
+        "Turn the confirmed brief and grill resolutions into dependency-ordered tracer-bullet implementation tickets",
       input: {
         idea: state.idea,
-        map: state.map,
-        decisions: state.decisionTickets.map(({ id, title, resolution }) => ({ id, title, resolution })),
+        confirmedBrief: state.reflectBrief?.confirmed,
+        resolutions: state.grillResolutions,
         defaultTdd: this.config.workflow.tdd,
         defaultTestCommand: this.config.commands.test,
       },
       expectedOutput:
         "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,tdd?,testCommand?}]}",
       schema: PlannerOutputSchema,
-      knowledgeQuery: `${state.map?.destination ?? state.idea} implementation tests architecture`,
+      knowledgeQuery: [
+        state.reflectBrief?.confirmed ?? state.idea,
+        compactDomainSeed(
+          state.idea,
+          state.reflectBrief?.confirmed,
+          ...state.grillResolutions.flatMap((item) => [item.question, item.answer, item.summary]),
+        ),
+      ]
+        .filter(Boolean)
+        .join(" "),
+      knowledgeFallbackQuery: compactDomainSeed(state.idea, state.reflectBrief?.confirmed),
     });
     const tasks = materializeTasks(output, this.config);
     assertAcyclic(tasks);
@@ -524,41 +603,58 @@ export class HarnessEngine {
     );
   }
 
-  private async execute(state: RunState): Promise<RunState> {
+  private async execute(state: RunState): Promise<StepResult> {
     const failed = state.tasks.find((task) => task.status === "failed");
     if (failed) throw new Error(`Task ${failed.id} failed: ${failed.failure ?? "unknown failure"}`);
     const active = state.tasks.find((task) => task.status === "active");
     const task = active ?? taskFrontier(state.tasks)[0];
     if (!task) {
       if (state.tasks.every((item) => item.status === "done")) {
-        return this.store.record({ ...state, phase: "publishing" }, "implementation.completed");
+        return {
+          state: await this.store.record({ ...state, phase: "publishing" }, "implementation.completed"),
+          consumedBudget: false,
+        };
       }
       throw new Error("Build frontier is empty while pending tasks remain");
     }
     return this.executeTaskStep(state, task);
   }
 
-  private async executeTaskStep(state: RunState, task: BuildTask): Promise<RunState> {
+  private async executeTaskStep(state: RunState, task: BuildTask): Promise<StepResult> {
     switch (task.step) {
       case "pending": {
-        const next = { ...task, status: "active" as const, step: task.tdd ? ("writing_tests" as const) : ("implementing" as const) };
-        return this.updateTask(state, next, "task.started");
+        const next = {
+          ...task,
+          status: "active" as const,
+          step: task.tdd ? ("writing_tests" as const) : ("implementing" as const),
+        };
+        return {
+          state: await this.updateTask(state, next, "task.started"),
+          consumedBudget: false,
+        };
       }
       case "writing_tests":
-        return this.writeTests(state, task);
+        return { state: await this.writeTests(state, task), consumedBudget: true };
       case "red":
-        return this.updateTask(state, { ...task, step: "implementing" }, "task.red_confirmed");
+        return {
+          state: await this.updateTask(
+            state,
+            { ...task, step: "implementing" },
+            "task.red_confirmed",
+          ),
+          consumedBudget: false,
+        };
       case "implementing":
-        return this.implementTask(state, task);
+        return { state: await this.implementTask(state, task), consumedBudget: true };
       case "verifying":
-        return this.verifyTask(state, task);
+        return { state: await this.verifyTask(state, task), consumedBudget: true };
       case "reviewing":
-        return this.reviewTask(state, task);
+        return { state: await this.reviewTask(state, task), consumedBudget: true };
       case "committing":
-        return this.commitTask(state, task);
+        return { state: await this.commitTask(state, task), consumedBudget: true };
       case "done":
       case "failed":
-        return state;
+        return { state, consumedBudget: false };
     }
   }
 
@@ -567,11 +663,20 @@ export class HarnessEngine {
       runId: state.runId,
       role: "test-writer",
       objective: `Write the next failing behavioral test for “${task.title}”`,
-      input: { task, priorCommandOutput: evidenceOutput(task.evidence) },
+      input: {
+        task: taskForPacket(task),
+        priorCommandOutput: recentEvidenceOutput(task.evidence),
+      },
       expectedOutput: "{summary,changedFiles}",
       schema: WorkerOutputSchema,
       constraints: ["Change tests only", "Do not implement production code"],
-      knowledgeQuery: `${task.title} tests public interface seam`,
+      knowledgeQuery: [task.title, task.description, ...task.acceptanceCriteria].join(" "),
+      knowledgeFallbackQuery: compactDomainSeed(
+        state.idea,
+        state.reflectBrief?.confirmed,
+        task.title,
+        task.description,
+      ),
     });
     const observedPaths = this.config.git.enabled ? await this.git.changedFiles() : result.changedFiles;
     const illegal = observedPaths.filter((file) => !isTestPath(file));
@@ -590,14 +695,12 @@ export class HarnessEngine {
     const updated: BuildTask = {
       ...task,
       attempts,
+      testPaths: unique([...task.testPaths, ...observedPaths.filter(isTestPath)]),
       changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
       evidence: [...task.evidence, evidence],
       step: meaningfulRed ? "red" : exhausted ? "failed" : "writing_tests",
       status: exhausted ? "failed" : "active",
-      failure:
-        exhausted
-          ? "Test writer could not produce a meaningful RED run"
-          : undefined,
+      failure: exhausted ? "Test writer could not produce a meaningful RED run" : undefined,
     };
     return this.updateTask(state, updated, meaningfulRed ? "task.red_observed" : "task.red_rejected");
   }
@@ -620,21 +723,62 @@ export class HarnessEngine {
       role: "implementer",
       objective: `Implement or repair the behavior in “${task.title}”`,
       input: {
-        task,
-        verifiedCommandOutput: evidenceOutput(task.evidence),
+        task: taskForPacket(task),
+        verifiedCommandOutput: recentEvidenceOutput(task.evidence),
         reviewFeedback: task.reviewSummary,
       },
       expectedOutput: "{summary,changedFiles}",
       schema: WorkerOutputSchema,
       constraints: ["Do not commit", "Do not weaken tests", "Stop after this one task"],
-      knowledgeQuery: `${task.title} ${task.description}`,
+      knowledgeQuery: [task.title, task.description, ...task.acceptanceCriteria].join(" "),
+      knowledgeFallbackQuery: compactDomainSeed(
+        state.idea,
+        state.reflectBrief?.confirmed,
+        task.title,
+        task.description,
+      ),
     });
     const evidence = await this.runTargetedTest(task, task.tdd ? "tdd:green" : "test");
     const attempts = {
       ...task.attempts,
       implementation: task.attempts.implementation + 1,
     };
-    const exhausted = !evidence.passed && attempts.implementation >= this.config.workflow.maxImplementationAttempts;
+    const observedPaths = this.config.git.enabled
+      ? await this.git.changedFiles()
+      : result.changedFiles;
+    const touchedTests = observedPaths.filter((file) =>
+      task.testPaths.some((testPath) => normalizePathKey(testPath) === normalizePathKey(file)),
+    );
+    if (evidence.passed && touchedTests.length > 0) {
+      const exhausted = attempts.implementation >= this.config.workflow.maxImplementationAttempts;
+      const failure = `Implementer modified recorded test files: ${touchedTests.join(", ")}`;
+      const updated: BuildTask = {
+        ...task,
+        attempts,
+        changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
+        evidence: [
+          ...task.evidence,
+          evidence,
+          {
+            purpose: "guard:test-tamper",
+            command: "deterministic-test-path-guard",
+            exitCode: 1,
+            passed: false,
+            stdout: "",
+            stderr: failure,
+            durationMs: 0,
+            at: new Date().toISOString(),
+          },
+        ],
+        step: exhausted ? "failed" : "implementing",
+        status: exhausted ? "failed" : "active",
+        failure: exhausted ? failure : undefined,
+        reviewSummary: failure,
+      };
+      return this.updateTask(state, updated, "task.implementation_test_tamper");
+    }
+    const exhausted =
+      !evidence.passed && attempts.implementation >= this.config.workflow.maxImplementationAttempts;
     const updated: BuildTask = {
       ...task,
       attempts,
@@ -642,9 +786,15 @@ export class HarnessEngine {
       evidence: [...task.evidence, evidence],
       step: evidence.passed ? "verifying" : exhausted ? "failed" : "implementing",
       status: exhausted ? "failed" : "active",
-      failure: exhausted ? `Targeted test failed after ${attempts.implementation} implementation attempts` : undefined,
+      failure: exhausted
+        ? `Targeted test failed after ${attempts.implementation} implementation attempts`
+        : undefined,
     };
-    return this.updateTask(state, updated, evidence.passed ? "task.green_observed" : "task.implementation_repair_needed");
+    return this.updateTask(
+      state,
+      updated,
+      evidence.passed ? "task.green_observed" : "task.implementation_repair_needed",
+    );
   }
 
   private async verifyTask(state: RunState, task: BuildTask): Promise<RunState> {
@@ -663,7 +813,10 @@ export class HarnessEngine {
       evidence: [...task.evidence, ...evidence],
       step: passed ? "reviewing" : canRepair ? "implementing" : "failed",
       status: passed || canRepair ? "active" : "failed",
-      failure: !passed && !canRepair ? "Command gates failed and implementation repair budget is exhausted" : undefined,
+      failure:
+        !passed && !canRepair
+          ? "Command gates failed and implementation repair budget is exhausted"
+          : undefined,
     };
     return this.updateTask(state, updated, passed ? "task.gates_passed" : "task.gates_failed");
   }
@@ -674,10 +827,20 @@ export class HarnessEngine {
       runId: state.runId,
       role: "reviewer",
       objective: `Independently review “${task.title}” against its acceptance criteria`,
-      input: { task, changedFiles, commandEvidence: task.evidence },
+      input: {
+        task: taskForPacket(task),
+        changedFiles,
+        commandEvidence: recentEvidenceOutput(task.evidence),
+      },
       expectedOutput: "{approved,summary,findings:[{severity,message}]}",
       schema: ReviewOutputSchema,
-      knowledgeQuery: `${task.title} acceptance security standards`,
+      knowledgeQuery: [task.title, task.description, ...task.acceptanceCriteria].join(" "),
+      knowledgeFallbackQuery: compactDomainSeed(
+        state.idea,
+        state.reflectBrief?.confirmed,
+        task.title,
+        task.description,
+      ),
     });
     const blocking = review.findings.filter((finding) => finding.severity === "blocking");
     const approved = review.approved && blocking.length === 0;
@@ -688,7 +851,10 @@ export class HarnessEngine {
     const updated: BuildTask = {
       ...task,
       attempts,
-      reviewSummary: [review.summary, ...review.findings.map((finding) => `${finding.severity}: ${finding.message}`)].join("\n"),
+      reviewSummary: [
+        review.summary,
+        ...review.findings.map((finding) => `${finding.severity}: ${finding.message}`),
+      ].join("\n"),
       step: approved ? "committing" : canRepair ? "implementing" : "failed",
       status: approved || canRepair ? "active" : "failed",
       failure: !approved && !canRepair ? "Review failed and repair budget is exhausted" : undefined,
@@ -701,17 +867,18 @@ export class HarnessEngine {
       subject: `feat: ${task.title}`.slice(0, 100),
       body: task.description,
     };
-    const message = await this.message(
-      state.runId,
-      `Write the commit message for completed task “${task.title}”`,
-      { task, changedFiles: task.changedFiles, review: task.reviewSummary },
-      fallback,
-    );
+    const message = this.config.workflow.generateCommitMessages
+      ? await this.message(
+          state.runId,
+          `Write the commit message for completed task “${task.title}”`,
+          { task: taskForPacket(task), changedFiles: task.changedFiles, review: task.reviewSummary },
+          fallback,
+        )
+      : MessageOutputSchema.parse(fallback);
     const commitSha = await this.git.commitTask(task.id, message, task.changedFiles);
-    // A committed task is the deterministic graph boundary: the next task can
-    // query the code structure that was just verified and committed. Graphify
-    // fails soft here so a graph-tool outage never invalidates a good commit.
-    const graphifyUpdated = await this.knowledge.rebuildRepositoryGraph();
+    const graphifyUpdated = includesSourcePath(task.changedFiles)
+      ? await this.knowledge.rebuildRepositoryGraph()
+      : false;
     return this.updateTask(
       state,
       { ...task, status: "done", step: "done", commitSha },
@@ -722,16 +889,20 @@ export class HarnessEngine {
 
   private async publish(state: RunState): Promise<RunState> {
     const fallback: MessageOutput = {
-      subject: `feat: ${state.map?.destination ?? state.idea}`.slice(0, 100),
+      subject: `feat: ${state.idea}`.slice(0, 100),
       body: state.tasks.map((task) => `- ${task.title}`).join("\n"),
     };
     const message = await this.message(
       state.runId,
       "Write the pull-request title and body for this verified feature",
       {
-        destination: state.map?.destination,
-        decisions: state.map?.decisionsSoFar,
-        tasks: state.tasks.map(({ title, reviewSummary, commitSha }) => ({ title, reviewSummary, commitSha })),
+        brief: state.reflectBrief?.confirmed,
+        resolutions: state.grillResolutions,
+        tasks: state.tasks.map(({ title, reviewSummary, commitSha }) => ({
+          title,
+          reviewSummary,
+          commitSha,
+        })),
       },
       fallback,
     );
@@ -760,6 +931,7 @@ export class HarnessEngine {
         expectedOutput: "{subject,body}",
         schema: MessageOutputSchema,
         buildPrompt: false,
+        retrieval: false,
       });
     } catch {
       return MessageOutputSchema.parse(fallback);
@@ -790,68 +962,8 @@ export class HarnessEngine {
   }
 
   private async syncArtifacts(state: RunState): Promise<void> {
-    // Write map/issues/tasks to disk for within-run handoff (work packets, priorArtifacts,
-    // direct reads). Do not index run artifacts into the knowledge base.
     await this.tracker.sync(state);
   }
-}
-
-function materializeProposedTickets(
-  proposals: NavigatorOutput["tickets"],
-  existing: DecisionTicket[],
-  now: string,
-  maxOpen?: number,
-): { tickets: DecisionTicket[]; deferredCount: number } {
-  const used = new Set(existing.map((ticket) => ticket.id));
-  const idMap = new Map<string, string>();
-  const existingProposalIds = new Set<string>();
-  for (const [index, proposal] of proposals.entries()) {
-    const baseId = safeId(proposal.id, `decision-${index + 1}`);
-    if (used.has(baseId)) {
-      idMap.set(proposal.id, baseId);
-      existingProposalIds.add(proposal.id);
-      continue;
-    }
-    let id = baseId;
-    let suffix = 2;
-    while (used.has(id)) {
-      id = `${safeId(proposal.id, `decision-${index + 1}`)}-${suffix}`;
-      suffix += 1;
-    }
-    used.add(id);
-    idMap.set(proposal.id, id);
-  }
-  const existingIds = new Set(existing.map((ticket) => ticket.id));
-  const newProposals = proposals.filter((proposal) => !existingProposalIds.has(proposal.id));
-  const openCount = existing.filter((ticket) => !decisionClosed(ticket)).length;
-  const slots =
-    maxOpen === undefined ? newProposals.length : Math.max(0, maxOpen - openCount);
-  const accepted = newProposals.slice(0, slots);
-  const deferredCount = newProposals.length - accepted.length;
-  const created = accepted.map((proposal) => {
-    const question =
-      typeof proposal.question === "string"
-        ? proposal.question
-        : proposal.question.prompt;
-    const humanQuestion =
-      typeof proposal.question === "string" ? undefined : proposal.question;
-    return {
-      id: idMap.get(proposal.id)!,
-      title: proposal.title,
-      question,
-      humanQuestion,
-      kind: proposal.kind,
-      interaction: proposal.interaction,
-      status: "open" as const,
-      blockedBy: proposal.blockedBy.map((id) =>
-        idMap.get(id) ?? (existingIds.has(id) ? id : id),
-      ),
-      conversation: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-  });
-  return { tickets: [...existing, ...created], deferredCount };
 }
 
 function materializeTasks(
@@ -890,30 +1002,29 @@ function materializeTasks(
     blockedBy: task.blockedBy.map((id) => idMap.get(id) ?? id),
     tdd: task.tdd ?? config.workflow.tdd,
     testCommand: task.testCommand ?? config.commands.test,
-    status: "pending",
-    step: "pending",
+    status: "pending" as const,
+    step: "pending" as const,
     attempts: { tests: 0, implementation: 0, review: 0 },
     evidence: [],
+    testPaths: [],
     changedFiles: [],
   }));
 }
 
-function decisionRole(ticket: DecisionTicket): AgentRole {
-  if (ticket.kind === "prototype") return "decision-prototyper";
-  if (ticket.kind === "research") return "decision-researcher";
-  return "decision-facilitator";
+function mergeResolutions(
+  existing: GrillResolution[],
+  next: GrillResolution,
+): GrillResolution[] {
+  return [...existing.filter((item) => item.id !== next.id), next];
 }
 
-function decisionClosed(ticket: DecisionTicket): boolean {
-  return ticket.status === "resolved" || ticket.status === "out_of_scope";
-}
-
-function replaceTicket(tickets: DecisionTicket[], replacement: DecisionTicket): DecisionTicket[] {
-  return tickets.map((ticket) => (ticket.id === replacement.id ? replacement : ticket));
-}
-
-function normalizeFog(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLowerCase();
+function mergeResolutionLists(
+  existing: GrillResolution[],
+  additions: GrillResolution[],
+): GrillResolution[] {
+  let result = existing;
+  for (const item of additions) result = mergeResolutions(result, item);
+  return result;
 }
 
 function unique(values: string[]): string[] {
@@ -922,7 +1033,7 @@ function unique(values: string[]): string[] {
   for (const value of values) {
     const trimmed = value.trim();
     if (!trimmed) continue;
-    const key = normalizeFog(trimmed);
+    const key = trimmed.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(trimmed);
@@ -942,22 +1053,19 @@ function configurationHash(config: unknown): string {
   return createHash("sha256").update(JSON.stringify(config)).digest("hex");
 }
 
-function configurationHashes(config: HarnessConfig): Set<string> {
-  const { maxWayfindingTurnsPerEpisode: _addedInEpisodeMigration, ...legacyWorkflow } =
-    config.workflow;
-  const { guidance: _addedInGuidanceMigration, ...legacyKnowledge } = config.knowledge;
-  const variants = [
-    config,
-    { ...config, workflow: legacyWorkflow },
-    { ...config, knowledge: legacyKnowledge },
-    { ...config, workflow: legacyWorkflow, knowledge: legacyKnowledge },
-  ];
-  return new Set([
-    // Runs created before ADR 0004 did not serialize this default. Accept the
-    // otherwise-identical frozen snapshot so an in-flight run can upgrade.
-    // The same applies to the guidance default introduced by ADR 0006.
-    ...variants.map(configurationHash),
-  ]);
+const PACKET_DESCRIPTION_LIMIT = 2_000;
+const PACKET_CRITERION_LIMIT = 500;
+
+/** Drop durable evidence and bound long prose before a task enters a packet. */
+export function taskForPacket(task: BuildTask): Omit<BuildTask, "evidence"> {
+  const { evidence: _evidence, ...rest } = task;
+  return {
+    ...rest,
+    description: rest.description.slice(0, PACKET_DESCRIPTION_LIMIT),
+    acceptanceCriteria: rest.acceptanceCriteria.map((item) =>
+      item.slice(0, PACKET_CRITERION_LIMIT),
+    ),
+  };
 }
 
 function isTestPath(filePath: string): boolean {
@@ -970,7 +1078,33 @@ function isTestPath(filePath: string): boolean {
   );
 }
 
-void DecisionOutputSchema;
-void NavigatorOutputSchema;
-void ReviewOutputSchema;
-void WorkerOutputSchema;
+const SOURCE_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".py",
+  ".go",
+  ".rs",
+  ".java",
+  ".kt",
+  ".kts",
+  ".cs",
+  ".cpp",
+  ".c",
+  ".h",
+  ".hpp",
+  ".rb",
+  ".php",
+  ".swift",
+]);
+
+function includesSourcePath(paths: string[]): boolean {
+  return paths.some((filePath) => SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()));
+}
+
+function normalizePathKey(filePath: string): string {
+  return filePath.replaceAll("\\", "/").toLowerCase();
+}

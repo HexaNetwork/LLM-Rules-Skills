@@ -13,20 +13,34 @@ import {
 import { fixtureRoot } from "../helpers.js";
 
 describe("token-conscious defaults", () => {
-  it("uses deterministic prompts and bounded wayfinding episodes by default", () => {
+  it("uses deterministic prompts and bounded grill episodes by default", () => {
     const config = HarnessConfigSchema.parse({});
 
     expect(config.agent.promptBuilder).toBe(false);
-    expect(config.workflow.maxWayfindingTurnsPerEpisode).toBe(1);
+    expect(config.workflow.maxGrillQuestionsPerEpisode).toBe(5);
+    expect(config.workflow.staleAnswerMinutes).toBe(30);
     expect(config.knowledge.graphify.enabled).toBe(false);
     expect(config.knowledge.graphify.roles).toContain("implementer");
     expect(config.knowledge.graphify.roles).not.toContain("message-writer");
+    expect(config.knowledge.graphify.roles).not.toContain("reflector");
+    expect(config.knowledge.graphify.roles).not.toContain("griller");
     expect(config.workflow.contextCharacters).toBe(12_000);
+    expect(config.workflow.inputCharacters).toBe(24_000);
+    expect(config.workflow.graphifyCharacters).toBe(3_000);
+    expect(config.workflow.generateCommitMessages).toBe(false);
+    expect(config.workflow.maxStepsPerRun).toBe(40);
     expect(config.knowledge.guidance).toMatchObject({ enabled: true, maxResults: 6, maxCharacters: 6_000 });
     expect(config.knowledge.embeddings.enabled).toBe(false);
     expect(config.knowledge.embeddings.model).toBe("text-embedding-3-small");
+    expect(config.knowledge.relevanceFloor).toBe(0.55);
+    expect(config.knowledge.minLexicalScore).toBe(0.05);
+    expect(config.knowledge.maxChunksPerSource).toBe(1);
+    expect(config.knowledge.maxForTopSource).toBe(2);
+    expect(config.knowledge.graphify.stopwords).toEqual([]);
     expect(defaultConfigYaml()).toContain("promptBuilder: false");
-    expect(defaultConfigYaml()).toContain("maxWayfindingTurnsPerEpisode: 1");
+    expect(defaultConfigYaml()).toContain("relevanceFloor: 0.55");
+    expect(defaultConfigYaml()).toContain("maxGrillQuestionsPerEpisode: 5");
+    expect(defaultConfigYaml()).toContain("staleAnswerMinutes: 30");
     expect(defaultConfigYaml()).toContain("enabled: false");
     const deployed = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({
       sources: ["README.md", "src"],
@@ -54,15 +68,16 @@ describe("token-conscious defaults", () => {
     const configPath = path.join(root, "agent-harness.config.yaml");
     await writeFile(
       configPath,
-      "version: 2\nrepositoryRoot: .\nworkflow:\n  maxWayfindingTurnsPerEpisode: 6\n",
+      "version: 2\nrepositoryRoot: .\nworkflow:\n  maxGrillQuestionsPerEpisode: 4\n",
       "utf8",
     );
 
     const updated = await writeProjectSettings(configPath, {
-      workflow: { maxWayfindingTurnsPerEpisode: 12 },
+      workflow: { maxGrillQuestionsPerEpisode: 8, staleAnswerMinutes: 45 },
     });
 
-    expect(updated.config.workflow.maxWayfindingTurnsPerEpisode).toBe(12);
+    expect(updated.config.workflow.maxGrillQuestionsPerEpisode).toBe(8);
+    expect(updated.config.workflow.staleAnswerMinutes).toBe(45);
     expect(updated.config.repositoryRoot).toBe(root);
     expect(await readFile(configPath, "utf8")).not.toContain(root);
   });

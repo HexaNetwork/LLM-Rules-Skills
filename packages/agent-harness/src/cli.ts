@@ -223,8 +223,12 @@ program
     const config = await runConfig(options.config, options.runId);
     const engine = new HarnessEngine(config, { backend: createCursorBackend("unused") });
     const state = await engine.status(options.runId);
-    if (options.json) console.log(JSON.stringify(state, null, 2));
-    else printState(state);
+    if (options.json) {
+      const usage = await aggregateSessionUsage(engine, options.runId);
+      console.log(JSON.stringify({ ...state, usage }, null, 2));
+      return;
+    }
+    printState(state);
   });
 
 program
@@ -347,6 +351,34 @@ async function resolvedConfig(configPath: string | undefined, tdd: string | unde
 async function runConfig(configPath: string | undefined, runId: string): Promise<HarnessConfig> {
   const { config } = await loadConfig(configPath);
   return loadRunConfig(config, runId);
+}
+
+async function aggregateSessionUsage(
+  engine: HarnessEngine,
+  runId: string,
+): Promise<{
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  sessions: number;
+}> {
+  const files = await engine.store.listFiles(runId, "sessions");
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let totalTokens = 0;
+  for (const file of files) {
+    const session = (await engine.store.readJson(runId, file)) as {
+      usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+    };
+    const usage = session.usage ?? {};
+    inputTokens += Number(usage.inputTokens ?? 0);
+    outputTokens += Number(usage.outputTokens ?? 0);
+    totalTokens +=
+      typeof usage.totalTokens === "number"
+        ? usage.totalTokens
+        : Number(usage.inputTokens ?? 0) + Number(usage.outputTokens ?? 0);
+  }
+  return { inputTokens, outputTokens, totalTokens, sessions: files.length };
 }
 
 function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {

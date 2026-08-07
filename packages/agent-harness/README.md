@@ -1,6 +1,6 @@
 # Agent Harness v2
 
-Agent Harness turns an idea into verified, committed feature slices through a durable state machine. Wayfinding uses bounded resumable provider episodes so several research and human Q→A turns can share repository understanding and cacheable context. Every invocation still has a complete persisted work packet, so provider history is an optimization rather than a recovery dependency.
+Agent Harness turns an idea into verified, committed feature slices through a durable state machine. New runs start with a reflect gate (editable restatement), then a grill-me interview in bounded provider episodes. Every invocation still has a complete persisted work packet, so provider history is an optimization rather than a recovery dependency.
 
 ## Quick start
 
@@ -57,7 +57,7 @@ The dashboard opens on an authenticated loopback URL and centralizes run creatio
 The lifecycle is:
 
 ```text
-idea → Wayfinder map → decision frontier → implementation tickets
+idea → reflect (editable confirm) → grill-me → implementation tickets
      → [RED → GREEN] → command gates → review → commit → pull request
 ```
 
@@ -86,7 +86,7 @@ agent-harness knowledge search "proration" --include-project billing-service
 
 ## Centralized dashboard
 
-The dependency-free browser UI is a read/write client of the same persisted state and engine used by the CLI. It does not keep a competing copy of lifecycle state. Mutating requests are serialized, while polling and artifact reads remain safe during long agent or command work. The top-bar gear opens schema-driven project settings; currently it controls the bounded wayfinding episode length and persists the value to the project config. Settings apply to new runs because active runs retain their frozen configuration snapshots.
+The dependency-free browser UI is a read/write client of the same persisted state and engine used by the CLI. It does not keep a competing copy of lifecycle state. Mutating requests are serialized, while polling and artifact reads remain safe during long agent or command work. The top-bar gear opens schema-driven project settings; currently it controls grill questions per episode and the stale-answer threshold, and persists those values to the project config. Settings apply to new runs because active runs retain their frozen configuration snapshots.
 
 The server binds only to `127.0.0.1`, generates a fresh access token, rejects unauthenticated API calls, caps request bodies, and restricts artifact and knowledge paths to the configured workspace. Closing the process closes the UI; runs remain recoverable from disk.
 
@@ -99,21 +99,22 @@ Each run lives under `.agent-harness/runs/<runId>/`:
 | `state.json` | Authoritative state-machine checkpoint |
 | `config.json` | Frozen run configuration |
 | `events.jsonl` | Append-only transition history |
-| `map.md` | Low-resolution Wayfinder index |
-| `issues/*.md` | Decision questions, conversations, and resolutions |
+| `brief.md` | Confirmed (or draft) feature restatement |
+| `grill.md` | Locked grill resolutions |
+| `issues/*.md` | Legacy decision artifacts if present |
 | `tasks/*.md` | Tracer-bullet implementation tickets and evidence |
 | `packets/*.json` | Complete handoff supplied to one model invocation |
 | `sessions/*.json` | Role, model, provider session/run IDs, context mode, exact submitted prompt, outcome, available usage, and handoff summary |
 
 The map is an index, not a duplicate source of truth. Full decisions live in their issue files. A session loads the map at low resolution and retrieves relevant issue/document chunks on demand.
 
-## Wayfinding and human questions
+## Reflect, grill, and human questions
 
-The navigator names a destination, charts precise decision tickets, and leaves unshaped uncertainty in `Not yet specified`. Tickets use Wayfinder's `research`, `prototype`, and `grilling` types and declare AFK or HITL interaction.
+New runs start with a **reflector** that restates the idea. The dashboard shows that draft in an editable textarea; confirming stores the exact edited brief and starts grilling.
 
-HITL work writes one open, decision-ready question and returns control immediately. Each new question includes why the choice matters, two to four options with tradeoffs, and a clearly identified recommendation with rationale; the operator can still give a custom answer. `answer` persists the human's exact words, then the current wayfinding episode continues with a compact appended turn. The agent never fills in the human side of the exchange.
+The **griller** asks one decision-ready HITL question at a time (context, 2–4 options, recommendation). `answer` persists the human's exact words, then the current grill episode continues with a compact appended turn when the answer is fresh. The agent never fills in the human side of the exchange.
 
-An episode spans at most `workflow.maxWayfindingTurnsPerEpisode` model turns (six by default), then checkpoints and rolls to a new provider agent. Navigation, AFK decisions, and facilitator follow-ups share the episode. Planning, implementation tasks, and review retain clean boundaries. If the Cursor checkpoint cannot be resumed, the backend creates a fresh agent and submits the complete packet instead.
+An episode spans at most `workflow.maxGrillQuestionsPerEpisode` answered questions (five by default), then checkpoints and rolls to a new provider agent with the confirmed brief and resolutions so far. If an answer arrives more than `workflow.staleAnswerMinutes` (30 by default) after the question was asked, the harness discards the episode and continues with a cold packet containing only the question and answer. Planning, implementation tasks, and review retain clean boundaries. If the Cursor checkpoint cannot be resumed, the backend creates a fresh agent and submits the complete packet instead.
 
 ## Scope-aware local retrieval
 
@@ -147,11 +148,14 @@ knowledge:
 
 Rules (`.mdc`) and skill roots (`SKILL.md`) are also classified as guidance. Before every worker invocation, the harness selects a bounded, auditable subset using the worker role, its objective, known planned or changed paths, rule `globs`, optional `roles`, and lexical relevance. `alwaysApply: true` is a ranking priority rather than unconditional prompt injection, so unrelated legacy rules do not consume every worker's context. The selected excerpts and reasons are persisted in the work packet, while omitted `alwaysApply` rules are recorded in its sibling guidance audit; generic retrieval excludes selected guidance to avoid duplication.
 
-New runs enable this behavior by default with a 12,000-character total context budget, reserving up to 6,000 characters and six entries for guidance:
+New runs enable this behavior by default with separate packet budgets: guidance+context, serialized `input`, and a Graphify sub-budget. Guidance itself is capped at 6,000 characters and six entries:
 
 ```yaml
 workflow:
-  contextCharacters: 12000
+  contextCharacters: 12000   # guidance + retrieved context
+  inputCharacters: 24000     # serialized packet.input
+  graphifyCharacters: 3000   # Graphify excerpt within contextCharacters
+  generateCommitMessages: false  # deterministic per-task subjects; PR body still uses the model
 knowledge:
   guidance:
     enabled: true
@@ -159,7 +163,7 @@ knowledge:
     maxCharacters: 6000
 ```
 
-Set `knowledge.guidance.enabled: false` to retain generic retrieval only. Frozen run configurations created before this setting continue with their original retrieval behavior.
+A single budget authority (`buildWorkPacket`) applies these ceilings and records truncations beside the retrieval audit. Set `knowledge.guidance.enabled: false` to retain generic retrieval only. Frozen run configurations created before this setting continue with their original retrieval behavior.
 
 Every indexed document has a scope gate: `global` material is always eligible, while `project` material is eligible only for `knowledge.projectId`. A normal query therefore searches global guidance plus the active project's private documents. To include another project, name it with `--include-project`; only documents indexed with `visibility: shared` can cross that boundary. `private` and `restricted` documents are never returned to another project by this local index.
 
@@ -180,12 +184,15 @@ Sources are currently constrained to the configured repository root, so shared g
 
 Graphify complements document matches with structural repository traversal. New
 harness configs enable it by default. Before the first agent step of each new
-run, the harness verifies both the `graphify` command and
+run (CLI and UI), the harness verifies both the `graphify` command and
 `graphify-out/graph.json`; if either is missing, it runs that project's editable
 setup script to install and build the graph. After each verified harness task
-commit, it runs `graphify update` so the next task receives fresh structural
-context. Use `agent-harness graphify install --project .` after code changes
-made outside the harness, or enable `knowledge.graphify.updateOnRefresh` if a
+commit that includes a source-file path, it runs `graphify update` so the next
+task receives fresh structural context. Default Graphify roles are planner,
+test-writer, implementer, and reviewer (not reflector/griller). Project-specific
+`knowledge.graphify.stopwords` merge over the built-in English and harness-meta
+lists. Use `agent-harness graphify install --project .` after code changes made
+outside the harness, or enable `knowledge.graphify.updateOnRefresh` if a
 document-refresh-triggered rebuild is specifically desired. Graphify is invoked
 with an argument array rather than a shell, reads only
 `graphify-out/graph.json`, and fails softly during later retrieval. Set

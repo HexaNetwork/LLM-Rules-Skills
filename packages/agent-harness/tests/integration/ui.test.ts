@@ -6,6 +6,36 @@ import { HarnessEngine } from "../../src/engine.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
+const REFLECT_OUTPUT = {
+  summary: "Restated",
+  restatement: "Build a dashboard-driven feature.",
+  goal: "Ship from the dashboard",
+  users: ["operators"],
+  inScope: ["HITL grilling"],
+  outOfScope: ["wayfinding"],
+  assumptions: [],
+  unknowns: ["tone"],
+};
+
+const GRILL_QUESTION = {
+  prompt: "Should the interface feel quiet or energetic?",
+  context: "This choice controls the dashboard's density, motion, and visual emphasis.",
+  options: [
+    {
+      id: "quiet",
+      label: "Quiet and focused",
+      description: "Restrained color and motion support longer work sessions.",
+    },
+    {
+      id: "energetic",
+      label: "Energetic",
+      description: "Stronger color and motion make progress more visible.",
+    },
+  ],
+  recommendedOptionId: "quiet",
+  recommendation: "Choose quiet and focused because this is a long-running control surface.",
+};
+
 describe("central dashboard", () => {
   let ui: UiServer | undefined;
 
@@ -19,7 +49,7 @@ describe("central dashboard", () => {
     const configPath = path.join(root, "agent-harness.config.yaml");
     await writeFile(
       configPath,
-      "version: 2\nrepositoryRoot: .\nworkflow:\n  maxWayfindingTurnsPerEpisode: 6\n",
+      "version: 2\nrepositoryRoot: .\nworkflow:\n  maxGrillQuestionsPerEpisode: 6\n",
       "utf8",
     );
     ui = await startUiServer({
@@ -35,14 +65,16 @@ describe("central dashboard", () => {
       settings: { editable: boolean; definitions: unknown[]; values: Record<string, number> };
     };
     expect(initialBody.settings.editable).toBe(true);
-    expect(initialBody.settings.definitions).toHaveLength(1);
-    expect(initialBody.settings.values["workflow.maxWayfindingTurnsPerEpisode"]).toBe(1);
+    expect(initialBody.settings.definitions).toHaveLength(2);
+    expect(initialBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(5);
+    expect(initialBody.settings.values["workflow.staleAnswerMinutes"]).toBe(30);
 
     const invalid = await request(ui, "/api/settings", {
       method: "PUT",
       body: {
         values: {
-          "workflow.maxWayfindingTurnsPerEpisode": 0,
+          "workflow.maxGrillQuestionsPerEpisode": 0,
+          "workflow.staleAnswerMinutes": 30,
         },
       },
     });
@@ -52,7 +84,8 @@ describe("central dashboard", () => {
       method: "PUT",
       body: {
         values: {
-          "workflow.maxWayfindingTurnsPerEpisode": 10,
+          "workflow.maxGrillQuestionsPerEpisode": 10,
+          "workflow.staleAnswerMinutes": 45,
         },
       },
     });
@@ -62,17 +95,16 @@ describe("central dashboard", () => {
       settings: { values: Record<string, number> };
     };
     expect(updatedBody.appliesTo).toBe("new_runs");
-    expect(updatedBody.settings.values["workflow.maxWayfindingTurnsPerEpisode"]).toBe(10);
-    expect(await readFile(configPath, "utf8")).toContain(
-      "maxWayfindingTurnsPerEpisode: 10",
-    );
+    expect(updatedBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(10);
+    expect(updatedBody.settings.values["workflow.staleAnswerMinutes"]).toBe(45);
+    expect(await readFile(configPath, "utf8")).toContain("maxGrillQuestionsPerEpisode: 10");
 
     const bootstrap = await request(ui, "/api/bootstrap");
     const bootstrapBody = (await bootstrap.json()) as {
       project: { settings: { values: Record<string, number> } };
     };
     expect(
-      bootstrapBody.project.settings.values["workflow.maxWayfindingTurnsPerEpisode"],
+      bootstrapBody.project.settings.values["workflow.maxGrillQuestionsPerEpisode"],
     ).toBe(10);
   });
 
@@ -80,41 +112,7 @@ describe("central dashboard", () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
     const backend = createFakeBackend({
-      navigator: () => ({
-        summary: "Needs a decision",
-        destination: "A recovered route",
-        notes: [],
-        tickets: [
-          {
-            id: "recovery-choice",
-            title: "Confirm recovery",
-            question: {
-              prompt: "Should the recovered run continue?",
-              context: "The dashboard was restarted before this route was charted.",
-              options: [
-                {
-                  id: "continue",
-                  label: "Continue",
-                  description: "Resume charting the route.",
-                },
-                {
-                  id: "cancel",
-                  label: "Cancel",
-                  description: "Leave the recovered route paused.",
-                },
-              ],
-              recommendedOptionId: "continue",
-              recommendation: "Continue the recovered run.",
-            },
-            kind: "grilling",
-            interaction: "HITL",
-            blockedBy: [],
-          },
-        ],
-        fog: [],
-        outOfScope: [],
-        readyToPlan: false,
-      }),
+      reflector: () => REFLECT_OUTPUT,
     });
     const engine = new HarnessEngine(config, { backend });
     const started = await engine.start("Resume after dashboard restart", "restored-run", false);
@@ -126,12 +124,10 @@ describe("central dashboard", () => {
       body: { action: "resume" },
     });
     expect(resumed.status).toBe(202);
-    expect((await resumed.json()) as { job: { action: string } }).toMatchObject({
-      job: { action: "resume run" },
-    });
 
     const detail = await waitForPhase(ui, started.runId, "awaiting_input");
-    expect(detail.state.map.destination).toBe("A recovered route");
+    expect(detail.state.reflectBrief.draft).toContain("dashboard-driven");
+    expect(detail.state.questions[0]?.purpose).toBe("reflect");
   });
 
   it("runs the HITL workflow, exposes artifacts, and searches local knowledge", async () => {
@@ -141,52 +137,29 @@ describe("central dashboard", () => {
       workflow: { tdd: false } as never,
     });
     const backend = createFakeBackend({
-      navigator: () => ({
-        summary: "One preference remains",
-        destination: "A dashboard-driven feature",
-        notes: [],
-        tickets: [
-          {
-            id: "tone",
-            title: "Choose interface tone",
-            question: {
-              prompt: "Should the interface feel quiet or energetic?",
-              context: "This choice controls the dashboard's density, motion, and visual emphasis.",
-              options: [
-                {
-                  id: "quiet",
-                  label: "Quiet and focused",
-                  description: "Restrained color and motion support longer work sessions.",
-                },
-                {
-                  id: "energetic",
-                  label: "Energetic",
-                  description: "Stronger color and motion make progress more visible.",
-                },
-              ],
-              recommendedOptionId: "quiet",
-              recommendation: "Choose quiet and focused because this is a long-running control surface.",
-            },
-            kind: "grilling",
-            interaction: "HITL",
-            blockedBy: [],
-          },
-        ],
-        fog: [],
-        outOfScope: [],
-        readyToPlan: false,
-      }),
-      "decision-facilitator": (request) => {
-        expect(request.prompt).toContain("Quiet and focused");
+      reflector: () => REFLECT_OUTPUT,
+      griller: (request) => {
+        if (
+          String(request.prompt).includes("Quiet and focused") ||
+          String(request.continuationPrompt ?? "").includes("Quiet and focused")
+        ) {
+          return {
+            status: "ready_to_plan",
+            summary: "Use a quiet interface",
+            resolutions: [
+              {
+                id: "tone",
+                question: GRILL_QUESTION.prompt,
+                answer: "Quiet and focused",
+                summary: "Use a quiet interface",
+              },
+            ],
+          };
+        }
         return {
-          status: "resolved",
-          summary: "Use a quiet interface",
-          resolution: "The interface should be quiet and focused.",
-          newTickets: [],
-          newFog: [],
-          clearFog: [],
-          outOfScope: [],
-          routeClear: true,
+          status: "needs_input",
+          summary: "Need tone",
+          question: GRILL_QUESTION,
         };
       },
       planner: () => ({
@@ -210,9 +183,12 @@ describe("central dashboard", () => {
     ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
 
     expect((await fetch(`${ui.origin}/api/bootstrap`)).status).toBe(401);
+    const refreshed = await fetch(`${ui.origin}/`);
+    expect(refreshed.status).toBe(200);
+    expect(await refreshed.text()).toContain("Reflect · Grill · Deliver");
     const page = await fetch(`${ui.origin}/?token=ui-test`);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain("Wayfinder Control");
+    expect(await page.text()).toContain("Agent Harness");
 
     const created = await request(ui, "/api/runs", {
       method: "POST",
@@ -223,7 +199,23 @@ describe("central dashboard", () => {
     const runId = createdBody.run.runId;
 
     let detail = await waitForPhase(ui, runId, "awaiting_input");
-    const question = detail.state.questions.find(
+    let question = detail.state.questions.find(
+      (item: { id: string }) => item.id === detail.state.activeQuestionId,
+    );
+    expect(question.purpose).toBe("reflect");
+    expect(question.draftAnswer).toContain("dashboard-driven");
+
+    await request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: {
+        action: "answer",
+        questionId: question.id,
+        answer: "Confirmed: quiet dashboard feature.",
+      },
+    });
+
+    detail = await waitForPhase(ui, runId, "awaiting_input");
+    question = detail.state.questions.find(
       (item: { id: string }) => item.id === detail.state.activeQuestionId,
     );
     expect(question.prompt).toContain("quiet or energetic");
@@ -243,15 +235,15 @@ describe("central dashboard", () => {
 
     expect(detail.state.tasks[0]?.status).toBe("done");
     expect(detail.sessions.length).toBeGreaterThan(0);
-    expect(detail.artifacts).toContain("map.md");
-    expect(detail.artifacts.some((artifact: string) => artifact.startsWith("issues/"))).toBe(true);
+    expect(detail.artifacts).toContain("brief.md");
+    expect(detail.artifacts).toContain("grill.md");
 
-    const facilitatorSession = detail.sessions.find(
-      (session: { role: string }) => session.role === "decision-facilitator",
+    const grillerSession = detail.sessions.find(
+      (session: { role: string }) => session.role === "griller",
     );
     const inspected = await request(
       ui,
-      `/api/runs/${runId}/session?path=${encodeURIComponent(facilitatorSession.path)}`,
+      `/api/runs/${runId}/session?path=${encodeURIComponent(grillerSession.path)}`,
     );
     expect(inspected.status).toBe(200);
     const inspection = (await inspected.json()) as {
@@ -261,39 +253,15 @@ describe("central dashboard", () => {
       session: { output: { summary: string } };
     };
     expect(inspection.inputSource).toBe("stored exact input");
-    expect(inspection.inputPrompt).toContain("decision-facilitator");
-    expect(inspection.packet.role).toBe("decision-facilitator");
-    expect(inspection.session.output.summary).toBe("Use a quiet interface");
+    expect(inspection.inputPrompt).toContain("griller");
+    expect(inspection.packet.role).toBe("griller");
 
-    const storedSessionPath = path.join(
-      root,
-      ".agent-harness",
-      "runs",
-      runId,
-      facilitatorSession.path,
-    );
-    const historicalSession = JSON.parse(
-      await readFile(storedSessionPath, "utf8"),
-    ) as Record<string, unknown>;
-    delete historicalSession.prompt;
-    await writeFile(storedSessionPath, JSON.stringify(historicalSession), "utf8");
-    const historicalInspection = await request(
+    const brief = await request(
       ui,
-      `/api/runs/${runId}/session?path=${encodeURIComponent(facilitatorSession.path)}`,
+      `/api/runs/${runId}/artifact?path=${encodeURIComponent("brief.md")}`,
     );
-    const historicalBody = (await historicalInspection.json()) as {
-      inputPrompt: string;
-      inputSource: string;
-    };
-    expect(historicalBody.inputSource).toBe("reconstructed deterministic input");
-    expect(historicalBody.inputPrompt).toContain("decision-facilitator");
-
-    const map = await request(
-      ui,
-      `/api/runs/${runId}/artifact?path=${encodeURIComponent("map.md")}`,
-    );
-    expect(((await map.json()) as { content: string }).content).toContain(
-      "Use a quiet interface",
+    expect(((await brief.json()) as { content: string }).content).toContain(
+      "Confirmed: quiet dashboard feature.",
     );
 
     const search = await request(ui, "/api/knowledge/search", {
@@ -301,7 +269,6 @@ describe("central dashboard", () => {
       body: { query: "quiet interface" },
     });
     const searchBody = (await search.json()) as { results: Array<{ source: string }> };
-    // Run sync writes artifacts to disk but does not index them into knowledge.
     expect(searchBody.results.some((result) => result.source.includes(".agent-harness/runs/"))).toBe(
       false,
     );
@@ -329,15 +296,15 @@ describe("central dashboard", () => {
 async function request(
   ui: UiServer,
   pathname: string,
-  options: { method?: string; body?: unknown } = {},
+  init: { method?: string; body?: unknown } = {},
 ): Promise<Response> {
   return fetch(`${ui.origin}${pathname}`, {
-    method: options.method,
+    method: init.method ?? "GET",
     headers: {
       "X-Harness-Token": ui.token,
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(init.body ? { "content-type": "application/json" } : {}),
     },
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    body: init.body ? JSON.stringify(init.body) : undefined,
   });
 }
 
@@ -345,14 +312,43 @@ async function waitForPhase(
   ui: UiServer,
   runId: string,
   phase: string,
-): Promise<any> {
-  const deadline = Date.now() + 10_000;
-  let latest: any;
+): Promise<{
+  state: {
+    phase: string;
+    activeQuestionId?: string;
+    reflectBrief?: { draft?: string; confirmed?: string };
+    questions: Array<{
+      id: string;
+      purpose?: string;
+      prompt: string;
+      draftAnswer?: string;
+      options?: unknown[];
+      recommendedOptionId?: string;
+    }>;
+    tasks: Array<{ status: string }>;
+  };
+  sessions: Array<{ role: string; path: string }>;
+  artifacts: string[];
+}> {
+  const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     const response = await request(ui, `/api/runs/${runId}`);
-    latest = await response.json();
-    if (latest.state?.phase === phase && !latest.job) return latest;
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    if (response.status !== 200) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      continue;
+    }
+    const body = (await response.json()) as {
+      state?: {
+        phase: string;
+      };
+      job?: { status: string };
+      sessions: Array<{ role: string; path: string }>;
+      artifacts: string[];
+    };
+    if (body.state?.phase === phase && !body.job) {
+      return body as never;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Timed out waiting for ${phase}; latest=${JSON.stringify(latest)}`);
+  throw new Error(`Timed out waiting for phase ${phase}`);
 }

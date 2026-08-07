@@ -137,6 +137,9 @@ export function renderDashboard(): string {
     .answer-row { display:flex; gap:10px; align-items:flex-end; }
     .answer-row textarea { min-height:86px; }
     .answer-row .btn { height:43px; }
+    .reflect-card { border-color:rgba(121,184,255,.28); background:linear-gradient(145deg,rgba(121,184,255,.08),var(--surface)); }
+    .reflect-editor { display:grid; gap:12px; }
+    .reflect-editor textarea { min-height:280px; width:100%; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; line-height:1.45; }
     .alert { border:1px solid rgba(255,115,115,.3); background:rgba(255,115,115,.07); border-radius:var(--radius); padding:18px; display:flex; justify-content:space-between; align-items:flex-start; gap:18px; }
     .alert strong { color:#ffb3b3; }
     .alert.warning { border-color:rgba(255,176,96,.35); background:rgba(255,176,96,.08); }
@@ -257,7 +260,7 @@ export function renderDashboard(): string {
         <div class="mark" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2 4 6.5v9L12 22l8-6.5v-9L12 2Z" stroke="currentColor" stroke-width="2"/><path d="m8 13 2.4 2.4L16.5 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
-        <div><strong>Agent Harness</strong><span>Wayfinder Control</span></div>
+        <div><strong>Agent Harness</strong><span>Reflect · Grill · Deliver</span></div>
       </div>
       <div class="sidebar-actions">
         <button class="btn primary new-btn" id="newRunBtn">＋ New run</button>
@@ -295,7 +298,7 @@ export function renderDashboard(): string {
           <div class="switch-row"><div><strong>Open pull request</strong><div class="faint">Uses <code>gh</code>; also enables push.</div></div><input id="openPr" type="checkbox"></div>
         </div></details>
       </div>
-      <div class="dialog-foot"><button type="button" class="btn" data-close="newRunDialog">Cancel</button><button class="btn primary" type="submit">Chart the route</button></div>
+      <div class="dialog-foot"><button type="button" class="btn" data-close="newRunDialog">Cancel</button><button class="btn primary" type="submit">Start reflect</button></div>
     </form>
   </dialog>
 
@@ -423,7 +426,7 @@ export function renderDashboard(): string {
 
     function renderHome() {
       $("crumbTitle").textContent = "Overview"; $("topActions").innerHTML = "";
-      $("content").innerHTML = '<div class="hero"><div><div class="eyebrow">Durable delivery control plane</div><h1>One idea.<br>Every decision.<br>A finished feature.</h1><p class="hero-copy">Chart the fog, talk through human decisions, hand clean context between agents, and watch deterministic tests turn red into green—all without losing the thread.</p><p><button class="btn primary" data-open-new>Start your first run →</button></p></div><div class="hero-card"><div class="card-label">The route</div><h2>Clarity before code</h2><div class="route"><div class="route-step"><b>01</b><span>Name the destination</span></div><div class="route-step"><b>02</b><span>Resolve the decision frontier</span></div><div class="route-step"><b>03</b><span>Plan tracer-bullet tasks</span></div><div class="route-step"><b>04</b><span>Test, implement, review</span></div><div class="route-step"><b>05</b><span>Commit and publish</span></div></div></div></div>';
+      $("content").innerHTML = '<div class="hero"><div><div class="eyebrow">Durable delivery control plane</div><h1>One idea.<br>Every decision.<br>A finished feature.</h1><p class="hero-copy">Reflect the idea, grill until shared understanding, hand clean context between agents, and watch deterministic tests turn red into green—all without losing the thread.</p><p><button class="btn primary" data-open-new>Start your first run →</button></p></div><div class="hero-card"><div class="card-label">The route</div><h2>Clarity before code</h2><div class="route"><div class="route-step"><b>01</b><span>Reflect and confirm the brief</span></div><div class="route-step"><b>02</b><span>Grill the open decisions</span></div><div class="route-step"><b>03</b><span>Plan tracer-bullet tasks</span></div><div class="route-step"><b>04</b><span>Test, implement, review</span></div><div class="route-step"><b>05</b><span>Commit and publish</span></div></div></div></div>';
     }
 
     function renderRun() {
@@ -459,7 +462,7 @@ export function renderDashboard(): string {
 
     function renderOverview(s, summary, phase) {
       var taskTotal = s.tasks.length, taskDone = s.tasks.filter(function (t) { return t.status === "done"; }).length;
-      var decisionTotal = s.decisionTickets.length, decisionDone = s.decisionTickets.filter(function (t) { return t.status === "resolved"; }).length;
+      var grillTotal = (s.grillResolutions || []).length;
       var percent = taskTotal ? Math.round(taskDone / taskTotal * 100) : (s.phase === "completed" ? 100 : 0);
       var html = '<div class="grid">';
       if (phase === "queued" || phase === "running") {
@@ -467,8 +470,8 @@ export function renderDashboard(): string {
         var jobDetail = state.detail.job && state.detail.job.detail;
         var thinkingDetail = phase === "queued"
           ? "Waiting for the current transition to start"
-          : jobAction === "index knowledge and chart route"
-            ? "Indexing knowledge before the Wayfinder starts"
+          : jobAction === "index knowledge and reflect"
+            ? "Indexing knowledge before the reflector starts"
             : "An agent or deterministic command is working";
         if (jobDetail) thinkingDetail = jobDetail;
         html += '<div class="thinking-strip" role="status" aria-live="polite"><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="thinking-copy"><strong>Thinking…</strong><span>' + esc(thinkingDetail) + '</span></div></div>';
@@ -476,14 +479,23 @@ export function renderDashboard(): string {
       if (s.phase === "awaiting_input") {
         var q = s.questions.find(function (item) { return item.id === s.activeQuestionId; });
         if (q) {
-          var questionOptions = Array.isArray(q.options) ? q.options : [];
-          var options = questionOptions.length ? '<div class="question-options">' + questionOptions.map(function (option) {
-            var recommended = option.id === q.recommendedOptionId;
-            return '<button type="button" class="question-option' + (recommended ? ' recommended' : '') + '" data-question-choice="' + attr(option.label) + '"><strong>' + esc(option.label) + '</strong>' + (recommended ? '<span class="recommendation-badge">Recommended</span>' : '') + '<small>' + esc(option.description) + '</small></button>';
-          }).join("") + '</div>' : '';
-          var context = q.context ? '<div class="question-context">' + esc(q.context) + '</div>' : '';
-          var recommendation = q.recommendation ? '<div class="recommendation"><strong>Our recommendation:</strong>' + esc(q.recommendation) + '</div>' : '';
-          html += '<div class="card question-card"><div class="card-label">Human decision needed</div><div class="question">' + esc(q.prompt) + '</div>' + context + options + recommendation + '<form id="answerForm" data-question="' + attr(q.id) + '"><div class="answer-row"><textarea name="answer" required placeholder="Choose an option above or answer in your own words…">' + esc(state.answerDrafts[q.id] || "") + '</textarea><button class="btn primary" type="submit">Answer & continue</button></div></form></div>';
+          var isReflect = q.purpose === "reflect";
+          var draft = state.answerDrafts[q.id];
+          if (draft == null && q.draftAnswer) draft = q.draftAnswer;
+          if (draft == null) draft = "";
+          if (isReflect) {
+            var reflectContext = q.context ? '<div class="question-context">' + esc(q.context) + '</div>' : '';
+            html += '<div class="card question-card reflect-card"><div class="card-label">Confirm feature understanding</div><div class="question">' + esc(q.prompt) + '</div>' + reflectContext + '<form id="answerForm" data-question="' + attr(q.id) + '"><div class="reflect-editor"><textarea name="answer" required placeholder="Edit the restatement until it matches what you mean…">' + esc(draft) + '</textarea><button class="btn primary" type="submit">Confirm & continue to grill</button></div></form></div>';
+          } else {
+            var questionOptions = Array.isArray(q.options) ? q.options : [];
+            var options = questionOptions.length ? '<div class="question-options">' + questionOptions.map(function (option) {
+              var recommended = option.id === q.recommendedOptionId;
+              return '<button type="button" class="question-option' + (recommended ? ' recommended' : '') + '" data-question-choice="' + attr(option.label) + '"><strong>' + esc(option.label) + '</strong>' + (recommended ? '<span class="recommendation-badge">Recommended</span>' : '') + '<small>' + esc(option.description) + '</small></button>';
+            }).join("") + '</div>' : '';
+            var context = q.context ? '<div class="question-context">' + esc(q.context) + '</div>' : '';
+            var recommendation = q.recommendation ? '<div class="recommendation"><strong>Our recommendation:</strong>' + esc(q.recommendation) + '</div>' : '';
+            html += '<div class="card question-card"><div class="card-label">Grill question</div><div class="question">' + esc(q.prompt) + '</div>' + context + options + recommendation + '<form id="answerForm" data-question="' + attr(q.id) + '"><div class="answer-row"><textarea name="answer" required placeholder="Choose an option above or answer in your own words…">' + esc(draft) + '</textarea><button class="btn primary" type="submit">Answer & continue</button></div></form></div>';
+          }
         }
       }
       if (!state.detail.job && !["completed","cancelled","awaiting_input","blocked"].includes(s.phase)) {
@@ -491,20 +503,16 @@ export function renderDashboard(): string {
       }
       if (s.phase === "blocked") html += '<div class="card"><div class="alert"><div><strong>Run blocked</strong><div class="muted" style="margin-top:5px">' + esc(s.failure || "The current transition could not complete.") + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + '</div></div><button class="btn danger" data-action="retry">Retry transition</button></div></div>';
       html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div></div>';
-      html += '<div class="card third"><div class="card-label">Decision route</div><div class="metric">' + decisionDone + '<span class="faint"> / ' + decisionTotal + '</span></div><div class="muted">questions resolved</div><div class="progress"><i style="width:' + (decisionTotal ? Math.round(decisionDone/decisionTotal*100) : 0) + '%"></i></div></div>';
-      var episode = s.wayfindingEpisode;
+      html += '<div class="card third"><div class="card-label">Grill resolutions</div><div class="metric">' + grillTotal + '</div><div class="muted">decisions locked in</div></div>';
+      var episode = s.grillEpisode;
       var tokenTotals = state.detail.sessions.reduce(function (acc, session) { var usage = session.usage || {}; var total = usage.totalTokens; if (total == null && (usage.inputTokens != null || usage.outputTokens != null)) total = Number(usage.inputTokens || 0) + Number(usage.outputTokens || 0); acc.tokens += Number(total || 0); acc.cached += Number(usage.cacheReadTokens || 0); return acc; }, { tokens: 0, cached: 0 });
-      var fogCount = s.map ? s.map.notYetSpecified.length : 0;
-      var isWayfinding = s.phase === "wayfinding" || s.phase === "navigating";
-      if (isWayfinding && (decisionTotal > 12 || fogCount > 8 || tokenTotals.tokens > 2000000)) {
-        html += '<div class="card"><div class="alert warning"><div><strong>Wayfinding may be over-decomposing</strong><div class="muted" style="margin-top:5px">Review this run — wayfinding is producing many decisions, fog items, or token usage and may be over-decomposing the feature. Consider cancelling and re-scoping.</div><div class="faint" style="margin-top:8px">' + decisionTotal + ' decision ticket(s) · ' + fogCount + ' fog item(s) · ' + number(tokenTotals.tokens) + ' recorded tokens</div></div></div></div>';
-      }
-      var episodeDetail = episode ? ('wayfinding episode ' + episode.number + ' · ' + episode.turnCount + ' turn(s)' + (episode.closedAt ? ' · closed' : ' · active')) : 'bounded model turns';
+      var episodeDetail = episode ? ('grill episode ' + episode.number + ' · ' + episode.questionsAnswered + ' answered' + (episode.closedAt ? ' · closed' : ' · active')) : 'bounded grill episodes';
       if (tokenTotals.tokens) episodeDetail += ' · ' + number(tokenTotals.tokens) + ' recorded tokens' + (tokenTotals.cached ? ' (' + number(tokenTotals.cached) + ' served from cache)' : '');
       html += '<div class="card third"><div class="card-label">Sessions</div><div class="metric">' + state.detail.sessions.length + '</div><div class="muted">' + esc(episodeDetail) + '</div><div class="faint" style="margin-top:12px">Updated ' + esc(ago(s.updatedAt)) + '</div></div>';
-      html += '<div class="card two-thirds"><div class="card-label">Destination</div><h2>' + esc(s.map ? s.map.destination : "Still being charted") + '</h2><div class="muted">' + esc(s.map && s.map.notes.length ? s.map.notes.join(" · ") : "The navigator is turning the idea into a bounded destination.") + '</div>';
-      if (s.map && s.map.notYetSpecified.length) html += '<details data-fog-disclosure' + (state.fogOpen[s.runId] ? ' open' : '') + '><summary>' + s.map.notYetSpecified.length + ' area(s) still in the fog</summary><ul>' + s.map.notYetSpecified.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join("") + '</ul></details>';
-      html += '</div>';
+      var brief = s.reflectBrief;
+      var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");
+      var briefBody = brief ? (brief.confirmed || brief.draft) : "The reflector will restate the idea for your confirmation before grilling begins.";
+      html += '<div class="card two-thirds"><div class="card-label">' + esc(briefTitle) + '</div><pre style="white-space:pre-wrap;margin:8px 0 0;color:var(--muted);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">' + esc(briefBody) + '</pre></div>';
       html += '<div class="card third"><div class="card-label">Delivery</div><div class="muted">Branch</div><div style="margin:4px 0 13px"><code>' + esc(s.branchName || "Not created yet") + '</code></div><div class="muted">TDD</div><div style="margin-top:4px"><strong>' + (s.tasks.length ? (s.tasks.some(function(t){return t.tdd;}) ? "Enabled" : "Disabled") : (state.bootstrap.project.defaults.tdd ? "Default on" : "Default off")) + '</strong></div></div>';
       html += '<div class="card"><div class="card-label">Recent activity</div><div class="timeline">' + (state.detail.events.slice(-10).reverse().map(renderEvent).join("") || '<div class="muted">No events yet.</div>') + '</div></div>';
       html += '</div>';
@@ -513,12 +521,10 @@ export function renderDashboard(): string {
     function renderEvent(event) { return '<div class="event"><div class="event-name">' + esc(event.type) + '</div><div class="event-time">' + esc(date(event.at)) + '</div></div>'; }
 
     function renderDecisions(s) {
-      var html = s.decisionTickets.length ? '<div class="list">' + s.decisionTickets.map(function (ticket) {
-        var resolution = ticket.resolution ? '<details class="resolution" data-resolution-disclosure="' + attr(ticket.id) + '"' + (state.resolutionOpen[ticket.id] ? ' open' : '') + '><summary>Resolution</summary><div>' + esc(ticket.resolution) + '</div></details>' : '';
-        var answers = ticket.conversation.filter(function (turn) { return turn.speaker === "human"; });
-        var conversation = answers.length ? '<div class="conversation">' + answers.map(function (turn) { return '<div class="turn"><b>Answer:</b> ' + esc(turn.text) + '</div>'; }).join("") + '</div>' : '';
-        return '<article class="item"><div class="item-head"><div><div class="item-title">' + esc(ticket.title) + '</div><div class="muted" style="margin-top:5px">' + esc(ticket.question) + '</div></div><span class="badge ' + attr(ticket.status === "resolved" ? "completed" : ticket.status) + '">' + esc(ticket.status) + '</span></div><div class="tags"><span class="tag">' + esc(ticket.kind) + '</span><span class="tag ' + ticket.interaction.toLowerCase() + '">' + esc(ticket.interaction) + '</span>' + (ticket.blockedBy.length ? '<span class="tag">blocked by ' + esc(ticket.blockedBy.join(", ")) + '</span>' : '') + '</div>' + conversation + resolution + '</article>';
-      }).join("") + '</div>' : '<div class="empty">No decision tickets. The route may already be clear.</div>';
+      var resolutions = s.grillResolutions || [];
+      var html = resolutions.length ? '<div class="list">' + resolutions.map(function (item) {
+        return '<article class="item"><div class="item-head"><div><div class="item-title">' + esc(item.summary) + '</div><div class="muted" style="margin-top:5px">' + esc(item.question) + '</div></div><span class="badge completed">resolved</span></div><div class="conversation"><div class="turn"><b>Answer:</b> ' + esc(item.answer) + '</div></div></article>';
+      }).join("") + '</div>' : '<div class="empty">No grill resolutions yet. Confirm the reflect brief to begin grilling.</div>';
       $("tabBody").innerHTML = html;
     }
 
@@ -527,7 +533,7 @@ export function renderDashboard(): string {
         var criteria = '<ul>' + task.acceptanceCriteria.map(function (criterion) { return '<li>' + esc(criterion) + '</li>'; }).join("") + '</ul>';
         var evidence = task.evidence.length ? '<details><summary>' + task.evidence.length + ' command result(s)</summary>' + task.evidence.map(function (item) { var output = [item.stderr,item.stdout].filter(Boolean).join(String.fromCharCode(10)); return '<div class="evidence"><div class="evidence-head"><span>' + esc(item.purpose) + ' · <code>' + esc(item.command) + '</code></span><strong class="' + (item.passed ? "pass" : "fail") + '">' + (item.passed ? "PASS" : "FAIL") + ' / ' + item.exitCode + '</strong></div>' + (output ? '<pre>' + esc(output.slice(-8000)) + '</pre>' : '') + '</div>'; }).join("") + '</details>' : '';
         return '<article class="item"><div class="item-head"><div><div class="card-label">Task ' + String(index + 1).padStart(2,"0") + '</div><div class="item-title">' + esc(task.title) + '</div><div class="muted" style="margin-top:5px">' + esc(task.description) + '</div></div><span class="badge ' + attr(task.status === "done" ? "completed" : task.status) + '">' + esc(task.status + " · " + task.step) + '</span></div><div class="tags"><span class="tag">TDD ' + (task.tdd ? "on" : "off") + '</span>' + (task.blockedBy.length ? '<span class="tag">after ' + esc(task.blockedBy.join(", ")) + '</span>' : '') + (task.commitSha ? '<span class="tag">' + esc(task.commitSha.slice(0,8)) + '</span>' : '') + '</div><details><summary>Acceptance criteria</summary>' + criteria + '</details>' + evidence + (task.failure ? '<div class="resolution" style="border-color:var(--red)">' + esc(task.failure) + '</div>' : '') + '</article>';
-      }).join("") + '</div>' : '<div class="empty">Implementation tasks appear after the decision route is clear.</div>';
+      }).join("") + '</div>' : '<div class="empty">Implementation tasks appear after grilling reaches shared understanding.</div>';
       $("tabBody").innerHTML = html;
     }
 
@@ -664,9 +670,26 @@ export function renderDashboard(): string {
         meta += sessionStat('Provider run', session.providerRunId || '—');
         meta += sessionStat('Context mode', session.providerSessionReused === true ? 'continued episode' : (session.providerSessionReused === false ? 'fresh provider context' : 'unknown'));
         var artifacts = Array.isArray(data.relatedArtifacts) && data.relatedArtifacts.length ? '<div class="related-artifacts">' + data.relatedArtifacts.map(function (artifact) { return '<code>' + esc(artifact) + '</code>'; }).join('') + '</div>' : '';
+        var packet = data.packet || {};
+        var context = Array.isArray(packet.context) ? packet.context : [];
+        var retrieval = data.retrieval;
+        var graphify = retrieval && retrieval.graphify ? retrieval.graphify : null;
+        var graphifySkipped = graphify && graphify.included === false && graphify.skippedReason;
+        var weakContext = context.length === 0 || graphifySkipped;
         var html = '<div class="session-meta">' + meta + '</div>';
         html += sessionSection('Actual submitted input', String(data.inputSource || 'unknown source') + ' · ' + number(prompt.length) + ' characters', prompt, true);
         html += sessionSection('Work packet', session.packet || 'No packet linked', data.packet, false);
+        if (weakContext && retrieval) {
+          var retrievalDetail = context.length === 0
+            ? 'Empty context'
+            : (graphifySkipped ? 'Graphify skipped · ' + String(graphify.skippedReason) : 'Weak context');
+          html += sessionSection('Retrieval audit', retrievalDetail + ' · ' + number((retrieval.kept || []).length) + ' kept / ' + number((retrieval.omitted || []).length) + ' omitted', retrieval, true);
+        } else if (retrieval) {
+          html += sessionSection('Retrieval audit', number((retrieval.kept || []).length) + ' kept / ' + number((retrieval.omitted || []).length) + ' omitted', retrieval, false);
+        }
+        if (retrieval && retrieval.budget) {
+          html += sessionSection('Packet budget', number((retrieval.budget.truncations || []).length) + ' truncations', retrieval.budget, (retrieval.budget.truncations || []).length > 0);
+        }
         html += sessionSection('Model output', session.output == null ? 'No output recorded' : '', session.output, false);
         if (session.error) html += sessionSection('Error', '', session.error, true, 'session-error');
         html += sessionSection('Raw session record', '', session, false);
@@ -729,8 +752,8 @@ export function renderDashboard(): string {
       var submit = event.target.querySelector('button[type="submit"]');
       var originalLabel = submit.textContent;
       submit.disabled = true;
-      submit.textContent = 'Charting route…';
-      setNewRunFeedback('Creating the durable run and queuing the Wayfinder…', false);
+      submit.textContent = 'Starting reflect…';
+      setNewRunFeedback('Creating the durable run and queuing the reflector…', false);
       try {
         var body = { idea:$("idea").value, tdd:$("tdd").checked, graphify:$("graphify").checked, push:$("push").checked, openPullRequest:$("openPr").checked, smallModel:$("smallModel").value || undefined, capableModel:$("capableModel").value || undefined };
         var data = await api('/api/runs',{method:'POST',body:body});

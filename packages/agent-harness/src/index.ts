@@ -7,6 +7,7 @@ export * from "./engine.js";
 export * from "./git.js";
 export * from "./knowledge.js";
 export * from "./graphify.js";
+export * from "./packet.js";
 export * from "./store.js";
 export * from "./tracker.js";
 export * from "./ui/server.js";

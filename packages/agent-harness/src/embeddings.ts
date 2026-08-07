@@ -36,6 +36,8 @@ type EmbeddingIndex = z.infer<typeof EmbeddingIndexSchema>;
  * A small, portable vector index. It deliberately keeps vector storage local so
  * access control remains in LocalKnowledgeBase before any result is exposed.
  */
+const queryVectorCache = new Map<string, number[]>();
+
 export class LocalEmbeddingIndex {
   private readonly indexPath: string;
 
@@ -92,12 +94,23 @@ export class LocalEmbeddingIndex {
     try {
       const index = await this.loadCompatible();
       if (!index || index.entries.length === 0) return new Map();
-      const [queryVector] = await this.embedMany([query]);
-      if (!queryVector) return new Map();
+      const cacheKey = [
+        query,
+        this.settings.provider,
+        this.settings.endpoint,
+        this.settings.model,
+      ].join("\0");
+      let queryVector = queryVectorCache.get(cacheKey);
+      if (!queryVector) {
+        const [embedded] = await this.embedMany([query]);
+        if (!embedded) return new Map();
+        queryVector = embedded;
+        queryVectorCache.set(cacheKey, embedded);
+      }
       return new Map(
         index.entries
           .filter((entry) => allowedIds.has(entry.id))
-          .map((entry) => [entry.id, cosineSimilarity(queryVector, entry.vector)] as const)
+          .map((entry) => [entry.id, cosineSimilarity(queryVector!, entry.vector)] as const)
           .filter(([, score]) => Number.isFinite(score) && score >= this.settings.minSimilarity),
       );
     } catch {

@@ -11,35 +11,47 @@ describe("dashboard document", () => {
     expect(() => new Function(script!)).not.toThrow();
   });
 
+  it("keeps the access token across address-bar cleanup for refresh", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain('sessionStorage.getItem("harnessToken")');
+    expect(html).toContain('sessionStorage.setItem("harnessToken", token)');
+    expect(html).toContain('history.replaceState(null, "", location.pathname)');
+    expect(html).toContain('"X-Harness-Token":token');
+  });
+
   it("contains the centralized workflow surfaces", () => {
     const html = renderDashboard();
 
     expect(html).toContain("New run");
+    expect(html).toContain("Starting reflect");
     expect(html).toContain("Knowledge base");
     expect(html).toContain("RAG inspector");
     expect(html).toContain("Manual RAG query");
     expect(html).toContain("newRunFeedback");
-    expect(html).toContain("Charting route");
+    expect(html).toContain("Confirm & continue to grill");
     expect(html).toContain("Resume run");
     expect(html).toContain("Use Graphify");
     expect(html).toContain("graphify:$(\"graphify\").checked");
     expect(html).toContain("Dashboard work does not continue automatically after a restart");
-    expect(html).toContain("Human decision needed");
+    expect(html).toContain("Confirm feature understanding");
     expect(html).toContain("Our recommendation:");
     expect(html).toContain("data-question-choice");
     expect(html).toContain("Inspect session");
     expect(html).toContain("Actual submitted input");
     expect(html).toContain("Work packet");
+    expect(html).toContain("Retrieval audit");
     expect(html).toContain("Raw session record");
     expect(html).toContain("data-session");
     expect(html).toContain("session-dialog");
-    expect(html).toContain("wayfinding episode");
+    expect(html).toContain("grill episode");
     expect(html).toContain("Context mode");
     expect(html).toContain("Project settings");
     expect(html).toContain("settingsBtn");
     expect(html).toContain("data-setting-key");
     expect(html).toContain("Active runs keep their frozen configuration");
     expect(html).toContain("Thinking…");
+    expect(html).toContain("draftAnswer");
   });
 
   it("preserves HITL editing state across background polling", () => {
@@ -50,24 +62,19 @@ describe("dashboard document", () => {
     expect(html).toContain("loadRun(state.selected,false,true,true)");
   });
 
-  it("preserves the expanded fog disclosure across polling renders", () => {
+  it("preserves answer draft editing across polling renders", () => {
     const html = renderDashboard();
 
-    expect(html).toContain("fogOpen: {}");
-    expect(html).toContain("resolutionOpen: {}");
-    expect(html).toContain("data-fog-disclosure");
-    expect(html).toContain("data-resolution-disclosure");
-    expect(html).toContain("state.fogOpen[state.selected] = event.target.open");
-    expect(html).toContain("state.fogOpen[s.runId] ? ' open' : ''");
+    expect(html).toContain("answerDrafts");
+    expect(html).toContain("draftAnswer");
+    expect(html).toContain("preserveEditor && editorIsActive()");
   });
 
-  it("shows human answers before a collapsible resolution", () => {
+  it("shows grill resolutions in the decisions tab", () => {
     const html = renderDashboard();
 
-    expect(html).toContain('turn.speaker === "human"');
-    expect(html).toContain("<b>Answer:</b>");
-    expect(html).toContain('details class="resolution"');
-    expect(html).toContain("+ conversation + resolution + '</article>'");
+    expect(html).toContain("grillResolutions");
+    expect(html).toContain("No grill resolutions yet");
   });
 
 

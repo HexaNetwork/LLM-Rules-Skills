@@ -115,3 +115,36 @@ export function evidenceOutput(evidence: CommandEvidence[]): string {
     })
     .join("\n\n");
 }
+
+/** Newest-first, budgeted rendering of command evidence for a prompt. */
+export function recentEvidenceOutput(
+  evidence: CommandEvidence[],
+  options: { entries?: number; charactersPerEntry?: number } = {},
+): string {
+  const entries = options.entries ?? 2;
+  const charactersPerEntry = options.charactersPerEntry ?? 2_000;
+  if (evidence.length === 0 || entries <= 0) return "";
+
+  const selected: CommandEvidence[] = [];
+  const latest = evidence[evidence.length - 1]!;
+  selected.push(latest);
+  for (let index = evidence.length - 1; index >= 0; index -= 1) {
+    const item = evidence[index]!;
+    if (!item.passed && item !== latest) {
+      selected.push(item);
+      break;
+    }
+  }
+  for (let index = evidence.length - 1; index >= 0 && selected.length < entries; index -= 1) {
+    const item = evidence[index]!;
+    if (!selected.includes(item)) selected.push(item);
+  }
+
+  return selected
+    .slice(0, entries)
+    .map((item) => {
+      const output = [item.stderr, item.stdout].filter(Boolean).join("\n").slice(-charactersPerEntry);
+      return `${item.purpose}: ${item.passed ? "PASS" : "FAIL"}\nCommand: ${item.command}\nExit: ${item.exitCode}\n${output}`;
+    })
+    .join("\n\n");
+}

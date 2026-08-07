@@ -4,16 +4,16 @@ import yaml from "js-yaml";
 import { z } from "zod";
 import { AgentRoleSchema, type AgentRole } from "./domain.js";
 
+/** Structural Graphify lookup is valuable for workers that edit or review code. */
 const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
-  "navigator",
-  "decision-researcher",
-  "decision-prototyper",
-  "decision-facilitator",
   "planner",
   "test-writer",
   "implementer",
   "reviewer",
 ];
+
+/** Bumped when the frozen run-config shape changes in a way that needs migration. */
+export const CONFIG_VERSION = 1;
 
 export const KnowledgeScopeSchema = z.enum(["global", "project"]);
 export type KnowledgeScope = z.infer<typeof KnowledgeScopeSchema>;
@@ -60,17 +60,25 @@ export const HarnessConfigSchema = z.object({
   workflow: z
     .object({
       tdd: z.boolean().default(true),
-      maxStepsPerRun: z.number().int().positive().max(100).default(25),
+      // Counts expensive steps (agent invocations / shell commands), not free transitions.
+      maxStepsPerRun: z.number().int().positive().max(100).default(40),
       maxTestAttempts: z.number().int().positive().max(10).default(2),
       maxImplementationAttempts: z.number().int().positive().max(10).default(3),
       maxReviewAttempts: z.number().int().positive().max(10).default(2),
-      maxFogPasses: z.number().int().positive().max(10).default(3),
-      maxOpenDecisionTickets: z.number().int().min(1).max(50).default(8),
-      // Wayfinding roles receive complete packets; reusing an autonomous
-      // provider session across roles can compound hidden tool context.
-      maxWayfindingTurnsPerEpisode: z.number().int().positive().max(50).default(1),
+      // Grill-me reuses one provider session for this many Q→A turns, then
+      // rolls to a fresh agent with a compact brief of resolutions so far.
+      maxGrillQuestionsPerEpisode: z.number().int().positive().max(50).default(5),
+      // Answers older than this force a cold agent with only question+answer.
+      staleAnswerMinutes: z.number().int().positive().max(24 * 60).default(30),
       contextResults: z.number().int().min(0).max(20).default(6),
+      // Guidance + retrieved context ceiling for each work packet.
       contextCharacters: z.number().int().positive().default(12_000),
+      // Serialized packet.input ceiling (longest string leaf truncated first).
+      inputCharacters: z.number().int().positive().default(24_000),
+      // Graphify excerpt sub-budget within the context ceiling.
+      graphifyCharacters: z.number().int().positive().default(3_000),
+      // Per-task commit subjects use the deterministic fallback unless enabled.
+      generateCommitMessages: z.boolean().default(false),
     })
     .default({}),
   commands: z
@@ -106,6 +114,13 @@ export const HarnessConfigSchema = z.object({
       sharedIndexDirectory: z.string().min(1).optional(),
       sources: z.array(KnowledgeSourceSchema).default(["README.md", "docs"]),
       chunkCharacters: z.number().int().positive().default(2_000),
+      // Refuse weak lexical hits before hybrid fusion so embeddings cannot
+      // resurrect near-zero accidental term matches into the packet.
+      relevanceFloor: z.number().min(0).max(1).default(0.55),
+      minLexicalScore: z.number().min(0).default(0.05),
+      maxChunksPerSource: z.number().int().min(1).max(20).default(1),
+      // Highest-ranked source may contribute this many chunks; others use maxChunksPerSource.
+      maxForTopSource: z.number().int().min(1).max(20).default(2),
       guidance: z
         .object({
           enabled: z.boolean().default(true),
@@ -137,6 +152,8 @@ export const HarnessConfigSchema = z.object({
           queryTimeoutMs: z.number().int().positive().default(15_000),
           queryBudgetTokens: z.number().int().positive().max(10_000).default(1_200),
           roles: z.array(AgentRoleSchema).default(REPOSITORY_LOOKUP_ROLES),
+          // Project-specific noise merged over the built-in English + harness lists.
+          stopwords: z.array(z.string().min(1)).default([]),
         })
         .default({}),
     })
@@ -150,7 +167,8 @@ export const ProjectSettingsPatchSchema = z
   .object({
     workflow: z
       .object({
-        maxWayfindingTurnsPerEpisode: z.number().int().positive().max(50).optional(),
+        maxGrillQuestionsPerEpisode: z.number().int().positive().max(50).optional(),
+        staleAnswerMinutes: z.number().int().positive().max(24 * 60).optional(),
       })
       .strict()
       .optional(),
@@ -237,15 +255,22 @@ export async function loadRunConfig(
     "config.json",
   );
   const raw: unknown = JSON.parse(await readFile(snapshot, "utf8"));
+  const { configVersion: _configVersion, ...withoutVersion } = isRecord(raw)
+    ? raw
+    : { configVersion: undefined };
   // Frozen runs predate smart guidance. Preserve their exact retrieval
   // behavior instead of silently changing an in-progress delivery.
-  if (isRecord(raw) && isRecord(raw.knowledge) && !Object.hasOwn(raw.knowledge, "guidance")) {
+  if (
+    isRecord(withoutVersion) &&
+    isRecord(withoutVersion.knowledge) &&
+    !Object.hasOwn(withoutVersion.knowledge, "guidance")
+  ) {
     return HarnessConfigSchema.parse({
-      ...raw,
-      knowledge: { ...raw.knowledge, guidance: { enabled: false } },
+      ...withoutVersion,
+      knowledge: { ...withoutVersion.knowledge, guidance: { enabled: false } },
     });
   }
-  return HarnessConfigSchema.parse(raw);
+  return HarnessConfigSchema.parse(withoutVersion);
 }
 
 const SMALL_ROLES = new Set<AgentRole>(["prompt-builder", "message-writer"]);
@@ -273,15 +298,22 @@ agent:
 
 workflow:
   tdd: true
-  maxStepsPerRun: 25
+  # Expensive steps only (agent invocations and shell commands).
+  maxStepsPerRun: 40
   maxTestAttempts: 2
   maxImplementationAttempts: 3
   maxReviewAttempts: 2
-  maxFogPasses: 3
-  maxOpenDecisionTickets: 8
-  maxWayfindingTurnsPerEpisode: 1
+  maxGrillQuestionsPerEpisode: 5
+  staleAnswerMinutes: 30
   contextResults: 6
+  # Guidance + retrieved context ceiling.
   contextCharacters: 12000
+  # Serialized packet.input ceiling.
+  inputCharacters: 24000
+  # Graphify excerpt sub-budget inside contextCharacters.
+  graphifyCharacters: 3000
+  # Deterministic commit subjects by default; PR bodies still use the model.
+  generateCommitMessages: false
 
 commands:
   test: npm test -- --run
@@ -312,6 +344,12 @@ knowledge:
     - path: docs
       scope: project
   chunkCharacters: 2000
+  # Keep lexical hits within a band of the top score; refuse crumbs.
+  relevanceFloor: 0.55
+  minLexicalScore: 0.05
+  maxChunksPerSource: 1
+  # Top-ranked source may contribute two chunks; every other source one.
+  maxForTopSource: 2
   guidance:
     enabled: true
     maxResults: 6
@@ -335,12 +373,14 @@ knowledge:
     enabled: true
     command: graphify
     # Initial setup happens before the first new run; later rebuilds happen
-    # after each verified harness task commit. Keep this false so a document
+    # after each verified source-file commit. Keep this false so a document
     # index refresh does not needlessly rebuild the repository graph.
     updateOnRefresh: false
     updateTimeoutMs: 120000
     queryTimeoutMs: 15000
     queryBudgetTokens: 1200
+    # Extra stopwords merged over the built-in English + harness lists.
+    stopwords: []
 `;
 }
 

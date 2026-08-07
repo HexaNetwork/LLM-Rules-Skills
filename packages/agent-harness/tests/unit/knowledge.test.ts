@@ -76,10 +76,14 @@ describe("LocalKnowledgeBase", () => {
       async rebuild() { return true; },
       async search() {
         return {
-          source: "graphify:graphify-out/graph.json",
-          title: "Repository relationships (Graphify)",
-          excerpt: "AgentCoordinator --calls--> LocalKnowledgeBase",
-          score: 1,
+          result: {
+            source: "graphify:graphify-out/graph.json",
+            title: "Repository relationships (Graphify)",
+            excerpt: "AgentCoordinator --calls--> LocalKnowledgeBase",
+            score: 1,
+          },
+          shapedQuery: "AgentCoordinator",
+          usedFallback: false,
         };
       },
     };
@@ -453,5 +457,187 @@ describe("LocalKnowledgeBase", () => {
     });
     expect(forB.some((result) => result.source === ".agent-harness/runs/run-b/map.md")).toBe(true);
     expect(forB.some((result) => result.source === ".agent-harness/runs/run-a/map.md")).toBe(false);
+  });
+
+  it("ranks multi-term chunks above repeated single-term chunks after IDF dedupe", async () => {
+    const root = await fixtureRoot();
+    await writeFile(
+      path.join(root, "docs", "repeated.md"),
+      "# Repeated\n\nSettlementWindow SettlementWindow SettlementWindow only.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "docs", "diverse.md"),
+      "# Diverse\n\nSettlementWindow refund ledger closes midnight.\n",
+      "utf8",
+    );
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root, {
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        relevanceFloor: 0,
+        minLexicalScore: 0,
+        maxChunksPerSource: 2,
+        maxForTopSource: 2,
+      },
+    }));
+    await knowledge.refresh();
+
+    const results = await knowledge.search(
+      "SettlementWindow SettlementWindow SettlementWindow refund ledger",
+      2,
+      { repository: false },
+    );
+    expect(results[0]?.source).toBe("docs/diverse.md");
+  });
+
+  it("refuses weak lexical crumbs instead of padding to the requested limit", async () => {
+    const root = await fixtureRoot();
+    await writeFile(
+      path.join(root, "docs", "settlement.md"),
+      "# SettlementWindow\n\nSettlementWindow closes the ledger at midnight and records refunds against the original ledger entry.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "docs", "profiles.md"),
+      "# Profiles\n\nA display name belongs to a user profile. The ledger label is cosmetic only.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "docs", "colors.md"),
+      "# Colors\n\nTheme tokens mention ledger accents only in passing.\n",
+      "utf8",
+    );
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+    await knowledge.refresh();
+
+    const results = await knowledge.search("SettlementWindow refunds ledger", 6, {
+      repository: false,
+    });
+
+    expect(results.map((result) => result.source)).toEqual(["docs/settlement.md"]);
+    expect(results).toHaveLength(1);
+  });
+
+  it("diversifies results so one noisy source cannot fill every slot", async () => {
+    const root = await fixtureRoot();
+    const longDoc = Array.from({ length: 8 }, (_, index) =>
+      `## Part ${index}\n\nSettlementWindow refund ledger chunk ${index} with unique padding words abc${index}.\n`,
+    ).join("\n");
+    await writeFile(path.join(root, "docs", "settlement.md"), `# Settlement\n\n${longDoc}`, "utf8");
+    await writeFile(
+      path.join(root, "docs", "billing.md"),
+      "# Billing\n\nSettlementWindow refund ledger also appears in billing notes.\n",
+      "utf8",
+    );
+    const base = fixtureConfig(root);
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root, {
+      knowledge: {
+        ...base.knowledge,
+        chunkCharacters: 120,
+        maxChunksPerSource: 1,
+      },
+    }));
+    await knowledge.refresh();
+
+    const results = await knowledge.search("SettlementWindow refund ledger", 4, {
+      repository: false,
+    });
+
+    const sources = results.map((result) => result.source);
+    // Top source may contribute two chunks; other sources remain capped at one.
+    expect(sources.filter((source) => source === "docs/settlement.md").length).toBeLessThanOrEqual(2);
+    expect(sources.filter((source) => source === "docs/settlement.md").length).toBeGreaterThanOrEqual(1);
+    expect(sources).toContain("docs/billing.md");
+    expect(sources.filter((source) => source === "docs/billing.md")).toHaveLength(1);
+  });
+
+  it("does not let hybrid RRF revive lexical hits rejected by the floor", async () => {
+    const root = await fixtureRoot();
+    const base = fixtureConfig(root);
+    const apiKeyEnv = "AGENT_HARNESS_TEST_FLOOR_KEY";
+    process.env[apiKeyEnv] = "test-key";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { input: string[] };
+      return new Response(JSON.stringify({
+        data: body.input.map((text, index) => ({
+          index,
+          embedding: text.includes("Theme tokens") || text.includes("SettlementWindow refunds")
+            ? [1, 0]
+            : [0, 1],
+        })),
+      }), { status: 200 });
+    });
+    try {
+      await writeFile(
+        path.join(root, "docs", "settlement.md"),
+        "# SettlementWindow\n\nSettlementWindow closes the ledger and records refunds against the original ledger entry.\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(root, "docs", "colors.md"),
+        "# Colors\n\nTheme tokens mention ledger accents only in passing.\n",
+        "utf8",
+      );
+      const knowledge = new LocalKnowledgeBase(fixtureConfig(root, {
+        knowledge: {
+          ...base.knowledge,
+          embeddings: {
+            ...base.knowledge.embeddings,
+            enabled: true,
+            endpoint: "https://embeddings.test/v1/embeddings",
+            apiKeyEnv,
+            minSimilarity: 0.1,
+          },
+        },
+      }));
+      await knowledge.refresh();
+
+      const { results, audit } = await knowledge.searchWithAudit(
+        "SettlementWindow refunds ledger",
+        6,
+        { repository: false },
+      );
+
+      expect(results.map((result) => result.source)).toEqual(["docs/settlement.md"]);
+      expect(audit.omitted.some((item) =>
+        item.source === "docs/colors.md" &&
+        (item.reason === "below-floor" || item.reason === "below-min-lexical")
+      )).toBe(true);
+    } finally {
+      fetchMock.mockRestore();
+      delete process.env[apiKeyEnv];
+    }
+  });
+
+  it("records Graphify skips in the retrieval audit", async () => {
+    const root = await fixtureRoot();
+    const lookup: RepositoryLookup = {
+      async refresh() {},
+      async rebuild() { return true; },
+      async search() {
+        return {
+          shapedQuery: "",
+          usedFallback: true,
+          skippedReason: "generic-query",
+        };
+      },
+    };
+    await writeFile(
+      path.join(root, "docs", "settlement.md"),
+      "# SettlementWindow\n\nSettlementWindow closes the ledger.\n",
+      "utf8",
+    );
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root), lookup);
+    await knowledge.refresh();
+
+    const { results, audit } = await knowledge.searchWithAudit("SettlementWindow ledger", 3);
+
+    expect(results.every((result) => !result.source.startsWith("graphify:"))).toBe(true);
+    expect(audit.graphify).toMatchObject({
+      included: false,
+      skippedReason: "generic-query",
+      usedFallback: true,
+    });
+    expect(audit.omitted.some((item) => item.reason === "graphify-skipped")).toBe(true);
   });
 });

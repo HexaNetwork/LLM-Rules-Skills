@@ -1,14 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { HarnessConfig } from "./config.js";
 import { modelForRole } from "./config.js";
 import {
-  CONTRACT_VERSION,
   PromptBuilderOutputSchema,
   type AgentRole,
   type WorkPacket,
 } from "./domain.js";
 import { LocalKnowledgeBase } from "./knowledge.js";
+import { buildWorkPacket } from "./packet.js";
 import {
   renderContinuationPrompt,
   renderPrompt,
@@ -60,7 +60,7 @@ export class AgentBackendRunError extends Error {
   }
 }
 
-export type InvokeInput<T> = {
+type InvokeBase<T> = {
   runId: string;
   role: AgentRole;
   objective: string;
@@ -69,9 +69,16 @@ export type InvokeInput<T> = {
   schema: z.ZodType<T>;
   constraints?: string[];
   priorArtifacts?: string[];
-  knowledgeQuery?: string;
+  /** Domain seed for Graphify when the primary query shapes to generic tokens. */
+  knowledgeFallbackQuery?: string;
   buildPrompt?: boolean;
+  previousGuidanceFingerprint?: string;
 };
+
+/** Retrieval-disabled calls must not invent a JSON-blob knowledge query. */
+export type InvokeInput<T> =
+  | (InvokeBase<T> & { retrieval: false; knowledgeQuery?: string })
+  | (InvokeBase<T> & { retrieval?: true; knowledgeQuery: string });
 
 export type AgentInvocation<T> = {
   value: T;
@@ -79,6 +86,7 @@ export type AgentInvocation<T> = {
   providerRunId?: string;
   providerSessionReused: boolean;
   providerTurns: number;
+  guidanceFingerprint?: string;
 };
 
 export class AgentCoordinator {
@@ -116,55 +124,95 @@ export class AgentCoordinator {
     } = {},
   ): Promise<AgentInvocation<T>> {
     const invocationId = randomUUID();
-    const knowledgeQuery = input.knowledgeQuery ??
-      `${input.objective} ${JSON.stringify(input.input).slice(0, 4_000)}`;
-    const guidanceEnabled = this.config.knowledge.guidance.enabled;
-    const [guidanceAudit, results] = await Promise.all([
-      guidanceEnabled
-        ? this.knowledge.selectGuidanceWithAudit(knowledgeQuery, {
-            role: input.role,
-            knownPaths: knownPaths(input.input),
-          })
-        : Promise.resolve({ selected: [], omittedAlwaysApply: [] }),
-      this.knowledge.search(
-        knowledgeQuery,
-        this.config.workflow.contextResults,
-        {
-          repository: this.config.knowledge.graphify.roles.includes(input.role),
-          excludeGuidance: guidanceEnabled,
-          runId: input.runId,
+    const retrievalEnabled = input.retrieval !== false;
+    const guidanceEnabled = retrievalEnabled && this.config.knowledge.guidance.enabled;
+    let guidanceAudit: Awaited<ReturnType<LocalKnowledgeBase["selectGuidanceWithAudit"]>> = {
+      selected: [],
+      omittedAlwaysApply: [],
+    };
+    let retrieval: Awaited<ReturnType<LocalKnowledgeBase["searchWithAudit"]>> = {
+      results: [],
+      audit: {
+        query: "",
+        graphify: {
+          shapedQuery: "",
+          usedFallback: false,
+          included: false,
+          skippedReason: "retrieval-disabled",
         },
-      ),
-    ]);
-    const guidance = guidanceAudit.selected;
-    let remaining = Math.max(
-      0,
-      this.config.workflow.contextCharacters - guidance.reduce((total, item) => total + item.excerpt.length, 0),
-    );
-    const context: WorkPacket["context"] = [];
-    for (const result of results) {
-      if (remaining <= 0) break;
-      const excerpt = result.excerpt.slice(0, remaining);
-      context.push({ source: result.source, title: result.title, excerpt });
-      remaining -= excerpt.length;
+        kept: [],
+        omitted: [],
+      },
+    };
+
+    if (retrievalEnabled) {
+      const knowledgeQuery = input.knowledgeQuery;
+      if (!knowledgeQuery?.trim()) {
+        throw new Error(`knowledgeQuery is required when retrieval is enabled for role ${input.role}`);
+      }
+      const knowledgeFallbackQuery = input.knowledgeFallbackQuery;
+      [guidanceAudit, retrieval] = await Promise.all([
+        guidanceEnabled
+          ? this.knowledge.selectGuidanceWithAudit(knowledgeQuery, {
+              role: input.role,
+              knownPaths: knownPaths(input.input),
+            })
+          : Promise.resolve({ selected: [], omittedAlwaysApply: [] }),
+        this.knowledge.searchWithAudit(
+          knowledgeQuery,
+          this.config.workflow.contextResults,
+          {
+            repository: this.config.knowledge.graphify.roles.includes(input.role),
+            excludeGuidance: guidanceEnabled,
+            runId: input.runId,
+            fallbackQuery: knowledgeFallbackQuery,
+          },
+        ),
+      ]);
+    } else {
+      retrieval = {
+        results: [],
+        audit: {
+          query: "",
+          graphify: {
+            shapedQuery: "",
+            usedFallback: false,
+            included: false,
+            skippedReason: "retrieval-disabled",
+          },
+          kept: [],
+          omitted: [],
+          skipped: "retrieval-disabled",
+        },
+      };
     }
-    const packet: WorkPacket = {
-      contractVersion: CONTRACT_VERSION,
+
+    const { packet, budgetAudit } = buildWorkPacket({
       invocationId,
       runId: input.runId,
       role: input.role,
       objective: input.objective,
       constraints: input.constraints ?? [],
       input: input.input,
-      guidance,
-      context,
+      guidance: guidanceAudit.selected,
+      retrievalResults: retrieval.results,
       priorArtifacts: input.priorArtifacts ?? [],
       expectedOutput: input.expectedOutput,
       createdAt: new Date().toISOString(),
-    };
+      budgets: {
+        contextCharacters: this.config.workflow.contextCharacters,
+        inputCharacters: this.config.workflow.inputCharacters,
+        graphifyCharacters: this.config.workflow.graphifyCharacters,
+      },
+    });
+    const guidanceFingerprint = fingerprintGuidance(packet.guidance);
     const packetPath = `packets/${invocationId}.json`;
     await this.store.writeJson(input.runId, packetPath, packet);
     await this.store.writeJson(input.runId, `packets/${invocationId}.guidance.json`, guidanceAudit);
+    await this.store.writeJson(input.runId, `packets/${invocationId}.retrieval.json`, {
+      retrieval: retrieval.audit,
+      budget: budgetAudit,
+    });
 
     let prompt = renderPrompt(packet);
     const shouldBuildPrompt =
@@ -189,14 +237,27 @@ export class AgentCoordinator {
         prompt = renderPrompt(packet);
       }
     }
-    return this.invokePacket(input.runId, input.role, packet, prompt, input.schema, packetPath, {
-      providerSessionId: episode.providerSessionId,
-      continuationPrompt: episode.providerSessionId
-        ? renderContinuationPrompt(packet)
-        : undefined,
-      retainProviderSession: episode.retainProviderSession,
-      mode: episode.mode,
-    });
+    const includeGuidance =
+      !episode.providerSessionId ||
+      !input.previousGuidanceFingerprint ||
+      input.previousGuidanceFingerprint !== guidanceFingerprint;
+    const invocation = await this.invokePacket(
+      input.runId,
+      input.role,
+      packet,
+      prompt,
+      input.schema,
+      packetPath,
+      {
+        providerSessionId: episode.providerSessionId,
+        continuationPrompt: episode.providerSessionId
+          ? renderContinuationPrompt(packet, { includeGuidance })
+          : undefined,
+        retainProviderSession: episode.retainProviderSession,
+        mode: episode.mode,
+      },
+    );
+    return { ...invocation, guidanceFingerprint };
   }
 
   private async invokePacket<T>(
@@ -384,6 +445,12 @@ function knownPaths(input: unknown): string[] {
   };
   visit(input);
   return [...new Set(values)];
+}
+
+function fingerprintGuidance(guidance: WorkPacket["guidance"]): string {
+  return createHash("sha256")
+    .update(guidance.map((item) => item.source).join("\0"))
+    .digest("hex");
 }
 
 export function createCursorBackend(apiKey = process.env.CURSOR_API_KEY): AgentBackend {

@@ -45,14 +45,24 @@ export type UiServer = {
 
 const PROJECT_SETTING_DEFINITIONS = [
   {
-    key: "workflow.maxWayfindingTurnsPerEpisode",
+    key: "workflow.maxGrillQuestionsPerEpisode",
     category: "Context & cost",
-    label: "Wayfinding turns per episode",
+    label: "Grill questions per episode",
     description:
-      "Reuse one provider session for this many model turns before starting a fresh context.",
+      "Reuse one provider session for this many Q→A turns before starting a fresh grill context.",
     type: "integer",
     minimum: 1,
     maximum: 50,
+  },
+  {
+    key: "workflow.staleAnswerMinutes",
+    category: "Context & cost",
+    label: "Stale answer threshold (minutes)",
+    description:
+      "If a human answer arrives after this many minutes, continue with a fresh agent using only the question and answer.",
+    type: "integer",
+    minimum: 1,
+    maximum: 1440,
   },
 ] as const;
 
@@ -104,12 +114,15 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
       if (url.pathname === "/health") {
         return json(response, 200, { ok: true });
       }
-      if (!authorized(request, url, token)) {
-        return json(response, 401, { error: "Invalid or missing dashboard token" });
-      }
+      // Serve the HTML shell without a query token so browser refresh still works
+      // after the client strips ?token= from the address bar into sessionStorage.
+      // API routes below still require the header/query token.
       if (!url.pathname.startsWith("/api/")) {
         if (url.pathname !== "/") throw new HttpError(404, "Not found");
         return html(response, renderDashboard());
+      }
+      if (!authorized(request, url, token)) {
+        return json(response, 401, { error: "Invalid or missing dashboard token" });
       }
 
       if (request.method === "GET" && url.pathname === "/api/bootstrap") {
@@ -147,17 +160,26 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         const known = new Set<string>(PROJECT_SETTING_DEFINITIONS.map((setting) => setting.key));
         const unknown = Object.keys(values).filter((key) => !known.has(key));
         if (unknown.length) throw new HttpError(400, `Unknown setting: ${unknown.join(", ")}`);
-        const maxWayfindingTurnsPerEpisode = optionalInteger(
-          values["workflow.maxWayfindingTurnsPerEpisode"],
-          "workflow.maxWayfindingTurnsPerEpisode",
+        const maxGrillQuestionsPerEpisode = optionalInteger(
+          values["workflow.maxGrillQuestionsPerEpisode"],
+          "workflow.maxGrillQuestionsPerEpisode",
           1,
           50,
         );
-        if (maxWayfindingTurnsPerEpisode == null) {
-          throw new HttpError(400, "workflow.maxWayfindingTurnsPerEpisode is required");
+        const staleAnswerMinutes = optionalInteger(
+          values["workflow.staleAnswerMinutes"],
+          "workflow.staleAnswerMinutes",
+          1,
+          1440,
+        );
+        if (maxGrillQuestionsPerEpisode == null) {
+          throw new HttpError(400, "workflow.maxGrillQuestionsPerEpisode is required");
+        }
+        if (staleAnswerMinutes == null) {
+          throw new HttpError(400, "workflow.staleAnswerMinutes is required");
         }
         const updated = await writeProjectSettings(options.configPath, {
-          workflow: { maxWayfindingTurnsPerEpisode },
+          workflow: { maxGrillQuestionsPerEpisode, staleAnswerMinutes },
         });
         projectConfig = updated.config;
         return json(response, 200, {
@@ -213,8 +235,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         // Creating the durable run must be quick. A first semantic index may
         // take minutes for a large repository, so run it in the visible job
         // queue rather than holding the browser request open.
-        const state = await engine.start(idea, runId, false);
-        enqueue(runId, "index knowledge and chart route", async () => {
+        // UI already prepares Graphify and refreshes knowledge inside the job
+        // queue so the browser request can return immediately.
+        const state = await engine.start(idea, runId, false, false);
+        enqueue(runId, "index knowledge and reflect", async () => {
           const current = jobs.get(runId);
           if (current) jobs.set(runId, { ...current, detail: "Checking Graphify for this project" });
           const graphify = await prepareGraphifyForRun(runConfig);
@@ -360,9 +384,20 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
     }
   });
 
+  const port = options.port ?? 8787;
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(options.port ?? 8787, host, () => resolve());
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE") {
+        reject(
+          new Error(
+            `Port ${port} is already in use on ${host}. Stop the other harness UI, or pass --port <number>.`,
+          ),
+        );
+        return;
+      }
+      reject(error);
+    });
+    server.listen(port, host, () => resolve());
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Dashboard did not bind a TCP port");
@@ -388,14 +423,14 @@ function summarizeRun(state: RunState, job?: UiJob): Record<string, unknown> {
   return {
     runId: state.runId,
     idea: state.idea,
-    destination: state.map?.destination,
+    destination: state.reflectBrief?.confirmed?.slice(0, 120) ?? state.reflectBrief?.draft?.slice(0, 120),
     phase: state.phase,
     updatedAt: state.updatedAt,
     createdAt: state.createdAt,
     taskProgress: { completed: completedTasks, total: state.tasks.length },
     decisions: {
-      resolved: state.decisionTickets.filter((ticket) => ticket.status === "resolved").length,
-      total: state.decisionTickets.length,
+      resolved: state.grillResolutions.length,
+      total: state.grillResolutions.length + (activeQuestion?.purpose === "grill" ? 1 : 0),
     },
     activeQuestion,
     failure: state.failure,
@@ -411,8 +446,8 @@ function projectSettings(config: HarnessConfig, configPath?: string): Record<str
     appliesTo: "new_runs",
     definitions: PROJECT_SETTING_DEFINITIONS,
     values: {
-      "workflow.maxWayfindingTurnsPerEpisode":
-        config.workflow.maxWayfindingTurnsPerEpisode,
+      "workflow.maxGrillQuestionsPerEpisode": config.workflow.maxGrillQuestionsPerEpisode,
+      "workflow.staleAnswerMinutes": config.workflow.staleAnswerMinutes,
     },
   };
 }
@@ -471,6 +506,18 @@ async function readSessionDetail(
   const packet = packetPath
     ? ((await store.readJson(runId, packetPath)) as WorkPacket)
     : undefined;
+  const retrievalPath = packetPath?.replace(/\.json$/, ".retrieval.json");
+  const retrievalArtifact = retrievalPath
+    ? await store.readJson(runId, retrievalPath).catch(() => undefined)
+    : undefined;
+  // New runs store `{ retrieval, budget }`; older artifacts were a flat audit.
+  const retrievalRecord = isRecord(retrievalArtifact) ? retrievalArtifact : undefined;
+  const retrieval = retrievalRecord && isRecord(retrievalRecord.retrieval)
+    ? {
+        ...retrievalRecord.retrieval,
+        ...(retrievalRecord.budget != null ? { budget: retrievalRecord.budget } : {}),
+      }
+    : retrievalArtifact;
   const reconstructed = await submittedPrompt(store, runId, session, packet);
   const handoff = isRecord(session.handoff) ? session.handoff : undefined;
   const artifactRefs = Array.isArray(handoff?.artifactRefs)
@@ -480,9 +527,12 @@ async function readSessionDetail(
   return {
     session,
     packet,
+    retrieval,
     inputPrompt: reconstructed.prompt,
     inputSource: reconstructed.source,
-    relatedArtifacts: [...new Set([sessionPath, packetPath, ...artifactRefs].filter(isString))],
+    relatedArtifacts: [
+      ...new Set([sessionPath, packetPath, retrievalPath, ...artifactRefs].filter(isString)),
+    ],
   };
 }
 
@@ -563,7 +613,7 @@ async function listArtifacts(store: RunStore, runId: string): Promise<string[]> 
       store.listFiles(runId, directory),
     ),
   );
-  const fixed = ["idea.md", "map.md", "events.jsonl", "state.json", "config.json"];
+  const fixed = ["idea.md", "brief.md", "grill.md", "events.jsonl", "state.json", "config.json"];
   const available: string[] = [];
   for (const file of fixed) {
     try {
@@ -578,7 +628,7 @@ async function listArtifacts(store: RunStore, runId: string): Promise<string[]> 
 
 function allowedArtifact(value: string): boolean {
   return (
-    ["idea.md", "map.md", "events.jsonl", "state.json", "config.json"].includes(value) ||
+    ["idea.md", "brief.md", "grill.md", "events.jsonl", "state.json", "config.json"].includes(value) ||
     /^(issues|tasks|packets|sessions)\/[A-Za-z0-9._-]+$/.test(value)
   );
 }

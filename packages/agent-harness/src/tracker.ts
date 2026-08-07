@@ -1,4 +1,4 @@
-import type { BuildTask, DecisionTicket, RunState } from "./domain.js";
+import type { BuildTask, GrillResolution, RunState } from "./domain.js";
 import { RunStore } from "./store.js";
 
 export interface TrackerPort {
@@ -11,15 +11,17 @@ export class LocalTracker implements TrackerPort {
 
   async sync(state: RunState): Promise<string[]> {
     const paths: string[] = [];
-    if (state.map) {
-      paths.push(await this.store.writeText(state.runId, "map.md", renderMap(state)));
+    if (state.reflectBrief) {
+      paths.push(
+        await this.store.writeText(state.runId, "brief.md", renderBrief(state)),
+      );
     }
-    for (const ticket of state.decisionTickets) {
+    if (state.grillResolutions.length > 0) {
       paths.push(
         await this.store.writeText(
           state.runId,
-          `issues/${ticket.id}-${slug(ticket.title)}.md`,
-          renderDecision(ticket),
+          "grill.md",
+          renderGrill(state.grillResolutions),
         ),
       );
     }
@@ -34,20 +36,6 @@ export class LocalTracker implements TrackerPort {
     }
     return paths;
   }
-}
-
-export function decisionFrontier(tickets: DecisionTicket[]): DecisionTicket[] {
-  const resolved = new Set(
-    tickets
-      .filter((ticket) => ticket.status === "resolved" || ticket.status === "out_of_scope")
-      .map((ticket) => ticket.id),
-  );
-  return tickets
-    .filter(
-      (ticket) =>
-        ticket.status === "open" && ticket.blockedBy.every((blocker) => resolved.has(blocker)),
-    )
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
 export function taskFrontier(tasks: BuildTask[]): BuildTask[] {
@@ -81,84 +69,39 @@ export function assertAcyclic(items: Array<{ id: string; blockedBy: string[] }>)
   for (const item of items) visit(item.id);
 }
 
-function renderMap(state: RunState): string {
-  const map = state.map!;
-  return `# ${escapeHeading(map.destination)}
+function renderBrief(state: RunState): string {
+  const brief = state.reflectBrief!;
+  const body = brief.confirmed ?? brief.draft;
+  return `# Feature brief
 
-## Destination
+**Status:** ${brief.confirmed ? "confirmed" : "draft"}
 
-${map.destination}
+## Idea
 
-## Notes
+${state.idea}
 
-${renderList(map.notes)}
+## Restatement
 
-## Decisions so far
-
-${
-  map.decisionsSoFar.length
-    ? map.decisionsSoFar
-        .map((decision) => `- [${decision.title}](issues/${decision.ticketId}-${slug(decision.title)}.md) — ${decision.gist}`)
-        .join("\n")
-    : "_None yet._"
-}
-
-## Not yet specified
-
-${renderList(map.notYetSpecified)}
-
-## Out of scope
-
-${renderList(map.outOfScope)}
+${body}
 `;
 }
 
-function renderDecision(ticket: DecisionTicket): string {
-  const conversation = ticket.conversation.length
-    ? ticket.conversation
-        .map((turn) => `- **${turn.speaker}:** ${turn.text}`)
-        .join("\n")
-    : "_No conversation yet._";
-  const humanQuestion = ticket.humanQuestion;
-  const questionDetails = humanQuestion
-    ? `
+function renderGrill(resolutions: GrillResolution[]): string {
+  if (resolutions.length === 0) return "# Grill resolutions\n\n_None yet._\n";
+  return `# Grill resolutions
 
-### Why this matters
-
-${humanQuestion.context}
-
-### Options
-
-${humanQuestion.options
+${resolutions
   .map(
-    (option) =>
-      `- **${option.label}${option.id === humanQuestion.recommendedOptionId ? " (recommended)" : ""}:** ${option.description}`,
+    (item) => `## ${escapeHeading(item.id)}
+
+**Question:** ${item.question}
+
+**Answer:** ${item.answer}
+
+**Summary:** ${item.summary}
+`,
   )
-  .join("\n")}
-
-### Recommendation
-
-${humanQuestion.recommendation}`
-    : "";
-  return `# ${escapeHeading(ticket.title)}
-
-**Type:** wayfinder:${ticket.kind}  
-**Interaction:** ${ticket.interaction}  
-**Status:** ${ticket.status}  
-**Blocked by:** ${ticket.blockedBy.length ? ticket.blockedBy.join(", ") : "None"}
-
-## Question
-
-${ticket.question}${questionDetails}
-
-## Conversation
-
-${conversation}
-
-## Resolution
-
-${ticket.resolution ?? "_Open._"}
-`;
+  .join("\n")}`;
 }
 
 function renderTask(task: BuildTask): string {
@@ -184,10 +127,6 @@ ${
     : "_Not run._"
 }
 `;
-}
-
-function renderList(values: string[]): string {
-  return values.length ? values.map((value) => `- ${value}`).join("\n") : "_None._";
 }
 
 function slug(value: string): string {

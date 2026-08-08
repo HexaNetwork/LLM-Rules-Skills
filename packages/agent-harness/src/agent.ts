@@ -455,7 +455,10 @@ function fingerprintGuidance(guidance: WorkPacket["guidance"]): string {
     .digest("hex");
 }
 
-export function createCursorBackend(apiKey = process.env.CURSOR_API_KEY): AgentBackend {
+export function createCursorBackend(
+  apiKey = process.env.CURSOR_API_KEY,
+  options?: { retainTtlMs?: number; maxRetained?: number },
+): AgentBackend {
   type CursorUsage = {
     inputTokens?: number;
     outputTokens?: number;
@@ -482,8 +485,40 @@ export function createCursorBackend(apiKey = process.env.CURSOR_API_KEY): AgentB
     close?: () => void;
     [Symbol.asyncDispose]?: () => Promise<void>;
   };
+  type RetainedAgent = { agent: CursorAgent; lastUsedAt: number };
 
-  const retainedAgents = new Map<string, CursorAgent>();
+  const retainTtlMs = options?.retainTtlMs ?? 60 * 60_000;
+  const maxRetained = options?.maxRetained ?? 8;
+  const retainedAgents = new Map<string, RetainedAgent>();
+
+  async function disposeRetained(agent: CursorAgent): Promise<void> {
+    await disposeAgent(agent).catch(() => undefined);
+  }
+
+  async function sweepExpired(now: number): Promise<void> {
+    for (const [id, entry] of retainedAgents) {
+      if (now - entry.lastUsedAt <= retainTtlMs) continue;
+      retainedAgents.delete(id);
+      await disposeRetained(entry.agent);
+    }
+  }
+
+  async function evictLruToCap(): Promise<void> {
+    while (retainedAgents.size > maxRetained) {
+      let oldestId: string | undefined;
+      let oldestAt = Infinity;
+      for (const [id, entry] of retainedAgents) {
+        if (entry.lastUsedAt < oldestAt) {
+          oldestAt = entry.lastUsedAt;
+          oldestId = id;
+        }
+      }
+      if (oldestId == null) break;
+      const entry = retainedAgents.get(oldestId);
+      retainedAgents.delete(oldestId);
+      if (entry) await disposeRetained(entry.agent);
+    }
+  }
 
   return {
     readiness() {
@@ -500,11 +535,16 @@ export function createCursorBackend(apiKey = process.env.CURSOR_API_KEY): AgentB
         };
       };
 
+      await sweepExpired(Date.now());
+
       let agent: CursorAgent | undefined;
       let providerSessionReused = false;
       if (request.providerSessionId) {
-        agent = retainedAgents.get(request.providerSessionId);
-        if (!agent) {
+        const retained = retainedAgents.get(request.providerSessionId);
+        if (retained) {
+          agent = retained.agent;
+          retained.lastUsedAt = Date.now();
+        } else {
           try {
             agent = await sdk.Agent.resume(request.providerSessionId, {
               apiKey,
@@ -567,7 +607,10 @@ export function createCursorBackend(apiKey = process.env.CURSOR_API_KEY): AgentB
             // Conversation replay is best-effort when onStep missed CreatePlan.
           }
         }
-        if (request.retainProviderSession) retainedAgents.set(agent.agentId, agent);
+        if (request.retainProviderSession) {
+          retainedAgents.set(agent.agentId, { agent, lastUsedAt: Date.now() });
+          await evictLruToCap();
+        }
         const result: AgentBackendResult = {
           output: response.result ?? "",
           createPlanBodies,
@@ -608,10 +651,10 @@ export function createCursorBackend(apiKey = process.env.CURSOR_API_KEY): AgentB
       }
     },
     async release(providerSessionId) {
-      const agent = retainedAgents.get(providerSessionId);
-      if (!agent) return;
+      const entry = retainedAgents.get(providerSessionId);
+      if (!entry) return;
       retainedAgents.delete(providerSessionId);
-      await disposeAgent(agent);
+      await disposeRetained(entry.agent);
     },
   };
 }

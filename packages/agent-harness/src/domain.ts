@@ -228,6 +228,21 @@ export const RunStateSchema = z.object({
   grillEpisode: GrillEpisodeSchema.optional(),
   // Distinguishes a yielded run from one paused on human input.
   yieldedAt: z.string().optional(),
+  // Recomputed from sessions/*.json after budget-consuming steps (not incremented).
+  usage: z
+    .object({
+      inputTokens: z.number().nonnegative().default(0),
+      outputTokens: z.number().nonnegative().default(0),
+      cacheReadTokens: z.number().nonnegative().default(0),
+      cacheWriteTokens: z.number().nonnegative().default(0),
+      totalTokens: z.number().nonnegative().default(0),
+      costUsd: z.number().nonnegative().default(0),
+      // True when any session used a model missing from models.pricing.
+      costIsLowerBound: z.boolean().default(false),
+      invocations: z.number().int().nonnegative().default(0),
+      sessionsRead: z.number().int().nonnegative().default(0),
+    })
+    .default({}),
   revision: z.number().int().nonnegative(),
   lastEventSequence: z.number().int().nonnegative(),
   createdAt: z.string(),

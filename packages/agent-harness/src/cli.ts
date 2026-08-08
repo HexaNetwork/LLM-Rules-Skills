@@ -214,6 +214,16 @@ program
   .option("--config <path>", "config path")
   .option("--force", "retry even when blockedRetriable is false", false)
   .option(
+    "--max-run-tokens <n>",
+    "raise the frozen run's maxRunTokens ceiling (requires --force for budget blocks)",
+    (value) => Number(value),
+  )
+  .option(
+    "--max-run-cost-usd <n>",
+    "raise the frozen run's maxRunCostUsd ceiling (requires --force for budget blocks)",
+    (value) => Number(value),
+  )
+  .option(
     "--commit-dirty [order]",
     "commit a dirty working tree before retrying: branch-then-commit (default) or commit-then-branch",
   )
@@ -221,10 +231,18 @@ program
     runId: string;
     config?: string;
     force: boolean;
+    maxRunTokens?: number;
+    maxRunCostUsd?: number;
     commitDirty?: string | boolean;
   }) => {
     const config = await runConfig(options.config, options.runId);
     const engine = new HarnessEngine(config, { backend: createCursorBackend() });
+    if (options.maxRunTokens != null && (!Number.isFinite(options.maxRunTokens) || options.maxRunTokens < 0)) {
+      throw new Error("--max-run-tokens must be a non-negative number");
+    }
+    if (options.maxRunCostUsd != null && (!Number.isFinite(options.maxRunCostUsd) || options.maxRunCostUsd < 0)) {
+      throw new Error("--max-run-cost-usd must be a non-negative number");
+    }
     if (options.commitDirty) {
       const order = typeof options.commitDirty === "string" ? options.commitDirty : undefined;
       if (order != null && order !== "branch-then-commit" && order !== "commit-then-branch") {
@@ -232,7 +250,11 @@ program
       }
       await engine.commitPreflight(options.runId, { order });
     } else {
-      await engine.retry(options.runId, { force: options.force });
+      await engine.retry(options.runId, {
+        force: options.force,
+        maxRunTokens: options.maxRunTokens,
+        maxRunCostUsd: options.maxRunCostUsd,
+      });
     }
     printState(await engine.advance(options.runId));
   });

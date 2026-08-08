@@ -356,10 +356,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         if (since && since === signature) {
           return json(response, 200, { unchanged: true, signature });
         }
-        const [events, sessions, artifacts] = await Promise.all([
+        const [events, sessions, artifacts, runConfig] = await Promise.all([
           readEvents(store, runId),
           readSessionSummaries(store, runId),
           listArtifacts(store, runId),
+          loadRunConfig(projectConfig, runId).catch(() => null),
         ]);
         // git.currentBranch spawns a subprocess; only pay for it when the UI
         // actually needs it (blocked runs), and never fold it into the signature.
@@ -370,6 +371,13 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
                 baseBranch: projectConfig.git.baseBranch,
               }
             : undefined;
+        const ceilings = runConfig
+          ? {
+              maxRunTokens: runConfig.workflow.maxRunTokens,
+              maxRunCostUsd: runConfig.workflow.maxRunCostUsd,
+              maxStepsPerRun: runConfig.workflow.maxStepsPerRun,
+            }
+          : undefined;
         return json(response, 200, {
           state,
           job,
@@ -378,6 +386,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           artifacts,
           signature,
           ...(git ? { git } : {}),
+          ...(ceilings ? { ceilings } : {}),
         });
       }
 
@@ -418,8 +427,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           enqueue(runId, action, () => engine.addNote(runId, text, asUnknown));
         } else if (action === "retry") {
           const force = optionalBoolean(body.force, "force") ?? false;
+          const maxRunTokens = optionalNonNegativeNumber(body.maxRunTokens, "maxRunTokens");
+          const maxRunCostUsd = optionalNonNegativeNumber(body.maxRunCostUsd, "maxRunCostUsd");
           enqueue(runId, action, async () => {
-            await engine.retry(runId, { force });
+            await engine.retry(runId, { force, maxRunTokens, maxRunCostUsd });
             await engine.advance(runId);
           });
         } else if (action === "commit_preflight") {
@@ -860,6 +871,15 @@ function optionalInteger(
     throw new HttpError(400, `${field} must be an integer from ${minimum} to ${maximum}`);
   }
   return Number(value);
+}
+
+function optionalNonNegativeNumber(value: unknown, field: string): number | undefined {
+  if (value == null || value === "") return undefined;
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    throw new HttpError(400, `${field} must be a non-negative number`);
+  }
+  return number;
 }
 
 function optionalEnum<T extends string>(

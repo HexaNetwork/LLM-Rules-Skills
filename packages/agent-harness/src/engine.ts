@@ -1,9 +1,15 @@
 import { access } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { CONFIG_VERSION, type HarnessConfig, type PreflightCommitOrder } from "./config.js";
+import {
+  CONFIG_VERSION,
+  HarnessConfigSchema,
+  type HarnessConfig,
+  type PreflightCommitOrder,
+} from "./config.js";
 import {
   AgentCoordinator,
+  reportedTotal,
   type AgentBackend,
   type InvokeInput,
 } from "./agent.js";
@@ -191,12 +197,22 @@ export class HarnessEngine {
         const maxIterations = Math.max(maxSteps * 8, 40);
         while (remaining > 0 && iterations < maxIterations) {
           iterations += 1;
+          // Enforce spend ceilings between steps only — never abort mid-step.
+          state = await this.accrueUsage(state);
+          this.assertWithinBudget(state);
           const step = await this.advanceOneWithProviderRetry(state);
           state = step.state;
           await this.syncArtifacts(state);
-          if (step.consumedBudget) remaining -= 1;
-          if (terminal(state.phase) || state.phase === "awaiting_input") return state;
+          if (step.consumedBudget) {
+            remaining -= 1;
+            state = await this.accrueUsage(state);
+          }
+          if (terminal(state.phase) || state.phase === "awaiting_input") {
+            state = await this.accrueUsage(state);
+            return state;
+          }
         }
+        state = await this.accrueUsage(state);
         state = await this.store.record(
           { ...state, yieldedAt: new Date().toISOString() },
           "run.yielded",
@@ -207,7 +223,9 @@ export class HarnessEngine {
         const message = error instanceof Error ? error.message : String(error);
         const classified = classifyFailure(error);
         state = await this.store.load(runId).catch(() => state);
-        const blockedFrom = state.phase;
+        // Keep the latest accrued usage on the blocked snapshot when available.
+        state = await this.accrueUsage(state).catch(() => state);
+        const blockedFrom = state.phase === "blocked" ? (state.blockedFrom ?? state.phase) : state.phase;
         state = await this.store.record(
           {
             ...state,
@@ -229,6 +247,112 @@ export class HarnessEngine {
         return state;
       }
     });
+  }
+
+  /**
+   * Recompute run usage from sessions/*.json and replace state.usage.
+   * Idempotent: reading the same files twice yields the same totals.
+   */
+  async accrueUsage(state: RunState): Promise<RunState> {
+    const files = await this.store.listFiles(state.runId, "sessions");
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheReadTokens = 0;
+    let cacheWriteTokens = 0;
+    let totalTokens = 0;
+    let costUsd = 0;
+    let costIsLowerBound = false;
+    let sessionsRead = 0;
+    let invocations = 0;
+
+    for (const file of files) {
+      let session: {
+        model?: string;
+        usage?: {
+          inputTokens?: number;
+          outputTokens?: number;
+          cacheReadTokens?: number;
+          cacheWriteTokens?: number;
+          totalTokens?: number;
+        };
+      };
+      try {
+        session = (await this.store.readJson(state.runId, file)) as typeof session;
+      } catch {
+        // Concurrently-written or partial files must not fail accrual.
+        continue;
+      }
+      sessionsRead += 1;
+      invocations += 1;
+      const usage = session.usage ?? {};
+      const input = Number(usage.inputTokens ?? 0);
+      const output = Number(usage.outputTokens ?? 0);
+      const cacheRead = Number(usage.cacheReadTokens ?? 0);
+      const cacheWrite = Number(usage.cacheWriteTokens ?? 0);
+      const total = reportedTotal(usage) ?? 0;
+      inputTokens += input;
+      outputTokens += output;
+      cacheReadTokens += cacheRead;
+      cacheWriteTokens += cacheWrite;
+      totalTokens += total;
+
+      const model = typeof session.model === "string" ? session.model : "";
+      const pricing = model ? this.config.models.pricing[model] : undefined;
+      if (!pricing) {
+        if (input > 0 || output > 0 || total > 0) costIsLowerBound = true;
+        continue;
+      }
+      costUsd +=
+        (input / 1_000_000) * pricing.inputPerMillion +
+        (output / 1_000_000) * pricing.outputPerMillion +
+        (cacheRead / 1_000_000) * pricing.cacheReadPerMillion +
+        (cacheWrite / 1_000_000) * pricing.cacheWritePerMillion;
+    }
+
+    const nextUsage = {
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      totalTokens,
+      costUsd,
+      costIsLowerBound,
+      invocations,
+      sessionsRead,
+    };
+    if (
+      state.usage.inputTokens === nextUsage.inputTokens &&
+      state.usage.outputTokens === nextUsage.outputTokens &&
+      state.usage.cacheReadTokens === nextUsage.cacheReadTokens &&
+      state.usage.cacheWriteTokens === nextUsage.cacheWriteTokens &&
+      state.usage.totalTokens === nextUsage.totalTokens &&
+      state.usage.costUsd === nextUsage.costUsd &&
+      state.usage.costIsLowerBound === nextUsage.costIsLowerBound &&
+      state.usage.invocations === nextUsage.invocations &&
+      state.usage.sessionsRead === nextUsage.sessionsRead
+    ) {
+      return state;
+    }
+    return this.store.writeState({ ...state, usage: nextUsage });
+  }
+
+  /** Throw a non-retriable budget failure when a configured ceiling is exceeded. */
+  private assertWithinBudget(state: RunState): void {
+    const { maxRunTokens, maxRunCostUsd } = this.config.workflow;
+    if (maxRunTokens > 0 && state.usage.totalTokens > maxRunTokens) {
+      throw new HarnessFailure(
+        `Run exceeded maxRunTokens: observed ${state.usage.totalTokens} > limit ${maxRunTokens}`,
+        "budget",
+        false,
+      );
+    }
+    if (maxRunCostUsd > 0 && state.usage.costUsd > maxRunCostUsd) {
+      throw new HarnessFailure(
+        `Run exceeded maxRunCostUsd: observed ${state.usage.costUsd} > limit ${maxRunCostUsd}`,
+        "budget",
+        false,
+      );
+    }
   }
 
   private async ensureCompatibleConfiguration(state: RunState): Promise<RunState> {
@@ -425,7 +549,10 @@ export class HarnessEngine {
     });
   }
 
-  async retry(runId: string, options?: { force?: boolean }): Promise<RunState> {
+  async retry(
+    runId: string,
+    options?: { force?: boolean; maxRunTokens?: number; maxRunCostUsd?: number },
+  ): Promise<RunState> {
     return this.store.withLock(runId, async () => {
       let state = await this.store.load(runId);
       if (state.phase !== "blocked" || !state.blockedFrom) {
@@ -437,20 +564,63 @@ export class HarnessEngine {
           `Run ${runId} is blocked with kind "${state.blockedKind ?? "unknown"}" and is not retriable without force`,
         );
       }
+      const resumePhase = state.blockedFrom;
+      if (options?.maxRunTokens != null || options?.maxRunCostUsd != null) {
+        state = await this.raiseRunBudget(state, {
+          maxRunTokens: options.maxRunTokens,
+          maxRunCostUsd: options.maxRunCostUsd,
+        });
+      }
       state = await this.store.record(
         {
           ...state,
-          phase: state.blockedFrom,
+          phase: resumePhase,
           blockedFrom: undefined,
           failure: undefined,
           blockedKind: undefined,
           blockedRetriable: undefined,
         },
         "run.retry_requested",
-        { force: Boolean(options?.force) },
+        {
+          force: Boolean(options?.force),
+          ...(options?.maxRunTokens != null ? { maxRunTokens: options.maxRunTokens } : {}),
+          ...(options?.maxRunCostUsd != null ? { maxRunCostUsd: options.maxRunCostUsd } : {}),
+        },
       );
       return state;
     });
+  }
+
+  /**
+   * Rewrite maxRunTokens / maxRunCostUsd on the frozen run config snapshot and
+   * re-stamp configurationHash so resume does not treat it as config drift.
+   */
+  private async raiseRunBudget(
+    state: RunState,
+    ceilings: { maxRunTokens?: number; maxRunCostUsd?: number },
+  ): Promise<RunState> {
+    if (ceilings.maxRunTokens != null) {
+      this.config.workflow.maxRunTokens = ceilings.maxRunTokens;
+    }
+    if (ceilings.maxRunCostUsd != null) {
+      this.config.workflow.maxRunCostUsd = ceilings.maxRunCostUsd;
+    }
+    // Validate via the same schema that freezes run configs.
+    const parsed = HarnessConfigSchema.parse(this.config);
+    this.config.workflow.maxRunTokens = parsed.workflow.maxRunTokens;
+    this.config.workflow.maxRunCostUsd = parsed.workflow.maxRunCostUsd;
+
+    const raw = (await this.store.readJson(state.runId, "config.json")) as Record<string, unknown>;
+    const frozenVersion =
+      typeof raw.configVersion === "number" ? raw.configVersion : state.configVersion;
+    await this.store.writeJson(state.runId, "config.json", {
+      ...this.config,
+      configVersion: frozenVersion,
+    });
+    return {
+      ...state,
+      configurationHash: configurationHash(this.config),
+    };
   }
 
   /** Resolves a dirty tree the harness itself found by committing it, then clears the block like retry(). */

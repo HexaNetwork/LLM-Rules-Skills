@@ -30,6 +30,9 @@ describe("token-conscious defaults", () => {
     expect(config.workflow.graphifyCharacters).toBe(3_000);
     expect(config.workflow.generateCommitMessages).toBe(false);
     expect(config.workflow.maxStepsPerRun).toBe(40);
+    expect(config.workflow.maxRunTokens).toBe(0);
+    expect(config.workflow.maxRunCostUsd).toBe(0);
+    expect(config.models.pricing).toEqual({});
     expect(config.workflow.maxProviderRetries).toBe(2);
     expect(config.knowledge.guidance).toMatchObject({ enabled: true, maxResults: 6, maxCharacters: 6_000 });
     expect(config.knowledge.embeddings.enabled).toBe(false);
@@ -74,6 +77,9 @@ describe("token-conscious defaults", () => {
     expect(defaultConfigYaml()).toContain("relevanceFloor: 0.55");
     expect(defaultConfigYaml()).toContain("maxGrillQuestionsPerEpisode: 5");
     expect(defaultConfigYaml()).toContain("staleAnswerMinutes: 30");
+    expect(defaultConfigYaml()).toContain("maxRunTokens: 0");
+    expect(defaultConfigYaml()).toContain("maxRunCostUsd: 0");
+    expect(defaultConfigYaml()).toContain("pricing: {}");
     expect(defaultConfigYaml()).toContain("enabled: false");
     expect(defaultConfigYaml()).toContain("testPathPatterns:");
     expect(defaultConfigYaml()).toContain("sourceExtensions:");

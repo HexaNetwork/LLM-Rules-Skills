@@ -265,6 +265,18 @@ describe("dashboard document", () => {
     expect(html).not.toMatch(/s\.yieldedAt[\s\S]{0,400}Dashboard work does not continue automatically/);
   });
 
+  it("shows a usage row, ceiling progress bar, and raise-and-retry controls for budget blocks", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function renderUsageRow(s)");
+    expect(html).toContain("function renderUsageBudgetCard(s)");
+    expect(html).toContain("total tokens");
+    expect(html).toContain("maxRunTokens");
+    expect(html).toContain("Raise ceiling and retry");
+    expect(html).toContain("raise_budget_retry");
+    expect(html).toContain("costIsLowerBound");
+  });
+
   it("names the actual checked-out branch on the commit-then-branch preflight button, with a generic fallback", () => {
     const html = renderDashboard();
 

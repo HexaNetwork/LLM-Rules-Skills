@@ -560,6 +560,7 @@ export function renderDashboard(): string {
       var fullIdea = String(s.idea || "");
       var subtitle = title !== fullIdea ? '<div class="subtitle">' + esc(fullIdea) + '</div>' : '';
       var html = '<div class="title-row"><div><div class="eyebrow">Run ' + esc(s.runId.slice(0,8)) + '</div><h1>' + esc(title) + '</h1>' + subtitle + '</div><span class="badge ' + attr(phase) + '"><i class="dot ' + attr(phase) + '"></i>' + esc(phaseLabel(phase)) + '</span></div>';
+      html += renderUsageRow(s);
       html += '<nav class="tabs">' + tabs.map(function (tab) { return '<button class="tab ' + (state.tab === tab ? "active" : "") + '" data-tab="' + tab + '">' + tab[0].toUpperCase() + tab.slice(1) + '</button>'; }).join("") + '</nav><div id="tabBody"></div>';
       $("content").innerHTML = html;
       if (state.tab === "overview") renderOverview(s, summary, phase);
@@ -595,7 +596,7 @@ export function renderDashboard(): string {
         config: { title: "The run configuration cannot be resumed as-is",
           hint: "Restore the original configuration, start a new run, or use Retry anyway only if you accept the drift." },
         budget: { title: "A run budget ceiling was reached",
-          hint: "Raise the ceiling and retry, or accept the stop. Retrying without raising the limit will fail again." },
+          hint: "Raise the frozen run ceiling below, then retry. Retrying without raising the limit will hit the same block." },
         contract: { title: "The model could not satisfy the required contract",
           hint: "Inspect the failure detail, adjust the task or prompts if needed, then retry." },
         internal: { title: "The harness hit an internal error",
@@ -629,6 +630,49 @@ export function renderDashboard(): string {
       var parked = unknowns.filter(function (u) { return u.status === "parked"; }).length;
       var dropped = unknowns.filter(function (u) { return u.status === "dropped"; }).length;
       return resolved + " resolved · " + open + " open · " + parked + " parked · " + dropped + " dropped";
+    }
+
+    function formatCostUsd(usage) {
+      if (!usage) return "$0";
+      var amount = Number(usage.costUsd || 0);
+      var formatted = amount < 0.01 && amount > 0 ? amount.toFixed(4) : amount.toFixed(2);
+      return (usage.costIsLowerBound ? "≥$" : "$") + formatted;
+    }
+
+    function renderUsageRow(s) {
+      var usage = s.usage || {};
+      var tokens = Number(usage.totalTokens || 0);
+      var cached = Number(usage.cacheReadTokens || 0);
+      if (!tokens && !(state.detail && state.detail.sessions && state.detail.sessions.length)) {
+        return '<div class="usage-row muted">No recorded usage yet</div>';
+      }
+      var parts = [number(tokens) + " total tokens"];
+      if (cached) parts.push(number(cached) + " cached");
+      parts.push(formatCostUsd(usage) + (usage.costIsLowerBound ? " (lower bound)" : ""));
+      return '<div class="usage-row muted">' + esc(parts.join(" · ")) + '</div>';
+    }
+
+    function renderUsageBudgetCard(s) {
+      var usage = s.usage || {};
+      var ceilings = (state.detail && state.detail.ceilings) || {};
+      var maxTokens = Number(ceilings.maxRunTokens || 0);
+      var maxCost = Number(ceilings.maxRunCostUsd || 0);
+      if (!maxTokens && !maxCost && !usage.totalTokens) return "";
+      var tokenPct = maxTokens > 0 ? Math.min(100, Math.round((Number(usage.totalTokens || 0) / maxTokens) * 100)) : 0;
+      var costPct = maxCost > 0 ? Math.min(100, Math.round((Number(usage.costUsd || 0) / maxCost) * 100)) : 0;
+      var html = '<div class="card"><div class="card-label">Usage</div>';
+      html += '<div class="metric">' + number(usage.totalTokens || 0) + '<span class="faint"> tokens</span></div>';
+      html += '<div class="muted">' + esc(formatCostUsd(usage)) + (usage.costIsLowerBound ? ' · unpriced models omitted from cost' : '') + '</div>';
+      if (maxTokens > 0) {
+        html += '<div class="muted" style="margin-top:10px">Tokens vs maxRunTokens (' + number(maxTokens) + ')</div>';
+        html += '<div class="progress"><i style="width:' + tokenPct + '%"></i></div>';
+      }
+      if (maxCost > 0) {
+        html += '<div class="muted" style="margin-top:10px">Cost vs maxRunCostUsd ($' + esc(String(maxCost)) + ')</div>';
+        html += '<div class="progress"><i style="width:' + costPct + '%"></i></div>';
+      }
+      html += '</div>';
+      return html;
     }
 
     function renderFogCard(s) {
@@ -810,9 +854,26 @@ export function renderDashboard(): string {
             '<button class="' + otherBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(otherOrder) + '">' + esc(orderLabel(otherOrder)) + ' instead</button>' +
             '</div>' + cautionNote;
         }
-        var retryControls = s.blockedRetriable === false
-          ? '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Not retriable</strong><div class="muted" style="margin-top:3px">This block is classified as <code>' + esc(s.blockedKind || "unknown") + '</code>. Retrying without fixing the cause is unlikely to help.</div></div></div><button class="btn danger" data-action="retry" data-force="true">Retry anyway</button>'
-          : '<button class="btn danger" data-action="retry">Retry transition</button>';
+        var retryControls = "";
+        if (s.blockedKind === "budget") {
+          var ceilings = (state.detail && state.detail.ceilings) || {};
+          var currentTokens = ceilings.maxRunTokens || 0;
+          var currentCost = ceilings.maxRunCostUsd || 0;
+          var suggestedTokens = Math.max(currentTokens * 2 || 0, Math.ceil((s.usage && s.usage.totalTokens || 0) * 1.5) || 0, 1);
+          var suggestedCost = Math.max(currentCost * 2 || 0, Number(((s.usage && s.usage.costUsd || 0) * 1.5).toFixed(4)) || 0);
+          retryControls =
+            '<div class="budget-raise" style="margin-top:12px;display:grid;gap:8px">' +
+            '<div class="muted">Raise the frozen run ceiling, then force-retry. Project config alone will not unblock this run.</div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">' +
+            '<label style="display:grid;gap:4px"><span class="faint">maxRunTokens</span><input id="raiseMaxRunTokens" type="number" min="0" step="1" value="' + attr(String(suggestedTokens)) + '" style="width:140px"></label>' +
+            '<label style="display:grid;gap:4px"><span class="faint">maxRunCostUsd</span><input id="raiseMaxRunCostUsd" type="number" min="0" step="0.01" value="' + attr(String(suggestedCost || currentCost || 0)) + '" style="width:140px"></label>' +
+            '<button class="btn primary" data-action="raise_budget_retry">Raise ceiling and retry</button>' +
+            '</div></div>';
+        } else if (s.blockedRetriable === false) {
+          retryControls = '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Not retriable</strong><div class="muted" style="margin-top:3px">This block is classified as <code>' + esc(s.blockedKind || "unknown") + '</code>. Retrying without fixing the cause is unlikely to help.</div></div></div><button class="btn danger" data-action="retry" data-force="true">Retry anyway</button>';
+        } else {
+          retryControls = '<button class="btn danger" data-action="retry">Retry transition</button>';
+        }
         html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + '</div>' + retryControls + '</div></div>';
       }
       if (["grilling","awaiting_input","planning"].includes(s.phase)) {
@@ -824,10 +885,15 @@ export function renderDashboard(): string {
       html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div></div>';
       html += '<div class="card third"><div class="card-label">Grill resolutions</div><div class="metric">' + grillTotal + (unknowns.length ? '<span class="faint"> / ' + unknowns.length + '</span>' : '') + '</div><div class="muted">' + (unknowns.length ? (openUnknownCount + ' open unknown(s) remain') : 'decisions locked in') + '</div></div>';
       var episode = s.grillEpisode;
-      var tokenTotals = state.detail.sessions.reduce(function (acc, session) { var usage = session.usage || {}; var total = usage.totalTokens; if (total == null && (usage.inputTokens != null || usage.outputTokens != null)) total = Number(usage.inputTokens || 0) + Number(usage.outputTokens || 0); acc.tokens += Number(total || 0); acc.cached += Number(usage.cacheReadTokens || 0); return acc; }, { tokens: 0, cached: 0 });
+      var usage = s.usage || {};
+      var tokenTotals = { tokens: Number(usage.totalTokens || 0), cached: Number(usage.cacheReadTokens || 0) };
+      if (!tokenTotals.tokens) {
+        tokenTotals = state.detail.sessions.reduce(function (acc, session) { var sessionUsage = session.usage || {}; var total = sessionUsage.totalTokens; if (total == null && (sessionUsage.inputTokens != null || sessionUsage.outputTokens != null)) total = Number(sessionUsage.inputTokens || 0) + Number(sessionUsage.outputTokens || 0); acc.tokens += Number(total || 0); acc.cached += Number(sessionUsage.cacheReadTokens || 0); return acc; }, { tokens: 0, cached: 0 });
+      }
       var episodeDetail = episode ? ('grill episode ' + episode.number + ' · ' + episode.questionsAnswered + ' answered' + (episode.closedAt ? ' · closed' : ' · active')) : 'bounded grill episodes';
       if (tokenTotals.tokens) episodeDetail += ' · ' + number(tokenTotals.tokens) + ' recorded tokens' + (tokenTotals.cached ? ' (' + number(tokenTotals.cached) + ' served from cache)' : '');
       html += '<div class="card third"><div class="card-label">Sessions</div><div class="metric">' + state.detail.sessions.length + '</div><div class="muted">' + esc(episodeDetail) + '</div><div class="faint" style="margin-top:12px">Updated ' + esc(ago(s.updatedAt)) + '</div></div>';
+      html += renderUsageBudgetCard(s);
       var brief = s.reflectBrief;
       var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");
       var briefBody = brief ? (brief.confirmed || brief.draft) : "The reflector will restate the idea for your confirmation before grilling begins.";
@@ -1170,6 +1236,12 @@ export function renderDashboard(): string {
         if (target.dataset.action === 'cancel' && !confirm('Cancel this run?')) return;
         if (target.dataset.action === 'commit_preflight') {
           runAction(target.dataset.action, { order: target.dataset.preflightOrder });
+        } else if (target.dataset.action === 'raise_budget_retry') {
+          var tokenInput = document.getElementById('raiseMaxRunTokens');
+          var costInput = document.getElementById('raiseMaxRunCostUsd');
+          var maxRunTokens = tokenInput && tokenInput.value !== '' ? Number(tokenInput.value) : undefined;
+          var maxRunCostUsd = costInput && costInput.value !== '' ? Number(costInput.value) : undefined;
+          runAction('retry', { force: true, maxRunTokens: maxRunTokens, maxRunCostUsd: maxRunCostUsd });
         } else if (target.dataset.action === 'retry' && target.dataset.force === 'true') {
           runAction('retry', { force: true });
         } else {

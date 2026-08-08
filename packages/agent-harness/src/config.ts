@@ -50,8 +50,19 @@ export const HarnessConfigSchema = z.object({
       small: z.string().min(1),
       capable: z.string().min(1),
       roles: z.record(z.string()).default({}),
+      // Opt-in $/MTok rates; unpriced models contribute tokens but 0 cost.
+      pricing: z
+        .record(
+          z.object({
+            inputPerMillion: z.number().nonnegative(),
+            outputPerMillion: z.number().nonnegative(),
+            cacheReadPerMillion: z.number().nonnegative().default(0),
+            cacheWritePerMillion: z.number().nonnegative().default(0),
+          }),
+        )
+        .default({}),
     })
-    .default({ small: "composer-2.5", capable: "composer-2.5", roles: {} }),
+    .default({ small: "composer-2.5", capable: "composer-2.5", roles: {}, pricing: {} }),
   agent: z
     .object({
       provider: z.enum(["cursor"]).default("cursor"),
@@ -65,6 +76,9 @@ export const HarnessConfigSchema = z.object({
       tdd: z.boolean().default(true),
       // Counts expensive steps (agent invocations / shell commands), not free transitions.
       maxStepsPerRun: z.number().int().positive().max(100).default(40),
+      // Hard spend ceilings enforced between steps; 0 = unlimited.
+      maxRunTokens: z.number().int().nonnegative().default(0),
+      maxRunCostUsd: z.number().nonnegative().default(0),
       // Automatic in-place retries for transient provider failures inside advance().
       maxProviderRetries: z.number().int().min(0).max(5).default(2),
       maxTestAttempts: z.number().int().positive().max(10).default(2),
@@ -344,6 +358,8 @@ models:
   small: composer-2.5
   capable: composer-2.5
   roles: {}
+  # Opt-in $/MTok rates keyed by model id; unpriced models contribute 0 cost.
+  pricing: {}
 
 agent:
   provider: cursor
@@ -355,6 +371,9 @@ workflow:
   tdd: true
   # Expensive steps only (agent invocations and shell commands).
   maxStepsPerRun: 40
+  # Hard spend ceilings (0 = unlimited); enforced between steps, never mid-step.
+  maxRunTokens: 0
+  maxRunCostUsd: 0
   # Transient provider failures retry in-place (backoff 1s/4s/16s); does not consume step budget.
   maxProviderRetries: 2
   maxTestAttempts: 2

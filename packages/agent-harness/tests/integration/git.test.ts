@@ -127,6 +127,60 @@ describe("reviewTask packet", () => {
       "The diff is the primary evidence. Read the listed omitted files from disk before commenting on them.",
     );
   });
+
+  it("re-stamps treeFingerprint after intent-to-add so the next advance does not false-block", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "new-file.ts"), "export const added = 1;\n", "utf8");
+
+    const config = fixtureConfig(root, {
+      agent: { promptBuilder: false } as never,
+      workflow: { ...fixtureConfig(root).workflow, maxStepsPerRun: 1, tdd: false },
+      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      git: { enabled: true } as never,
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
+      },
+    });
+    const backend = createFakeBackend({
+      reviewer: () => ({
+        approved: false,
+        summary: "needs work",
+        findings: [{ severity: "blocking" as const, message: "tighten the edge case" }],
+      }),
+      implementer: () => ({ summary: "repaired", changedFiles: ["src/new-file.ts"] }),
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const gitService = new GitService(config);
+
+    const task = pendingTask("t1", "Ship new file");
+    task.status = "active";
+    task.step = "reviewing";
+    task.changedFiles = ["src/new-file.ts"];
+    let state = await seedExecutingRun(engine, config, "review-intent-fingerprint", [task]);
+
+    // Stamp a fingerprint that matches the tree *before* review's intent-to-add.
+    const beforeReview = await gitService.treeFingerprint();
+    state = { ...state, treeFingerprint: beforeReview };
+    await engine.store.writeJson(state.runId, "state.json", state);
+
+    state = await engine.advance(state.runId, 1);
+    expect(state.phase).not.toBe("blocked");
+    expect(state.blockedKind).not.toBe("workspace");
+    expect(state.tasks[0]?.step).toBe("implementing");
+    // Porcelain changed (?? → A ); fingerprint must reflect the post-intent-to-add tree.
+    const afterReview = await gitService.treeFingerprint();
+    expect(afterReview).not.toBe(beforeReview);
+    expect(state.treeFingerprint).toBe(afterReview);
+
+    // Next advance must not false-block solely because review intent-to-add'd the new file.
+    state = await engine.advance(state.runId, 1);
+    expect(state.phase).not.toBe("blocked");
+    expect(state.blockedKind).not.toBe("workspace");
+  });
 });
 
 describe("harness-owned git", () => {

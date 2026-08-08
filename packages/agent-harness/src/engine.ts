@@ -1637,7 +1637,13 @@ export class HarnessEngine {
       status: approved || canRepair ? "active" : "failed",
       failure: !approved && !canRepair ? "Review failed and repair budget is exhausted" : undefined,
     };
-    return this.updateTask(state, updated, approved ? "task.review_passed" : "task.review_failed");
+    // diffForPaths may run `git add --intent-to-add`, which changes porcelain; re-stamp so the
+    // next advance does not false-block on workspace divergence.
+    return this.updateTask(
+      await this.withTreeFingerprint(state),
+      updated,
+      approved ? "task.review_passed" : "task.review_failed",
+    );
   }
 
   private async commitTask(state: RunState, task: BuildTask): Promise<RunState> {

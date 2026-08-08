@@ -440,6 +440,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             await engine.commitPreflight(runId, { order, message });
             await engine.advance(runId);
           });
+        } else if (action === "accept_tree") {
+          enqueue(runId, action, async () => {
+            await engine.acceptTree(runId);
+            await engine.advance(runId);
+          });
         } else if (action === "cancel") {
           // Cancel must not wait behind the work it is aborting (or 409 on a busy run).
           const result = await engine.cancel(runId);

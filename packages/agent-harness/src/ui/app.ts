@@ -607,6 +607,13 @@ export function renderDashboard(): string {
         internal: { title: "The harness hit an internal error",
           hint: "This is unlikely to clear on retry. Capture the failure detail and file a bug, or Retry anyway only to unblock." }
       };
+      if (/Working tree diverged|Diverging paths/i.test(text)) {
+        return {
+          id: "tree-divergence",
+          title: "The working tree diverged from the harness's last known state",
+          hint: "Inspect the unexpected changes. Accept the current tree to continue from here, or restore the tree and retry.",
+        };
+      }
       if (kind && byKind[kind]) return byKind[kind];
       var patterns = [
         { id: "dirty-tree",
@@ -834,8 +841,10 @@ export function renderDashboard(): string {
       }
       if (s.phase === "blocked") {
         var remediation = blockedRemediation(s);
-        var isDirtyTree = remediation.id === "dirty-tree" || /dirty working tree|uncommitted changes|working tree is not clean/i.test(String(s.failure || ""));
-        var failureDetail = isDirtyTree
+        var failureText = String(s.failure || "");
+        var isTreeDivergence = /Working tree diverged|Diverging paths/i.test(failureText);
+        var isDirtyTree = !isTreeDivergence && (remediation.id === "dirty-tree" || /dirty working tree|uncommitted changes|working tree is not clean/i.test(failureText));
+        var failureDetail = (isDirtyTree || isTreeDivergence)
           ? '<pre style="margin-top:8px">' + esc(s.failure || "") + '</pre>'
           : '<details><summary>Raw failure detail</summary><pre>' + esc(s.failure || "The current transition could not complete.") + '</pre></details>';
         var commitControls = "";
@@ -861,6 +870,12 @@ export function renderDashboard(): string {
             '<button class="' + otherBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(otherOrder) + '">' + esc(orderLabel(otherOrder)) + ' instead</button>' +
             '</div>' + cautionNote;
         }
+        var acceptTreeControls = "";
+        if (isTreeDivergence) {
+          acceptTreeControls = '<div class="accept-tree-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
+            '<button class="btn primary" data-action="accept_tree">Accept current tree and continue</button>' +
+            '</div>';
+        }
         var retryControls = "";
         if (s.blockedKind === "budget") {
           var ceilings = (state.detail && state.detail.ceilings) || {};
@@ -878,10 +893,10 @@ export function renderDashboard(): string {
             '</div></div>';
         } else if (s.blockedRetriable === false) {
           retryControls = '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Not retriable</strong><div class="muted" style="margin-top:3px">This block is classified as <code>' + esc(s.blockedKind || "unknown") + '</code>. Retrying without fixing the cause is unlikely to help.</div></div></div><button class="btn danger" data-action="retry" data-force="true">Retry anyway</button>';
-        } else {
+        } else if (!isTreeDivergence) {
           retryControls = '<button class="btn danger" data-action="retry">Retry transition</button>';
         }
-        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + '</div>' + retryControls + '</div></div>';
+        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + acceptTreeControls + '</div>' + retryControls + '</div></div>';
       }
       if (["grilling","awaiting_input","planning"].includes(s.phase)) {
         html += renderFogCard(s);

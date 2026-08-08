@@ -225,6 +225,8 @@ export const RunStateSchema = z.object({
   // Structured failure classification (absent on runs blocked before Task 7).
   blockedKind: z.string().optional(),
   blockedRetriable: z.boolean().optional(),
+  // Last known working-tree fingerprint (HEAD + porcelain); divergence blocks advance.
+  treeFingerprint: z.string().optional(),
   grillEpisode: GrillEpisodeSchema.optional(),
   // Distinguishes a yielded run from one paused on human input.
   yieldedAt: z.string().optional(),

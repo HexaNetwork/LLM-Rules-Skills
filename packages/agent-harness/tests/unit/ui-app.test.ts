@@ -287,6 +287,15 @@ describe("dashboard document", () => {
     expect(html).toContain('return "Commit onto the run branch";');
   });
 
+  it("offers Accept current tree and continue for working-tree divergence blocks", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("isTreeDivergence");
+    expect(html).toContain('data-action="accept_tree"');
+    expect(html).toContain("Accept current tree and continue");
+    expect(html).toContain("Working tree diverged|Diverging paths");
+  });
+
   it("shows a base-branch caution, using the existing warning visual vocabulary, only when current === base", () => {
     const html = renderDashboard();
 

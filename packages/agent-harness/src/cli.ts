@@ -227,6 +227,11 @@ program
     "--commit-dirty [order]",
     "commit a dirty working tree before retrying: branch-then-commit (default) or commit-then-branch",
   )
+  .option(
+    "--accept-tree",
+    "accept the current working tree after a divergence block (re-stamp fingerprint and retry)",
+    false,
+  )
   .action(async (options: {
     runId: string;
     config?: string;
@@ -234,6 +239,7 @@ program
     maxRunTokens?: number;
     maxRunCostUsd?: number;
     commitDirty?: string | boolean;
+    acceptTree: boolean;
   }) => {
     const config = await runConfig(options.config, options.runId);
     const engine = new HarnessEngine(config, { backend: createCursorBackend() });
@@ -243,7 +249,12 @@ program
     if (options.maxRunCostUsd != null && (!Number.isFinite(options.maxRunCostUsd) || options.maxRunCostUsd < 0)) {
       throw new Error("--max-run-cost-usd must be a non-negative number");
     }
-    if (options.commitDirty) {
+    if (options.acceptTree && options.commitDirty) {
+      throw new Error("--accept-tree and --commit-dirty cannot be used together");
+    }
+    if (options.acceptTree) {
+      await engine.acceptTree(options.runId);
+    } else if (options.commitDirty) {
       const order = typeof options.commitDirty === "string" ? options.commitDirty : undefined;
       if (order != null && order !== "branch-then-commit" && order !== "commit-then-branch") {
         throw new Error("--commit-dirty must be branch-then-commit or commit-then-branch");

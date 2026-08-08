@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { relative as pathRelative, resolve as pathResolve } from "node:path";
 import type { HarnessConfig } from "./config.js";
@@ -48,24 +49,53 @@ export class GitService {
 
   async changedFiles(): Promise<string[]> {
     if (!this.config.git.enabled) return [];
+    const { paths } = await this.porcelainStatus();
+    return paths;
+  }
+
+  /**
+   * Cheap identity of HEAD + working tree (state-directory paths excluded).
+   * Returns `"git-disabled"` when git is off.
+   */
+  async treeFingerprint(): Promise<string> {
+    if (!this.config.git.enabled) return "git-disabled";
+    const head = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+    const { filteredPorcelain } = await this.porcelainStatus();
+    return createHash("sha256").update(`${head}\0${filteredPorcelain}`).digest("hex");
+  }
+
+  private async porcelainStatus(): Promise<{ paths: string[]; filteredPorcelain: string }> {
     const result = await this.git(["status", "--porcelain=v1", "--untracked-files=all", "-z"]);
     const statePrefix = normalize(
       pathRelative(this.config.repositoryRoot, pathResolve(this.config.repositoryRoot, this.config.stateDirectory)),
     );
     const records = result.stdout.split("\0").filter(Boolean);
     const paths: string[] = [];
+    const kept: string[] = [];
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index]!;
       const status = record.slice(0, 2);
-      paths.push(normalize(record.slice(3)));
+      const filePath = normalize(record.slice(3));
+      let second: string | undefined;
       if (/R|C/.test(status) && records[index + 1]) {
-        paths.push(normalize(records[index + 1]!));
+        second = records[index + 1]!;
         index += 1;
       }
+      const renamePath = second ? normalize(second) : undefined;
+      const underState = (file: string) => file === statePrefix || file.startsWith(`${statePrefix}/`);
+      if (underState(filePath) || (renamePath != null && underState(renamePath))) {
+        continue;
+      }
+      kept.push(record);
+      if (second) kept.push(second);
+      paths.push(filePath);
+      if (renamePath) paths.push(renamePath);
     }
-    return [...new Set(paths)]
-      .filter((file) => file !== statePrefix && !file.startsWith(`${statePrefix}/`))
-      .sort();
+    const filteredPorcelain = kept.length > 0 ? `${kept.join("\0")}\0` : "";
+    return {
+      paths: [...new Set(paths)].sort(),
+      filteredPorcelain,
+    };
   }
 
   /** Cuts/switches to the run branch from current HEAD, skipping the baseBranch hop and dirty-tree guard. */

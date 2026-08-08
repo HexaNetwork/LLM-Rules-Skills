@@ -201,7 +201,11 @@ export class HarnessEngine {
             const order = this.config.git.preflightCommitOrder;
             const commit = await this.runPreflightCommit(runId, order, defaultPreflightCommitMessage(runId));
             state = await this.store.record(
-              { ...state, branchName: commit.runBranch ?? state.branchName },
+              {
+                ...state,
+                branchName: commit.runBranch ?? state.branchName,
+                treeFingerprint: await this.git.treeFingerprint(),
+              },
               "run.preflight_committed",
               preflightCommitDetail(order, commit, true),
             );
@@ -263,6 +267,7 @@ export class HarnessEngine {
                 if (state.yieldedAt) {
                   state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
                 }
+                await this.assertTreeFingerprint(state);
                 let remaining = maxSteps;
                 let iterations = 0;
                 const maxIterations = Math.max(maxSteps * 8, 40);
@@ -741,6 +746,45 @@ export class HarnessEngine {
     };
   }
 
+  /**
+   * Operator accepts the current working tree after a divergence block: re-stamps
+   * `treeFingerprint`, clears the block, and audits `run.tree_accepted`.
+   */
+  async acceptTree(runId: string): Promise<RunState> {
+    return this.store.withRepositoryLock({ runId, action: "acceptTree" }, async () =>
+      this.store.withLock(runId, async () => {
+        let state = await this.store.load(runId);
+        if (state.phase !== "blocked" || !state.blockedFrom) {
+          throw new Error(`Run ${runId} is not resumably blocked`);
+        }
+        const previousFingerprint = state.treeFingerprint;
+        const recorded = new Set(state.tasks.flatMap((task) => task.changedFiles));
+        const current = this.config.git.enabled ? await this.git.changedFiles() : [];
+        const divergingPaths = current.filter((file) => !recorded.has(file));
+        const listed = divergingPaths.length > 0 ? divergingPaths : current;
+        const treeFingerprint = await this.git.treeFingerprint();
+        state = await this.store.record(
+          {
+            ...state,
+            phase: state.blockedFrom,
+            blockedFrom: undefined,
+            failure: undefined,
+            blockedKind: undefined,
+            blockedRetriable: undefined,
+            treeFingerprint,
+          },
+          "run.tree_accepted",
+          {
+            previousFingerprint,
+            treeFingerprint,
+            divergingPaths: listed,
+          },
+        );
+        return state;
+      }),
+    );
+  }
+
   /** Resolves a dirty tree the harness itself found by committing it, then clears the block like retry(). */
   async commitPreflight(
     runId: string,
@@ -765,6 +809,7 @@ export class HarnessEngine {
             blockedKind: undefined,
             blockedRetriable: undefined,
             branchName: commit.runBranch ?? state.branchName,
+            treeFingerprint: await this.git.treeFingerprint(),
           },
           "run.preflight_committed",
           preflightCommitDetail(order, commit, false),
@@ -1396,7 +1441,11 @@ export class HarnessEngine {
       status: exhausted ? "failed" : "active",
       failure: exhausted ? "Test writer could not produce a meaningful RED run" : undefined,
     };
-    return this.updateTask(state, updated, meaningfulRed ? "task.red_observed" : "task.red_rejected");
+    return this.updateTask(
+      await this.withTreeFingerprint(state),
+      updated,
+      meaningfulRed ? "task.red_observed" : "task.red_rejected",
+    );
   }
 
   private async implementTask(state: RunState, task: BuildTask): Promise<RunState> {
@@ -1404,13 +1453,13 @@ export class HarnessEngine {
       const recovery = await this.runTargetedTest(state.runId, task, "tdd:resume-check");
       if (recovery.passed) {
         return this.updateTask(
-          state,
+          await this.withTreeFingerprint(state),
           { ...task, evidence: [...task.evidence, recovery], step: "verifying" },
           "task.recovered_green",
         );
       }
       task = { ...task, evidence: [...task.evidence, recovery] };
-      state = await this.updateTask(state, task, "task.resume_check_failed");
+      state = await this.updateTask(await this.withTreeFingerprint(state), task, "task.resume_check_failed");
     }
     const result = await this.agents.invoke({
       runId: state.runId,
@@ -1470,7 +1519,7 @@ export class HarnessEngine {
         failure: exhausted ? failure : undefined,
         reviewSummary: failure,
       };
-      return this.updateTask(state, updated, "task.implementation_test_tamper", {
+      return this.updateTask(await this.withTreeFingerprint(state), updated, "task.implementation_test_tamper", {
         passed: evidence.passed,
       });
     }
@@ -1488,7 +1537,7 @@ export class HarnessEngine {
         : undefined,
     };
     return this.updateTask(
-      state,
+      await this.withTreeFingerprint(state),
       updated,
       evidence.passed ? "task.green_observed" : "task.implementation_repair_needed",
     );
@@ -1519,7 +1568,11 @@ export class HarnessEngine {
           ? "Command gates failed and implementation repair budget is exhausted"
           : undefined,
     };
-    return this.updateTask(state, updated, passed ? "task.gates_passed" : "task.gates_failed");
+    return this.updateTask(
+      await this.withTreeFingerprint(state),
+      updated,
+      passed ? "task.gates_passed" : "task.gates_failed",
+    );
   }
 
   private async reviewTask(state: RunState, task: BuildTask): Promise<RunState> {
@@ -1585,7 +1638,7 @@ export class HarnessEngine {
       ? await this.knowledge.rebuildRepositoryGraph()
       : false;
     return this.updateTask(
-      state,
+      await this.withTreeFingerprint(state),
       { ...task, status: "done", step: "done", commitSha },
       "task.committed",
       { commitSha, graphifyUpdated },
@@ -1669,6 +1722,29 @@ export class HarnessEngine {
       { ...state, tasks: state.tasks.map((item) => (item.id === task.id ? task : item)) },
       event,
       { taskId: task.id, step: task.step, ...detail },
+    );
+  }
+
+  private async withTreeFingerprint(state: RunState): Promise<RunState> {
+    if (!this.config.git.enabled) return state;
+    return { ...state, treeFingerprint: await this.git.treeFingerprint() };
+  }
+
+  /** Throws HarnessFailure when the working tree no longer matches the last stamped fingerprint. */
+  private async assertTreeFingerprint(state: RunState): Promise<void> {
+    if (!this.config.git.enabled || !state.treeFingerprint) return;
+    const observed = await this.git.treeFingerprint();
+    if (observed === state.treeFingerprint) return;
+    const recorded = new Set(state.tasks.flatMap((task) => task.changedFiles));
+    const current = await this.git.changedFiles();
+    const diverging = current.filter((file) => !recorded.has(file));
+    const listed = diverging.length > 0 ? diverging : current;
+    throw new HarnessFailure(
+      `Working tree diverged from the harness's last known state. Diverging paths: ${
+        listed.length > 0 ? listed.join(", ") : "(HEAD or index changed with no dirty paths)"
+      }`,
+      "workspace",
+      true,
     );
   }
 

@@ -1,3 +1,7 @@
+import { spawn } from "node:child_process";
+import { utimes, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
@@ -7,6 +11,17 @@ import { createRunState, type BuildTask, type RunState } from "../../src/domain.
 import { HarnessEngine } from "../../src/engine.js";
 import { RunStore } from "../../src/store.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
+
+async function deadPid(): Promise<number> {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], {
+    stdio: "ignore",
+  });
+  const pid = child.pid;
+  if (pid == null) throw new Error("failed to spawn probe child");
+  child.kill("SIGKILL");
+  await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  return pid;
+}
 
 describe("stall protection", () => {
   it("kills a timed-out command tree and returns evidence", async () => {
@@ -51,6 +66,63 @@ describe("stall protection", () => {
 
     release();
     await first;
+  });
+
+  it("breaks a lock naming a dead pid on the local hostname immediately", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const store = new RunStore(config);
+    await store.initialize();
+    await store.create(createRunState("stale-dead", "Test locking", new Date().toISOString()));
+    const lockPath = path.join(store.runDirectory("stale-dead"), "run.lock");
+    await writeFile(
+      lockPath,
+      JSON.stringify({ pid: await deadPid(), hostname: hostname(), at: new Date().toISOString() }),
+      "utf8",
+    );
+
+    const started = performance.now();
+    await store.withLock("stale-dead", async () => undefined);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("refuses a lock naming the current process pid regardless of age", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const store = new RunStore(config);
+    await store.initialize();
+    await store.create(createRunState("alive-pid", "Test locking", new Date().toISOString()));
+    const lockPath = path.join(store.runDirectory("alive-pid"), "run.lock");
+    const ancientMs = Date.now() - 2 * 60 * 60 * 1000;
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: process.pid,
+        hostname: hostname(),
+        at: new Date(ancientMs).toISOString(),
+      }),
+      "utf8",
+    );
+    // Age the file past the 30-minute stale threshold so only liveness can refuse.
+    await utimes(lockPath, new Date(ancientMs), new Date(ancientMs));
+
+    await expect(store.withLock("alive-pid", async () => undefined)).rejects.toThrow(
+      "already active",
+    );
+  });
+
+  it("refuses an unparseable lock younger than 30 minutes", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const store = new RunStore(config);
+    await store.initialize();
+    await store.create(createRunState("garbage-lock", "Test locking", new Date().toISOString()));
+    const lockPath = path.join(store.runDirectory("garbage-lock"), "run.lock");
+    await writeFile(lockPath, "not-json{{{", "utf8");
+
+    await expect(store.withLock("garbage-lock", async () => undefined)).rejects.toThrow(
+      "already active",
+    );
   });
 });
 

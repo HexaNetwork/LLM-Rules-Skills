@@ -1,6 +1,7 @@
 import path from "node:path";
 import { appendFile, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { hostname as localHostname } from "node:os";
 import {
   RunEventSchema,
   RunStateSchema,
@@ -8,6 +9,16 @@ import {
   type RunState,
 } from "./domain.js";
 import type { HarnessConfig } from "./config.js";
+
+const LOCK_STALE_MS = 30 * 60 * 1000;
+
+export type LockBody = {
+  pid: number;
+  hostname: string;
+  at: string;
+  runId?: string;
+  action?: string;
+};
 
 export class RunStore {
   readonly root: string;
@@ -127,28 +138,75 @@ export class RunStore {
     }
   }
 
+  runLockPath(runId: string): string {
+    return path.join(this.runDirectory(runId), "run.lock");
+  }
+
+  repositoryLockPath(): string {
+    return path.join(this.root, "repo.lock");
+  }
+
   async withLock<T>(runId: string, work: () => Promise<T>): Promise<T> {
-    const directory = this.runDirectory(runId);
-    const lockPath = path.join(directory, "run.lock");
-    let handle;
-    try {
-      handle = await open(lockPath, "wx");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const age = Date.now() - (await stat(lockPath)).mtimeMs;
-      if (age < 30 * 60 * 1000) {
-        throw new Error(`Run ${runId} is already active; refusing to wait on its lock.`);
-      }
-      await unlink(lockPath);
-      handle = await open(lockPath, "wx");
-    }
-    await handle.writeFile(JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+    const lockPath = this.runLockPath(runId);
+    const handle = await acquireLockFile(lockPath, () => {
+      throw new Error(`Run ${runId} is already active; refusing to wait on its lock.`);
+    });
+    await handle.writeFile(
+      JSON.stringify({
+        pid: process.pid,
+        hostname: localHostname(),
+        at: new Date().toISOString(),
+      } satisfies LockBody),
+    );
     try {
       return await work();
     } finally {
       await handle.close();
       await unlink(lockPath).catch(() => undefined);
     }
+  }
+
+  async inspectRunLock(
+    runId: string,
+  ): Promise<{ path: string; body: LockBody | null; ageMs: number | null } | null> {
+    return readLockInfo(this.runLockPath(runId));
+  }
+
+  async inspectRepositoryLock(): Promise<{
+    path: string;
+    body: LockBody | null;
+    ageMs: number | null;
+  } | null> {
+    return readLockInfo(this.repositoryLockPath());
+  }
+
+  /** Operator escape hatch: remove a run lock (and optionally the repository lock). */
+  async unlock(runId: string, options: { repo?: boolean } = {}): Promise<{
+    run: boolean;
+    repo: boolean | "absent";
+  }> {
+    const runPath = this.runLockPath(runId);
+    let run = false;
+    try {
+      await unlink(runPath);
+      run = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    let repo: boolean | "absent" = false;
+    if (options.repo) {
+      const repoPath = this.repositoryLockPath();
+      try {
+        await unlink(repoPath);
+        repo = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        repo = "absent";
+      }
+    }
+
+    return { run, repo };
   }
 
   private resolveInsideRun(runId: string, relativePath: string): string {
@@ -188,5 +246,89 @@ async function replaceFile(source: string, target: string): Promise<void> {
       }
       await new Promise((resolve) => setTimeout(resolve, 5 * 2 ** attempt));
     }
+  }
+}
+
+async function acquireLockFile(
+  lockPath: string,
+  onAlive: () => never,
+): Promise<Awaited<ReturnType<typeof open>>> {
+  try {
+    return await open(lockPath, "wx");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (!(await shouldBreakLock(lockPath))) onAlive();
+    await unlink(lockPath);
+    return open(lockPath, "wx");
+  }
+}
+
+async function shouldBreakLock(lockPath: string): Promise<boolean> {
+  try {
+    const raw = await readFile(lockPath, "utf8");
+    const body = parseLockBody(raw);
+    if (body && body.hostname === localHostname()) {
+      const liveness = probePid(body.pid);
+      if (liveness === "dead") return true;
+      if (liveness === "alive") return false;
+      // probe failure → degrade to age rule
+    }
+  } catch {
+    // Unreadable / probe failure → degrade to age rule.
+  }
+  const age = Date.now() - (await stat(lockPath)).mtimeMs;
+  return age >= LOCK_STALE_MS;
+}
+
+function parseLockBody(raw: string): LockBody | null {
+  try {
+    const value = JSON.parse(raw) as Partial<LockBody>;
+    if (
+      typeof value.pid !== "number" ||
+      !Number.isFinite(value.pid) ||
+      typeof value.hostname !== "string" ||
+      typeof value.at !== "string"
+    ) {
+      return null;
+    }
+    return {
+      pid: value.pid,
+      hostname: value.hostname,
+      at: value.at,
+      ...(typeof value.runId === "string" ? { runId: value.runId } : {}),
+      ...(typeof value.action === "string" ? { action: value.action } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** process.kill(pid, 0) — ESRCH dead, EPERM alive, no throw alive. */
+function probePid(pid: number): "alive" | "dead" | "unknown" {
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return "dead";
+    if (code === "EPERM") return "alive";
+    return "unknown";
+  }
+}
+
+async function readLockInfo(
+  lockPath: string,
+): Promise<{ path: string; body: LockBody | null; ageMs: number | null } | null> {
+  try {
+    const info = await stat(lockPath);
+    const raw = await readFile(lockPath, "utf8").catch(() => "");
+    return {
+      path: lockPath,
+      body: parseLockBody(raw),
+      ageMs: Date.now() - info.mtimeMs,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
   }
 }

@@ -261,6 +261,40 @@ program
   });
 
 program
+  .command("unlock")
+  .description("Force-remove a stale run lock (operator escape hatch)")
+  .requiredOption("--run-id <id>", "run id")
+  .option("--repo", "also remove the repository lock when present", false)
+  .option("--config <path>", "config path")
+  .action(async (options: { runId: string; repo: boolean; config?: string }) => {
+    const config = await runConfig(options.config, options.runId);
+    const engine = new HarnessEngine(config, { backend: createCursorBackend("unused") });
+    const store = engine.store;
+    const runLock = await store.inspectRunLock(options.runId);
+    if (runLock) {
+      printLockRemoval("run", runLock);
+    } else {
+      console.log(`No run lock found for ${options.runId}.`);
+    }
+    let repoLock: Awaited<ReturnType<typeof store.inspectRepositoryLock>> | undefined;
+    if (options.repo) {
+      repoLock = await store.inspectRepositoryLock();
+      if (repoLock) {
+        printLockRemoval("repository", repoLock);
+      } else {
+        console.log(
+          "Repository lock not present (repo.lock is added by repository-lock hardening; --repo accepted).",
+        );
+      }
+    }
+    const result = await store.unlock(options.runId, { repo: options.repo });
+    if (result.run && runLock) console.log(`Removed run lock: ${runLock.path}`);
+    if (options.repo && result.repo === true && repoLock) {
+      console.log(`Removed repository lock: ${repoLock.path}`);
+    }
+  });
+
+program
   .command("ui")
   .description("Open the centralized loopback dashboard")
   .option("--config <path>", "config path")
@@ -397,6 +431,20 @@ async function aggregateSessionUsage(
         : Number(usage.inputTokens ?? 0) + Number(usage.outputTokens ?? 0);
   }
   return { inputTokens, outputTokens, totalTokens, sessions: files.length };
+}
+
+function printLockRemoval(
+  kind: "run" | "repository",
+  info: { path: string; body: { pid: number; hostname: string; at: string } | null; ageMs: number | null },
+): void {
+  const ageSeconds = info.ageMs == null ? "unknown" : `${Math.round(info.ageMs / 1000)}s`;
+  if (info.body) {
+    console.log(
+      `Breaking ${kind} lock: pid=${info.body.pid} hostname=${info.body.hostname} at=${info.body.at} age=${ageSeconds}`,
+    );
+  } else {
+    console.log(`Breaking ${kind} lock (unparseable body, age=${ageSeconds}): ${info.path}`);
+  }
 }
 
 function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {

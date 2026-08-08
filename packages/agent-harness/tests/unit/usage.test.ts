@@ -117,12 +117,19 @@ describe("run usage accrual and cost ceiling", () => {
       },
     });
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const hash = configurationHash(config);
     let state: RunState = {
-      ...createRunState("usage-idempotent", "idea", new Date().toISOString(), "hash", CONFIG_VERSION),
+      ...createRunState("usage-idempotent", "idea", new Date().toISOString(), hash, CONFIG_VERSION),
       phase: "executing",
+      configurationHash: hash,
     };
     await engine.store.initialize();
     await engine.store.create(state);
+    await engine.store.writeJson(state.runId, "state.json", state);
+    await engine.store.writeJson(state.runId, "config.json", {
+      ...config,
+      configVersion: CONFIG_VERSION,
+    });
     await engine.store.writeJson(state.runId, "sessions/a.json", {
       sessionId: "a",
       role: "implementer",
@@ -144,8 +151,9 @@ describe("run usage accrual and cost ceiling", () => {
       usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
     });
 
-    const first = await engine.accrueUsage(state);
-    const second = await engine.accrueUsage(first);
+    // maxSteps=0: accrue on the yield path, twice, without consuming a step.
+    const first = await engine.advance(state.runId, 0);
+    const second = await engine.advance(first.runId, 0);
 
     expect(second.usage).toEqual(first.usage);
     expect(first.usage.totalTokens).toBe(1_500_150);
@@ -205,12 +213,19 @@ describe("run usage accrual and cost ceiling", () => {
       },
     });
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const hash = configurationHash(config);
     let state: RunState = {
-      ...createRunState("unpriced-model", "idea", new Date().toISOString(), "hash", CONFIG_VERSION),
+      ...createRunState("unpriced-model", "idea", new Date().toISOString(), hash, CONFIG_VERSION),
       phase: "executing",
+      configurationHash: hash,
     };
     await engine.store.initialize();
     await engine.store.create(state);
+    await engine.store.writeJson(state.runId, "state.json", state);
+    await engine.store.writeJson(state.runId, "config.json", {
+      ...config,
+      configVersion: CONFIG_VERSION,
+    });
     await engine.store.writeJson(state.runId, "sessions/unpriced.json", {
       sessionId: "unpriced",
       role: "implementer",
@@ -219,7 +234,7 @@ describe("run usage accrual and cost ceiling", () => {
       usage: { inputTokens: 2_000, outputTokens: 500, totalTokens: 2_500 },
     });
 
-    state = await engine.accrueUsage(state);
+    state = await engine.advance(state.runId, 0);
 
     expect(state.usage.totalTokens).toBe(2_500);
     expect(state.usage.inputTokens).toBe(2_000);

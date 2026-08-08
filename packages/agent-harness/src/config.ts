@@ -568,11 +568,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Canonical policy view for hashing: keys sorted recursively; environment paths omitted.
  */
-export function canonicalConfigForHash(config: unknown): unknown {
+function canonicalConfigForHash(config: unknown): unknown {
   return canonicalizeForHash(config, "");
 }
 
-/** Stable sha256 over {@link canonicalConfigForHash}. */
+/** Stable sha256 over the canonical policy view of a harness config. */
 export function configurationHash(config: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify(canonicalConfigForHash(config)))

@@ -262,102 +262,8 @@ export class HarnessEngine {
       // Lock ordering: repository → run, always (avoid deadlock with paths that take both).
       state = await this.store.withRepositoryLock({ runId, action: "advance" }, async () => {
         return this.store.withLock(runId, async () => {
-          let state = await this.store.load(runId);
-          try {
-            state = await this.ensureCompatibleConfiguration(state);
-            if (!(terminal(state.phase) || state.phase === "awaiting_input")) {
-              if (await this.isCancelRequested(runId)) {
-                state = await this.completeCancellation(state);
-              } else {
-                if (state.yieldedAt) {
-                  state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
-                }
-                await this.assertTreeFingerprint(state);
-                let remaining = maxSteps;
-                let iterations = 0;
-                const maxIterations = Math.max(maxSteps * 8, 40);
-                while (remaining > 0 && iterations < maxIterations) {
-                  iterations += 1;
-                  if (await this.isCancelRequested(runId)) {
-                    state = await this.completeCancellation(state);
-                    break;
-                  }
-                  // Enforce spend ceilings between steps only — never abort mid-step.
-                  state = await this.accrueUsage(state);
-                  this.assertWithinBudget(state);
-                  const step = await this.advanceOneWithProviderRetry(state);
-                  state = step.state;
-                  await this.syncArtifacts(state);
-                  if (step.consumedBudget) {
-                    remaining -= 1;
-                    state = await this.accrueUsage(state);
-                  }
-                  if (await this.isCancelRequested(runId)) {
-                    state = await this.completeCancellation(state);
-                    break;
-                  }
-                  if (terminal(state.phase) || state.phase === "awaiting_input") {
-                    state = await this.accrueUsage(state);
-                    break;
-                  }
-                }
-                // Step budget exhausted — yield only when cancel has not already won.
-                if (
-                  !terminal(state.phase) &&
-                  state.phase !== "awaiting_input" &&
-                  !(await this.isCancelRequested(runId))
-                ) {
-                  state = await this.accrueUsage(state);
-                  state = await this.store.record(
-                    { ...state, yieldedAt: new Date().toISOString() },
-                    "run.yielded",
-                    { maxSteps },
-                  );
-                }
-              }
-            }
-          } catch (error) {
-            state = await this.store.load(runId).catch(() => state);
-            if (
-              error instanceof RunCancelledError ||
-              (await this.isCancelRequested(runId))
-            ) {
-              state = await this.completeCancellation(state);
-              await this.syncArtifacts(state);
-            } else {
-              const message = error instanceof Error ? error.message : String(error);
-              const classified = classifyFailure(error);
-              // Keep the latest accrued usage on the blocked snapshot when available.
-              state = await this.accrueUsage(state).catch(() => state);
-              const blockedFrom =
-                state.phase === "blocked" ? (state.blockedFrom ?? state.phase) : state.phase;
-              state = await this.store.record(
-                {
-                  ...state,
-                  phase: "blocked",
-                  blockedFrom,
-                  failure: message,
-                  blockedKind: classified.kind,
-                  blockedRetriable: classified.retriable,
-                },
-                "run.blocked",
-                {
-                  blockedFrom,
-                  error: message,
-                  blockedKind: classified.kind,
-                  blockedRetriable: classified.retriable,
-                },
-              );
-              await this.syncArtifacts(state);
-            }
-          }
-          // Drain cancel before releasing the run lock. Covers cancel after the last
-          // post-step check (yield / awaiting_input / terminal) so cancel.request cannot
-          // outlive the advancing process while the UI stays on "Cancelling…".
-          if (await this.isCancelRequested(runId)) {
-            state = await this.completeCancellation(state);
-          }
-          return state;
+          const loaded = await this.store.load(runId);
+          return this.runAdvanceLoop(runId, loaded, maxSteps);
         });
       });
     } finally {
@@ -378,10 +284,113 @@ export class HarnessEngine {
   }
 
   /**
+   * In-lock advance body: step loop, usage accrual ordering, failure → blocked,
+   * and cancel drain before the run lock is released.
+   */
+  private async runAdvanceLoop(
+    runId: string,
+    state: RunState,
+    maxSteps: number,
+  ): Promise<RunState> {
+    try {
+      state = await this.ensureCompatibleConfiguration(state);
+      if (!(terminal(state.phase) || state.phase === "awaiting_input")) {
+        if (await this.isCancelRequested(runId)) {
+          state = await this.completeCancellation(state);
+        } else {
+          if (state.yieldedAt) {
+            state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
+          }
+          await this.assertTreeFingerprint(state);
+          let remaining = maxSteps;
+          let iterations = 0;
+          const maxIterations = Math.max(maxSteps * 8, 40);
+          while (remaining > 0 && iterations < maxIterations) {
+            iterations += 1;
+            if (await this.isCancelRequested(runId)) {
+              state = await this.completeCancellation(state);
+              break;
+            }
+            // Enforce spend ceilings between steps only — never abort mid-step.
+            state = await this.accrueUsage(state);
+            this.assertWithinBudget(state);
+            const step = await this.advanceOneWithProviderRetry(state);
+            state = step.state;
+            await this.syncArtifacts(state);
+            if (step.consumedBudget) {
+              remaining -= 1;
+              state = await this.accrueUsage(state);
+            }
+            if (await this.isCancelRequested(runId)) {
+              state = await this.completeCancellation(state);
+              break;
+            }
+            if (terminal(state.phase) || state.phase === "awaiting_input") {
+              state = await this.accrueUsage(state);
+              break;
+            }
+          }
+          // Step budget exhausted — yield only when cancel has not already won.
+          if (
+            !terminal(state.phase) &&
+            state.phase !== "awaiting_input" &&
+            !(await this.isCancelRequested(runId))
+          ) {
+            state = await this.accrueUsage(state);
+            state = await this.store.record(
+              { ...state, yieldedAt: new Date().toISOString() },
+              "run.yielded",
+              { maxSteps },
+            );
+          }
+        }
+      }
+    } catch (error) {
+      state = await this.store.load(runId).catch(() => state);
+      if (error instanceof RunCancelledError || (await this.isCancelRequested(runId))) {
+        state = await this.completeCancellation(state);
+        await this.syncArtifacts(state);
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        const classified = classifyFailure(error);
+        // Keep the latest accrued usage on the blocked snapshot when available.
+        state = await this.accrueUsage(state).catch(() => state);
+        const blockedFrom =
+          state.phase === "blocked" ? (state.blockedFrom ?? state.phase) : state.phase;
+        state = await this.store.record(
+          {
+            ...state,
+            phase: "blocked",
+            blockedFrom,
+            failure: message,
+            blockedKind: classified.kind,
+            blockedRetriable: classified.retriable,
+          },
+          "run.blocked",
+          {
+            blockedFrom,
+            error: message,
+            blockedKind: classified.kind,
+            blockedRetriable: classified.retriable,
+          },
+        );
+        await this.syncArtifacts(state);
+      }
+    }
+    // Drain cancel before releasing the run lock. Covers cancel after the last
+    // post-step check (yield / awaiting_input / terminal) so cancel.request cannot
+    // outlive the advancing process while the UI stays on "Cancelling…".
+    if (await this.isCancelRequested(runId)) {
+      state = await this.completeCancellation(state);
+    }
+    return state;
+  }
+
+  /**
    * Recompute run usage from sessions/*.json and replace state.usage.
    * Idempotent: reading the same files twice yields the same totals.
    */
-  async accrueUsage(state: RunState): Promise<RunState> {
+  private async accrueUsage(state: RunState): Promise<RunState> {
     const files = await this.store.listFiles(state.runId, "sessions");
     let inputTokens = 0;
     let outputTokens = 0;
@@ -700,14 +709,7 @@ export class HarnessEngine {
         });
       }
       state = await this.store.record(
-        {
-          ...state,
-          phase: resumePhase,
-          blockedFrom: undefined,
-          failure: undefined,
-          blockedKind: undefined,
-          blockedRetriable: undefined,
-        },
+        clearBlock(state, resumePhase),
         "run.retry_requested",
         {
           force: Boolean(options?.force),
@@ -769,15 +771,7 @@ export class HarnessEngine {
         const listed = divergingPaths.length > 0 ? divergingPaths : current;
         const treeFingerprint = await this.git.treeFingerprint();
         state = await this.store.record(
-          {
-            ...state,
-            phase: state.blockedFrom,
-            blockedFrom: undefined,
-            failure: undefined,
-            blockedKind: undefined,
-            blockedRetriable: undefined,
-            treeFingerprint,
-          },
+          { ...clearBlock(state, state.blockedFrom), treeFingerprint },
           "run.tree_accepted",
           {
             previousFingerprint,
@@ -807,12 +801,7 @@ export class HarnessEngine {
         const commit = await this.runPreflightCommit(runId, order, message);
         state = await this.store.record(
           {
-            ...state,
-            phase: state.blockedFrom,
-            blockedFrom: undefined,
-            failure: undefined,
-            blockedKind: undefined,
-            blockedRetriable: undefined,
+            ...clearBlock(state, state.blockedFrom),
             branchName: commit.runBranch ?? state.branchName,
             treeFingerprint: await this.git.treeFingerprint(),
           },
@@ -1928,6 +1917,18 @@ function safeId(value: string, fallback: string): string {
 
 function terminal(phase: RunPhase): boolean {
   return phase === "completed" || phase === "blocked" || phase === "cancelled";
+}
+
+/** Clear blocked-* fields and resume at `phase` (shared by retry / acceptTree / commitPreflight). */
+function clearBlock(state: RunState, phase: RunPhase): RunState {
+  return {
+    ...state,
+    phase,
+    blockedFrom: undefined,
+    failure: undefined,
+    blockedKind: undefined,
+    blockedRetriable: undefined,
+  };
 }
 
 const DIRTY_TREE_PATH_LIMIT = 10;

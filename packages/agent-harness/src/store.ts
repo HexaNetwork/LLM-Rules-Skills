@@ -12,7 +12,7 @@ import type { HarnessConfig } from "./config.js";
 
 const LOCK_STALE_MS = 30 * 60 * 1000;
 
-export type LockBody = {
+type LockBody = {
   pid: number;
   hostname: string;
   at: string;

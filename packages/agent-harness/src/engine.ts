@@ -531,6 +531,8 @@ export class HarnessEngine {
         }
         attempt += 1;
         const message = error instanceof Error ? error.message : String(error);
+        // Reload before recording — advanceOne may have persisted mid-step progress.
+        state = await this.store.load(state.runId);
         state = await this.store.record(state, "run.provider_retry", {
           attempt,
           error: message,
@@ -544,14 +546,18 @@ export class HarnessEngine {
   }
 
   /**
-   * Item 10 must make this wait interruptible (in-process AbortSignal + cancel.request).
-   * Until then, honor an existing `<runDir>/cancel.request` before/after the backoff sleep.
+   * Chunk backoff so `<runDir>/cancel.request` can short-circuit without waiting the full delay.
+   * Item 10 will also abort on the run's in-process AbortSignal.
    */
   private async sleepProviderBackoff(ms: number, runId: string): Promise<void> {
-    await this.throwIfCancelRequested(runId);
-    // TODO(item 10): chunk this sleep and abort immediately when cancel.request appears
-    // or the run's AbortController fires mid-wait.
-    await this.sleep(ms);
+    const chunkMs = 100;
+    let remaining = ms;
+    while (remaining > 0) {
+      await this.throwIfCancelRequested(runId);
+      const slice = Math.min(chunkMs, remaining);
+      await this.sleep(slice);
+      remaining -= slice;
+    }
     await this.throwIfCancelRequested(runId);
   }
 

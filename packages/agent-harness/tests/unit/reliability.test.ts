@@ -306,12 +306,96 @@ describe("failure classification", () => {
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
     expect(calls).toBe(3);
-    expect(sleeps).toEqual([1000, 4000]);
+    // Backoff is chunked into 100ms polls (1s + 4s).
+    expect(sleeps.every((ms) => ms === 100)).toBe(true);
+    expect(sleeps.reduce((sum, ms) => sum + ms, 0)).toBe(5_000);
     const events = await engine.store.readText(state.runId, "events.jsonl");
     const retryEvents = events
       .split("\n")
       .filter((line) => line.includes("run.provider_retry"));
     expect(retryEvents).toHaveLength(2);
+  });
+
+  it("does not clobber mid-step persisted state when recording run.provider_retry", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 1 },
+    });
+    let calls = 0;
+    const phasesDuringBackoff: string[] = [];
+    let runId = "";
+    const backend = createFakeBackend({
+      reflector: () => {
+        calls += 1;
+        if (calls === 1) throw new AgentBackendRunError("Cursor run failed mid-step");
+        return {
+          summary: "ok",
+          restatement: "Ship it",
+          goal: "Ship",
+          users: ["ops"],
+          inScope: ["a"],
+          outOfScope: [],
+          assumptions: [],
+          unknowns: [],
+        };
+      },
+    });
+    const engine = new HarnessEngine(config, {
+      backend,
+      sleep: async () => {
+        // reflect.started persists phase=reflecting before the provider throws. Without
+        // reloading before run.provider_retry, the stale in-memory phase ("new") would
+        // overwrite state.json.
+        const mid = await engine.store.load(runId);
+        phasesDuringBackoff.push(mid.phase);
+      },
+    });
+    const started = await engine.start("mid-step retry");
+    runId = started.runId;
+    expect(started.phase).toBe("new");
+    const state = await engine.advance(runId);
+    expect(phasesDuringBackoff.length).toBeGreaterThan(0);
+    expect(phasesDuringBackoff.every((phase) => phase === "reflecting")).toBe(true);
+    expect(state.phase).toBe("awaiting_input");
+    expect(calls).toBe(2);
+    const events = await engine.store.readText(runId, "events.jsonl");
+    expect(events).toContain("reflect.started");
+    expect(events).toContain("run.provider_retry");
+  });
+
+  it("short-circuits provider retry backoff when cancel.request appears", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 },
+    });
+    let runId = "";
+    const sleeps: number[] = [];
+    const backend = createFakeBackend({
+      reflector: () => {
+        throw new AgentBackendRunError("Cursor run flaky during backoff");
+      },
+    });
+    const engine = new HarnessEngine(config, {
+      backend,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        if (sleeps.length === 1) {
+          await writeFile(
+            path.join(engine.store.runDirectory(runId), "cancel.request"),
+            "1",
+            "utf8",
+          );
+        }
+      },
+    });
+    const started = await engine.start("cancel during backoff");
+    runId = started.runId;
+    const state = await engine.advance(runId);
+    // One 100ms chunk, then cancel.request is noticed — not the full 1s backoff.
+    expect(sleeps).toEqual([100]);
+    expect(state.phase).toBe("blocked");
+    expect(state.failure).toMatch(/cancellation requested/i);
+    expect(state.blockedKind).toBe("internal");
   });
 
   it("blocks with blockedKind provider when the backend always throws", async () => {

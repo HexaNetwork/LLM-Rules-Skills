@@ -75,4 +75,11 @@ describe("prompt rendering", () => {
     expect(renderPromptBuilderPrompt(packet)).toContain("selected guidance block");
     expect(renderPromptBuilderPrompt(packet)).toContain("General/rules/login.mdc");
   });
+
+  it("tells reviewers the diff is primary evidence", () => {
+    const reviewPacket: WorkPacket = { ...packet, role: "reviewer" };
+    expect(renderPrompt(reviewPacket)).toContain(
+      "The diff is the primary evidence. Read the listed omitted files from disk before commenting on them.",
+    );
+  });
 });

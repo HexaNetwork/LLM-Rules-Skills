@@ -96,6 +96,9 @@ export const HarnessConfigSchema = z.object({
       contextCharacters: z.number().int().positive().default(12_000),
       // Serialized packet.input ceiling (longest string leaf truncated first).
       inputCharacters: z.number().int().positive().default(24_000),
+      // Reviewer diff budget; defaults to Math.min(20_000, inputCharacters/2) so
+      // a full-size diff survives buildWorkPacket without input-budget truncation.
+      reviewDiffCharacters: z.number().int().positive().optional(),
       // Graphify excerpt sub-budget within the context ceiling.
       graphifyCharacters: z.number().int().positive().default(3_000),
       // Per-task commit subjects use the deterministic fallback unless enabled.
@@ -111,7 +114,13 @@ export const HarnessConfigSchema = z.object({
         "src/test/**",
       ]),
     })
-    .default({}),
+    .default({})
+    .transform((workflow) => ({
+      ...workflow,
+      reviewDiffCharacters:
+        workflow.reviewDiffCharacters ??
+        Math.min(20_000, Math.floor(workflow.inputCharacters / 2)),
+    })),
   commands: z
     .object({
       test: z.string().min(1).default("npm test -- --run"),
@@ -387,6 +396,8 @@ workflow:
   contextCharacters: 12000
   # Serialized packet.input ceiling.
   inputCharacters: 24000
+  # Reviewer diff budget (defaults to min(20000, inputCharacters/2) when omitted).
+  reviewDiffCharacters: 12000
   # Graphify excerpt sub-budget inside contextCharacters.
   graphifyCharacters: 3000
   # Deterministic commit subjects by default; PR bodies still use the model.

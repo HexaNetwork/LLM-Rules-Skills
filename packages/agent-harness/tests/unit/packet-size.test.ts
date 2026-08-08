@@ -64,6 +64,8 @@ function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
           task: taskForPacket(task),
           changedFiles: task.changedFiles,
           commandEvidence: recentEvidenceOutput(task.evidence),
+          diff: "diff --git a/src/settlement.ts b/src/settlement.ts\n+export {}",
+          diffOmittedFiles: [],
         }
       : role === "test-writer"
         ? {

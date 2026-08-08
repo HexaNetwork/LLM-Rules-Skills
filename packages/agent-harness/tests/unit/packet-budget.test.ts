@@ -53,6 +53,50 @@ describe("recentEvidenceOutput", () => {
 });
 
 describe("buildWorkPacket budgets", () => {
+  it("keeps a full-size review diff without input-budget truncation", () => {
+    const config = fixtureConfig(".", {});
+    const diffBudget = config.workflow.reviewDiffCharacters;
+    const diff = `diff --git a/src/a.ts b/src/a.ts\n${"x".repeat(Math.max(0, diffBudget - 40))}`;
+    expect(diff.length).toBeLessThanOrEqual(diffBudget);
+
+    const { packet, budgetAudit } = buildWorkPacket({
+      invocationId: "inv",
+      runId: "run",
+      role: "reviewer",
+      objective: "review",
+      constraints: [],
+      input: {
+        task: {
+          id: "t1",
+          title: "Ship feature",
+          description: "A short task body",
+          acceptanceCriteria: ["works"],
+        },
+        changedFiles: ["src/a.ts"],
+        commandEvidence: "ok",
+        diff,
+        diffOmittedFiles: [],
+      },
+      guidance: [],
+      retrievalResults: [],
+      priorArtifacts: [],
+      expectedOutput: "{approved,summary,findings}",
+      createdAt: "2026-08-07T00:00:00.000Z",
+      budgets: {
+        contextCharacters: config.workflow.contextCharacters,
+        inputCharacters: config.workflow.inputCharacters,
+        graphifyCharacters: config.workflow.graphifyCharacters,
+      },
+    });
+
+    expect((packet.input as { diff: string }).diff).toBe(diff);
+    expect(
+      budgetAudit.truncations.filter(
+        (item) => item.reason === "input-budget" && item.path.includes("diff"),
+      ),
+    ).toEqual([]);
+  });
+
   it("passes under-budget input through byte-identical", () => {
     const input = { task: { title: "Ship greeting", description: "short" } };
     const { packet, budgetAudit } = buildWorkPacket({

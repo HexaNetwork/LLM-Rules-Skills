@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { access } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { relative as pathRelative, resolve as pathResolve } from "node:path";
 import type { HarnessConfig } from "./config.js";
@@ -51,6 +52,62 @@ export class GitService {
     if (!this.config.git.enabled) return [];
     const { paths } = await this.porcelainStatus();
     return paths;
+  }
+
+  /**
+   * Unified diff for specific paths, budgeted per whole file (never mid-hunk).
+   * Intent-to-add newly created files so they appear vs HEAD.
+   */
+  async diffForPaths(
+    paths: string[],
+    maxCharacters: number,
+  ): Promise<{ diff: string; omittedFiles: string[]; truncated: boolean }> {
+    if (!this.config.git.enabled || paths.length === 0) {
+      return { diff: "", omittedFiles: [], truncated: false };
+    }
+    const existing: string[] = [];
+    for (const filePath of paths) {
+      try {
+        await access(pathResolve(this.config.repositoryRoot, filePath));
+        existing.push(normalize(filePath));
+      } catch {
+        // Skip paths that no longer exist.
+      }
+    }
+    if (existing.length === 0) {
+      return { diff: "", omittedFiles: [], truncated: false };
+    }
+    await this.git(["add", "--intent-to-add", "--", ...existing], true);
+    const result = await this.git(["diff", "--no-color", "HEAD", "--", ...existing], true);
+    const sections = splitDiffSections(result.stdout);
+    const kept: string[] = [];
+    const omittedFiles: string[] = [];
+    let used = 0;
+    let truncated = false;
+    for (const section of sections) {
+      if (isBinaryDiffSection(section)) {
+        omittedFiles.push(pathFromDiffSection(section));
+        continue;
+      }
+      if (truncated) {
+        omittedFiles.push(pathFromDiffSection(section));
+        continue;
+      }
+      const candidateLength = kept.length === 0 ? section.length : used + 1 + section.length;
+      if (candidateLength > maxCharacters) {
+        // Never mid-hunk: omit this file and every remaining text section.
+        omittedFiles.push(pathFromDiffSection(section));
+        truncated = true;
+        continue;
+      }
+      kept.push(section);
+      used = candidateLength;
+    }
+    return {
+      diff: kept.join("\n"),
+      omittedFiles: [...new Set(omittedFiles.filter(Boolean))],
+      truncated,
+    };
   }
 
   /**
@@ -231,4 +288,20 @@ function sanitizeSubject(value: string): string {
 
 function normalize(value: string): string {
   return value.replaceAll("\\", "/");
+}
+
+function splitDiffSections(diff: string): string[] {
+  if (!diff.trim()) return [];
+  const normalized = diff.replace(/\r\n/g, "\n").replace(/\s+$/, "");
+  return normalized.split(/(?=^diff --git )/m).filter((section) => section.startsWith("diff --git "));
+}
+
+function isBinaryDiffSection(section: string): boolean {
+  return /^Binary files /m.test(section) || /GIT binary patch/m.test(section);
+}
+
+function pathFromDiffSection(section: string): string {
+  const match = /^diff --git a\/(.+?) b\/(.+)$/m.exec(section);
+  if (!match) return "";
+  return normalize(match[2] ?? match[1] ?? "");
 }

@@ -1577,6 +1577,10 @@ export class HarnessEngine {
 
   private async reviewTask(state: RunState, task: BuildTask): Promise<RunState> {
     const changedFiles = this.config.git.enabled ? await this.git.changedFiles() : task.changedFiles;
+    const diffResult =
+      this.config.git.enabled && changedFiles.length > 0
+        ? await this.git.diffForPaths(changedFiles, this.config.workflow.reviewDiffCharacters)
+        : { diff: "", omittedFiles: [] as string[], truncated: false };
     const review = await this.agents.invoke({
       runId: state.runId,
       role: "reviewer",
@@ -1585,6 +1589,8 @@ export class HarnessEngine {
         task: taskForPacket(task),
         changedFiles,
         commandEvidence: recentEvidenceOutput(task.evidence),
+        diff: diffResult.diff,
+        diffOmittedFiles: diffResult.omittedFiles,
       },
       expectedOutput: "{approved,summary,findings:[{severity,message}]}",
       schema: ReviewOutputSchema,

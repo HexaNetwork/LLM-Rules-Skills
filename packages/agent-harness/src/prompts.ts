@@ -41,6 +41,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "Do not edit files.",
     "Block only for a demonstrable correctness, security, or acceptance failure.",
     "Use advisory findings for optional improvements.",
+    "The diff is the primary evidence. Read the listed omitted files from disk before commenting on them.",
   ],
   "message-writer": [
     "Do not run git commands.",

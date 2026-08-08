@@ -13,6 +13,122 @@ import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 const exec = promisify(execFile);
 
+describe("diffForPaths", () => {
+  it("includes a new untracked file in the diff via intent-to-add", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    const service = new GitService(fixtureConfig(root, { git: { enabled: true } as never }));
+
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "new-file.ts"), "export const added = 1;\n", "utf8");
+
+    const result = await service.diffForPaths(["src/new-file.ts"], 20_000);
+    expect(result.diff).toContain("diff --git");
+    expect(result.diff).toContain("src/new-file.ts");
+    expect(result.diff).toContain("export const added = 1;");
+    expect(result.omittedFiles).toEqual([]);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("drops whole files when over budget and reports them in omittedFiles", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    const service = new GitService(fixtureConfig(root, { git: { enabled: true } as never }));
+
+    await mkdir(path.join(root, "src"), { recursive: true });
+    // Names chosen so git's alphabetical section order keeps the small file first.
+    await writeFile(path.join(root, "src", "a-small.ts"), "export const small = 1;\n", "utf8");
+    await writeFile(
+      path.join(root, "src", "b-large.ts"),
+      `export const large = "${"x".repeat(2_000)}";\n`,
+      "utf8",
+    );
+
+    const full = await service.diffForPaths(["src/a-small.ts", "src/b-large.ts"], 100_000);
+    expect(full.diff).toContain("src/a-small.ts");
+    expect(full.diff).toContain("src/b-large.ts");
+
+    const tight = await service.diffForPaths(["src/a-small.ts", "src/b-large.ts"], 400);
+    expect(tight.diff).toContain("src/a-small.ts");
+    expect(tight.diff).not.toContain("src/b-large.ts");
+    expect(tight.omittedFiles).toContain("src/b-large.ts");
+    expect(tight.truncated).toBe(true);
+    // Whole-file budget: every kept section starts at a file boundary.
+    for (const section of tight.diff.split(/(?=^diff --git )/m).filter(Boolean)) {
+      expect(section.startsWith("diff --git ")).toBe(true);
+    }
+  });
+
+  it("omits binary file sections from the diff", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    const service = new GitService(fixtureConfig(root, { git: { enabled: true } as never }));
+
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "text.ts"), "export const ok = true;\n", "utf8");
+    await writeFile(path.join(root, "src", "blob.bin"), Buffer.from([0, 1, 2, 3, 255, 0, 10]));
+
+    const result = await service.diffForPaths(["src/text.ts", "src/blob.bin"], 20_000);
+    expect(result.diff).toContain("src/text.ts");
+    expect(result.diff).not.toMatch(/Binary files|GIT binary patch/);
+    expect(result.omittedFiles).toContain("src/blob.bin");
+  });
+});
+
+describe("reviewTask packet", () => {
+  it("passes diff and diffOmittedFiles to the reviewer", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "feature.ts"), "export const feature = true;\n", "utf8");
+
+    let reviewerPrompt = "";
+    const config = fixtureConfig(root, {
+      agent: { promptBuilder: false } as never,
+      workflow: { ...fixtureConfig(root).workflow, maxStepsPerRun: 1, tdd: false },
+      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      git: { enabled: true } as never,
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
+      },
+    });
+    const backend = createFakeBackend({
+      reviewer: (request) => {
+        reviewerPrompt = request.prompt;
+        return { approved: true, summary: "ok", findings: [] };
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const task = pendingTask("t1", "Ship feature");
+    task.status = "active";
+    task.step = "reviewing";
+    task.changedFiles = ["src/feature.ts"];
+    let state = await seedExecutingRun(engine, config, "review-diff", [task]);
+
+    state = await engine.advance(state.runId, 1);
+    expect(state.phase).not.toBe("blocked");
+
+    const packetFiles = await engine.store.listFiles(state.runId, "packets");
+    const reviewerPacketPath = packetFiles.find(
+      (name) => name.endsWith(".json") && !name.includes(".guidance.") && !name.includes(".retrieval."),
+    );
+    expect(reviewerPacketPath).toBeTruthy();
+    const packet = (await engine.store.readJson(state.runId, reviewerPacketPath!)) as {
+      role: string;
+      input: { diff?: string; diffOmittedFiles?: string[]; changedFiles?: string[] };
+    };
+    expect(packet.role).toBe("reviewer");
+    expect(packet.input.diff).toContain("src/feature.ts");
+    expect(packet.input.diff).toContain("export const feature = true;");
+    expect(packet.input.diffOmittedFiles).toEqual([]);
+    expect(reviewerPrompt).toContain(
+      "The diff is the primary evidence. Read the listed omitted files from disk before commenting on them.",
+    );
+  });
+});
+
 describe("harness-owned git", () => {
   it("creates the run branch, commits only reported paths, and writes the task trailer", async () => {
     const root = await fixtureRoot();

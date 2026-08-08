@@ -988,7 +988,7 @@ export class HarnessEngine {
     const touchedTests = observedPaths.filter((file) =>
       task.testPaths.some((testPath) => normalizePathKey(testPath) === normalizePathKey(file)),
     );
-    if (evidence.passed && touchedTests.length > 0) {
+    if (touchedTests.length > 0) {
       const exhausted = attempts.implementation >= this.config.workflow.maxImplementationAttempts;
       const failure = `Implementer modified recorded test files: ${touchedTests.join(", ")}`;
       const updated: BuildTask = {
@@ -1014,7 +1014,9 @@ export class HarnessEngine {
         failure: exhausted ? failure : undefined,
         reviewSummary: failure,
       };
-      return this.updateTask(state, updated, "task.implementation_test_tamper");
+      return this.updateTask(state, updated, "task.implementation_test_tamper", {
+        passed: evidence.passed,
+      });
     }
     const exhausted =
       !evidence.passed && attempts.implementation >= this.config.workflow.maxImplementationAttempts;

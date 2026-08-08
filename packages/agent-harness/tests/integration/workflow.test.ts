@@ -574,6 +574,65 @@ describe("durable idea-to-feature workflow", () => {
     void red;
   });
 
+  it("guards test-path tamper even when targeted tests fail", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: {
+        ...fixtureConfig(root).workflow,
+        tdd: true,
+        maxImplementationAttempts: 3,
+        generateCommitMessages: false,
+      },
+      commands: {
+        test: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
+        gates: [],
+      },
+    });
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => ({
+        status: "ready_to_plan",
+        summary: "Ready",
+        resolutions: [],
+      }),
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render greeting.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: true,
+            testCommand: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
+          },
+        ],
+      }),
+      "test-writer": () => {
+        process.env.HARNESS_FORCE_RED = "1";
+        return { summary: "wrote test", changedFiles: ["tests/greet.test.ts"] };
+      },
+      implementer: () => ({
+        summary: "touched test while still red",
+        changedFiles: ["src/greet.ts", "tests/greet.test.ts"],
+      }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: greet", body: "ok" }),
+    });
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Add greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    // grill + plan + writeTests + first implement; stop before repair retries exhaust.
+    state = await engine.advance(state.runId, 4);
+    const task = state.tasks[0];
+    expect(task?.step).toBe("implementing");
+    expect(task?.evidence.some((entry) => entry.purpose === "guard:test-tamper")).toBe(true);
+    expect(task?.reviewSummary).toMatch(/tests\/greet\.test\.ts/);
+    delete process.env.HARNESS_FORCE_RED;
+  });
+
   it("resolves a batch of independent questions in a single griller invocation", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {

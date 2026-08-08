@@ -722,29 +722,32 @@ export class HarnessEngine {
     runId: string,
     options?: { order?: PreflightCommitOrder; message?: string },
   ): Promise<RunState> {
-    return this.store.withLock(runId, async () => {
-      let state = await this.store.load(runId);
-      if (state.phase !== "blocked" || !state.blockedFrom) {
-        throw new Error(`Run ${runId} is not resumably blocked`);
-      }
-      const order = options?.order ?? this.config.git.preflightCommitOrder;
-      const message = options?.message ?? defaultPreflightCommitMessage(runId);
-      const commit = await this.runPreflightCommit(runId, order, message);
-      state = await this.store.record(
-        {
-          ...state,
-          phase: state.blockedFrom,
-          blockedFrom: undefined,
-          failure: undefined,
-          blockedKind: undefined,
-          blockedRetriable: undefined,
-          branchName: commit.runBranch ?? state.branchName,
-        },
-        "run.preflight_committed",
-        preflightCommitDetail(order, commit, false),
-      );
-      return state;
-    });
+    // Lock ordering: repository → run (mutates the shared working tree).
+    return this.store.withRepositoryLock({ runId, action: "commitPreflight" }, async () =>
+      this.store.withLock(runId, async () => {
+        let state = await this.store.load(runId);
+        if (state.phase !== "blocked" || !state.blockedFrom) {
+          throw new Error(`Run ${runId} is not resumably blocked`);
+        }
+        const order = options?.order ?? this.config.git.preflightCommitOrder;
+        const message = options?.message ?? defaultPreflightCommitMessage(runId);
+        const commit = await this.runPreflightCommit(runId, order, message);
+        state = await this.store.record(
+          {
+            ...state,
+            phase: state.blockedFrom,
+            blockedFrom: undefined,
+            failure: undefined,
+            blockedKind: undefined,
+            blockedRetriable: undefined,
+            branchName: commit.runBranch ?? state.branchName,
+          },
+          "run.preflight_committed",
+          preflightCommitDetail(order, commit, false),
+        );
+        return state;
+      }),
+    );
   }
 
   private async runPreflightCommit(

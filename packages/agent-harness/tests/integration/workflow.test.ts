@@ -319,6 +319,9 @@ describe("durable idea-to-feature workflow", () => {
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
     expect(state.configVersion).toBe(CONFIG_VERSION);
+    expect(state.configurationHash).toBe(
+      createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+    );
     const events = await readFile(
       path.join(root, ".agent-harness", "runs", state.runId, "events.jsonl"),
       "utf8",

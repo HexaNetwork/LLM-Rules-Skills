@@ -197,8 +197,14 @@ export class HarnessEngine {
 
   private async ensureCompatibleConfiguration(state: RunState): Promise<RunState> {
     if (state.configVersion < CONFIG_VERSION) {
+      // Re-stamp the hash before any comparison so additive config defaults
+      // from a CONFIG_VERSION bump do not permanently block existing runs.
       return this.store.record(
-        { ...state, configVersion: CONFIG_VERSION },
+        {
+          ...state,
+          configVersion: CONFIG_VERSION,
+          configurationHash: configurationHash(this.config),
+        },
         "run.config_migrated",
         { from: state.configVersion, to: CONFIG_VERSION },
       );
@@ -1398,7 +1404,7 @@ export function isTestPath(filePath: string, patterns: readonly string[]): boole
   return patterns.some((pattern) => matchesGlob(pattern, normalized));
 }
 
-export function includesSourcePath(paths: string[], extensions: readonly string[]): boolean {
+function includesSourcePath(paths: string[], extensions: readonly string[]): boolean {
   const allowed = new Set(extensions.map((ext) => ext.toLowerCase()));
   return paths.some((filePath) => {
     const normalized = filePath.replaceAll("\\", "/");

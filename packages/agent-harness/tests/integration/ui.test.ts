@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
+import { createFakeBackend, stepPersistenceLimits } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
@@ -182,6 +182,240 @@ describe("central dashboard", () => {
     expect(changedBody.signature).not.toBe(firstBody.signature);
     expect(changedBody.state).toBeTruthy();
     void detail;
+  });
+
+  it("appends agent steps to steps.jsonl and updates activity.json during a run", async () => {
+    const root = await fixtureRoot();
+    const runId = "live-activity-run";
+    const config = fixtureConfig(root, {
+      agent: { promptBuilder: false, timeoutMs: 10_000, schemaRepairAttempts: 0 } as never,
+    });
+    let releaseReflect!: () => void;
+    const holdReflect = new Promise<void>((resolve) => {
+      releaseReflect = resolve;
+    });
+    let midRunActivity: Record<string, unknown> | undefined;
+    let midRunSteps = "";
+
+    const backend = createFakeBackend({
+      reflector: async (request) => {
+        request.onStep?.({
+          type: "toolCall",
+          toolName: "readFile",
+          summary: "readFile README.md",
+        });
+        const runDir = path.join(root, ".agent-harness", "runs", runId);
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          try {
+            const activity = JSON.parse(
+              await readFile(path.join(runDir, "activity.json"), "utf8"),
+            ) as Record<string, unknown>;
+            const { readdir } = await import("node:fs/promises");
+            const sessionFiles = await readdir(path.join(runDir, "sessions"));
+            const stepsFile = sessionFiles.find((name) => name.endsWith(".steps.jsonl"));
+            if (stepsFile && Number(activity.stepCount) >= 1) {
+              midRunActivity = activity;
+              midRunSteps = await readFile(path.join(runDir, "sessions", stepsFile), "utf8");
+              break;
+            }
+          } catch {
+            // still writing
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        await holdReflect;
+        return REFLECT_OUTPUT;
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+    await engine.start("Live activity", runId, false);
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+
+    const resume = request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: { action: "resume" },
+    });
+    const readyDeadline = Date.now() + 5_000;
+    while (!midRunSteps && Date.now() < readyDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(midRunSteps.trim()).toBeTruthy();
+    const stepLine = JSON.parse(midRunSteps.trim().split(/\r?\n/)[0]!) as Record<string, unknown>;
+    expect(stepLine).toMatchObject({
+      type: "toolCall",
+      toolName: "readFile",
+      summary: "readFile README.md",
+    });
+    expect(midRunActivity).toMatchObject({
+      role: "reflector",
+      lastStepSummary: "readFile README.md",
+      stepCount: 1,
+    });
+    expect(midRunActivity?.sessionId).toBeTruthy();
+    expect(midRunActivity?.model).toBeTruthy();
+    expect(midRunActivity?.startedAt).toBeTruthy();
+    expect(midRunActivity?.lastStepAt).toBeTruthy();
+
+    releaseReflect();
+    await resume;
+    await waitForPhase(ui, runId, "awaiting_input");
+
+    const sessionsDir = path.join(root, ".agent-harness", "runs", runId, "sessions");
+    const { readdir } = await import("node:fs/promises");
+    const stepsFile = (await readdir(sessionsDir)).find((name) => name.endsWith(".steps.jsonl"));
+    expect(stepsFile).toBeTruthy();
+    expect(await readFile(path.join(sessionsDir, stepsFile!), "utf8")).toContain("readFile README.md");
+    await expect(readFile(path.join(root, ".agent-harness", "runs", runId, "activity.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("never persists raw tool args in steps.jsonl", async () => {
+    const root = await fixtureRoot();
+    const runId = "redact-args-run";
+    const config = fixtureConfig(root, {
+      agent: { promptBuilder: false, timeoutMs: 10_000, schemaRepairAttempts: 0 } as never,
+    });
+    const secret = "SUPER_SECRET_TOKEN_do_not_persist";
+    const backend = createFakeBackend({
+      reflector: async (request) => {
+        // Deliberately pass a hostile extra `args` field — persistence must strip it.
+        (request.onStep as ((step: Record<string, unknown>) => void) | undefined)?.({
+          type: "toolCall",
+          toolName: "write",
+          summary: "write secrets.env",
+          args: { path: "secrets.env", contents: secret },
+        });
+        return REFLECT_OUTPUT;
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+    await engine.start("Redact args", runId, false);
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+    await request(ui, `/api/runs/${runId}/actions`, { method: "POST", body: { action: "resume" } });
+    await waitForPhase(ui, runId, "awaiting_input");
+
+    const { readdir } = await import("node:fs/promises");
+    const sessionsDir = path.join(root, ".agent-harness", "runs", runId, "sessions");
+    const stepsFile = (await readdir(sessionsDir)).find((name) => name.endsWith(".steps.jsonl"));
+    expect(stepsFile).toBeTruthy();
+    const raw = await readFile(path.join(sessionsDir, stepsFile!), "utf8");
+    expect(raw).toContain("write secrets.env");
+    expect(raw).not.toContain(secret);
+    expect(raw).not.toContain('"args"');
+    expect(raw).not.toContain("contents");
+  });
+
+  it("stops appending to steps.jsonl once the line/byte cap is reached", async () => {
+    const root = await fixtureRoot();
+    const runId = "steps-cap-run";
+    const previousLimits = { ...stepPersistenceLimits };
+    stepPersistenceLimits.maxLines = 5;
+    stepPersistenceLimits.maxBytes = 256 * 1024;
+    try {
+      const config = fixtureConfig(root, {
+        agent: { promptBuilder: false, timeoutMs: 10_000, schemaRepairAttempts: 0 } as never,
+      });
+      const backend = createFakeBackend({
+        reflector: async (request) => {
+          for (let index = 0; index < 12; index += 1) {
+            request.onStep?.({
+              type: "toolCall",
+              toolName: "readFile",
+              summary: `readFile file-${index}.ts`,
+            });
+          }
+          return REFLECT_OUTPUT;
+        },
+      });
+      const engine = new HarnessEngine(config, { backend });
+      await engine.start("Cap steps", runId, false);
+      await engine.advance(runId);
+
+      const { readdir } = await import("node:fs/promises");
+      const sessionsDir = path.join(root, ".agent-harness", "runs", runId, "sessions");
+      const stepsFile = (await readdir(sessionsDir)).find((name) => name.endsWith(".steps.jsonl"));
+      expect(stepsFile).toBeTruthy();
+      const raw = await readFile(path.join(sessionsDir, stepsFile!), "utf8");
+      const lines = raw.split(/\r?\n/).filter(Boolean);
+      expect(lines.length).toBeLessThanOrEqual(6);
+      expect(lines.some((line) => line.includes('"type":"truncated"'))).toBe(true);
+      expect(raw).toContain("file-4.ts");
+      expect(raw).not.toContain("file-11.ts");
+    } finally {
+      stepPersistenceLimits.maxLines = previousLimits.maxLines;
+      stepPersistenceLimits.maxBytes = previousLimits.maxBytes;
+    }
+  });
+
+  it("changes the poll signature when only activity.json changes", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Activity signature", "activity-sig-run", false);
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+
+    const first = await request(ui, `/api/runs/${started.runId}`);
+    const firstBody = (await first.json()) as { signature: string; activity?: unknown };
+    expect(firstBody.signature).toBeTruthy();
+    expect(firstBody.activity == null).toBe(true);
+
+    const unchanged = await request(
+      ui,
+      `/api/runs/${started.runId}?since=${encodeURIComponent(firstBody.signature)}`,
+    );
+    expect(((await unchanged.json()) as { unchanged?: boolean }).unchanged).toBe(true);
+
+    await engine.store.writeJson(started.runId, "activity.json", {
+      sessionId: "sess-1",
+      role: "implementer",
+      model: "composer-2.5",
+      startedAt: "2026-08-08T00:00:00.000Z",
+      lastStepAt: "2026-08-08T00:00:05.000Z",
+      lastStepSummary: "editing src/engine.ts",
+      stepCount: 3,
+    });
+
+    const changed = await request(
+      ui,
+      `/api/runs/${started.runId}?since=${encodeURIComponent(firstBody.signature)}`,
+    );
+    const changedBody = (await changed.json()) as {
+      unchanged?: boolean;
+      signature: string;
+      activity?: { stepCount?: number; lastStepSummary?: string };
+    };
+    expect(changedBody.unchanged).toBeUndefined();
+    expect(changedBody.signature).not.toBe(firstBody.signature);
+    expect(changedBody.activity).toMatchObject({
+      stepCount: 3,
+      lastStepSummary: "editing src/engine.ts",
+    });
+
+    const still = await request(
+      ui,
+      `/api/runs/${started.runId}?since=${encodeURIComponent(changedBody.signature)}`,
+    );
+    expect(((await still.json()) as { unchanged?: boolean }).unchanged).toBe(true);
+
+    await engine.store.writeJson(started.runId, "activity.json", {
+      sessionId: "sess-1",
+      role: "implementer",
+      model: "composer-2.5",
+      startedAt: "2026-08-08T00:00:00.000Z",
+      lastStepAt: "2026-08-08T00:00:06.000Z",
+      lastStepSummary: "editing src/engine.ts",
+      stepCount: 4,
+    });
+    const stepped = await request(
+      ui,
+      `/api/runs/${started.runId}?since=${encodeURIComponent(changedBody.signature)}`,
+    );
+    const steppedBody = (await stepped.json()) as { signature: string; activity?: { stepCount?: number } };
+    expect(steppedBody.signature).not.toBe(changedBody.signature);
+    expect(steppedBody.activity?.stepCount).toBe(4);
   });
 
   it("accepts the legacy single {questionId, answer} shape for the answer action", async () => {

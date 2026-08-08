@@ -351,7 +351,8 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         const runId = decodeURIComponent(runMatch[1]!);
         const state = await store.load(runId);
         const job = jobs.get(runId);
-        const signature = runSignature(state, job);
+        const activity = await readActivity(store, runId);
+        const signature = runSignature(state, job, activity);
         const since = url.searchParams.get("since");
         if (since && since === signature) {
           return json(response, 200, { unchanged: true, signature });
@@ -384,6 +385,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           events,
           sessions,
           artifacts,
+          activity,
           signature,
           ...(git ? { git } : {}),
           ...(ceilings ? { ceilings } : {}),
@@ -576,12 +578,38 @@ function summarizeRun(state: RunState, job?: UiJob): Record<string, unknown> {
   };
 }
 
+type UiActivity = {
+  sessionId?: string;
+  role?: string;
+  model?: string;
+  startedAt?: string;
+  lastStepAt?: string;
+  lastStepSummary?: string;
+  stepCount?: number;
+  truncated?: boolean;
+};
+
 /**
  * Cheap change signature for polling clients: state.revision plus job status
- * plus lastEventSequence — no events.jsonl read needed to detect "nothing changed".
+ * plus lastEventSequence plus live activity — no events.jsonl read needed to
+ * detect "nothing changed". activity.lastStepAt and stepCount must be included
+ * or unchanged-poll short-circuiting hides in-flight agent steps.
  */
-function runSignature(state: RunState, job?: UiJob): string {
-  return `${state.revision}:${state.lastEventSequence}:${job ? `${job.status}:${job.detail ?? ""}` : "none"}`;
+function runSignature(state: RunState, job?: UiJob, activity?: UiActivity | null): string {
+  const activityPart = activity
+    ? `${activity.lastStepAt ?? ""}:${activity.stepCount ?? 0}`
+    : "none";
+  return `${state.revision}:${state.lastEventSequence}:${job ? `${job.status}:${job.detail ?? ""}` : "none"}:${activityPart}`;
+}
+
+async function readActivity(store: RunStore, runId: string): Promise<UiActivity | null> {
+  try {
+    const value = await store.readJson(runId, "activity.json");
+    return isRecord(value) ? (value as UiActivity) : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 function projectSettings(config: HarnessConfig, configPath?: string): Record<string, unknown> {
@@ -671,16 +699,50 @@ async function readSessionDetail(
     ? handoff.artifactRefs.filter((value): value is string => typeof value === "string")
     : [];
 
+  const stepsPath = sessionPath.replace(/\.json$/, ".steps.jsonl");
+  const steps = await readSessionSteps(store, runId, stepsPath);
+
   return {
     session,
     packet,
     retrieval,
+    steps,
+    stepsPath: steps ? stepsPath : undefined,
     inputPrompt: reconstructed.prompt,
     inputSource: reconstructed.source,
     relatedArtifacts: [
-      ...new Set([sessionPath, packetPath, retrievalPath, ...artifactRefs].filter(isString)),
+      ...new Set(
+        [sessionPath, packetPath, retrievalPath, steps ? stepsPath : undefined, ...artifactRefs].filter(
+          isString,
+        ),
+      ),
     ],
   };
+}
+
+async function readSessionSteps(
+  store: RunStore,
+  runId: string,
+  stepsPath: string,
+): Promise<unknown[] | undefined> {
+  try {
+    const raw = await store.readText(runId, stepsPath);
+    const lines = raw
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-500)
+      .map((line) => {
+        try {
+          return JSON.parse(line) as unknown;
+        } catch {
+          return { type: "invalid", summary: line.slice(0, 200) };
+        }
+      });
+    return lines;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 async function submittedPrompt(
@@ -778,7 +840,8 @@ function allowedArtifact(value: string): boolean {
     ["idea.md", "brief.md", "grill.md", "unknowns.md", "events.jsonl", "state.json", "config.json"].includes(
       value,
     ) ||
-    /^(issues|tasks|packets|sessions)\/[A-Za-z0-9._-]+$/.test(value)
+    /^(issues|tasks|packets|sessions)\/[A-Za-z0-9._-]+$/.test(value) ||
+    /^sessions\/[A-Za-z0-9][A-Za-z0-9._-]*\.steps\.jsonl$/.test(value)
   );
 }
 

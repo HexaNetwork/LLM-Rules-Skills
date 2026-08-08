@@ -107,6 +107,23 @@ export class RunStore {
     return target;
   }
 
+  /** Plain append (not atomic rewrite) for high-churn JSONL such as live agent steps. */
+  async appendJsonl(runId: string, relativePath: string, value: unknown): Promise<string> {
+    const target = this.resolveInsideRun(runId, relativePath);
+    await mkdir(path.dirname(target), { recursive: true });
+    await appendFile(target, `${JSON.stringify(value)}\n`, "utf8");
+    return target;
+  }
+
+  async remove(runId: string, relativePath: string): Promise<void> {
+    const target = this.resolveInsideRun(runId, relativePath);
+    try {
+      await unlink(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+
   async writeText(runId: string, relativePath: string, value: string): Promise<string> {
     const target = this.resolveInsideRun(runId, relativePath);
     await mkdir(path.dirname(target), { recursive: true });

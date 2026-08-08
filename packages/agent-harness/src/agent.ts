@@ -17,6 +17,12 @@ import {
 } from "./prompts.js";
 import { RunStore } from "./store.js";
 
+export type AgentStepEvent = {
+  type: string;
+  toolName?: string;
+  summary?: string;
+};
+
 export type AgentRequest = {
   role: AgentRole;
   model: string;
@@ -27,7 +33,16 @@ export type AgentRequest = {
   mode?: "agent" | "plan";
   cwd: string;
   signal: AbortSignal;
+  /** Redacted live step ticker; never includes raw tool args. */
+  onStep?: (step: AgentStepEvent) => void;
 };
+
+/** Mutable so tests can exercise the cap without writing thousands of lines. */
+export const stepPersistenceLimits = {
+  maxLines: 2_000,
+  maxBytes: 256 * 1024,
+};
+const ACTIVITY_WRITE_MIN_MS = 1_000;
 
 export type AgentBackendResult = {
   output: unknown;
@@ -303,11 +318,12 @@ export class AgentCoordinator {
         const submittedPrompt = providerSessionId && continuationPrompt
           ? continuationPrompt
           : prompt;
+        const model = modelForRole(this.config, role);
         await this.store.writeJson(runId, `sessions/${sessionId}.json`, {
           sessionId,
           invocationId: packet.invocationId,
           role,
-          model: modelForRole(this.config, role),
+          model,
           providerSessionId,
           status: "running",
           attempt,
@@ -316,13 +332,21 @@ export class AgentCoordinator {
           startedAt,
         });
 
+        const activity = createSessionActivityTracker(this.store, runId, {
+          sessionId,
+          role,
+          model,
+          startedAt,
+        });
+        await activity.writeNow();
+
         let result: AgentBackendResult;
         try {
           result = await withTimeout(
             (signal) =>
               this.backend.run({
                 role,
-                model: modelForRole(this.config, role),
+                model,
                 prompt,
                 continuationPrompt,
                 providerSessionId,
@@ -330,12 +354,18 @@ export class AgentCoordinator {
                 mode: options.mode,
                 cwd: this.config.repositoryRoot,
                 signal,
+                onStep: (step) => {
+                  void activity.recordStep(step);
+                },
               }),
             this.config.agent.timeoutMs,
             `${role} agent`,
             options.signal,
           );
+          await activity.flush();
         } catch (error) {
+          await activity.flush();
+          await activity.clear();
           lastError = error;
           const failure = error instanceof AgentBackendRunError ? error.result : {};
           providerSessionId = failure.providerSessionId ?? providerSessionId;
@@ -349,7 +379,7 @@ export class AgentCoordinator {
             sessionId,
             invocationId: packet.invocationId,
             role,
-            model: modelForRole(this.config, role),
+            model,
             providerSessionId,
             providerRunId: failure.providerRunId,
             providerSessionReused: failure.providerSessionReused,
@@ -381,12 +411,13 @@ export class AgentCoordinator {
           harvestedRaw = harvested.raw;
           parsed = schema.parse(harvested.parsed);
         } catch (error) {
+          await activity.clear();
           lastError = error;
           await this.store.writeJson(runId, `sessions/${sessionId}.json`, {
             sessionId,
             invocationId: packet.invocationId,
             role,
-            model: modelForRole(this.config, role),
+            model,
             providerSessionId,
             providerRunId: result.providerRunId,
             providerSessionReused: result.providerSessionReused,
@@ -414,11 +445,12 @@ export class AgentCoordinator {
           continue;
         }
 
+        await activity.clear();
         await this.store.writeJson(runId, `sessions/${sessionId}.json`, {
           sessionId,
           invocationId: packet.invocationId,
           role,
-          model: modelForRole(this.config, role),
+          model,
           providerSessionId,
           providerRunId: result.providerRunId,
           providerSessionReused: result.providerSessionReused,
@@ -615,6 +647,7 @@ export function createCursorBackend(
           model: { id: request.model },
           mode: request.mode,
           onStep: ({ step }: { step: { type: string; message?: { type?: string; args?: unknown } } }) => {
+            request.onStep?.(summarizeAgentStep(step));
             if (step.type !== "toolCall") return;
             const planBody = createPlanBodyFromTool(step.message);
             if (planBody) createPlanBodies.push(planBody);
@@ -853,6 +886,157 @@ function jsonObjectEnd(text: string, start: number): number {
     }
   }
   return -1;
+}
+
+type SessionActivity = {
+  sessionId: string;
+  role: AgentRole;
+  model: string;
+  startedAt: string;
+  lastStepAt?: string;
+  lastStepSummary?: string;
+  stepCount: number;
+  truncated?: boolean;
+};
+
+function createSessionActivityTracker(
+  store: RunStore,
+  runId: string,
+  base: { sessionId: string; role: AgentRole; model: string; startedAt: string },
+) {
+  const stepsPath = `sessions/${base.sessionId}.steps.jsonl`;
+  let stepCount = 0;
+  let stepsBytes = 0;
+  let truncated = false;
+  let lastStepAt: string | undefined;
+  let lastStepSummary: string | undefined;
+  let lastWriteAt = 0;
+  let chain = Promise.resolve();
+  let pendingWrite = false;
+  let trailingTimer: NodeJS.Timeout | undefined;
+
+  function snapshot(): SessionActivity {
+    return {
+      sessionId: base.sessionId,
+      role: base.role,
+      model: base.model,
+      startedAt: base.startedAt,
+      ...(lastStepAt ? { lastStepAt } : {}),
+      ...(lastStepSummary ? { lastStepSummary } : {}),
+      stepCount,
+      ...(truncated ? { truncated: true } : {}),
+    };
+  }
+
+  async function writeActivity(): Promise<void> {
+    lastWriteAt = Date.now();
+    pendingWrite = false;
+    await store.writeJson(runId, "activity.json", snapshot());
+  }
+
+  function scheduleActivityWrite(force = false): void {
+    pendingWrite = true;
+    if (force) {
+      if (trailingTimer) {
+        clearTimeout(trailingTimer);
+        trailingTimer = undefined;
+      }
+      chain = chain.then(() => writeActivity()).catch(() => undefined);
+      return;
+    }
+    if (trailingTimer) return;
+    const waitMs = Math.max(0, ACTIVITY_WRITE_MIN_MS - (Date.now() - lastWriteAt));
+    trailingTimer = setTimeout(() => {
+      trailingTimer = undefined;
+      chain = chain.then(() => writeActivity()).catch(() => undefined);
+    }, waitMs);
+  }
+
+  return {
+    writeNow() {
+      chain = chain.then(() => writeActivity()).catch(() => undefined);
+      return chain;
+    },
+    recordStep(step: AgentStepEvent) {
+      chain = chain
+        .then(async () => {
+          const at = new Date().toISOString();
+          const line = {
+            type: step.type,
+            ...(step.toolName ? { toolName: step.toolName } : {}),
+            ...(step.summary ? { summary: step.summary } : {}),
+            at,
+          };
+          const encoded = `${JSON.stringify(line)}\n`;
+          const wasEmpty = stepCount === 0 && !truncated;
+          if (!truncated) {
+            if (
+              stepCount >= stepPersistenceLimits.maxLines ||
+              stepsBytes + Buffer.byteLength(encoded, "utf8") > stepPersistenceLimits.maxBytes
+            ) {
+              truncated = true;
+              const marker = { type: "truncated", at };
+              await store.appendJsonl(runId, stepsPath, marker);
+              stepsBytes += Buffer.byteLength(`${JSON.stringify(marker)}\n`, "utf8");
+            } else {
+              await store.appendJsonl(runId, stepsPath, line);
+              stepCount += 1;
+              stepsBytes += Buffer.byteLength(encoded, "utf8");
+            }
+          }
+          lastStepAt = at;
+          lastStepSummary = step.summary ?? step.toolName ?? step.type;
+          // First step bypasses the throttle so the header lights up immediately.
+          scheduleActivityWrite(wasEmpty);
+        })
+        .catch(() => undefined);
+    },
+    async flush() {
+      if (trailingTimer) {
+        clearTimeout(trailingTimer);
+        trailingTimer = undefined;
+      }
+      await chain;
+      if (pendingWrite || lastWriteAt === 0) await writeActivity();
+    },
+    async clear() {
+      if (trailingTimer) {
+        clearTimeout(trailingTimer);
+        trailingTimer = undefined;
+      }
+      await chain;
+      await store.remove(runId, "activity.json");
+    },
+  };
+}
+
+/** Derive a bounded, args-free step summary for persistence and UI. */
+export function summarizeAgentStep(step: {
+  type: string;
+  message?: { type?: string; args?: unknown };
+}): AgentStepEvent {
+  const toolName =
+    step.type === "toolCall" && typeof step.message?.type === "string"
+      ? step.message.type
+      : undefined;
+  const pathHint = toolName ? filePathFromToolArgs(step.message?.args) : undefined;
+  let summary = toolName ?? step.type;
+  if (toolName && pathHint) summary = `${toolName} ${pathHint}`;
+  if (summary.length > 200) summary = `${summary.slice(0, 199)}…`;
+  return {
+    type: step.type,
+    ...(toolName ? { toolName } : {}),
+    summary,
+  };
+}
+
+function filePathFromToolArgs(args: unknown): string | undefined {
+  if (!isRecord(args)) return undefined;
+  for (const key of ["path", "target", "file_path", "filePath", "relativePath"]) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
 }
 
 function createPlanBodyFromTool(message: { type?: string; args?: unknown } | undefined): string | undefined {

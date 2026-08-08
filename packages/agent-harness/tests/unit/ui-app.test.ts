@@ -316,4 +316,22 @@ describe("dashboard document", () => {
     expect(html).toContain('id="thinkingElapsed"');
     expect(html).toContain("setInterval(function () {");
   });
+
+  it("surfaces live activity in the thinking strip while a step is in flight", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("state.detail.activity");
+    expect(html).toContain("function activityLine(activity)");
+    expect(html).toContain("lastStepSummary");
+    expect(html).toContain(' · ');
+  });
+
+  it("tails steps.jsonl in the session inspector with scroll/details restoration keys", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("data.steps");
+    expect(html).toContain("Live steps");
+    expect(html).toContain('data-details-key="session-steps"');
+    expect(html).toContain('data-scroll-key="session-steps"');
+  });
 });

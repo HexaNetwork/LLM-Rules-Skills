@@ -22,11 +22,17 @@ preserved across any rewrite.
 ## Signature-based short-circuit
 
 `GET /api/runs/:id` accepts `?since=<signature>`. The server computes a cheap
-signature from `state.revision`, `state.lastEventSequence`, and the active
-job's status/detail (`runSignature` in `src/ui/server.ts`). When the query
-signature matches the current one, the server returns `{unchanged:true,
-signature}` with no `state`/`events`/`sessions`/`artifacts` payload — the
-client does zero re-render work for that poll.
+signature from `state.revision`, `state.lastEventSequence`, the active job's
+status/detail, and live `activity.lastStepAt` + `activity.stepCount`
+(`runSignature` in `src/ui/server.ts`). When the query signature matches the
+current one, the server returns `{unchanged:true, signature}` with no
+`state`/`events`/`sessions`/`artifacts`/`activity` payload — the client does
+zero re-render work for that poll.
+
+Live agent activity is disk-polled with the rest of the run detail (no SSE).
+`activity.json` is optional: when present it is included in the payload and
+folded into the signature so an in-flight tool step still invalidates
+unchanged-poll short-circuiting even if `state.revision` is unchanged.
 
 This replaced an earlier client-side approach that fetched the full payload
 every poll and diffed it via `JSON.stringify(detail) === state.detailFingerprint`.
@@ -84,6 +90,15 @@ now tracks `state.signature` (the last *rendered* signature) instead.
    `#thinkingElapsed`'s `textContent`. It self-stops the moment that node is
    gone (tab switched away, run reloaded), and `renderOverview` always calls
    `stopElapsedTimer()` before starting a fresh one, so timers never stack.
+   When `activity` is present, the strip shows
+   `role · model · 4m12s · lastStepSummary` instead of a separate elapsed node;
+   step progress then advances only on the next successful poll render.
+
+9. **Live activity never carries raw tool args.**
+   Steps are redacted at the agent boundary to `{ type, toolName?, summary? }`
+   (summary ≤200 chars) before `sessions/<id>.steps.jsonl` / `activity.json`
+   persistence. The session inspector tails `steps.jsonl` in a
+   collapsed-by-default block keyed for scroll/details restoration.
 
 ## Scrollable / disclosure keys that must stay stable
 
@@ -97,10 +112,12 @@ DOM (`#content` / `#tabBody`), give it a stable key:
 | Task acceptance criteria | `data-details-key="<taskId>-criteria"` | Tasks tab |
 | Task evidence group | `data-details-key="<taskId>-evidence"` | Tasks tab |
 | Resolved open-unknowns | `data-details-key="fog-resolved"` | Overview card |
+| Session live steps | `data-details-key="session-steps"` / `data-scroll-key="session-steps"` | Session inspector |
 
 Dialogs (artifact viewer, session inspector, settings, new run) are outside the
-poll rewrite path and do not need these keys unless a future change starts
-re-rendering them from the interval.
+poll rewrite path. The session-steps keys still follow this contract so chrome
+survives if a poll rewrite overlaps an open inspector, and so the surface stays
+consistent with overview/task keys.
 
 ## Known acceptable staleness
 
@@ -114,7 +131,10 @@ re-rendering them from the interval.
 
 - **Scroll jumps while idle** → signature short-circuit broken, or a field in
   `runSignature` (server) is changing every poll without a real state
-  transition.
+  transition (including a thrashing `activity.lastStepAt` / `stepCount`).
+- **Thinking strip stuck on a generic "working" line while tools run** →
+  `activity` missing from the poll payload, or `lastStepAt`/`stepCount` omitted
+  from `runSignature` so unchanged polls hide step updates.
 - **Scroll jumps only while a job runs** → capture/restore missing a new
   `[data-scroll-key]` region.
 - **Stale UI after finishing an answer edit** → signature advanced during an

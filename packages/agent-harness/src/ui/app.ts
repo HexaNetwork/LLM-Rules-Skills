@@ -390,6 +390,21 @@ export function renderDashboard(): string {
       var m = Math.floor(seconds / 60), s = seconds % 60;
       return m > 0 ? (m + "m " + String(s).padStart(2, "0") + "s") : (s + "s");
     }
+    function compactElapsed(sinceValue) {
+      if (!sinceValue) return "";
+      var seconds = Math.max(0, Math.floor((Date.now() - new Date(sinceValue).getTime()) / 1000));
+      var m = Math.floor(seconds / 60), s = seconds % 60;
+      return m > 0 ? (m + "m" + String(s).padStart(2, "0") + "s") : (s + "s");
+    }
+    function activityLine(activity) {
+      if (!activity) return "";
+      var parts = [];
+      if (activity.role) parts.push(String(activity.role));
+      if (activity.model) parts.push(String(activity.model));
+      if (activity.startedAt) parts.push(compactElapsed(activity.startedAt));
+      if (activity.lastStepSummary) parts.push(String(activity.lastStepSummary));
+      return parts.join(" · ");
+    }
     // Ticks every second without a full re-render, so it must not disturb scroll or focus.
     function startElapsedTimer(sinceValue) {
       stopElapsedTimer();
@@ -812,7 +827,11 @@ export function renderDashboard(): string {
       var openUnknownCount = unknowns.filter(function (u) { return u.status === "fog" || u.status === "asked"; }).length;
       var percent = taskTotal ? Math.round(taskDone / taskTotal * 100) : (s.phase === "completed" ? 100 : 0);
       var html = '<div class="grid">';
-      var thinkingSince = state.detail.job ? (state.detail.job.startedAt || state.detail.job.queuedAt) : null;
+      var activity = state.detail.activity;
+      var activityText = activityLine(activity);
+      var thinkingSince = activity && activity.startedAt
+        ? activity.startedAt
+        : (state.detail.job ? (state.detail.job.startedAt || state.detail.job.queuedAt) : null);
       if (state.cancelling && s.phase !== "cancelled") {
         html += '<div class="thinking-strip" role="status" aria-live="polite"><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="thinking-copy"><strong>Cancelling…</strong><span>Waiting for the current step to stop</span></div></div>';
       } else if (phase === "queued" || phase === "running") {
@@ -824,8 +843,9 @@ export function renderDashboard(): string {
             ? "Indexing knowledge before the reflector starts"
             : "An agent or deterministic command is working";
         if (jobDetail) thinkingDetail = jobDetail;
-        if (s.phase === "grilling" && unknowns.length) thinkingDetail += " · " + openUnknownCount + " open unknown(s) remain";
-        html += '<div class="thinking-strip" role="status" aria-live="polite"><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="thinking-copy"><strong>Thinking…</strong><span>' + esc(thinkingDetail) + '</span>' + (thinkingSince ? '<span id="thinkingElapsed">' + esc(elapsed(thinkingSince)) + '</span>' : '') + '</div></div>';
+        if (activityText) thinkingDetail = activityText;
+        if (s.phase === "grilling" && unknowns.length && !activityText) thinkingDetail += " · " + openUnknownCount + " open unknown(s) remain";
+        html += '<div class="thinking-strip" role="status" aria-live="polite"><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="thinking-copy"><strong>Thinking…</strong><span>' + esc(thinkingDetail) + '</span>' + (thinkingSince && !activityText ? '<span id="thinkingElapsed">' + esc(elapsed(thinkingSince)) + '</span>' : '') + '</div></div>';
       }
       if (s.phase === "awaiting_input") {
         var q = s.questions.find(function (item) { return item.id === s.activeQuestionId; });
@@ -1117,6 +1137,16 @@ export function renderDashboard(): string {
         }
         html += sessionSection('Model output', session.output == null ? 'No output recorded' : '', session.output, false);
         if (session.error) html += sessionSection('Error', '', session.error, true, 'session-error');
+        if (Array.isArray(data.steps) && data.steps.length) {
+          var stepsText = data.steps.map(function (step) {
+            if (!step || typeof step !== "object") return String(step);
+            var tool = step.toolName || step.type || "step";
+            var summary = step.summary ? String(step.summary) : tool;
+            var when = step.at ? String(step.at) : "";
+            return (when ? when + "  " : "") + summary;
+          }).join(String.fromCharCode(10));
+          html += '<details class="session-section" data-details-key="session-steps"><summary>Live steps<small>' + number(data.steps.length) + (data.stepsPath ? ' · ' + String(data.stepsPath) : '') + '</small></summary><pre data-scroll-key="session-steps">' + esc(stepsText) + '</pre></details>';
+        }
         html += sessionSection('Raw session record', '', session, false);
         if (artifacts) html += '<details class="session-section"><summary>Related artifacts</summary>' + artifacts + '</details>';
         $("sessionTitle").textContent = String(session.role || 'Session') + ' session';

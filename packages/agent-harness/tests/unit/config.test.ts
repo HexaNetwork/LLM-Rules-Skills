@@ -10,6 +10,7 @@ import {
   loadRunConfig,
   writeProjectSettings,
 } from "../../src/config.js";
+import { isTestPath } from "../../src/engine.js";
 import { fixtureRoot } from "../helpers.js";
 
 describe("token-conscious defaults", () => {
@@ -37,11 +38,44 @@ describe("token-conscious defaults", () => {
     expect(config.knowledge.maxChunksPerSource).toBe(1);
     expect(config.knowledge.maxForTopSource).toBe(2);
     expect(config.knowledge.graphify.stopwords).toEqual([]);
+    expect(config.workflow.testPathPatterns).toEqual([
+      "tests/**",
+      "test/**",
+      "**/__tests__/**",
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*_test.*",
+      "src/test/**",
+    ]);
+    expect(config.knowledge.graphify.sourceExtensions).toEqual([
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".mjs",
+      ".cjs",
+      ".py",
+      ".go",
+      ".rs",
+      ".java",
+      ".kt",
+      ".kts",
+      ".cs",
+      ".cpp",
+      ".c",
+      ".h",
+      ".hpp",
+      ".rb",
+      ".php",
+      ".swift",
+    ]);
     expect(defaultConfigYaml()).toContain("promptBuilder: false");
     expect(defaultConfigYaml()).toContain("relevanceFloor: 0.55");
     expect(defaultConfigYaml()).toContain("maxGrillQuestionsPerEpisode: 5");
     expect(defaultConfigYaml()).toContain("staleAnswerMinutes: 30");
     expect(defaultConfigYaml()).toContain("enabled: false");
+    expect(defaultConfigYaml()).toContain("testPathPatterns:");
+    expect(defaultConfigYaml()).toContain("sourceExtensions:");
     const deployed = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({
       sources: ["README.md", "src"],
       ollama: true,
@@ -61,6 +95,13 @@ describe("token-conscious defaults", () => {
       enabled: false,
       updateOnRefresh: false,
     });
+  });
+
+  it("classifies Go and Maven test paths with default patterns", () => {
+    const patterns = HarnessConfigSchema.parse({}).workflow.testPathPatterns;
+
+    expect(isTestPath("foo_test.go", patterns)).toBe(true);
+    expect(isTestPath("src/test/java/FooTest.java", patterns)).toBe(true);
   });
 
   it("persists editable settings without expanding the resolved repository path", async () => {

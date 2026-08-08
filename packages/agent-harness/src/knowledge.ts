@@ -1078,7 +1078,7 @@ function splitGlobList(value: string): string[] {
   return result.filter(Boolean);
 }
 
-function matchesGlob(glob: string, filePath: string): boolean {
+export function matchesGlob(glob: string, filePath: string): boolean {
   const pattern = glob.trim().replace(/^['"]|['"]$/g, "");
   if (!pattern) return false;
   const source = globToRegex(pattern);

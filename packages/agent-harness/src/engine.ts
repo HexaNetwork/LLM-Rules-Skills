@@ -41,7 +41,7 @@ import {
   type GraphifyRunner,
   type GraphifySetupRunner,
 } from "./graphify.js";
-import { LocalKnowledgeBase, compactDomainSeed } from "./knowledge.js";
+import { LocalKnowledgeBase, compactDomainSeed, matchesGlob } from "./knowledge.js";
 import { RunStore } from "./store.js";
 import { LocalTracker, assertAcyclic, taskFrontier, type TrackerPort } from "./tracker.js";
 
@@ -921,7 +921,8 @@ export class HarnessEngine {
       ),
     });
     const observedPaths = this.config.git.enabled ? await this.git.changedFiles() : result.changedFiles;
-    const illegal = observedPaths.filter((file) => !isTestPath(file));
+    const testPatterns = this.config.workflow.testPathPatterns;
+    const illegal = observedPaths.filter((file) => !isTestPath(file, testPatterns));
     if (illegal.length > 0) {
       throw new Error(`Test writer changed non-test paths: ${illegal.join(", ")}`);
     }
@@ -937,7 +938,10 @@ export class HarnessEngine {
     const updated: BuildTask = {
       ...task,
       attempts,
-      testPaths: unique([...task.testPaths, ...observedPaths.filter(isTestPath)]),
+      testPaths: unique([
+        ...task.testPaths,
+        ...observedPaths.filter((file) => isTestPath(file, testPatterns)),
+      ]),
       changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
       evidence: [...task.evidence, evidence],
       step: meaningfulRed ? "red" : exhausted ? "failed" : "writing_tests",
@@ -1120,7 +1124,10 @@ export class HarnessEngine {
         )
       : MessageOutputSchema.parse(fallback);
     const commitSha = await this.git.commitTask(task.id, message, task.changedFiles);
-    const graphifyUpdated = includesSourcePath(task.changedFiles)
+    const graphifyUpdated = includesSourcePath(
+      task.changedFiles,
+      this.config.knowledge.graphify.sourceExtensions,
+    )
       ? await this.knowledge.rebuildRepositoryGraph()
       : false;
     return this.updateTask(
@@ -1386,41 +1393,17 @@ export function taskForPacket(task: BuildTask): Omit<BuildTask, "evidence"> {
   };
 }
 
-function isTestPath(filePath: string): boolean {
-  const normalized = filePath.replaceAll("\\", "/").toLowerCase();
-  return (
-    normalized.startsWith("tests/") ||
-    normalized.startsWith("test/") ||
-    normalized.includes("/__tests__/") ||
-    /\.(test|spec)\.[^/]+$/.test(normalized)
-  );
+export function isTestPath(filePath: string, patterns: readonly string[]): boolean {
+  const normalized = filePath.replaceAll("\\", "/");
+  return patterns.some((pattern) => matchesGlob(pattern, normalized));
 }
 
-const SOURCE_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-  ".py",
-  ".go",
-  ".rs",
-  ".java",
-  ".kt",
-  ".kts",
-  ".cs",
-  ".cpp",
-  ".c",
-  ".h",
-  ".hpp",
-  ".rb",
-  ".php",
-  ".swift",
-]);
-
-function includesSourcePath(paths: string[]): boolean {
-  return paths.some((filePath) => SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()));
+export function includesSourcePath(paths: string[], extensions: readonly string[]): boolean {
+  const allowed = new Set(extensions.map((ext) => ext.toLowerCase()));
+  return paths.some((filePath) => {
+    const normalized = filePath.replaceAll("\\", "/");
+    return allowed.has(path.extname(normalized).toLowerCase());
+  });
 }
 
 function normalizePathKey(filePath: string): string {

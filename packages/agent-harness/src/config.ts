@@ -13,7 +13,7 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
 ];
 
 /** Bumped when the frozen run-config shape changes in a way that needs migration. */
-export const CONFIG_VERSION = 3;
+export const CONFIG_VERSION = 4;
 
 export const PreflightCommitOrderSchema = z.enum(["branch-then-commit", "commit-then-branch"]);
 export type PreflightCommitOrder = z.infer<typeof PreflightCommitOrderSchema>;
@@ -84,6 +84,16 @@ export const HarnessConfigSchema = z.object({
       graphifyCharacters: z.number().int().positive().default(3_000),
       // Per-task commit subjects use the deterministic fallback unless enabled.
       generateCommitMessages: z.boolean().default(false),
+      // Globs that mark paths as test-only for the test-writer legality check.
+      testPathPatterns: z.array(z.string().min(1)).default([
+        "tests/**",
+        "test/**",
+        "**/__tests__/**",
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/*_test.*",
+        "src/test/**",
+      ]),
     })
     .default({}),
   commands: z
@@ -164,6 +174,29 @@ export const HarnessConfigSchema = z.object({
           roles: z.array(AgentRoleSchema).default(REPOSITORY_LOOKUP_ROLES),
           // Project-specific noise merged over the built-in English + harness lists.
           stopwords: z.array(z.string().min(1)).default([]),
+          // Extensions that count as source for post-commit graphify rebuild.
+          sourceExtensions: z.array(z.string().min(1)).default([
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".mjs",
+            ".cjs",
+            ".py",
+            ".go",
+            ".rs",
+            ".java",
+            ".kt",
+            ".kts",
+            ".cs",
+            ".cpp",
+            ".c",
+            ".h",
+            ".hpp",
+            ".rb",
+            ".php",
+            ".swift",
+          ]),
         })
         .default({}),
     })
@@ -335,6 +368,15 @@ workflow:
   graphifyCharacters: 3000
   # Deterministic commit subjects by default; PR bodies still use the model.
   generateCommitMessages: false
+  # Paths the test-writer may edit; tune for Go (_test.go), Maven (src/test), etc.
+  testPathPatterns:
+    - tests/**
+    - test/**
+    - "**/__tests__/**"
+    - "**/*.test.*"
+    - "**/*.spec.*"
+    - "**/*_test.*"
+    - src/test/**
 
 commands:
   test: npm test -- --run
@@ -407,6 +449,28 @@ knowledge:
     queryBudgetTokens: 1200
     # Extra stopwords merged over the built-in English + harness lists.
     stopwords: []
+    # File extensions that trigger a graphify rebuild after a verified commit.
+    sourceExtensions:
+      - .ts
+      - .tsx
+      - .js
+      - .jsx
+      - .mjs
+      - .cjs
+      - .py
+      - .go
+      - .rs
+      - .java
+      - .kt
+      - .kts
+      - .cs
+      - .cpp
+      - .c
+      - .h
+      - .hpp
+      - .rb
+      - .php
+      - .swift
 `;
 }
 

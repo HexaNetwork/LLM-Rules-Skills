@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { access, readFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentBackendRunError, createFakeBackend, type AgentRequest } from "../../src/agent.js";
 import { runCommand } from "../../src/commands.js";
+import { CONFIG_VERSION } from "../../src/config.js";
+import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
@@ -205,6 +208,76 @@ describe("out-of-band cancellation", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect(phase).toBe("cancelled");
+  });
+
+  it("cancel during yield exit drains cancel.request and ends cancelled", async () => {
+    // Race: cancel after the last post-step check / during run.yielded must not leave
+    // cancel.request pending forever with the UI stuck on "Cancelling…".
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { ...fixtureConfig(root).workflow, maxStepsPerRun: 1, tdd: false },
+    });
+    let calls = 0;
+    const backend = createFakeBackend({
+      implementer: () => {
+        calls += 1;
+        return { summary: "built", changedFiles: [`src/a${calls}.ts`] };
+      },
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: a", body: "" }),
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const tasks: BuildTask[] = [1, 2].map((index) => ({
+      id: `t${index}`,
+      title: `Ship ${index}`,
+      description: `Do ${index}`,
+      acceptanceCriteria: ["works"],
+      affectedPaths: [],
+      blockedBy: [],
+      tdd: false,
+      testCommand: 'node -e "process.exit(0)"',
+      status: "pending" as const,
+      step: "pending" as const,
+      attempts: { tests: 0, implementation: 0, review: 0 },
+      evidence: [],
+      testPaths: [],
+      changedFiles: [],
+    }));
+    let seed: RunState = {
+      ...createRunState("cancel-yield", "idea", new Date().toISOString(), "hash", CONFIG_VERSION),
+      phase: "executing",
+      tasks,
+      reflectBrief: { draft: "d", confirmed: "confirmed", confirmedAt: new Date().toISOString() },
+    };
+    await engine.store.initialize();
+    await engine.store.create(seed);
+    seed = {
+      ...seed,
+      configurationHash: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+    };
+    await engine.store.writeJson(seed.runId, "state.json", seed);
+    await engine.store.writeJson(seed.runId, "config.json", {
+      ...config,
+      configVersion: CONFIG_VERSION,
+    });
+
+    const originalRecord = engine.store.record.bind(engine.store);
+    let cancelDuringYield: Awaited<ReturnType<HarnessEngine["cancel"]>> | undefined;
+    engine.store.record = async (state, type, detail) => {
+      if (type === "run.yielded") {
+        cancelDuringYield = await engine.cancel(state.runId);
+      }
+      return originalRecord(state, type, detail);
+    };
+
+    const state = await engine.advance(seed.runId, 1);
+
+    expect(cancelDuringYield?.pending).toBe(true);
+    expect(state.phase).toBe("cancelled");
+    const cancelPath = path.join(engine.store.runDirectory(seed.runId), "cancel.request");
+    await expect(access(cancelPath)).rejects.toMatchObject({ code: "ENOENT" });
+    const events = await engine.store.readText(seed.runId, "events.jsonl");
+    expect(events).toContain("run.cancelled");
   });
 
   it("writes cancel.request for cross-process cancellation at step boundaries", async () => {

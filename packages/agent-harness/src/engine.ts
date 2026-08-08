@@ -248,58 +248,64 @@ export class HarnessEngine {
   async advance(runId: string, maxSteps = this.config.workflow.maxStepsPerRun): Promise<RunState> {
     const controller = new AbortController();
     activeRuns.set(runId, controller);
+    let state: RunState;
     try {
       // Lock ordering: repository → run, always (avoid deadlock with paths that take both).
-      return await this.store.withRepositoryLock({ runId, action: "advance" }, async () => {
+      state = await this.store.withRepositoryLock({ runId, action: "advance" }, async () => {
         return this.store.withLock(runId, async () => {
           let state = await this.store.load(runId);
           try {
             state = await this.ensureCompatibleConfiguration(state);
-            if (terminal(state.phase) || state.phase === "awaiting_input") {
-              if (await this.cancelRequestPresent(runId)) {
-                return this.completeCancellation(state);
-              }
-              return state;
-            }
-            if (await this.isCancelRequested(runId)) {
-              return this.completeCancellation(state);
-            }
-            if (state.yieldedAt) {
-              state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
-            }
-            let remaining = maxSteps;
-            let iterations = 0;
-            const maxIterations = Math.max(maxSteps * 8, 40);
-            while (remaining > 0 && iterations < maxIterations) {
-              iterations += 1;
+            if (!(terminal(state.phase) || state.phase === "awaiting_input")) {
               if (await this.isCancelRequested(runId)) {
-                return this.completeCancellation(state);
-              }
-              // Enforce spend ceilings between steps only — never abort mid-step.
-              state = await this.accrueUsage(state);
-              this.assertWithinBudget(state);
-              const step = await this.advanceOneWithProviderRetry(state);
-              state = step.state;
-              await this.syncArtifacts(state);
-              if (step.consumedBudget) {
-                remaining -= 1;
-                state = await this.accrueUsage(state);
-              }
-              if (await this.isCancelRequested(runId)) {
-                return this.completeCancellation(state);
-              }
-              if (terminal(state.phase) || state.phase === "awaiting_input") {
-                state = await this.accrueUsage(state);
-                return state;
+                state = await this.completeCancellation(state);
+              } else {
+                if (state.yieldedAt) {
+                  state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
+                }
+                let remaining = maxSteps;
+                let iterations = 0;
+                const maxIterations = Math.max(maxSteps * 8, 40);
+                while (remaining > 0 && iterations < maxIterations) {
+                  iterations += 1;
+                  if (await this.isCancelRequested(runId)) {
+                    state = await this.completeCancellation(state);
+                    break;
+                  }
+                  // Enforce spend ceilings between steps only — never abort mid-step.
+                  state = await this.accrueUsage(state);
+                  this.assertWithinBudget(state);
+                  const step = await this.advanceOneWithProviderRetry(state);
+                  state = step.state;
+                  await this.syncArtifacts(state);
+                  if (step.consumedBudget) {
+                    remaining -= 1;
+                    state = await this.accrueUsage(state);
+                  }
+                  if (await this.isCancelRequested(runId)) {
+                    state = await this.completeCancellation(state);
+                    break;
+                  }
+                  if (terminal(state.phase) || state.phase === "awaiting_input") {
+                    state = await this.accrueUsage(state);
+                    break;
+                  }
+                }
+                // Step budget exhausted — yield only when cancel has not already won.
+                if (
+                  !terminal(state.phase) &&
+                  state.phase !== "awaiting_input" &&
+                  !(await this.isCancelRequested(runId))
+                ) {
+                  state = await this.accrueUsage(state);
+                  state = await this.store.record(
+                    { ...state, yieldedAt: new Date().toISOString() },
+                    "run.yielded",
+                    { maxSteps },
+                  );
+                }
               }
             }
-            state = await this.accrueUsage(state);
-            state = await this.store.record(
-              { ...state, yieldedAt: new Date().toISOString() },
-              "run.yielded",
-              { maxSteps },
-            );
-            return state;
           } catch (error) {
             state = await this.store.load(runId).catch(() => state);
             if (
@@ -308,39 +314,57 @@ export class HarnessEngine {
             ) {
               state = await this.completeCancellation(state);
               await this.syncArtifacts(state);
-              return state;
+            } else {
+              const message = error instanceof Error ? error.message : String(error);
+              const classified = classifyFailure(error);
+              // Keep the latest accrued usage on the blocked snapshot when available.
+              state = await this.accrueUsage(state).catch(() => state);
+              const blockedFrom =
+                state.phase === "blocked" ? (state.blockedFrom ?? state.phase) : state.phase;
+              state = await this.store.record(
+                {
+                  ...state,
+                  phase: "blocked",
+                  blockedFrom,
+                  failure: message,
+                  blockedKind: classified.kind,
+                  blockedRetriable: classified.retriable,
+                },
+                "run.blocked",
+                {
+                  blockedFrom,
+                  error: message,
+                  blockedKind: classified.kind,
+                  blockedRetriable: classified.retriable,
+                },
+              );
+              await this.syncArtifacts(state);
             }
-            const message = error instanceof Error ? error.message : String(error);
-            const classified = classifyFailure(error);
-            // Keep the latest accrued usage on the blocked snapshot when available.
-            state = await this.accrueUsage(state).catch(() => state);
-            const blockedFrom =
-              state.phase === "blocked" ? (state.blockedFrom ?? state.phase) : state.phase;
-            state = await this.store.record(
-              {
-                ...state,
-                phase: "blocked",
-                blockedFrom,
-                failure: message,
-                blockedKind: classified.kind,
-                blockedRetriable: classified.retriable,
-              },
-              "run.blocked",
-              {
-                blockedFrom,
-                error: message,
-                blockedKind: classified.kind,
-                blockedRetriable: classified.retriable,
-              },
-            );
-            await this.syncArtifacts(state);
-            return state;
           }
+          // Drain cancel before releasing the run lock. Covers cancel after the last
+          // post-step check (yield / awaiting_input / terminal) so cancel.request cannot
+          // outlive the advancing process while the UI stays on "Cancelling…".
+          if (await this.isCancelRequested(runId)) {
+            state = await this.completeCancellation(state);
+          }
+          return state;
         });
       });
     } finally {
       activeRuns.delete(runId);
     }
+    // Cancel may race in after the in-lock drain but before activeRuns was cleared
+    // (cancel short-circuits to pending while a controller exists). Finish it now.
+    if (await this.cancelRequestPresent(runId)) {
+      const locked = await this.store.tryWithLock(runId, CANCEL_LOCK_WAIT_MS, async () => {
+        const current = await this.store.load(runId);
+        return this.completeCancellation(current);
+      });
+      if (locked.acquired) {
+        state = locked.value;
+      }
+    }
+    return state;
   }
 
   /**

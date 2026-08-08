@@ -68,12 +68,36 @@ describe("reconcileUnknowns", () => {
     expect(result[0]?.id).toBe("tone");
   });
 
-  it("preserves incoming order for open entries and appends resolved ones", () => {
+  it("preserves incoming order for open entries and appends dropped ones", () => {
     const previous = [entry({ id: "a", title: "A" }), entry({ id: "old", title: "Old" })];
     const incoming = [draft({ id: "b", title: "B" }), draft({ id: "a", title: "A" })];
     const result = reconcileUnknowns(previous, incoming);
     expect(result.map((item) => item.id)).toEqual(["b", "a", "old"]);
-    expect(result.find((item) => item.id === "old")?.status).toBe("resolved");
+    expect(result.find((item) => item.id === "old")?.status).toBe("dropped");
+  });
+
+  it("marks a fog entry absent from incoming as dropped, not resolved", () => {
+    const previous = [entry({ status: "fog" })];
+    const result = reconcileUnknowns(previous, []);
+    expect(result).toEqual([entry({ status: "dropped" })]);
+  });
+
+  it("marks an asked entry absent from incoming as resolved", () => {
+    const previous = [entry({ status: "asked" })];
+    const result = reconcileUnknowns(previous, []);
+    expect(result).toEqual([entry({ status: "resolved" })]);
+  });
+
+  it("keeps a parked entry parked when it is absent from incoming", () => {
+    const previous = [entry({ status: "parked" })];
+    const result = reconcileUnknowns(previous, []);
+    expect(result).toEqual([entry({ status: "parked" })]);
+  });
+
+  it("returns a dropped entry to fog when it reappears in incoming", () => {
+    const previous = [entry({ status: "dropped" })];
+    const result = reconcileUnknowns(previous, [draft()]);
+    expect(result).toEqual([entry({ status: "fog" })]);
   });
 
   it("fills defaults for whyItMatters and impact when the draft omits them", () => {

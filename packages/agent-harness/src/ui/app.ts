@@ -607,7 +607,8 @@ export function renderDashboard(): string {
       var resolved = unknowns.filter(function (u) { return u.status === "resolved"; }).length;
       var open = unknowns.filter(function (u) { return u.status === "fog" || u.status === "asked"; }).length;
       var parked = unknowns.filter(function (u) { return u.status === "parked"; }).length;
-      return resolved + " resolved · " + open + " open · " + parked + " parked";
+      var dropped = unknowns.filter(function (u) { return u.status === "dropped"; }).length;
+      return resolved + " resolved · " + open + " open · " + parked + " parked · " + dropped + " dropped";
     }
 
     function renderFogCard(s) {

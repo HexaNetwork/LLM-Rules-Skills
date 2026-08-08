@@ -114,6 +114,7 @@ function renderUnknowns(unknowns: OpenUnknown[]): string {
     fog: [],
     asked: [],
     parked: [],
+    dropped: [],
     resolved: [],
   };
   for (const item of unknowns) groups[item.status].push(item);
@@ -135,6 +136,8 @@ ${section("Fog (not yet asked)", groups.fog)}
 ${section("Asked", groups.asked)}
 
 ${section("Parked", groups.parked)}
+
+${section("Dropped (griller stopped tracking)", groups.dropped)}
 
 ${section("Resolved", groups.resolved)}
 `;

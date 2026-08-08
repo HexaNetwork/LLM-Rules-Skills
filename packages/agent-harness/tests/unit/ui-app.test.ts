@@ -188,14 +188,15 @@ describe("dashboard document", () => {
     expect(html).toContain("keyboard-hint");
   });
 
-  it("renders the open-unknowns fog register with a resolved/open/parked headline", () => {
+  it("renders the open-unknowns fog register with a resolved/open/parked/dropped headline", () => {
     const html = renderDashboard();
 
     expect(html).toContain("function renderFogCard(s)");
     expect(html).toContain("function fogSummaryLine(unknowns)");
     expect(html).toContain('" resolved · "');
     expect(html).toContain('" open · "');
-    expect(html).toContain('" parked"');
+    expect(html).toContain('" parked · "');
+    expect(html).toContain('" dropped"');
     expect(html).toContain('data-details-key="fog-resolved"');
     expect(html).toContain("fog-entry impact-");
   });

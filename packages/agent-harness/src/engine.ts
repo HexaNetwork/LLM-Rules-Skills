@@ -1282,7 +1282,15 @@ export function reconcileUnknowns(
   });
   for (const prior of previous) {
     if (incomingIds.has(prior.id)) continue;
-    reconciled.push({ ...prior, status: "resolved" });
+    const status: OpenUnknown["status"] =
+      prior.status === "asked"
+        ? "resolved"
+        : prior.status === "parked"
+          ? "parked"
+          : prior.status === "resolved"
+            ? "resolved"
+            : "dropped";
+    reconciled.push({ ...prior, status });
   }
   return reconciled;
 }

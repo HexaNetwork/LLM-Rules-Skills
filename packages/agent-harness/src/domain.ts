@@ -68,7 +68,7 @@ export const OpenUnknownSchema = z.object({
   title: z.string().min(1),
   whyItMatters: z.string().default(""),
   impact: z.enum(["blocking", "shaping", "minor"]).default("shaping"),
-  status: z.enum(["fog", "asked", "parked", "resolved"]).default("fog"),
+  status: z.enum(["fog", "asked", "parked", "resolved", "dropped"]).default("fog"),
 });
 export type OpenUnknown = z.infer<typeof OpenUnknownSchema>;
 

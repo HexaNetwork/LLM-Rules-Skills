@@ -7,6 +7,7 @@ import {
   type AgentRole,
   type WorkPacket,
 } from "./domain.js";
+import { HarnessFailure } from "./errors.js";
 import { LocalKnowledgeBase } from "./knowledge.js";
 import { buildWorkPacket } from "./packet.js";
 import {
@@ -50,13 +51,16 @@ export interface AgentBackend {
   readiness?(): { ready: boolean; message?: string };
 }
 
-export class AgentBackendRunError extends Error {
+export class AgentBackendRunError extends HarnessFailure {
+  readonly result: Partial<AgentBackendResult>;
+
   constructor(
     message: string,
-    readonly result: Partial<AgentBackendResult> = {},
+    result: Partial<AgentBackendResult> = {},
   ) {
-    super(message);
+    super(message, "provider", true);
     this.name = "AgentBackendRunError";
+    this.result = result;
   }
 }
 
@@ -379,7 +383,14 @@ export class AgentCoordinator {
             output: harvestedRaw,
             error: error instanceof Error ? error.message : String(error),
           });
-          if (attempt + 1 >= attempts) throw error;
+          if (attempt + 1 >= attempts) {
+            throw new HarnessFailure(
+              error instanceof Error ? error.message : String(error),
+              "contract",
+              true,
+              { cause: error },
+            );
+          }
           const repair = repairInstruction("Validation error", error);
           prompt = `${initialPrompt}\n\n${repair}`;
           continuationPrompt = repair;
@@ -419,7 +430,14 @@ export class AgentCoordinator {
           providerTurns: attempt + 1,
         };
       }
-      throw lastError;
+      throw lastError instanceof HarnessFailure
+        ? lastError
+        : new HarnessFailure(
+            lastError instanceof Error ? lastError.message : String(lastError),
+            "contract",
+            true,
+            { cause: lastError },
+          );
     } finally {
       if (!options.retainProviderSession || !completed) {
         await this.releaseProviderSession(providerSessionId).catch(() => undefined);
@@ -590,12 +608,12 @@ export function createCursorBackend(
           run.wait(),
           new Promise<never>((_resolve, reject) => {
             if (request.signal.aborted) {
-              reject(new Error(`${request.role} aborted`));
+              reject(new HarnessFailure(`${request.role} aborted`, "provider", true));
               return;
             }
             request.signal.addEventListener(
               "abort",
-              () => reject(new Error(`${request.role} aborted`)),
+              () => reject(new HarnessFailure(`${request.role} aborted`, "provider", true)),
               { once: true },
             );
           }),
@@ -860,7 +878,7 @@ async function withTimeout<T>(
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       controller.abort();
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      reject(new HarnessFailure(`${label} timed out after ${timeoutMs}ms`, "provider", true));
     }, timeoutMs);
   });
   try {

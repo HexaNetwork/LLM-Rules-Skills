@@ -417,8 +417,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           const asUnknown = optionalBoolean(body.asUnknown, "asUnknown") ?? false;
           enqueue(runId, action, () => engine.addNote(runId, text, asUnknown));
         } else if (action === "retry") {
+          const force = optionalBoolean(body.force, "force") ?? false;
           enqueue(runId, action, async () => {
-            await engine.retry(runId);
+            await engine.retry(runId, { force });
             await engine.advance(runId);
           });
         } else if (action === "commit_preflight") {

@@ -4,6 +4,7 @@ export * from "./config.js";
 export * from "./domain.js";
 export * from "./embeddings.js";
 export * from "./engine.js";
+export * from "./errors.js";
 export * from "./git.js";
 export * from "./knowledge.js";
 export * from "./graphify.js";

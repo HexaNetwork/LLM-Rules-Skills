@@ -65,6 +65,8 @@ export const HarnessConfigSchema = z.object({
       tdd: z.boolean().default(true),
       // Counts expensive steps (agent invocations / shell commands), not free transitions.
       maxStepsPerRun: z.number().int().positive().max(100).default(40),
+      // Automatic in-place retries for transient provider failures inside advance().
+      maxProviderRetries: z.number().int().min(0).max(5).default(2),
       maxTestAttempts: z.number().int().positive().max(10).default(2),
       maxImplementationAttempts: z.number().int().positive().max(10).default(3),
       maxReviewAttempts: z.number().int().positive().max(10).default(2),
@@ -353,6 +355,8 @@ workflow:
   tdd: true
   # Expensive steps only (agent invocations and shell commands).
   maxStepsPerRun: 40
+  # Transient provider failures retry in-place (backoff 1s/4s/16s); does not consume step budget.
+  maxProviderRetries: 2
   maxTestAttempts: 2
   maxImplementationAttempts: 3
   maxReviewAttempts: 2

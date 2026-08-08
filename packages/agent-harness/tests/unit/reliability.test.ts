@@ -1,14 +1,19 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { utimes, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
+import { AgentBackendRunError, createFakeBackend } from "../../src/agent.js";
 import { CONFIG_VERSION } from "../../src/config.js";
 import { runCommand } from "../../src/commands.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
+import {
+  HarnessFailure,
+  classifyFailure,
+} from "../../src/errors.js";
 import { RunStore } from "../../src/store.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
@@ -241,5 +246,170 @@ describe("step budget", () => {
     expect(state.phase).toBe("executing");
     const events = await engine.store.readText(state.runId, "events.jsonl");
     expect(events).toContain("run.yielded");
+  });
+});
+
+describe("failure classification", () => {
+  it("returns HarnessFailure fields and falls back via message patterns for legacy errors", () => {
+    const harness = new HarnessFailure("provider down", "provider", true);
+    expect(classifyFailure(harness)).toEqual({ kind: "provider", retriable: true });
+
+    expect(classifyFailure(new AgentBackendRunError("Cursor run x error"))).toEqual({
+      kind: "provider",
+      retriable: true,
+    });
+
+    expect(classifyFailure(new Error("The working tree has uncommitted changes: a.ts"))).toEqual({
+      kind: "workspace",
+      retriable: true,
+    });
+    expect(classifyFailure(new Error("Run configuration changed; resume with the persisted run config"))).toEqual({
+      kind: "config",
+      retriable: false,
+    });
+    expect(classifyFailure(new Error("unexpected boom"))).toEqual({
+      kind: "internal",
+      retriable: false,
+    });
+  });
+
+  it("retries a provider failure twice then succeeds, emitting run.provider_retry events", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 },
+    });
+    let calls = 0;
+    const backend = createFakeBackend({
+      reflector: () => {
+        calls += 1;
+        if (calls <= 2) throw new AgentBackendRunError(`Cursor run failed attempt ${calls}`);
+        return {
+          summary: "ok",
+          restatement: "Ship it",
+          goal: "Ship",
+          users: ["ops"],
+          inScope: ["a"],
+          outOfScope: [],
+          assumptions: [],
+          unknowns: [],
+        };
+      },
+    });
+    const sleeps: number[] = [];
+    const engine = new HarnessEngine(config, {
+      backend,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+    let state = await engine.start("provider retry");
+    state = await engine.advance(state.runId);
+    expect(state.phase).toBe("awaiting_input");
+    expect(calls).toBe(3);
+    expect(sleeps).toEqual([1000, 4000]);
+    const events = await engine.store.readText(state.runId, "events.jsonl");
+    const retryEvents = events
+      .split("\n")
+      .filter((line) => line.includes("run.provider_retry"));
+    expect(retryEvents).toHaveLength(2);
+  });
+
+  it("blocks with blockedKind provider when the backend always throws", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 },
+    });
+    const backend = createFakeBackend({
+      reflector: () => {
+        throw new AgentBackendRunError("Cursor run always-fails error");
+      },
+    });
+    const engine = new HarnessEngine(config, {
+      backend,
+      sleep: async () => undefined,
+    });
+    let state = await engine.start("always fail");
+    state = await engine.advance(state.runId);
+    expect(state.phase).toBe("blocked");
+    expect(state.blockedKind).toBe("provider");
+    expect(state.blockedRetriable).toBe(true);
+    expect(state.failure).toMatch(/always-fails/i);
+  });
+
+  it("refuses retry on a config-kind block without force, and allows it with force", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const engine = new HarnessEngine(config, {
+      backend: createFakeBackend({}),
+    });
+    await engine.store.initialize();
+    const now = new Date().toISOString();
+    let state: RunState = {
+      ...createRunState("cfg-block", "idea", now, "hash", CONFIG_VERSION),
+      phase: "blocked",
+      blockedFrom: "reflecting",
+      failure: "Run configuration changed; resume with the persisted run config",
+      blockedKind: "config",
+      blockedRetriable: false,
+    };
+    await engine.store.create(state);
+    await engine.store.writeJson(state.runId, "config.json", {
+      ...config,
+      configVersion: CONFIG_VERSION,
+    });
+
+    await expect(engine.retry(state.runId)).rejects.toThrow(/config/i);
+    await expect(engine.retry(state.runId, { force: true })).resolves.toMatchObject({
+      phase: "reflecting",
+      blockedKind: undefined,
+      blockedRetriable: undefined,
+      failure: undefined,
+    });
+  });
+
+  it("keeps retry permissive when blockedRetriable is undefined (legacy runs)", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const engine = new HarnessEngine(config, {
+      backend: createFakeBackend({}),
+    });
+    await engine.store.initialize();
+    const state: RunState = {
+      ...createRunState("legacy-block", "idea", new Date().toISOString(), "hash", CONFIG_VERSION),
+      phase: "blocked",
+      blockedFrom: "reflecting",
+      failure: "something old",
+    };
+    await engine.store.create(state);
+    await expect(engine.retry(state.runId)).resolves.toMatchObject({ phase: "reflecting" });
+  });
+
+  it("records blockedKind config when ensureCompatibleConfiguration detects a hash mismatch", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const backend = createFakeBackend({
+      reflector: () => ({
+        summary: "ok",
+        restatement: "Ship it",
+        goal: "Ship",
+        users: ["ops"],
+        inScope: ["a"],
+        outOfScope: [],
+        assumptions: [],
+        unknowns: [],
+      }),
+    });
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("hash drift");
+    state = {
+      ...state,
+      configurationHash: createHash("sha256").update("different").digest("hex"),
+      configVersion: CONFIG_VERSION,
+    };
+    await engine.store.writeJson(state.runId, "state.json", state);
+    state = await engine.advance(state.runId);
+    expect(state.phase).toBe("blocked");
+    expect(state.blockedKind).toBe("config");
+    expect(state.blockedRetriable).toBe(false);
   });
 });

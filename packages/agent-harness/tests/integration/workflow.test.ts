@@ -282,15 +282,17 @@ describe("durable idea-to-feature workflow", () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       agent: { timeoutMs: 20 } as never,
+      workflow: { maxProviderRetries: 0 } as never,
     });
     const backend = createFakeBackend({
       reflector: () => new Promise(() => undefined),
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new HarnessEngine(config, { backend, sleep: async () => undefined });
     let state = await engine.start("Hang");
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("blocked");
     expect(state.blockedFrom).toBe("reflecting");
+    expect(state.blockedKind).toBe("provider");
   });
 
   it("migrates older configVersion runs and refuses same-version hash mismatches", async () => {
@@ -333,6 +335,8 @@ describe("durable idea-to-feature workflow", () => {
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("blocked");
     expect(state.failure).toMatch(/configuration changed/i);
+    expect(state.blockedKind).toBe("config");
+    expect(state.blockedRetriable).toBe(false);
   });
 
   it("repairs invalid grill JSON on the same provider session", async () => {

@@ -30,6 +30,7 @@ describe("token-conscious defaults", () => {
     expect(config.workflow.graphifyCharacters).toBe(3_000);
     expect(config.workflow.generateCommitMessages).toBe(false);
     expect(config.workflow.maxStepsPerRun).toBe(40);
+    expect(config.workflow.maxProviderRetries).toBe(2);
     expect(config.knowledge.guidance).toMatchObject({ enabled: true, maxResults: 6, maxCharacters: 6_000 });
     expect(config.knowledge.embeddings.enabled).toBe(false);
     expect(config.knowledge.embeddings.model).toBe("text-embedding-3-small");

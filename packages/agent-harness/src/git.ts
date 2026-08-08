@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { relative as pathRelative, resolve as pathResolve } from "node:path";
 import type { HarnessConfig } from "./config.js";
 import type { MessageOutput } from "./domain.js";
+import { HarnessFailure } from "./errors.js";
 
 export class GitService {
   constructor(private readonly config: HarnessConfig) {}
@@ -15,8 +16,10 @@ export class GitService {
     if (!this.config.git.enabled) return undefined;
     const dirty = await this.changedFiles();
     if (dirty.length > 0) {
-      throw new Error(
+      throw new HarnessFailure(
         `Refusing to start on a dirty working tree. Commit or stash first: ${dirty.join(", ")}`,
+        "workspace",
+        true,
       );
     }
     const branch = this.branchForRun(runId);
@@ -107,11 +110,17 @@ export class GitService {
       return (await this.git(["rev-parse", "HEAD"])).stdout.trim();
     }
     const changed = await this.changedFiles();
-    if (changed.length === 0) throw new Error(`Task ${taskId} produced no git changes`);
+    if (changed.length === 0) {
+      throw new HarnessFailure(`Task ${taskId} produced no git changes`, "workspace", true);
+    }
     const allowed = new Set(reportedPaths.map(normalize));
     const unreported = changed.filter((file) => !allowed.has(file));
     if (unreported.length > 0) {
-      throw new Error(`Task ${taskId} changed unreported paths: ${unreported.join(", ")}`);
+      throw new HarnessFailure(
+        `Task ${taskId} changed unreported paths: ${unreported.join(", ")}`,
+        "workspace",
+        true,
+      );
     }
     await this.git(["add", "--all", "--", ...changed]);
     const subject = sanitizeSubject(message.subject);

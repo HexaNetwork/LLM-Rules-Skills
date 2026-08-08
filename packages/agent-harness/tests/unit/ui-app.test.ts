@@ -244,12 +244,16 @@ describe("dashboard document", () => {
   it("shows pattern-matched remediation copy for common blocked-run causes, with the raw failure kept in a collapsed details", () => {
     const html = renderDashboard();
 
-    expect(html).toContain("function blockedRemediation(failureText)");
+    expect(html).toContain("function blockedRemediation(stateOrFailure)");
+    expect(html).toContain("blockedKind");
     expect(html).toContain("dirty working tree|uncommitted changes");
     expect(html).toContain("CURSOR_API_KEY");
     expect(html).toContain("graphify-out");
     expect(html).toContain("run configuration changed");
     expect(html).toContain("<summary>Raw failure detail</summary>");
+    expect(html).toContain('data-force="true"');
+    expect(html).toContain("Retry anyway");
+    expect(html).toContain("force: true");
   });
 
   it("shows budget-exhaustion copy for a yielded run instead of the generic paused copy", () => {

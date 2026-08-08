@@ -222,6 +222,9 @@ export const RunStateSchema = z.object({
   pullRequestUrl: z.string().optional(),
   failure: z.string().optional(),
   blockedFrom: RunPhaseSchema.optional(),
+  // Structured failure classification (absent on runs blocked before Task 7).
+  blockedKind: z.string().optional(),
+  blockedRetriable: z.boolean().optional(),
   grillEpisode: GrillEpisodeSchema.optional(),
   // Distinguishes a yielded run from one paused on human input.
   yieldedAt: z.string().optional(),

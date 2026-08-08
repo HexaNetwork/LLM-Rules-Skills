@@ -573,15 +573,35 @@ export function renderDashboard(): string {
       if (phase === "queued" || phase === "running") return '<span class="badge ' + phase + '"><i class="dot ' + phase + '"></i>' + phase + '</span>';
       var out = "";
       if (!["completed","cancelled","awaiting_input","blocked"].includes(s.phase)) out += '<button class="btn small primary" data-action="resume">Resume run</button>';
-      if (s.phase === "blocked") out += '<button class="btn small primary" data-action="retry">Retry</button>';
+      if (s.phase === "blocked") {
+        out += s.blockedRetriable === false
+          ? '<button class="btn small primary" data-action="retry" data-force="true">Retry anyway</button>'
+          : '<button class="btn small primary" data-action="retry">Retry</button>';
+      }
       if (!["completed","cancelled"].includes(s.phase)) out += '<button class="btn small danger" data-action="cancel">Cancel</button>';
       if (s.pullRequestUrl) out += '<a class="btn small primary" target="_blank" rel="noreferrer" href="' + attr(safeUrl(s.pullRequestUrl)) + '">Open PR ↗</a>';
       return out;
     }
 
-    // Pattern-matched remediation copy for common blocked-run causes.
-    function blockedRemediation(failureText) {
-      var text = String(failureText || "");
+    // Prefer blockedKind; fall back to message patterns for runs blocked before classification.
+    function blockedRemediation(stateOrFailure) {
+      var kind = stateOrFailure && typeof stateOrFailure === "object" ? stateOrFailure.blockedKind : undefined;
+      var text = String((stateOrFailure && typeof stateOrFailure === "object" ? stateOrFailure.failure : stateOrFailure) || "");
+      var byKind = {
+        workspace: { title: "A workspace problem is blocking this run",
+          hint: "Fix the working tree, missing graph, or unreported paths, then retry the transition." },
+        provider: { title: "The agent backend failed transiently",
+          hint: "Check credentials and provider health, then retry. Automatic provider retries were already exhausted for this step." },
+        config: { title: "The run configuration cannot be resumed as-is",
+          hint: "Restore the original configuration, start a new run, or use Retry anyway only if you accept the drift." },
+        budget: { title: "A run budget ceiling was reached",
+          hint: "Raise the ceiling and retry, or accept the stop. Retrying without raising the limit will fail again." },
+        contract: { title: "The model could not satisfy the required contract",
+          hint: "Inspect the failure detail, adjust the task or prompts if needed, then retry." },
+        internal: { title: "The harness hit an internal error",
+          hint: "This is unlikely to clear on retry. Capture the failure detail and file a bug, or Retry anyway only to unblock." }
+      };
+      if (kind && byKind[kind]) return byKind[kind];
       var patterns = [
         { id: "dirty-tree",
           test: /dirty working tree|uncommitted changes|working tree is not clean/i,
@@ -762,8 +782,8 @@ export function renderDashboard(): string {
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">Dashboard work does not continue automatically after a restart. Resume queues the next transition and refreshes the document index first.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }
       if (s.phase === "blocked") {
-        var remediation = blockedRemediation(s.failure);
-        var isDirtyTree = remediation.id === "dirty-tree";
+        var remediation = blockedRemediation(s);
+        var isDirtyTree = remediation.id === "dirty-tree" || /dirty working tree|uncommitted changes|working tree is not clean/i.test(String(s.failure || ""));
         var failureDetail = isDirtyTree
           ? '<pre style="margin-top:8px">' + esc(s.failure || "") + '</pre>'
           : '<details><summary>Raw failure detail</summary><pre>' + esc(s.failure || "The current transition could not complete.") + '</pre></details>';
@@ -790,7 +810,10 @@ export function renderDashboard(): string {
             '<button class="' + otherBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(otherOrder) + '">' + esc(orderLabel(otherOrder)) + ' instead</button>' +
             '</div>' + cautionNote;
         }
-        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + '</div>' + failureDetail + commitControls + '</div><button class="btn danger" data-action="retry">Retry transition</button></div></div>';
+        var retryControls = s.blockedRetriable === false
+          ? '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Not retriable</strong><div class="muted" style="margin-top:3px">This block is classified as <code>' + esc(s.blockedKind || "unknown") + '</code>. Retrying without fixing the cause is unlikely to help.</div></div></div><button class="btn danger" data-action="retry" data-force="true">Retry anyway</button>'
+          : '<button class="btn danger" data-action="retry">Retry transition</button>';
+        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + '</div>' + retryControls + '</div></div>';
       }
       if (["grilling","awaiting_input","planning"].includes(s.phase)) {
         html += renderFogCard(s);
@@ -1147,6 +1170,8 @@ export function renderDashboard(): string {
         if (target.dataset.action === 'cancel' && !confirm('Cancel this run?')) return;
         if (target.dataset.action === 'commit_preflight') {
           runAction(target.dataset.action, { order: target.dataset.preflightOrder });
+        } else if (target.dataset.action === 'retry' && target.dataset.force === 'true') {
+          runAction('retry', { force: true });
         } else {
           runAction(target.dataset.action);
         }

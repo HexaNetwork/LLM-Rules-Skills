@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { CONFIG_VERSION, type HarnessConfig, type PreflightCommitOrder } from "./config.js";
@@ -33,6 +34,7 @@ import {
   type RunPhase,
   type RunState,
 } from "./domain.js";
+import { classifyFailure, HarnessFailure } from "./errors.js";
 import { GitService } from "./git.js";
 import {
   GraphifyRepositoryLookup,
@@ -53,7 +55,11 @@ export type HarnessDependencies = {
   git?: GitService;
   graphifyRunner?: GraphifyRunner;
   graphifySetupRunner?: GraphifySetupRunner;
+  /** Test seam for provider-retry backoff; defaults to real wall-clock sleep. */
+  sleep?: (ms: number) => Promise<void>;
 };
+
+const PROVIDER_RETRY_BACKOFF_MS = [1_000, 4_000, 16_000] as const;
 
 type StepResult = { state: RunState; consumedBudget: boolean };
 
@@ -73,6 +79,7 @@ export class HarnessEngine {
   readonly agents: AgentCoordinator;
   private readonly graphifyRunner: GraphifyRunner;
   private readonly graphifySetupRunner?: GraphifySetupRunner;
+  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(
     readonly config: HarnessConfig,
@@ -90,6 +97,7 @@ export class HarnessEngine {
     this.tracker = dependencies.tracker ?? new LocalTracker(this.store);
     this.git = dependencies.git ?? new GitService(config);
     this.agents = new AgentCoordinator(config, dependencies.backend, this.store, this.knowledge);
+    this.sleep = dependencies.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   async start(
@@ -118,7 +126,9 @@ export class HarnessEngine {
       if (this.config.git.enabled) {
         const dirty = await this.git.changedFiles();
         if (dirty.length > 0) {
-          if (!this.config.git.autoCommitPreflight) throw new Error(dirtyTreeMessage(dirty));
+          if (!this.config.git.autoCommitPreflight) {
+            throw new HarnessFailure(dirtyTreeMessage(dirty), "workspace", true);
+          }
           const order = this.config.git.preflightCommitOrder;
           const commit = await this.runPreflightCommit(runId, order, defaultPreflightCommitMessage(runId));
           state = await this.store.record(
@@ -142,10 +152,23 @@ export class HarnessEngine {
       if (refreshKnowledge) await this.knowledge.refresh();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const classified = classifyFailure(error);
       state = await this.store.record(
-        { ...state, phase: "blocked", blockedFrom: "new", failure: message },
+        {
+          ...state,
+          phase: "blocked",
+          blockedFrom: "new",
+          failure: message,
+          blockedKind: classified.kind,
+          blockedRetriable: classified.retriable,
+        },
         "run.blocked",
-        { blockedFrom: "new", error: message },
+        {
+          blockedFrom: "new",
+          error: message,
+          blockedKind: classified.kind,
+          blockedRetriable: classified.retriable,
+        },
       );
       await this.syncArtifacts(state);
       return state;
@@ -168,7 +191,7 @@ export class HarnessEngine {
         const maxIterations = Math.max(maxSteps * 8, 40);
         while (remaining > 0 && iterations < maxIterations) {
           iterations += 1;
-          const step = await this.advanceOne(state);
+          const step = await this.advanceOneWithProviderRetry(state);
           state = step.state;
           await this.syncArtifacts(state);
           if (step.consumedBudget) remaining -= 1;
@@ -182,12 +205,25 @@ export class HarnessEngine {
         return state;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const classified = classifyFailure(error);
         state = await this.store.load(runId).catch(() => state);
         const blockedFrom = state.phase;
         state = await this.store.record(
-          { ...state, phase: "blocked", blockedFrom, failure: message },
+          {
+            ...state,
+            phase: "blocked",
+            blockedFrom,
+            failure: message,
+            blockedKind: classified.kind,
+            blockedRetriable: classified.retriable,
+          },
           "run.blocked",
-          { blockedFrom, error: message },
+          {
+            blockedFrom,
+            error: message,
+            blockedKind: classified.kind,
+            blockedRetriable: classified.retriable,
+          },
         );
         await this.syncArtifacts(state);
         return state;
@@ -210,12 +246,18 @@ export class HarnessEngine {
       );
     }
     if (state.configVersion > CONFIG_VERSION) {
-      throw new Error(
+      throw new HarnessFailure(
         `Run configVersion ${state.configVersion} is newer than harness ${CONFIG_VERSION}`,
+        "config",
+        false,
       );
     }
     if (configurationHash(this.config) !== state.configurationHash) {
-      throw new Error("Run configuration changed; resume with the persisted run config");
+      throw new HarnessFailure(
+        "Run configuration changed; resume with the persisted run config",
+        "config",
+        false,
+      );
     }
     return state;
   }
@@ -383,15 +425,29 @@ export class HarnessEngine {
     });
   }
 
-  async retry(runId: string): Promise<RunState> {
+  async retry(runId: string, options?: { force?: boolean }): Promise<RunState> {
     return this.store.withLock(runId, async () => {
       let state = await this.store.load(runId);
       if (state.phase !== "blocked" || !state.blockedFrom) {
         throw new Error(`Run ${runId} is not resumably blocked`);
       }
+      // Legacy runs without blockedRetriable stay permissive so they are not stranded.
+      if (state.blockedRetriable === false && !options?.force) {
+        throw new Error(
+          `Run ${runId} is blocked with kind "${state.blockedKind ?? "unknown"}" and is not retriable without force`,
+        );
+      }
       state = await this.store.record(
-        { ...state, phase: state.blockedFrom, blockedFrom: undefined, failure: undefined },
+        {
+          ...state,
+          phase: state.blockedFrom,
+          blockedFrom: undefined,
+          failure: undefined,
+          blockedKind: undefined,
+          blockedRetriable: undefined,
+        },
         "run.retry_requested",
+        { force: Boolean(options?.force) },
       );
       return state;
     });
@@ -416,6 +472,8 @@ export class HarnessEngine {
           phase: state.blockedFrom,
           blockedFrom: undefined,
           failure: undefined,
+          blockedKind: undefined,
+          blockedRetriable: undefined,
           branchName: commit.runBranch ?? state.branchName,
         },
         "run.preflight_committed",
@@ -454,6 +512,62 @@ export class HarnessEngine {
 
   status(runId: string): Promise<RunState> {
     return this.store.load(runId);
+  }
+
+  /**
+   * Retries provider failures in-place with exponential backoff. Retries do not
+   * consume maxStepsPerRun — the outer advance loop only counts a successful step.
+   */
+  private async advanceOneWithProviderRetry(state: RunState): Promise<StepResult> {
+    const maxRetries = this.config.workflow.maxProviderRetries;
+    let attempt = 0;
+    for (;;) {
+      try {
+        return await this.advanceOne(state);
+      } catch (error) {
+        const classified = classifyFailure(error);
+        if (classified.kind !== "provider" || !classified.retriable || attempt >= maxRetries) {
+          throw error;
+        }
+        attempt += 1;
+        const message = error instanceof Error ? error.message : String(error);
+        state = await this.store.record(state, "run.provider_retry", {
+          attempt,
+          error: message,
+        });
+        const delay =
+          PROVIDER_RETRY_BACKOFF_MS[attempt - 1] ??
+          PROVIDER_RETRY_BACKOFF_MS[PROVIDER_RETRY_BACKOFF_MS.length - 1]!;
+        await this.sleepProviderBackoff(delay, state.runId);
+      }
+    }
+  }
+
+  /**
+   * Item 10 must make this wait interruptible (in-process AbortSignal + cancel.request).
+   * Until then, honor an existing `<runDir>/cancel.request` before/after the backoff sleep.
+   */
+  private async sleepProviderBackoff(ms: number, runId: string): Promise<void> {
+    await this.throwIfCancelRequested(runId);
+    // TODO(item 10): chunk this sleep and abort immediately when cancel.request appears
+    // or the run's AbortController fires mid-wait.
+    await this.sleep(ms);
+    await this.throwIfCancelRequested(runId);
+  }
+
+  private async throwIfCancelRequested(runId: string): Promise<void> {
+    const cancelPath = path.join(this.store.runDirectory(runId), "cancel.request");
+    try {
+      await access(cancelPath);
+    } catch {
+      return;
+    }
+    // TODO(item 10): complete the cancelled transition instead of blocking.
+    throw new HarnessFailure(
+      "Run cancellation requested during provider retry backoff",
+      "internal",
+      false,
+    );
   }
 
   private async advanceOne(state: RunState): Promise<StepResult> {
@@ -853,7 +967,13 @@ export class HarnessEngine {
 
   private async execute(state: RunState): Promise<StepResult> {
     const failed = state.tasks.find((task) => task.status === "failed");
-    if (failed) throw new Error(`Task ${failed.id} failed: ${failed.failure ?? "unknown failure"}`);
+    if (failed) {
+      throw new HarnessFailure(
+        `Task ${failed.id} failed: ${failed.failure ?? "unknown failure"}`,
+        "contract",
+        false,
+      );
+    }
     const active = state.tasks.find((task) => task.status === "active");
     const task = active ?? taskFrontier(state.tasks)[0];
     if (!task) {
@@ -863,7 +983,11 @@ export class HarnessEngine {
           consumedBudget: false,
         };
       }
-      throw new Error("Build frontier is empty while pending tasks remain");
+      throw new HarnessFailure(
+        "Build frontier is empty while pending tasks remain",
+        "internal",
+        false,
+      );
     }
     return this.executeTaskStep(state, task);
   }

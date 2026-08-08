@@ -212,11 +212,17 @@ program
   .description("Explicitly retry a bounded step after inspecting a blocked run")
   .requiredOption("--run-id <id>", "run id")
   .option("--config <path>", "config path")
+  .option("--force", "retry even when blockedRetriable is false", false)
   .option(
     "--commit-dirty [order]",
     "commit a dirty working tree before retrying: branch-then-commit (default) or commit-then-branch",
   )
-  .action(async (options: { runId: string; config?: string; commitDirty?: string | boolean }) => {
+  .action(async (options: {
+    runId: string;
+    config?: string;
+    force: boolean;
+    commitDirty?: string | boolean;
+  }) => {
     const config = await runConfig(options.config, options.runId);
     const engine = new HarnessEngine(config, { backend: createCursorBackend() });
     if (options.commitDirty) {
@@ -226,7 +232,7 @@ program
       }
       await engine.commitPreflight(options.runId, { order });
     } else {
-      await engine.retry(options.runId);
+      await engine.retry(options.runId, { force: options.force });
     }
     printState(await engine.advance(options.runId));
   });

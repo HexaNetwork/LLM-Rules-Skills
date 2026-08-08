@@ -239,6 +239,20 @@ Agents never run git. The harness:
 - optionally pushes and opens a pull request with `gh`;
 - never auto-merges.
 
+### Preflight commit
+
+A dirty tree at `start()` blocks by default (`blockedFrom: "new"`), with the offending paths in the failure message. Resolving it by committing is available two ways:
+
+- **Explicit action (default path):** on a blocked run, the dashboard's "Commit changes and retry" control (or `agent-harness retry --run-id <id> --commit-dirty [order]`) commits the tree and clears the block. The offending paths stay visible next to the control so you see what gets swept in before clicking.
+- **`git.autoCommitPreflight: true`:** `start()` commits a dirty tree itself instead of blocking. Off by default.
+
+Both paths honor `git.preflightCommitOrder`, which is user-selectable, not fixed:
+
+- `branch-then-commit` (default): creates `git.branchPrefix/<runId>` from **current HEAD** — not `config.git.baseBranch` — then commits onto it. This is a deliberate deviation from the branching rule above: it exists so the dirty tree rides onto the run branch instead of the operator's checked-out branch, and it is recorded on the `run.preflight_committed` audit event (`detail.deviation`).
+- `commit-then-branch`: commits on whatever branch is currently checked out; the run branch is then created normally by `plan()` once the tree is clean. The dashboard names that branch on the button so you're not guessing, and shows a caution when it's the same as `config.git.baseBranch`, since that means the commit lands directly on it.
+
+Either way the commit message defaults to `chore: commit working tree before harness run <runId>`, and the audit event records the order, resulting sha, branch, and the exact list of committed files — the harness state directory (`.agent-harness/`) is never included.
+
 ## Extension boundaries
 
 `AgentBackend`, `TrackerPort`, `LocalKnowledgeBase`, and `GitService` are replaceable ports. v2 intentionally ships one Cursor backend and one local tracker first; external trackers and parallel isolated task execution can be added without changing the run artifact contract.

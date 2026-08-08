@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { CONFIG_VERSION, type HarnessConfig } from "./config.js";
+import { CONFIG_VERSION, type HarnessConfig, type PreflightCommitOrder } from "./config.js";
 import {
   AgentCoordinator,
   type AgentBackend,
@@ -57,6 +57,14 @@ export type HarnessDependencies = {
 
 type StepResult = { state: RunState; consumedBudget: boolean };
 
+/** `committedBranch` is where the commit landed (audit only); `runBranch` is set only when the order actually produced the run's branch. */
+type PreflightCommitResult = {
+  committedBranch?: string;
+  runBranch?: string;
+  sha: string;
+  files: string[];
+};
+
 export class HarnessEngine {
   readonly store: RunStore;
   readonly knowledge: LocalKnowledgeBase;
@@ -106,6 +114,20 @@ export class HarnessEngine {
     });
     state = await this.store.record(state, "run.created", { idea: idea.trim() });
     try {
+      // Same changedFiles() source ensureRunBranch guards later; fail before burning a run.
+      if (this.config.git.enabled) {
+        const dirty = await this.git.changedFiles();
+        if (dirty.length > 0) {
+          if (!this.config.git.autoCommitPreflight) throw new Error(dirtyTreeMessage(dirty));
+          const order = this.config.git.preflightCommitOrder;
+          const commit = await this.runPreflightCommit(runId, order, defaultPreflightCommitMessage(runId));
+          state = await this.store.record(
+            { ...state, branchName: commit.runBranch ?? state.branchName },
+            "run.preflight_committed",
+            preflightCommitDetail(order, commit, true),
+          );
+        }
+      }
       if (prepareGraphify && this.config.knowledge.graphify.enabled) {
         if (this.graphifySetupRunner) {
           await prepareGraphifyForRun(
@@ -367,6 +389,52 @@ export class HarnessEngine {
       );
       return state;
     });
+  }
+
+  /** Resolves a dirty tree the harness itself found by committing it, then clears the block like retry(). */
+  async commitPreflight(
+    runId: string,
+    options?: { order?: PreflightCommitOrder; message?: string },
+  ): Promise<RunState> {
+    return this.store.withLock(runId, async () => {
+      let state = await this.store.load(runId);
+      if (state.phase !== "blocked" || !state.blockedFrom) {
+        throw new Error(`Run ${runId} is not resumably blocked`);
+      }
+      const order = options?.order ?? this.config.git.preflightCommitOrder;
+      const message = options?.message ?? defaultPreflightCommitMessage(runId);
+      const commit = await this.runPreflightCommit(runId, order, message);
+      state = await this.store.record(
+        {
+          ...state,
+          phase: state.blockedFrom,
+          blockedFrom: undefined,
+          failure: undefined,
+          branchName: commit.runBranch ?? state.branchName,
+        },
+        "run.preflight_committed",
+        preflightCommitDetail(order, commit, false),
+      );
+      return state;
+    });
+  }
+
+  private async runPreflightCommit(
+    runId: string,
+    order: PreflightCommitOrder,
+    message: string,
+  ): Promise<PreflightCommitResult> {
+    // branch-then-commit must cut the branch before committing so the dirty tree rides onto it.
+    if (order === "branch-then-commit") {
+      const runBranch = await this.git.createRunBranchFromHead(runId);
+      const result = await this.git.commitWorkingTree(message);
+      return { committedBranch: runBranch, runBranch, sha: result.sha, files: result.files };
+    }
+    const result = await this.git.commitWorkingTree(message);
+    // commit-then-branch lands on whatever was checked out; that is an audit
+    // fact, not the run branch, so it must not overwrite state.branchName.
+    const committedBranch = await this.git.currentBranch();
+    return { committedBranch, sha: result.sha, files: result.files };
   }
 
   async cancel(runId: string): Promise<RunState> {
@@ -1257,6 +1325,36 @@ function terminal(phase: RunPhase): boolean {
 
 function configurationHash(config: unknown): string {
   return createHash("sha256").update(JSON.stringify(config)).digest("hex");
+}
+
+const DIRTY_TREE_PATH_LIMIT = 10;
+
+function dirtyTreeMessage(paths: string[]): string {
+  const shown = paths.slice(0, DIRTY_TREE_PATH_LIMIT);
+  const more = paths.length > shown.length ? ` (+${paths.length - shown.length} more)` : "";
+  return `The working tree has uncommitted changes: ${shown.join(", ")}${more}. Commit or stash local changes in the repository, then retry the transition.`;
+}
+
+function defaultPreflightCommitMessage(runId: string): string {
+  return `chore: commit working tree before harness run ${runId}`;
+}
+
+function preflightCommitDetail(
+  order: PreflightCommitOrder,
+  commit: PreflightCommitResult,
+  auto: boolean,
+): Record<string, unknown> {
+  return {
+    order,
+    auto,
+    sha: commit.sha,
+    branch: commit.committedBranch,
+    files: commit.files,
+    // branch-then-commit is a real deviation from the documented baseBranch branching rule.
+    ...(order === "branch-then-commit"
+      ? { deviation: "run branch created from current HEAD, not config.git.baseBranch" }
+      : {}),
+  };
 }
 
 const PACKET_DESCRIPTION_LIMIT = 2_000;

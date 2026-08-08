@@ -10,6 +10,7 @@ import {
 } from "../config.js";
 import type { AgentBackend } from "../agent.js";
 import { HarnessEngine } from "../engine.js";
+import { GitService } from "../git.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { prepareGraphifyForRun } from "../graphify.js";
 import { RunStore } from "../store.js";
@@ -43,7 +44,35 @@ export type UiServer = {
   close(): Promise<void>;
 };
 
-const PROJECT_SETTING_DEFINITIONS = [
+type IntegerSettingDefinition = {
+  key: string;
+  category: string;
+  label: string;
+  description: string;
+  type: "integer";
+  minimum: number;
+  maximum: number;
+};
+type BooleanSettingDefinition = {
+  key: string;
+  category: string;
+  label: string;
+  description: string;
+  type: "boolean";
+};
+type EnumSettingDefinition = {
+  key: string;
+  category: string;
+  label: string;
+  description: string;
+  type: "enum";
+  options: Array<{ value: string; label: string }>;
+};
+type SettingDefinition = IntegerSettingDefinition | BooleanSettingDefinition | EnumSettingDefinition;
+
+const PREFLIGHT_COMMIT_ORDER_VALUES = ["branch-then-commit", "commit-then-branch"] as const;
+
+const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
   {
     key: "workflow.maxGrillQuestionsPerEpisode",
     category: "Context & cost",
@@ -74,7 +103,27 @@ const PROJECT_SETTING_DEFINITIONS = [
     minimum: 1,
     maximum: 6,
   },
-] as const;
+  {
+    key: "git.autoCommitPreflight",
+    category: "Git",
+    label: "Auto-commit a dirty tree before a run",
+    description:
+      "When on, start() commits a dirty working tree itself instead of blocking. Off by default; the blocked-run card always offers this as an explicit action either way.",
+    type: "boolean",
+  },
+  {
+    key: "git.preflightCommitOrder",
+    category: "Git",
+    label: "Preflight commit order",
+    description:
+      "Whether a preflight commit lands on the run branch (cut from current HEAD, not baseBranch) or on the current branch before the run branch is created normally.",
+    type: "enum",
+    options: [
+      { value: "branch-then-commit", label: "Commit onto the run branch" },
+      { value: "commit-then-branch", label: "Commit onto the current branch" },
+    ],
+  },
+];
 
 export async function startUiServer(options: UiServerOptions): Promise<UiServer> {
   const host = "127.0.0.1";
@@ -188,6 +237,15 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           1,
           6,
         );
+        const autoCommitPreflight = optionalBoolean(
+          values["git.autoCommitPreflight"],
+          "git.autoCommitPreflight",
+        );
+        const preflightCommitOrder = optionalEnum(
+          values["git.preflightCommitOrder"],
+          "git.preflightCommitOrder",
+          PREFLIGHT_COMMIT_ORDER_VALUES,
+        );
         if (maxGrillQuestionsPerEpisode == null) {
           throw new HttpError(400, "workflow.maxGrillQuestionsPerEpisode is required");
         }
@@ -200,6 +258,14 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             staleAnswerMinutes,
             ...(grillQuestionsPerBatch != null ? { grillQuestionsPerBatch } : {}),
           },
+          ...(autoCommitPreflight != null || preflightCommitOrder != null
+            ? {
+                git: {
+                  ...(autoCommitPreflight != null ? { autoCommitPreflight } : {}),
+                  ...(preflightCommitOrder != null ? { preflightCommitOrder } : {}),
+                },
+              }
+            : {}),
         });
         projectConfig = updated.config;
         return json(response, 200, {
@@ -295,6 +361,15 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           readSessionSummaries(store, runId),
           listArtifacts(store, runId),
         ]);
+        // git.currentBranch spawns a subprocess; only pay for it when the UI
+        // actually needs it (blocked runs), and never fold it into the signature.
+        const git =
+          state.phase === "blocked"
+            ? {
+                currentBranch: await new GitService(projectConfig).currentBranch(),
+                baseBranch: projectConfig.git.baseBranch,
+              }
+            : undefined;
         return json(response, 200, {
           state,
           job,
@@ -302,6 +377,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           sessions,
           artifacts,
           signature,
+          ...(git ? { git } : {}),
         });
       }
 
@@ -343,6 +419,13 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         } else if (action === "retry") {
           enqueue(runId, action, async () => {
             await engine.retry(runId);
+            await engine.advance(runId);
+          });
+        } else if (action === "commit_preflight") {
+          const order = optionalEnum(body.order, "order", PREFLIGHT_COMMIT_ORDER_VALUES);
+          const message = optionalString(body.message, "message", 500);
+          enqueue(runId, action, async () => {
+            await engine.commitPreflight(runId, { order, message });
             await engine.advance(runId);
           });
         } else if (action === "cancel") {
@@ -487,6 +570,8 @@ function projectSettings(config: HarnessConfig, configPath?: string): Record<str
       "workflow.maxGrillQuestionsPerEpisode": config.workflow.maxGrillQuestionsPerEpisode,
       "workflow.staleAnswerMinutes": config.workflow.staleAnswerMinutes,
       "workflow.grillQuestionsPerBatch": config.workflow.grillQuestionsPerBatch,
+      "git.autoCommitPreflight": config.git.autoCommitPreflight,
+      "git.preflightCommitOrder": config.git.preflightCommitOrder,
     },
   };
 }
@@ -774,6 +859,18 @@ function optionalInteger(
     throw new HttpError(400, `${field} must be an integer from ${minimum} to ${maximum}`);
   }
   return Number(value);
+}
+
+function optionalEnum<T extends string>(
+  value: unknown,
+  field: string,
+  allowed: readonly T[],
+): T | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw new HttpError(400, `${field} must be one of: ${allowed.join(", ")}`);
+  }
+  return value as T;
 }
 
 function assertInside(root: string, target: string): void {

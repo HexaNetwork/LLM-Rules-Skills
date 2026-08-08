@@ -34,6 +34,15 @@ export class GitService {
     return branch;
   }
 
+  /** Fails soft: undefined on detached HEAD or when git is off, never throws. */
+  async currentBranch(): Promise<string | undefined> {
+    if (!this.config.git.enabled) return undefined;
+    const result = await this.git(["branch", "--show-current"], true);
+    if (result.exitCode !== 0) return undefined;
+    const branch = result.stdout.trim();
+    return branch === "" ? undefined : branch;
+  }
+
   async changedFiles(): Promise<string[]> {
     if (!this.config.git.enabled) return [];
     const result = await this.git(["status", "--porcelain=v1", "--untracked-files=all", "-z"]);
@@ -54,6 +63,32 @@ export class GitService {
     return [...new Set(paths)]
       .filter((file) => file !== statePrefix && !file.startsWith(`${statePrefix}/`))
       .sort();
+  }
+
+  /** Cuts/switches to the run branch from current HEAD, skipping the baseBranch hop and dirty-tree guard. */
+  async createRunBranchFromHead(runId: string): Promise<string> {
+    if (!this.config.git.enabled) throw new Error("git is not enabled");
+    const branch = this.branchForRun(runId);
+    const current = (await this.git(["branch", "--show-current"])).stdout.trim();
+    if (current === branch) return branch;
+    const exists = (await this.git(["show-ref", "--verify", `refs/heads/${branch}`], true)).exitCode === 0;
+    if (exists) {
+      await this.git(["switch", branch]);
+    } else {
+      await this.git(["switch", "-c", branch]);
+    }
+    return branch;
+  }
+
+  /** Stages and commits everything except the harness state directory. */
+  async commitWorkingTree(message: string): Promise<{ sha: string; files: string[] }> {
+    if (!this.config.git.enabled) throw new Error("git is not enabled");
+    const files = await this.changedFiles();
+    if (files.length === 0) throw new Error("No changes to commit");
+    await this.git(["add", "--all", "--", ...files]);
+    await this.git(["commit", "-m", sanitizeSubject(message)]);
+    const sha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+    return { sha, files };
   }
 
   async isTaskCommitted(taskId: string): Promise<boolean> {

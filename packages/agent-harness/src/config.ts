@@ -13,7 +13,10 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
 ];
 
 /** Bumped when the frozen run-config shape changes in a way that needs migration. */
-export const CONFIG_VERSION = 2;
+export const CONFIG_VERSION = 3;
+
+export const PreflightCommitOrderSchema = z.enum(["branch-then-commit", "commit-then-branch"]);
+export type PreflightCommitOrder = z.infer<typeof PreflightCommitOrderSchema>;
 
 export const KnowledgeScopeSchema = z.enum(["global", "project"]);
 export type KnowledgeScope = z.infer<typeof KnowledgeScopeSchema>;
@@ -105,6 +108,11 @@ export const HarnessConfigSchema = z.object({
       remote: z.string().min(1).default("origin"),
       push: z.boolean().default(false),
       openPullRequest: z.boolean().default(false),
+      // Explicit action (dashboard/CLI) is the default path; this makes start() sweep a dirty tree itself.
+      autoCommitPreflight: z.boolean().default(false),
+      // branch-then-commit deviates from baseBranch branching: the run branch is cut from
+      // current HEAD so the dirty tree rides onto it, not from config.git.baseBranch.
+      preflightCommitOrder: PreflightCommitOrderSchema.default("branch-then-commit"),
     })
     .default({}),
   knowledge: z
@@ -175,6 +183,13 @@ export const ProjectSettingsPatchSchema = z
       })
       .strict()
       .optional(),
+    git: z
+      .object({
+        autoCommitPreflight: z.boolean().optional(),
+        preflightCommitOrder: PreflightCommitOrderSchema.optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -231,11 +246,13 @@ export async function writeProjectSettings(
 
   const parsedPatch = ProjectSettingsPatchSchema.parse(patch);
   const workflow = isRecord(value.workflow) ? value.workflow : {};
+  const git = isRecord(value.git) ? value.git : {};
   const candidate = {
     ...value,
     ...(parsedPatch.workflow
       ? { workflow: { ...workflow, ...parsedPatch.workflow } }
       : {}),
+    ...(parsedPatch.git ? { git: { ...git, ...parsedPatch.git } } : {}),
   };
   HarnessConfigSchema.parse(candidate);
 
@@ -334,6 +351,11 @@ git:
   remote: origin
   push: false
   openPullRequest: false
+  # A dirty tree blocks by default; the dashboard/CLI offer an explicit commit-and-retry.
+  autoCommitPreflight: false
+  # branch-then-commit cuts the run branch from current HEAD (not baseBranch) so a dirty
+  # tree rides onto it. commit-then-branch commits on the current branch first instead.
+  preflightCommitOrder: branch-then-commit
 
 tracker:
   kind: local

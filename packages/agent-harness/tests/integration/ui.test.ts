@@ -1,10 +1,14 @@
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readFile, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
+
+const exec = promisify(execFile);
 
 const REFLECT_OUTPUT = {
   summary: "Restated",
@@ -65,10 +69,12 @@ describe("central dashboard", () => {
       settings: { editable: boolean; definitions: unknown[]; values: Record<string, number> };
     };
     expect(initialBody.settings.editable).toBe(true);
-    expect(initialBody.settings.definitions).toHaveLength(3);
+    expect(initialBody.settings.definitions).toHaveLength(5);
     expect(initialBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(5);
     expect(initialBody.settings.values["workflow.staleAnswerMinutes"]).toBe(30);
     expect(initialBody.settings.values["workflow.grillQuestionsPerBatch"]).toBe(3);
+    expect(initialBody.settings.values["git.autoCommitPreflight"]).toBe(false);
+    expect(initialBody.settings.values["git.preflightCommitOrder"]).toBe("branch-then-commit");
 
     const invalid = await request(ui, "/api/settings", {
       method: "PUT",
@@ -107,6 +113,36 @@ describe("central dashboard", () => {
     expect(
       bootstrapBody.project.settings.values["workflow.maxGrillQuestionsPerEpisode"],
     ).toBe(10);
+
+    const updatedGit = await request(ui, "/api/settings", {
+      method: "PUT",
+      body: {
+        values: {
+          "workflow.maxGrillQuestionsPerEpisode": 10,
+          "workflow.staleAnswerMinutes": 45,
+          "git.autoCommitPreflight": true,
+          "git.preflightCommitOrder": "commit-then-branch",
+        },
+      },
+    });
+    expect(updatedGit.status).toBe(200);
+    const updatedGitBody = (await updatedGit.json()) as {
+      settings: { values: Record<string, unknown> };
+    };
+    expect(updatedGitBody.settings.values["git.autoCommitPreflight"]).toBe(true);
+    expect(updatedGitBody.settings.values["git.preflightCommitOrder"]).toBe("commit-then-branch");
+
+    const invalidOrder = await request(ui, "/api/settings", {
+      method: "PUT",
+      body: {
+        values: {
+          "workflow.maxGrillQuestionsPerEpisode": 10,
+          "workflow.staleAnswerMinutes": 45,
+          "git.preflightCommitOrder": "sideways",
+        },
+      },
+    });
+    expect(invalidOrder.status).toBe(400);
   });
 
   it("reports unchanged for a matching ?since= signature and a fresh payload after a transition", async () => {
@@ -500,7 +536,59 @@ describe("central dashboard", () => {
     );
     expect(sessionTraversal.status).toBe(400);
   });
+  it("includes git.currentBranch/baseBranch only for a blocked run, never for other phases", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await writeFile(path.join(root, "surprise.txt"), "dirty\n", "utf8");
+
+    const config = fixtureConfig(root, { git: { enabled: true } as never });
+    const backend = createFakeBackend({});
+    const engine = new HarnessEngine(config, { backend });
+    const blocked = await engine.start("Report git branch", "git-payload-run", false);
+    expect(blocked.phase).toBe("blocked");
+
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+    const blockedResponse = await request(ui, `/api/runs/${blocked.runId}`);
+    const blockedBody = (await blockedResponse.json()) as {
+      git?: { currentBranch?: string; baseBranch?: string };
+    };
+    expect(blockedBody.git).toEqual({ currentBranch: "main", baseBranch: "main" });
+
+    // Same run, not blocked: the git subprocess must not run, so the key is absent.
+    const nonBlockedConfig = fixtureConfig(root);
+    const nonBlockedBackend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    const nonBlockedEngine = new HarnessEngine(nonBlockedConfig, { backend: nonBlockedBackend });
+    const started = await nonBlockedEngine.start("Not blocked", "git-payload-not-blocked", false);
+    const otherUi = await startUiServer({
+      config: nonBlockedConfig,
+      backend: nonBlockedBackend,
+      port: 0,
+      token: "ui-test",
+    });
+    try {
+      const nonBlockedResponse = await request(otherUi, `/api/runs/${started.runId}`);
+      const nonBlockedBody = (await nonBlockedResponse.json()) as { git?: unknown };
+      expect("git" in nonBlockedBody).toBe(false);
+    } finally {
+      await otherUi.close();
+    }
+  });
 });
+
+async function initGitRepo(root: string): Promise<void> {
+  await git(root, "init");
+  await git(root, "config", "user.email", "harness@example.com");
+  await git(root, "config", "user.name", "Harness Test");
+  await writeFile(path.join(root, ".gitignore"), ".agent-harness/\n", "utf8");
+  await git(root, "add", "--all");
+  await git(root, "commit", "-m", "initial");
+  await git(root, "branch", "-M", "main");
+}
+
+async function git(cwd: string, ...args: string[]): Promise<string> {
+  const result = await exec("git", args, { cwd, windowsHide: true });
+  return result.stdout;
+}
 
 async function request(
   ui: UiServer,

@@ -260,6 +260,26 @@ describe("dashboard document", () => {
     expect(html).not.toMatch(/s\.yieldedAt[\s\S]{0,400}Dashboard work does not continue automatically/);
   });
 
+  it("names the actual checked-out branch on the commit-then-branch preflight button, with a generic fallback", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("var gitInfo = state.detail.git;");
+    expect(html).toContain('currentBranch ? "Commit onto " + currentBranch : "Commit onto the current branch"');
+    expect(html).toContain('return "Commit onto the run branch";');
+  });
+
+  it("shows a base-branch caution, using the existing warning visual vocabulary, only when current === base", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("var onBaseBranch = !!(currentBranch && baseBranch && currentBranch === baseBranch);");
+    expect(html).toContain('"btn danger" : "btn primary"');
+    expect(html).toContain('"btn danger" : "btn"');
+    expect(html).toContain('class="alert warning"');
+    expect(html).toContain("is your base branch. Committing onto the current branch lands these changes directly on it.");
+    // No caution note at all when onBaseBranch is false.
+    expect(html).toMatch(/var cautionNote = onBaseBranch\s*\n\s*\?[\s\S]*?:\s*"";/);
+  });
+
   it("drives the thinking strip's elapsed timer from job.startedAt/queuedAt without a full re-render", () => {
     const html = renderDashboard();
 

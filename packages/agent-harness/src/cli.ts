@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { createCursorBackend } from "./agent.js";
@@ -101,6 +102,11 @@ program
       const changed = await new LocalKnowledgeBase(config).refresh();
       console.log(`Indexed ${changed} changed document(s)`);
     }
+    await warnIfDeployedFilesUntracked(project, [
+      target,
+      path.join(graphifyScripts, "setup-graphify.ps1"),
+      path.join(graphifyScripts, "setup-graphify.sh"),
+    ]);
   });
 
 const graphify = program
@@ -206,10 +212,22 @@ program
   .description("Explicitly retry a bounded step after inspecting a blocked run")
   .requiredOption("--run-id <id>", "run id")
   .option("--config <path>", "config path")
-  .action(async (options: { runId: string; config?: string }) => {
+  .option(
+    "--commit-dirty [order]",
+    "commit a dirty working tree before retrying: branch-then-commit (default) or commit-then-branch",
+  )
+  .action(async (options: { runId: string; config?: string; commitDirty?: string | boolean }) => {
     const config = await runConfig(options.config, options.runId);
     const engine = new HarnessEngine(config, { backend: createCursorBackend() });
-    await engine.retry(options.runId);
+    if (options.commitDirty) {
+      const order = typeof options.commitDirty === "string" ? options.commitDirty : undefined;
+      if (order != null && order !== "branch-then-commit" && order !== "commit-then-branch") {
+        throw new Error("--commit-dirty must be branch-then-commit or commit-then-branch");
+      }
+      await engine.commitPreflight(options.runId, { order });
+    } else {
+      await engine.retry(options.runId);
+    }
     printState(await engine.advance(options.runId));
   });
 
@@ -415,6 +433,55 @@ async function ensureIgnored(filePath: string, entry: string): Promise<void> {
   if (current.split(/\r?\n/).includes(entry)) return;
   const separator = current.length > 0 && !current.endsWith("\n") ? "\n" : "";
   await writeFile(filePath, `${current}${separator}${entry}\n`, "utf8");
+}
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Deploy leaves committable files (config + scripts, see writeGraphifySetupScripts)
+ * untracked; a run refuses to start on a dirty tree, so surface that now, not later.
+ */
+async function warnIfDeployedFilesUntracked(project: string, absolutePaths: string[]): Promise<void> {
+  if (!(await isGitRepository(project))) return;
+  const relativePaths = absolutePaths.map((absolute) => path.relative(project, absolute));
+  const untracked = await gitUntrackedPaths(project, relativePaths);
+  if (untracked.length === 0) return;
+  console.log("");
+  console.log("Deployed files are untracked in this git repository:");
+  for (const file of untracked) console.log(`  ${file}`);
+  console.log("Runs will refuse to start until the working tree is clean.");
+  console.log(`Commit them: git add ${untracked.map((file) => `"${file}"`).join(" ")} && git commit -m "chore: deploy agent-harness"`);
+  console.log(
+    "Alternative: set git.autoCommitPreflight: true in the config so a dirty tree is committed automatically instead of blocking new runs.",
+  );
+}
+
+async function isGitRepository(project: string): Promise<boolean> {
+  try {
+    const result = await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
+      cwd: project,
+      windowsHide: true,
+    });
+    return result.stdout.trim() === "true";
+  } catch {
+    return false;
+  }
+}
+
+async function gitUntrackedPaths(project: string, relativePaths: string[]): Promise<string[]> {
+  try {
+    const result = await execFileAsync(
+      "git",
+      ["status", "--porcelain=v1", "--untracked-files=all", "--", ...relativePaths],
+      { cwd: project, windowsHide: true },
+    );
+    return result.stdout
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => line.slice(3).trim());
+  } catch {
+    return [];
+  }
 }
 
 const GRAPHIFY_SETUP_FILENAMES = ["setup-graphify.ps1", "setup-graphify.sh"] as const;

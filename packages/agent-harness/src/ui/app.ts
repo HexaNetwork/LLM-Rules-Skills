@@ -583,7 +583,8 @@ export function renderDashboard(): string {
     function blockedRemediation(failureText) {
       var text = String(failureText || "");
       var patterns = [
-        { test: /dirty working tree|uncommitted changes|working tree is not clean/i,
+        { id: "dirty-tree",
+          test: /dirty working tree|uncommitted changes|working tree is not clean/i,
           title: "The working tree has uncommitted changes",
           hint: "Commit or stash local changes in the repository, then retry the transition." },
         { test: /CURSOR_API_KEY|agent backend (is )?unavailable|missing.*api.?key/i,
@@ -761,7 +762,34 @@ export function renderDashboard(): string {
       }
       if (s.phase === "blocked") {
         var remediation = blockedRemediation(s.failure);
-        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + '</div><details><summary>Raw failure detail</summary><pre>' + esc(s.failure || "The current transition could not complete.") + '</pre></details></div><button class="btn danger" data-action="retry">Retry transition</button></div></div>';
+        var isDirtyTree = remediation.id === "dirty-tree";
+        var failureDetail = isDirtyTree
+          ? '<pre style="margin-top:8px">' + esc(s.failure || "") + '</pre>'
+          : '<details><summary>Raw failure detail</summary><pre>' + esc(s.failure || "The current transition could not complete.") + '</pre></details>';
+        var commitControls = "";
+        if (isDirtyTree) {
+          var settingsValues = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.settings && state.bootstrap.project.settings.values) || {};
+          var defaultOrder = settingsValues["git.preflightCommitOrder"] === "commit-then-branch" ? "commit-then-branch" : "branch-then-commit";
+          var otherOrder = defaultOrder === "commit-then-branch" ? "branch-then-commit" : "commit-then-branch";
+          var gitInfo = state.detail.git;
+          var currentBranch = gitInfo ? gitInfo.currentBranch : null;
+          var baseBranch = gitInfo ? gitInfo.baseBranch : null;
+          var onBaseBranch = !!(currentBranch && baseBranch && currentBranch === baseBranch);
+          var orderLabel = function (order) {
+            if (order === "commit-then-branch") return currentBranch ? "Commit onto " + currentBranch : "Commit onto the current branch";
+            return "Commit onto the run branch";
+          };
+          var defaultBtnClass = defaultOrder === "commit-then-branch" && onBaseBranch ? "btn danger" : "btn primary";
+          var otherBtnClass = otherOrder === "commit-then-branch" && onBaseBranch ? "btn danger" : "btn";
+          var cautionNote = onBaseBranch
+            ? '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Heads up</strong><div class="muted" style="margin-top:3px">' + esc(currentBranch) + ' is your base branch. Committing onto the current branch lands these changes directly on it.</div></div></div>'
+            : "";
+          commitControls = '<div class="preflight-commit-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
+            '<button class="' + defaultBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(defaultOrder) + '">' + esc(orderLabel(defaultOrder)) + ' and retry</button>' +
+            '<button class="' + otherBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(otherOrder) + '">' + esc(orderLabel(otherOrder)) + ' instead</button>' +
+            '</div>' + cautionNote;
+        }
+        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + '</div>' + failureDetail + commitControls + '</div><button class="btn danger" data-action="retry">Retry transition</button></div></div>';
       }
       if (["grilling","awaiting_input","planning"].includes(s.phase)) {
         html += renderFogCard(s);
@@ -859,7 +887,18 @@ export function renderDashboard(): string {
       var fields = categories.map(function (category) {
         var rows = category.definitions.map(function (definition) {
           var id = "setting-" + String(definition.key).replace(/[^a-z0-9_-]/gi,"-");
-          var input = '<input id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="' + attr(definition.type) + '" type="number" value="' + attr(values[definition.key]) + '" min="' + attr(definition.minimum) + '" max="' + attr(definition.maximum) + '" step="1" required' + (settings.editable ? '' : ' disabled') + '>';
+          var input;
+          if (definition.type === "boolean") {
+            input = '<input id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="boolean" type="checkbox"' + (values[definition.key] ? ' checked' : '') + (settings.editable ? '' : ' disabled') + '>';
+          } else if (definition.type === "enum") {
+            var options = Array.isArray(definition.options) ? definition.options : [];
+            var optionHtml = options.map(function (option) {
+              return '<option value="' + attr(option.value) + '"' + (values[definition.key] === option.value ? ' selected' : '') + '>' + esc(option.label) + '</option>';
+            }).join('');
+            input = '<select id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="enum"' + (settings.editable ? '' : ' disabled') + '>' + optionHtml + '</select>';
+          } else {
+            input = '<input id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="integer" type="number" value="' + attr(values[definition.key]) + '" min="' + attr(definition.minimum) + '" max="' + attr(definition.maximum) + '" step="1" required' + (settings.editable ? '' : ' disabled') + '>';
+          }
           return '<label class="setting-row" for="' + attr(id) + '"><span><strong>' + esc(definition.label) + '</strong><span class="faint">' + esc(definition.description) + '</span></span>' + input + '</label>';
         }).join('');
         return '<section class="settings-group"><h3>' + esc(category.name) + '</h3>' + rows + '</section>';
@@ -1105,7 +1144,11 @@ export function renderDashboard(): string {
       if (target.dataset.tab) { state.tab = target.dataset.tab; renderRun(); }
       if (target.dataset.action) {
         if (target.dataset.action === 'cancel' && !confirm('Cancel this run?')) return;
-        runAction(target.dataset.action);
+        if (target.dataset.action === 'commit_preflight') {
+          runAction(target.dataset.action, { order: target.dataset.preflightOrder });
+        } else {
+          runAction(target.dataset.action);
+        }
       }
       if (target.dataset.artifact) openArtifact(target.dataset.artifact);
       if (target.dataset.session) openSession(target.dataset.session);
@@ -1214,7 +1257,8 @@ export function renderDashboard(): string {
       try {
         var values = {};
         event.target.querySelectorAll('[data-setting-key]').forEach(function (input) {
-          values[input.dataset.settingKey] = input.dataset.settingType === 'integer' ? Number(input.value) : input.value;
+          var type = input.dataset.settingType;
+          values[input.dataset.settingKey] = type === 'integer' ? Number(input.value) : (type === 'boolean' ? input.checked : input.value);
         });
         var data = await api('/api/settings',{method:'PUT',body:{values:values}});
         state.settings = data.settings;

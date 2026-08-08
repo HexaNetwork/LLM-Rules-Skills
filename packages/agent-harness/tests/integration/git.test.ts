@@ -44,6 +44,23 @@ describe("harness-owned git", () => {
       ),
     ).rejects.toThrow("unreported paths");
   });
+
+  it("currentBranch reports the checked-out branch, and undefined when git is disabled", async () => {
+    const root = await fixtureRoot();
+    await git(root, "init");
+    await git(root, "config", "user.email", "harness@example.com");
+    await git(root, "config", "user.name", "Harness Test");
+    await writeFile(path.join(root, ".gitignore"), ".agent-harness/\n", "utf8");
+    await git(root, "add", "--all");
+    await git(root, "commit", "-m", "initial");
+    await git(root, "branch", "-M", "main");
+
+    const enabled = new GitService(fixtureConfig(root, { git: { enabled: true } as never }));
+    expect(await enabled.currentBranch()).toBe("main");
+
+    const disabled = new GitService(fixtureConfig(root, { git: { enabled: false } as never }));
+    expect(await disabled.currentBranch()).toBeUndefined();
+  });
 });
 
 async function git(cwd: string, ...args: string[]): Promise<string> {

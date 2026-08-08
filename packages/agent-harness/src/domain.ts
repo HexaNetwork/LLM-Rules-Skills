@@ -184,6 +184,14 @@ export const BuildTaskSchema = z.object({
   reviewSummary: z.string().optional(),
   commitSha: z.string().optional(),
   failure: z.string().optional(),
+  // In-process implementer episode; provider handles are not durable across processes.
+  implementerSession: z
+    .object({
+      providerSessionId: z.string().optional(),
+      guidanceFingerprint: z.string().optional(),
+      turns: z.number().int().nonnegative().default(0),
+    })
+    .optional(),
 });
 export type BuildTask = z.infer<typeof BuildTaskSchema>;
 

@@ -84,7 +84,7 @@ export function renderContinuationPrompt(
 ): string {
   const includeGuidance = options.includeGuidance !== false;
   return [
-    `Continue the durable grill episode. For this turn, act as the ${packet.role} worker.`,
+    `Continue the durable episode. For this turn, act as the ${packet.role} worker.`,
     "Use the existing conversation and repository findings; do not repeat exploration already completed unless the new input invalidates it.",
     ...ROLE_RULES[packet.role].map((rule) => `- ${rule}`),
     ...packet.constraints.map((constraint) => `- ${constraint}`),

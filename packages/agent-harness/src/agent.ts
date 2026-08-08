@@ -110,12 +110,15 @@ export class AgentCoordinator {
   }
 
   async invokeInEpisode<T>(
-    input: InvokeInput<T> & { providerSessionId?: string },
+    input: InvokeInput<T> & {
+      providerSessionId?: string;
+      mode?: "agent" | "plan";
+    },
   ): Promise<AgentInvocation<T>> {
     return this.invokeInternal(input, {
       providerSessionId: input.providerSessionId,
       retainProviderSession: true,
-      mode: "plan",
+      mode: input.mode ?? "plan",
     });
   }
 

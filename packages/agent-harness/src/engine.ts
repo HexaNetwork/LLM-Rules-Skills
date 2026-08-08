@@ -161,7 +161,11 @@ export class HarnessEngine {
       await this.clearCancelRequest(state.runId);
       return state;
     }
-    const cancelled = await this.closeGrillEpisode({ ...state, phase: "cancelled" });
+    const withoutSessions = await this.releaseAllImplementerSessions({
+      ...state,
+      phase: "cancelled",
+    });
+    const cancelled = await this.closeGrillEpisode(withoutSessions);
     const recorded = await this.store.record(cancelled, "run.cancelled");
     await this.clearCancelRequest(state.runId);
     return recorded;
@@ -1461,9 +1465,11 @@ export class HarnessEngine {
       task = { ...task, evidence: [...task.evidence, recovery] };
       state = await this.updateTask(await this.withTreeFingerprint(state), task, "task.resume_check_failed");
     }
-    const result = await this.agents.invoke({
+    const episode = task.implementerSession;
+    const invocation = await this.agents.invokeInEpisode({
       runId: state.runId,
       role: "implementer",
+      mode: "agent",
       objective: `Implement or repair the behavior in “${task.title}”`,
       input: {
         task: taskForPacket(task),
@@ -1480,8 +1486,19 @@ export class HarnessEngine {
         task.title,
         task.description,
       ),
+      providerSessionId: episode?.providerSessionId,
+      previousGuidanceFingerprint: episode?.guidanceFingerprint,
       signal: this.signalFor(state.runId),
     });
+    const result = invocation.value;
+    task = {
+      ...task,
+      implementerSession: {
+        providerSessionId: invocation.providerSessionId,
+        guidanceFingerprint: invocation.guidanceFingerprint ?? episode?.guidanceFingerprint,
+        turns: (episode?.turns ?? 0) + 1,
+      },
+    };
     const evidence = await this.runTargetedTest(state.runId, task, task.tdd ? "tdd:green" : "test");
     const attempts = {
       ...task.attempts,
@@ -1724,11 +1741,31 @@ export class HarnessEngine {
     event: string,
     detail: Record<string, unknown> = {},
   ): Promise<RunState> {
+    const next =
+      task.status === "done" || task.status === "failed"
+        ? await this.releaseImplementerSession(task)
+        : task;
     return this.store.record(
-      { ...state, tasks: state.tasks.map((item) => (item.id === task.id ? task : item)) },
+      { ...state, tasks: state.tasks.map((item) => (item.id === next.id ? next : item)) },
       event,
-      { taskId: task.id, step: task.step, ...detail },
+      { taskId: next.id, step: next.step, ...detail },
     );
+  }
+
+  private async releaseImplementerSession(task: BuildTask): Promise<BuildTask> {
+    if (!task.implementerSession) return task;
+    await this.agents
+      .releaseProviderSession(task.implementerSession.providerSessionId)
+      .catch(() => undefined);
+    return { ...task, implementerSession: undefined };
+  }
+
+  private async releaseAllImplementerSessions(state: RunState): Promise<RunState> {
+    const tasks: BuildTask[] = [];
+    for (const task of state.tasks) {
+      tasks.push(await this.releaseImplementerSession(task));
+    }
+    return { ...state, tasks };
   }
 
   private async withTreeFingerprint(state: RunState): Promise<RunState> {

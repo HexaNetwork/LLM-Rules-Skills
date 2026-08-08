@@ -1026,4 +1026,296 @@ describe("durable idea-to-feature workflow", () => {
       "Shared turn summary for the whole batch",
     ]);
   });
+
+  it("reuses the implementer session across one review repair with continuation findings", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: {
+        ...fixtureConfig(root).workflow,
+        tdd: false,
+        maxReviewAttempts: 2,
+        maxImplementationAttempts: 3,
+        generateCommitMessages: false,
+      },
+      agent: { ...fixtureConfig(root).agent, promptBuilder: false },
+    });
+    const implementerRequests: AgentRequest[] = [];
+    const reviewerSessionIds: string[] = [];
+    const implementerSessionIds: string[] = [];
+    const released: string[] = [];
+    let reviewCalls = 0;
+    const inner = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => ({
+        status: "ready_to_plan",
+        summary: "Ready",
+        resolutions: [],
+      }),
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render greeting.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: (request) => {
+        implementerRequests.push(request);
+        return { summary: "Built", changedFiles: ["src/greet.ts"] };
+      },
+      reviewer: () => {
+        reviewCalls += 1;
+        if (reviewCalls === 1) {
+          return {
+            approved: false,
+            summary: "Needs a null check",
+            findings: [{ severity: "blocking", message: "Handle null input" }],
+          };
+        }
+        return { approved: true, summary: "ok", findings: [] };
+      },
+      "message-writer": () => ({ subject: "feat: greet", body: "ok" }),
+    });
+    const backend: AgentBackend = {
+      async run(request) {
+        const result = await inner.run(request);
+        if (request.role === "implementer" && result.providerSessionId) {
+          implementerSessionIds.push(result.providerSessionId);
+        }
+        if (request.role === "reviewer" && result.providerSessionId) {
+          reviewerSessionIds.push(result.providerSessionId);
+        }
+        return result;
+      },
+      async release(providerSessionId) {
+        released.push(providerSessionId);
+        await inner.release?.(providerSessionId);
+      },
+    };
+
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Add greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    state = await engine.advance(state.runId);
+
+    expect(state.phase).toBe("completed");
+    expect(implementerRequests).toHaveLength(2);
+    expect(implementerRequests[0]?.mode).toBe("agent");
+    expect(implementerRequests[1]?.mode).toBe("agent");
+    expect(implementerRequests[0]?.providerSessionId).toBeUndefined();
+    expect(implementerRequests[1]?.providerSessionId).toBe(implementerSessionIds[0]);
+    expect(implementerRequests[1]?.continuationPrompt).toContain("Handle null input");
+    expect(implementerRequests[1]?.continuationPrompt).toContain("New authoritative input");
+
+    for (const reviewerId of reviewerSessionIds) {
+      expect(reviewerId).not.toBe(implementerSessionIds[0]);
+    }
+    expect(released).toContain(implementerSessionIds[0]);
+    expect(state.tasks[0]?.implementerSession).toBeUndefined();
+  });
+
+  it("cold-starts the implementer when a run resumes without in-process session handles", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: {
+        ...fixtureConfig(root).workflow,
+        tdd: false,
+        maxReviewAttempts: 2,
+        maxImplementationAttempts: 3,
+        generateCommitMessages: false,
+        maxStepsPerRun: 8,
+      },
+      agent: { ...fixtureConfig(root).agent, promptBuilder: false },
+    });
+    const aliveSessions = new Set<string>();
+    let reviewCalls = 0;
+    let implementerCalls = 0;
+    const implementerPrompts: Array<{ reused: boolean; prompt: string }> = [];
+
+    const makeBackend = (): AgentBackend => ({
+      async run(request) {
+        if (request.role === "reflector") {
+          return {
+            output: REFLECT_OUTPUT,
+            providerSessionId: "reflect",
+            providerRunId: "r1",
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+        if (request.role === "griller") {
+          return {
+            output: {
+              status: "ready_to_plan",
+              summary: "Ready",
+              resolutions: [],
+            },
+            providerSessionId: "grill",
+            providerRunId: "g1",
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+        if (request.role === "planner") {
+          return {
+            output: {
+              summary: "One task",
+              tasks: [
+                {
+                  id: "greet",
+                  title: "Ship greeting",
+                  description: "Render greeting.",
+                  acceptanceCriteria: ["Works"],
+                  blockedBy: [],
+                  tdd: false,
+                  testCommand: 'node -e "process.exit(0)"',
+                },
+              ],
+            },
+            providerSessionId: "plan",
+            providerRunId: "p1",
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+        if (request.role === "implementer") {
+          implementerCalls += 1;
+          let providerSessionId = request.providerSessionId;
+          let providerSessionReused = false;
+          if (providerSessionId && aliveSessions.has(providerSessionId)) {
+            providerSessionReused = true;
+          } else {
+            // Missing in-process handle (new process): resume fails → cold start.
+            providerSessionId = `impl-${implementerCalls}`;
+            aliveSessions.add(providerSessionId);
+            providerSessionReused = false;
+          }
+          const submittedPrompt = providerSessionReused
+            ? request.continuationPrompt ?? request.prompt
+            : request.prompt;
+          implementerPrompts.push({ reused: providerSessionReused, prompt: submittedPrompt });
+          return {
+            output: { summary: "Built", changedFiles: ["src/greet.ts"] },
+            providerSessionId,
+            providerRunId: `impl-run-${implementerCalls}`,
+            providerSessionReused,
+            submittedPrompt,
+          };
+        }
+        if (request.role === "reviewer") {
+          reviewCalls += 1;
+          return {
+            output:
+              reviewCalls === 1
+                ? {
+                    approved: false,
+                    summary: "Needs a null check",
+                    findings: [{ severity: "blocking", message: "Handle null input" }],
+                  }
+                : { approved: true, summary: "ok", findings: [] },
+            providerSessionId: `review-${reviewCalls}`,
+            providerRunId: `rev-run-${reviewCalls}`,
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+        throw new Error(`Unexpected role ${request.role}`);
+      },
+      async release(providerSessionId) {
+        aliveSessions.delete(providerSessionId);
+      },
+    });
+
+    const engine = new HarnessEngine(config, { backend: makeBackend() });
+    let state = await engine.start("Add greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    // Stop after first review failure leaves the task needing repair with a session.
+    state = await engine.advance(state.runId, 5);
+    expect(state.tasks[0]?.step).toBe("implementing");
+    expect(state.tasks[0]?.implementerSession?.providerSessionId).toBe("impl-1");
+    expect(implementerCalls).toBe(1);
+    expect(implementerPrompts[0]?.reused).toBe(false);
+
+    // New process: empty retained-handle map; persisted providerSessionId alone is not enough.
+    aliveSessions.clear();
+    const resumed = new HarnessEngine(config, { backend: makeBackend() });
+    state = await resumed.advance(state.runId);
+    expect(implementerCalls).toBe(2);
+    expect(implementerPrompts[1]?.reused).toBe(false);
+    expect(implementerPrompts[1]?.prompt).not.toContain("New authoritative input");
+    expect(implementerPrompts[1]?.prompt).toContain("Ship greeting");
+  });
+
+  it("releases implementer sessions for all tasks on cancel", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: {
+        ...fixtureConfig(root).workflow,
+        tdd: false,
+        maxReviewAttempts: 2,
+        generateCommitMessages: false,
+        maxStepsPerRun: 8,
+      },
+      agent: { ...fixtureConfig(root).agent, promptBuilder: false },
+    });
+    const released: string[] = [];
+    const inner = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => ({
+        status: "ready_to_plan",
+        summary: "Ready",
+        resolutions: [],
+      }),
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render greeting.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
+      reviewer: () => ({
+        approved: false,
+        summary: "Needs work",
+        findings: [{ severity: "blocking", message: "Fix edge case" }],
+      }),
+    });
+    const backend: AgentBackend = {
+      async run(request) {
+        return inner.run(request);
+      },
+      async release(providerSessionId) {
+        released.push(providerSessionId);
+        await inner.release?.(providerSessionId);
+      },
+    };
+
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Add greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    state = await engine.advance(state.runId, 5);
+    expect(state.tasks[0]?.implementerSession?.providerSessionId).toBeTruthy();
+    const sessionId = state.tasks[0]!.implementerSession!.providerSessionId!;
+
+    const cancelled = await engine.cancel(state.runId);
+    expect(cancelled.state.phase).toBe("cancelled");
+    expect(released).toContain(sessionId);
+    expect(cancelled.state.tasks[0]?.implementerSession).toBeUndefined();
+  });
 });

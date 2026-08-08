@@ -38,3 +38,7 @@ Observe remote checks after push and support explicit merge policies. v2 stops a
 ### Additional agent providers
 
 Implement provider adapters behind `AgentBackend`. All must honor abort signals and the existing work-packet/session contract.
+
+### Command allowlisting for model-authored test targets
+
+`task.testCommand` is planner-authored and executed with `shell: true` under the operator's environment. Allowlist it against config-owned commands and replace free-form strings with a scoped `testFilter` into a config template. See [Trust boundary](../packages/agent-harness/README.md#trust-boundary) in the harness README.

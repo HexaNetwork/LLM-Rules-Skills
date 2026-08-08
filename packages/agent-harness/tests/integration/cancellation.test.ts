@@ -1,11 +1,10 @@
-import { createHash } from "node:crypto";
 import path from "node:path";
 import { access, readFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentBackendRunError, createFakeBackend, type AgentRequest } from "../../src/agent.js";
 import { runCommand } from "../../src/commands.js";
-import { CONFIG_VERSION } from "../../src/config.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
@@ -253,7 +252,7 @@ describe("out-of-band cancellation", () => {
     await engine.store.create(seed);
     seed = {
       ...seed,
-      configurationHash: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+      configurationHash: configurationHash(config),
     };
     await engine.store.writeJson(seed.runId, "state.json", seed);
     await engine.store.writeJson(seed.runId, "config.json", {

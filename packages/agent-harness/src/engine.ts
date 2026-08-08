@@ -1,9 +1,10 @@
 import { access, unlink, writeFile } from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { hostname as localHostname } from "node:os";
 import path from "node:path";
 import {
   CONFIG_VERSION,
+  configurationHash,
   HarnessConfigSchema,
   type HarnessConfig,
   type PreflightCommitOrder,
@@ -1927,10 +1928,6 @@ function safeId(value: string, fallback: string): string {
 
 function terminal(phase: RunPhase): boolean {
   return phase === "completed" || phase === "blocked" || phase === "cancelled";
-}
-
-function configurationHash(config: unknown): string {
-  return createHash("sha256").update(JSON.stringify(config)).digest("hex");
 }
 
 const DIRTY_TREE_PATH_LIMIT = 10;

@@ -1,11 +1,10 @@
 import path from "node:path";
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
-import { CONFIG_VERSION } from "../../src/config.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { GitService } from "../../src/git.js";
@@ -380,7 +379,7 @@ async function seedExecutingRun(
   await engine.store.create(state);
   state = {
     ...state,
-    configurationHash: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+    configurationHash: configurationHash(config),
   };
   await engine.store.writeJson(state.runId, "state.json", state);
   await engine.store.writeJson(state.runId, "config.json", {

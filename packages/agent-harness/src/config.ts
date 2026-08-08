@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import yaml from "js-yaml";
@@ -12,8 +13,18 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
   "reviewer",
 ];
 
-/** Bumped when the frozen run-config shape changes in a way that needs migration. */
-export const CONFIG_VERSION = 4;
+/**
+ * Bumped when the frozen run-config shape or configuration-hash algorithm changes
+ * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
+ */
+export const CONFIG_VERSION = 5;
+
+/** Environment paths — omitted from configurationHash (policy only). */
+const CONFIG_HASH_OMIT_PATHS = new Set([
+  "repositoryRoot",
+  "stateDirectory",
+  "knowledge.sharedIndexDirectory",
+]);
 
 export const PreflightCommitOrderSchema = z.enum(["branch-then-commit", "commit-then-branch"]);
 export type PreflightCommitOrder = z.infer<typeof PreflightCommitOrderSchema>;
@@ -552,4 +563,36 @@ export function deploymentConfigYaml(options: {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Canonical policy view for hashing: keys sorted recursively; environment paths omitted.
+ */
+export function canonicalConfigForHash(config: unknown): unknown {
+  return canonicalizeForHash(config, "");
+}
+
+/** Stable sha256 over {@link canonicalConfigForHash}. */
+export function configurationHash(config: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalConfigForHash(config)))
+    .digest("hex");
+}
+
+function canonicalizeForHash(value: unknown, keyPath: string): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeForHash(item, keyPath));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    const childPath = keyPath ? `${keyPath}.${key}` : key;
+    if (CONFIG_HASH_OMIT_PATHS.has(childPath)) {
+      continue;
+    }
+    out[key] = canonicalizeForHash(value[key], childPath);
+  }
+  return out;
 }

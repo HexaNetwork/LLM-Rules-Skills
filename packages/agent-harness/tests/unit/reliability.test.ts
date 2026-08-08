@@ -6,7 +6,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 import { AgentBackendRunError, createFakeBackend } from "../../src/agent.js";
-import { CONFIG_VERSION } from "../../src/config.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { runCommand } from "../../src/commands.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
@@ -178,10 +178,7 @@ describe("step budget", () => {
     // Align hash so resume checks pass.
     state = {
       ...state,
-      configurationHash: (await import("node:crypto"))
-        .createHash("sha256")
-        .update(JSON.stringify(config))
-        .digest("hex"),
+      configurationHash: configurationHash(config),
     };
     await engine.store.writeJson(state.runId, "state.json", state);
 
@@ -230,10 +227,9 @@ describe("step budget", () => {
     };
     await engine.store.initialize();
     await engine.store.create(state);
-    const { createHash } = await import("node:crypto");
     state = {
       ...state,
-      configurationHash: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+      configurationHash: configurationHash(config),
     };
     await engine.store.writeJson(state.runId, "state.json", state);
     await engine.store.writeJson(state.runId, "config.json", {

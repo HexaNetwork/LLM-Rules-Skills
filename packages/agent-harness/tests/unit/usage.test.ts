@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createFakeBackend, reportedTotal } from "../../src/agent.js";
-import { CONFIG_VERSION } from "../../src/config.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
@@ -73,7 +72,7 @@ describe("run usage accrual and cost ceiling", () => {
       phase: "executing",
       tasks,
       reflectBrief: { draft: "d", confirmed: "confirmed", confirmedAt: new Date().toISOString() },
-      configurationHash: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+      configurationHash: configurationHash(config),
     };
     await engine.store.initialize();
     await engine.store.create(state);
@@ -164,7 +163,7 @@ describe("run usage accrual and cost ceiling", () => {
       workflow: { ...fixtureConfig(root).workflow, maxRunTokens: 100 },
     });
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
-    const hash = createHash("sha256").update(JSON.stringify(config)).digest("hex");
+    const hash = configurationHash(config);
     let state: RunState = {
       ...createRunState("raise-ceiling", "idea", new Date().toISOString(), hash, CONFIG_VERSION),
       phase: "blocked",
@@ -190,9 +189,7 @@ describe("run usage accrual and cost ceiling", () => {
       workflow: { maxRunTokens: number };
     };
     expect(frozen.workflow.maxRunTokens).toBe(500);
-    expect(state.configurationHash).toBe(
-      createHash("sha256").update(JSON.stringify(engine.config)).digest("hex"),
-    );
+    expect(state.configurationHash).toBe(configurationHash(engine.config));
   });
 
   it("counts tokens for an unpriced model but contributes 0 to costUsd", async () => {

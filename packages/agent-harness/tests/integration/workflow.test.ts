@@ -1,13 +1,13 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   createFakeBackend,
   type AgentBackend,
   type AgentRequest,
 } from "../../src/agent.js";
-import { CONFIG_VERSION } from "../../src/config.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
@@ -321,9 +321,7 @@ describe("durable idea-to-feature workflow", () => {
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
     expect(state.configVersion).toBe(CONFIG_VERSION);
-    expect(state.configurationHash).toBe(
-      createHash("sha256").update(JSON.stringify(config)).digest("hex"),
-    );
+    expect(state.configurationHash).toBe(configurationHash(config));
     const events = await readFile(
       path.join(root, ".agent-harness", "runs", state.runId, "events.jsonl"),
       "utf8",
@@ -337,6 +335,60 @@ describe("durable idea-to-feature workflow", () => {
     expect(state.failure).toMatch(/configuration changed/i);
     expect(state.blockedKind).toBe("config");
     expect(state.blockedRetriable).toBe(false);
+  });
+
+  it("hashes policy only so repositoryRoot moves migrate and resume cleanly", async () => {
+    const rootA = await fixtureRoot();
+    const rootB = await fixtureRoot();
+    const configA = fixtureConfig(rootA, {
+      workflow: { tdd: false } as never,
+      knowledge: {
+        ...fixtureConfig(rootA).knowledge,
+        sharedIndexDirectory: path.join(rootA, "shared-a"),
+      },
+      stateDirectory: ".agent-harness-a",
+    });
+    const configB = fixtureConfig(rootB, {
+      workflow: { tdd: false } as never,
+      knowledge: {
+        ...fixtureConfig(rootB).knowledge,
+        sharedIndexDirectory: path.join(rootB, "shared-b"),
+      },
+      stateDirectory: ".agent-harness-b",
+    });
+    expect(configA.repositoryRoot).not.toBe(configB.repositoryRoot);
+    expect(configA.stateDirectory).not.toBe(configB.stateDirectory);
+    expect(configA.knowledge.sharedIndexDirectory).not.toBe(configB.knowledge.sharedIndexDirectory);
+
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+    });
+    const engineA = new HarnessEngine(configA, { backend });
+    const engineB = new HarnessEngine(configB, { backend });
+    let stateA = await engineA.start("moved-repo");
+    const stateB = await engineB.start("fresh-at-b");
+    expect(stateA.configurationHash).toBe(stateB.configurationHash);
+
+    const fromRun = path.join(rootA, configA.stateDirectory, "runs", stateA.runId);
+    const toRun = path.join(rootB, configB.stateDirectory, "runs", stateA.runId);
+    await mkdir(path.dirname(toRun), { recursive: true });
+    await cp(fromRun, toRun, { recursive: true });
+
+    // Simulate a pre-canonicalisation run that needs CONFIG_VERSION migration after the move.
+    stateA = {
+      ...stateA,
+      configVersion: 0,
+      configurationHash: "legacy-pre-canonical-hash",
+    };
+    await engineB.store.writeJson(stateA.runId, "state.json", stateA);
+
+    const advanced = await engineB.advance(stateA.runId);
+    expect(advanced.configVersion).toBe(CONFIG_VERSION);
+    expect(advanced.configurationHash).toBe(stateB.configurationHash);
+    expect(advanced.phase).toBe("awaiting_input");
+    expect(advanced.blockedKind).not.toBe("config");
+    const events = await readFile(path.join(toRun, "events.jsonl"), "utf8");
+    expect(events).toContain("run.config_migrated");
   });
 
   it("repairs invalid grill JSON on the same provider session", async () => {

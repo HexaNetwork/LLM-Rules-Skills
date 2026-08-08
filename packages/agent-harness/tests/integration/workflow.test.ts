@@ -861,4 +861,162 @@ describe("durable idea-to-feature workflow", () => {
     state = await engine.advance(state.runId);
     expect(["planning", "executing", "publishing", "completed"]).toContain(state.phase);
   });
+
+  it("stamps each grillResolution with its own resolutionSummaries entry", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, grillQuestionsPerBatch: 3 } as never,
+    });
+    let grillCalls = 0;
+    let resolutionSummaries: Array<{ questionId: string; summary: string }> = [];
+    const batchQuestions = [
+      { ...FIRST_GRILL_QUESTION, prompt: "Q1: formal or casual?", unknownId: "tone" },
+      { ...FIRST_GRILL_QUESTION, prompt: "Q2: short or long?", unknownId: "length" },
+      { ...FIRST_GRILL_QUESTION, prompt: "Q3: emoji or plain?", unknownId: "emoji" },
+    ];
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => {
+        grillCalls += 1;
+        if (grillCalls === 1) {
+          return {
+            status: "needs_input",
+            summary: "Batching independent decisions",
+            questions: batchQuestions,
+            openUnknowns: [
+              { id: "tone", title: "Tone", impact: "shaping" },
+              { id: "length", title: "Length", impact: "shaping" },
+              { id: "emoji", title: "Emoji", impact: "minor" },
+            ],
+          };
+        }
+        return {
+          status: "ready_to_plan",
+          summary: "Turn-level wrap-up of the batch",
+          resolutionSummaries,
+          resolutions: [],
+          openUnknowns: [],
+        };
+      },
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render greeting.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: greet", body: "ok" }),
+    });
+
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    state = await engine.advance(state.runId);
+    const ids = state.questions.filter((q) => q.purpose === "grill").map((q) => q.id);
+    expect(ids).toHaveLength(3);
+
+    resolutionSummaries = [
+      { questionId: ids[0]!, summary: "Settled on formal tone" },
+      { questionId: ids[1]!, summary: "Settled on short copy" },
+      { questionId: ids[2]!, summary: "Settled on plain text without emoji" },
+    ];
+    state = await engine.answerMany(state.runId, [
+      { questionId: ids[0]!, answer: "Formal" },
+      { questionId: ids[1]!, answer: "Short" },
+      { questionId: ids[2]!, answer: "Plain" },
+    ]);
+    state = await engine.advance(state.runId);
+
+    expect(state.grillResolutions).toHaveLength(3);
+    const byId = new Map(state.grillResolutions.map((item) => [item.id, item.summary]));
+    expect(byId.get(ids[0]!)).toBe("Settled on formal tone");
+    expect(byId.get(ids[1]!)).toBe("Settled on short copy");
+    expect(byId.get(ids[2]!)).toBe("Settled on plain text without emoji");
+    expect(new Set(byId.values()).size).toBe(3);
+  });
+
+  it("falls back to the turn summary when resolutionSummaries is omitted", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, grillQuestionsPerBatch: 3 } as never,
+    });
+    let grillCalls = 0;
+    const batchQuestions = [
+      { ...FIRST_GRILL_QUESTION, prompt: "Q1: formal or casual?", unknownId: "tone" },
+      { ...FIRST_GRILL_QUESTION, prompt: "Q2: short or long?", unknownId: "length" },
+      { ...FIRST_GRILL_QUESTION, prompt: "Q3: emoji or plain?", unknownId: "emoji" },
+    ];
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => {
+        grillCalls += 1;
+        if (grillCalls === 1) {
+          return {
+            status: "needs_input",
+            summary: "Batching independent decisions",
+            questions: batchQuestions,
+            openUnknowns: [
+              { id: "tone", title: "Tone", impact: "shaping" },
+              { id: "length", title: "Length", impact: "shaping" },
+              { id: "emoji", title: "Emoji", impact: "minor" },
+            ],
+          };
+        }
+        // Intentionally omit resolutionSummaries — weaker models may do this.
+        return {
+          status: "ready_to_plan",
+          summary: "Shared turn summary for the whole batch",
+          resolutions: [],
+          openUnknowns: [],
+        };
+      },
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render greeting.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: greet", body: "ok" }),
+    });
+
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    state = await engine.advance(state.runId);
+    const ids = state.questions.filter((q) => q.purpose === "grill").map((q) => q.id);
+    state = await engine.answerMany(state.runId, [
+      { questionId: ids[0]!, answer: "Formal" },
+      { questionId: ids[1]!, answer: "Short" },
+      { questionId: ids[2]!, answer: "Plain" },
+    ]);
+    state = await engine.advance(state.runId);
+
+    expect(state.grillResolutions).toHaveLength(3);
+    expect(state.grillResolutions.map((item) => item.summary)).toEqual([
+      "Shared turn summary for the whole batch",
+      "Shared turn summary for the whole batch",
+      "Shared turn summary for the whole batch",
+    ]);
+  });
 });

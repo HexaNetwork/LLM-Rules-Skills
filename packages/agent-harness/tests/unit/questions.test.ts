@@ -70,6 +70,45 @@ describe("human question contracts", () => {
     ).toThrow(/recommended option/i);
   });
 
+  it("defaults resolutionSummaries to [] when omitted on either grill status", () => {
+    const needsInput = GrillOutputSchema.parse({
+      status: "needs_input",
+      summary: "Need a tone decision",
+      questions: [question],
+    });
+    expect(needsInput.resolutionSummaries).toEqual([]);
+
+    const ready = GrillOutputSchema.parse({
+      status: "ready_to_plan",
+      summary: "Done",
+      resolutions: [
+        {
+          id: "q1",
+          question: "Tone?",
+          answer: "Quiet",
+          summary: "Use quiet tone",
+        },
+      ],
+    });
+    expect(ready.resolutionSummaries).toEqual([]);
+  });
+
+  it("accepts per-question resolutionSummaries", () => {
+    const parsed = GrillOutputSchema.parse({
+      status: "ready_to_plan",
+      summary: "Batch incorporated",
+      resolutionSummaries: [
+        { questionId: "q1", summary: "Settled tone" },
+        { questionId: "q2", summary: "Settled length" },
+      ],
+      resolutions: [],
+    });
+    expect(parsed.resolutionSummaries).toEqual([
+      { questionId: "q1", summary: "Settled tone" },
+      { questionId: "q2", summary: "Settled length" },
+    ]);
+  });
+
   it("stores reflect drafts on open questions", () => {
     const parsed = QuestionSchema.parse({
       id: "q-reflect",

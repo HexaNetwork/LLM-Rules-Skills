@@ -610,11 +610,14 @@ export class HarnessEngine {
 
     if (answeredQuestions.length > 0) {
       const now = new Date().toISOString();
+      const summaryByQuestionId = new Map(
+        output.resolutionSummaries.map((item) => [item.questionId, item.summary]),
+      );
       const resolutions: GrillResolution[] = answeredQuestions.map((question) => ({
         id: question.id,
         question: question.prompt,
         answer: question.answer ?? "",
-        summary: output.summary,
+        summary: summaryByQuestionId.get(question.id) ?? output.summary,
         resolvedAt: now,
       }));
       const questionsAnswered = (state.grillEpisode?.questionsAnswered ?? 0) + answeredQuestions.length;

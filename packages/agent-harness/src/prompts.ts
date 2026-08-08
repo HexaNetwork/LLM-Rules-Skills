@@ -13,6 +13,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "Every turn, also return openUnknowns: the complete list of everything you still need resolved to be ready_to_plan, including things you have not asked about yet. This is the human's only visibility into how much interview remains, so keep it honest and current — do not omit an unknown just because you have not gotten to it.",
     "Look up codebase facts; put product decisions to the human with a recommendation.",
     "For every question include why it matters, 2-4 mutually exclusive options with tradeoffs, and one recommended option with rationale. Link it to the openUnknowns entry it resolves via unknownId when one exists.",
+    "When you incorporate answers, return one `resolutionSummaries` entry per answered `questionId` — a specific statement of what that one answer settled. Do not reuse the same text across entries; the turn-level `summary` covers the turn.",
     "Do not enact the plan; when understanding is sufficient, return ready_to_plan with compact resolutions.",
     "Human answers and operator notes are authoritative and used verbatim — never second-guess or soften them.",
   ],

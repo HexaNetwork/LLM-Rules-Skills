@@ -253,18 +253,25 @@ export const AgentRoleSchema = z.enum([
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 
 export const GRILL_EXPECTED_OUTPUT =
-  "either {status:'needs_input',summary:string,questions:[{prompt,context,options:[{id,label,description}] (2-4),recommendedOptionId,recommendation,unknownId?}] (1-N, N is a ceiling not a target; only mutually independent questions may share a turn),openUnknowns:[{id,title,whyItMatters,impact:'blocking'|'shaping'|'minor'}]} or {status:'ready_to_plan',summary:string,resolutions:[{id,question,answer,summary}],openUnknowns:[{id,title,whyItMatters,impact}]}";
+  "either {status:'needs_input',summary:string,resolutionSummaries:[{questionId,summary}] (one per answered questionId this turn; omit or [] when none),questions:[{prompt,context,options:[{id,label,description}] (2-4),recommendedOptionId,recommendation,unknownId?}] (1-N, N is a ceiling not a target; only mutually independent questions may share a turn),openUnknowns:[{id,title,whyItMatters,impact:'blocking'|'shaping'|'minor'}]} or {status:'ready_to_plan',summary:string,resolutionSummaries:[{questionId,summary}] (one per answered questionId this turn; omit or [] when none),resolutions:[{id,question,answer,summary}],openUnknowns:[{id,title,whyItMatters,impact}]}";
+
+const GrillResolutionSummarySchema = z.object({
+  questionId: z.string().min(1),
+  summary: z.string().min(1),
+});
 
 export const GrillOutputSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("needs_input"),
     summary: z.string().min(1),
+    resolutionSummaries: z.array(GrillResolutionSummarySchema).default([]),
     questions: z.array(HumanQuestionDraftSchema).min(1).max(6),
     openUnknowns: z.array(OpenUnknownDraftSchema).default([]),
   }),
   z.object({
     status: z.literal("ready_to_plan"),
     summary: z.string().min(1),
+    resolutionSummaries: z.array(GrillResolutionSummarySchema).default([]),
     resolutions: z.array(
       z.object({
         id: z.string().min(1),

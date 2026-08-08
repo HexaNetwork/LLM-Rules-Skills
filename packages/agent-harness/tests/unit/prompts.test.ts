@@ -62,6 +62,13 @@ describe("prompt rendering", () => {
     expect(REFLECT_EXPECTED_OUTPUT).toContain("restatement:string");
     expect(GRILL_EXPECTED_OUTPUT).toContain("needs_input");
     expect(GRILL_EXPECTED_OUTPUT).toContain("ready_to_plan");
+    expect(GRILL_EXPECTED_OUTPUT).toContain("resolutionSummaries");
+  });
+
+  it("instructs grillers to return per-question resolutionSummaries", () => {
+    const grillPacket: WorkPacket = { ...packet, role: "griller" };
+    expect(renderPrompt(grillPacket)).toContain("resolutionSummaries");
+    expect(renderPrompt(grillPacket)).toContain("one answer settled");
   });
 
   it("requires the prompt builder to preserve guidance", () => {

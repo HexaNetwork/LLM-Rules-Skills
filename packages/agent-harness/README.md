@@ -75,6 +75,7 @@ agent-harness answer --run-id <id> --question <id> --text "..."
 agent-harness continue --run-id <id>
 agent-harness retry --run-id <id>
 agent-harness cancel --run-id <id>
+agent-harness unlock --run-id <id> [--repo]   # remove a stale run/repo lock
 
 agent-harness knowledge refresh
 agent-harness knowledge add docs/api.md
@@ -227,6 +228,14 @@ Prompt compilation is disabled by default because the deterministic renderer is 
 With TDD on, the harness launches a test writer first, restricts its reported/observed paths to tests, runs the declared targeted command, and requires a meaningful non-timeout failure. Only then does it launch the implementer. Failing GREEN or command-gate output is persisted and included in the next implementation packet. With TDD off, implementation starts first but the same targeted test, gate, review, and repair budgets still apply.
 
 Agents cannot claim a command passed. The harness owns process execution and records exit code, stdout, stderr, duration, and timestamp.
+
+## Repository lock
+
+`start` (preflight / Graphify / knowledge refresh) and `advance` take a process-wide repository lock at `<stateDirectory>/repo.lock`. That serialises working-tree work across runs — including a CLI `advance` beside the UI, or two UI instances — so branch switches and `changedFiles()` reads cannot interleave against one shared tree.
+
+Hold time matches the work: a long `advance` blocks every other run for the same duration. That is intentional with one working tree. `answer`, `answerMany`, `addNote`, `status`, and `cancel` do not take the repository lock, so human input and cancellation stay available while a run is executing. If a holder dies, `agent-harness unlock --run-id <id> --repo` removes a stale `repo.lock`.
+
+True parallel runs need isolated worktrees; that remains deferred under [Parallel task execution](../../docs/roadmap.md#parallel-task-execution) in the roadmap.
 
 ## Git ownership
 

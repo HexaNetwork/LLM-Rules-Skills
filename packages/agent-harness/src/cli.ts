@@ -290,7 +290,7 @@ program
 
 program
   .command("unlock")
-  .description("Force-remove a stale run lock (operator escape hatch)")
+  .description("Force-remove a stale run lock, and optionally the repository lock")
   .requiredOption("--run-id <id>", "run id")
   .option("--repo", "also remove the repository lock when present", false)
   .option("--config <path>", "config path")
@@ -310,9 +310,7 @@ program
       if (repoLock) {
         printLockRemoval("repository", repoLock);
       } else {
-        console.log(
-          "Repository lock not present (repo.lock is added by repository-lock hardening; --repo accepted).",
-        );
+        console.log("Repository lock not present.");
       }
     }
     const result = await store.unlock(options.runId, { repo: options.repo });

@@ -127,125 +127,129 @@ export class HarnessEngine {
       configVersion: CONFIG_VERSION,
     });
     state = await this.store.record(state, "run.created", { idea: idea.trim() });
-    try {
-      // Same changedFiles() source ensureRunBranch guards later; fail before burning a run.
-      if (this.config.git.enabled) {
-        const dirty = await this.git.changedFiles();
-        if (dirty.length > 0) {
-          if (!this.config.git.autoCommitPreflight) {
-            throw new HarnessFailure(dirtyTreeMessage(dirty), "workspace", true);
-          }
-          const order = this.config.git.preflightCommitOrder;
-          const commit = await this.runPreflightCommit(runId, order, defaultPreflightCommitMessage(runId));
-          state = await this.store.record(
-            { ...state, branchName: commit.runBranch ?? state.branchName },
-            "run.preflight_committed",
-            preflightCommitDetail(order, commit, true),
-          );
-        }
-      }
-      if (prepareGraphify && this.config.knowledge.graphify.enabled) {
-        if (this.graphifySetupRunner) {
-          await prepareGraphifyForRun(
-            this.config,
-            this.graphifyRunner,
-            this.graphifySetupRunner,
-          );
-        } else {
-          await prepareGraphifyForRun(this.config, this.graphifyRunner);
-        }
-      }
-      if (refreshKnowledge) await this.knowledge.refresh();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const classified = classifyFailure(error);
-      state = await this.store.record(
-        {
-          ...state,
-          phase: "blocked",
-          blockedFrom: "new",
-          failure: message,
-          blockedKind: classified.kind,
-          blockedRetriable: classified.retriable,
-        },
-        "run.blocked",
-        {
-          blockedFrom: "new",
-          error: message,
-          blockedKind: classified.kind,
-          blockedRetriable: classified.retriable,
-        },
-      );
-      await this.syncArtifacts(state);
-      return state;
-    }
-    await this.syncArtifacts(state);
-    return state;
-  }
-
-  async advance(runId: string, maxSteps = this.config.workflow.maxStepsPerRun): Promise<RunState> {
-    return this.store.withLock(runId, async () => {
-      let state = await this.store.load(runId);
+    // Lock ordering: repository → run, always (avoid deadlock with paths that take both).
+    await this.store.withRepositoryLock({ runId, action: "start" }, async () => {
       try {
-        state = await this.ensureCompatibleConfiguration(state);
-        if (terminal(state.phase) || state.phase === "awaiting_input") return state;
-        if (state.yieldedAt) {
-          state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
-        }
-        let remaining = maxSteps;
-        let iterations = 0;
-        const maxIterations = Math.max(maxSteps * 8, 40);
-        while (remaining > 0 && iterations < maxIterations) {
-          iterations += 1;
-          // Enforce spend ceilings between steps only — never abort mid-step.
-          state = await this.accrueUsage(state);
-          this.assertWithinBudget(state);
-          const step = await this.advanceOneWithProviderRetry(state);
-          state = step.state;
-          await this.syncArtifacts(state);
-          if (step.consumedBudget) {
-            remaining -= 1;
-            state = await this.accrueUsage(state);
-          }
-          if (terminal(state.phase) || state.phase === "awaiting_input") {
-            state = await this.accrueUsage(state);
-            return state;
+        // Same changedFiles() source ensureRunBranch guards later; fail before burning a run.
+        if (this.config.git.enabled) {
+          const dirty = await this.git.changedFiles();
+          if (dirty.length > 0) {
+            if (!this.config.git.autoCommitPreflight) {
+              throw new HarnessFailure(dirtyTreeMessage(dirty), "workspace", true);
+            }
+            const order = this.config.git.preflightCommitOrder;
+            const commit = await this.runPreflightCommit(runId, order, defaultPreflightCommitMessage(runId));
+            state = await this.store.record(
+              { ...state, branchName: commit.runBranch ?? state.branchName },
+              "run.preflight_committed",
+              preflightCommitDetail(order, commit, true),
+            );
           }
         }
-        state = await this.accrueUsage(state);
-        state = await this.store.record(
-          { ...state, yieldedAt: new Date().toISOString() },
-          "run.yielded",
-          { maxSteps },
-        );
-        return state;
+        if (prepareGraphify && this.config.knowledge.graphify.enabled) {
+          if (this.graphifySetupRunner) {
+            await prepareGraphifyForRun(
+              this.config,
+              this.graphifyRunner,
+              this.graphifySetupRunner,
+            );
+          } else {
+            await prepareGraphifyForRun(this.config, this.graphifyRunner);
+          }
+        }
+        if (refreshKnowledge) await this.knowledge.refresh();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const classified = classifyFailure(error);
-        state = await this.store.load(runId).catch(() => state);
-        // Keep the latest accrued usage on the blocked snapshot when available.
-        state = await this.accrueUsage(state).catch(() => state);
-        const blockedFrom = state.phase === "blocked" ? (state.blockedFrom ?? state.phase) : state.phase;
         state = await this.store.record(
           {
             ...state,
             phase: "blocked",
-            blockedFrom,
+            blockedFrom: "new",
             failure: message,
             blockedKind: classified.kind,
             blockedRetriable: classified.retriable,
           },
           "run.blocked",
           {
-            blockedFrom,
+            blockedFrom: "new",
             error: message,
             blockedKind: classified.kind,
             blockedRetriable: classified.retriable,
           },
         );
-        await this.syncArtifacts(state);
-        return state;
       }
+    });
+    await this.syncArtifacts(state);
+    return state;
+  }
+
+  async advance(runId: string, maxSteps = this.config.workflow.maxStepsPerRun): Promise<RunState> {
+    // Lock ordering: repository → run, always (avoid deadlock with paths that take both).
+    return this.store.withRepositoryLock({ runId, action: "advance" }, async () => {
+      return this.store.withLock(runId, async () => {
+        let state = await this.store.load(runId);
+        try {
+          state = await this.ensureCompatibleConfiguration(state);
+          if (terminal(state.phase) || state.phase === "awaiting_input") return state;
+          if (state.yieldedAt) {
+            state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
+          }
+          let remaining = maxSteps;
+          let iterations = 0;
+          const maxIterations = Math.max(maxSteps * 8, 40);
+          while (remaining > 0 && iterations < maxIterations) {
+            iterations += 1;
+            // Enforce spend ceilings between steps only — never abort mid-step.
+            state = await this.accrueUsage(state);
+            this.assertWithinBudget(state);
+            const step = await this.advanceOneWithProviderRetry(state);
+            state = step.state;
+            await this.syncArtifacts(state);
+            if (step.consumedBudget) {
+              remaining -= 1;
+              state = await this.accrueUsage(state);
+            }
+            if (terminal(state.phase) || state.phase === "awaiting_input") {
+              state = await this.accrueUsage(state);
+              return state;
+            }
+          }
+          state = await this.accrueUsage(state);
+          state = await this.store.record(
+            { ...state, yieldedAt: new Date().toISOString() },
+            "run.yielded",
+            { maxSteps },
+          );
+          return state;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const classified = classifyFailure(error);
+          state = await this.store.load(runId).catch(() => state);
+          // Keep the latest accrued usage on the blocked snapshot when available.
+          state = await this.accrueUsage(state).catch(() => state);
+          const blockedFrom = state.phase === "blocked" ? (state.blockedFrom ?? state.phase) : state.phase;
+          state = await this.store.record(
+            {
+              ...state,
+              phase: "blocked",
+              blockedFrom,
+              failure: message,
+              blockedKind: classified.kind,
+              blockedRetriable: classified.retriable,
+            },
+            "run.blocked",
+            {
+              blockedFrom,
+              error: message,
+              blockedKind: classified.kind,
+              blockedRetriable: classified.retriable,
+            },
+          );
+          await this.syncArtifacts(state);
+          return state;
+        }
+      });
     });
   }
 

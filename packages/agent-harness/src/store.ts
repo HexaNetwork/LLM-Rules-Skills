@@ -166,6 +166,40 @@ export class RunStore {
     }
   }
 
+  /**
+   * Serialises git / working-tree work across runs. Callers that also take a
+   * per-run lock must acquire this first (repository → run) to avoid deadlock.
+   */
+  async withRepositoryLock<T>(
+    holder: { runId: string; action: string },
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const lockPath = this.repositoryLockPath();
+    const handle = await acquireLockFile(lockPath, (body) => {
+      const runId = body?.runId ?? "unknown";
+      const action = body?.action ?? "unknown";
+      const at = body?.at ?? "unknown time";
+      throw new Error(
+        `The repository is in use by run ${runId} (${action}) since ${at}. Wait, or run agent-harness unlock --repo if that process is gone.`,
+      );
+    });
+    await handle.writeFile(
+      JSON.stringify({
+        pid: process.pid,
+        hostname: localHostname(),
+        at: new Date().toISOString(),
+        runId: holder.runId,
+        action: holder.action,
+      } satisfies LockBody),
+    );
+    try {
+      return await work();
+    } finally {
+      await handle.close();
+      await unlink(lockPath).catch(() => undefined);
+    }
+  }
+
   async inspectRunLock(
     runId: string,
   ): Promise<{ path: string; body: LockBody | null; ageMs: number | null } | null> {
@@ -251,13 +285,16 @@ async function replaceFile(source: string, target: string): Promise<void> {
 
 async function acquireLockFile(
   lockPath: string,
-  onAlive: () => never,
+  onAlive: (body: LockBody | null) => never,
 ): Promise<Awaited<ReturnType<typeof open>>> {
   try {
     return await open(lockPath, "wx");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    if (!(await shouldBreakLock(lockPath))) onAlive();
+    if (!(await shouldBreakLock(lockPath))) {
+      const info = await readLockInfo(lockPath);
+      onAlive(info?.body ?? null);
+    }
     await unlink(lockPath);
     return open(lockPath, "wx");
   }

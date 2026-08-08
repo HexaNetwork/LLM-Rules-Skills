@@ -363,7 +363,8 @@ export function renderDashboard(): string {
       selectedOptions: {}, parked: {}, batchFeedback: "",
       reflectDrafts: {},
       noteText: "", noteAsUnknown: false,
-      elapsedTimer: null
+      elapsedTimer: null,
+      cancelling: false
     };
     var $ = function (id) { return document.getElementById(id); };
 
@@ -518,6 +519,7 @@ export function renderDashboard(): string {
         var detail = await api("/api/runs/" + encodeURIComponent(runId) + since, undefined, silent);
         if (detail.unchanged) return;
         state.detail = detail;
+        if (detail.state && detail.state.phase === "cancelled") state.cancelling = false;
         renderSidebar();
         // The signature tracks the last *rendered* payload; do not advance it
         // when a poll skips render, or a later poll treats stale DOM as current.
@@ -571,6 +573,9 @@ export function renderDashboard(): string {
     }
 
     function actionButtons(s, phase) {
+      if (state.cancelling && s.phase !== "cancelled") {
+        return '<span class="badge running"><i class="dot running"></i>Cancelling…</span>';
+      }
       if (phase === "queued" || phase === "running") return '<span class="badge ' + phase + '"><i class="dot ' + phase + '"></i>' + phase + '</span>';
       var out = "";
       if (!["completed","cancelled","awaiting_input","blocked"].includes(s.phase)) out += '<button class="btn small primary" data-action="resume">Resume run</button>';
@@ -801,7 +806,9 @@ export function renderDashboard(): string {
       var percent = taskTotal ? Math.round(taskDone / taskTotal * 100) : (s.phase === "completed" ? 100 : 0);
       var html = '<div class="grid">';
       var thinkingSince = state.detail.job ? (state.detail.job.startedAt || state.detail.job.queuedAt) : null;
-      if (phase === "queued" || phase === "running") {
+      if (state.cancelling && s.phase !== "cancelled") {
+        html += '<div class="thinking-strip" role="status" aria-live="polite"><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="thinking-copy"><strong>Cancelling…</strong><span>Waiting for the current step to stop</span></div></div>';
+      } else if (phase === "queued" || phase === "running") {
         var jobAction = state.detail.job && state.detail.job.action;
         var jobDetail = state.detail.job && state.detail.job.detail;
         var thinkingDetail = phase === "queued"
@@ -1010,9 +1017,14 @@ export function renderDashboard(): string {
     async function runAction(action, extra) {
       if (!state.selected) return;
       try {
-        await api('/api/runs/' + encodeURIComponent(state.selected) + '/actions', {method:'POST',body:Object.assign({action:action},extra||{})});
+        var response = await api('/api/runs/' + encodeURIComponent(state.selected) + '/actions', {method:'POST',body:Object.assign({action:action},extra||{})});
         if (action === 'answer' && extra && extra.questionId) delete state.answerDrafts[extra.questionId];
-        toast(action === 'answer' ? 'Answer recorded; run queued' : 'Action queued');
+        if (action === 'cancel') {
+          state.cancelling = !(response && response.state && response.state.phase === 'cancelled');
+          toast(state.cancelling ? 'Cancelling…' : 'Run cancelled');
+        } else {
+          toast(action === 'answer' ? 'Answer recorded; run queued' : 'Action queued');
+        }
         await bootstrap(true);
       } catch (error) { toast(error.message,true); }
     }

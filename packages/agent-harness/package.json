@@ -27,7 +27,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.3"
   },
   "dependencies": {
     "@cursor/sdk": "^1.0.16",

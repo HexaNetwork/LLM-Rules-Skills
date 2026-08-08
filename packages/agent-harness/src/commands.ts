@@ -8,15 +8,28 @@ export type CommandResult = {
   stderr: string;
   durationMs: number;
   timedOut: boolean;
+  cancelled?: boolean;
 };
 
 const OUTPUT_LIMIT = 200_000;
 
 export function runCommand(
   command: string,
-  options: { cwd: string; timeoutMs: number },
+  options: { cwd: string; timeoutMs: number; signal?: AbortSignal },
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      resolve({
+        command,
+        exitCode: 130,
+        stdout: "",
+        stderr: "",
+        durationMs: 0,
+        timedOut: false,
+        cancelled: true,
+      });
+      return;
+    }
     const started = Date.now();
     const child = spawn(command, {
       cwd: options.cwd,
@@ -29,6 +42,7 @@ export function runCommand(
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let cancelled = false;
     const capture = (current: string, chunk: Buffer): string =>
       `${current}${chunk.toString("utf8")}`.slice(-OUTPUT_LIMIT);
     child.stdout.on("data", (chunk: Buffer) => {
@@ -44,6 +58,7 @@ export function runCommand(
       settled = true;
       clearTimeout(timer);
       if (forcedTimer) clearTimeout(forcedTimer);
+      options.signal?.removeEventListener("abort", onAbort);
       resolve({
         command,
         exitCode,
@@ -51,24 +66,36 @@ export function runCommand(
         stderr: timedOut ? `${stderr}\nCommand timed out after ${options.timeoutMs}ms`.trim() : stderr,
         durationMs: Date.now() - started,
         timedOut,
+        ...(cancelled ? { cancelled: true } : {}),
       });
     };
-    child.once("error", (error) => {
-      if (timedOut) finish(124);
-      else reject(error);
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const forceSettle = (exitCode: number): void => {
       killTree(child.pid);
       forcedTimer = setTimeout(() => {
         child.stdout.destroy();
         child.stderr.destroy();
         child.unref();
-        finish(124);
+        finish(exitCode);
       }, 2_000);
+    };
+    const onAbort = (): void => {
+      if (settled || timedOut) return;
+      cancelled = true;
+      forceSettle(130);
+    };
+    child.once("error", (error) => {
+      if (timedOut) finish(124);
+      else if (cancelled) finish(130);
+      else reject(error);
+    });
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      timedOut = true;
+      forceSettle(124);
     }, options.timeoutMs);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     child.once("close", (code) => {
-      finish(timedOut ? 124 : (code ?? 1));
+      finish(cancelled ? 130 : timedOut ? 124 : (code ?? 1));
     });
   });
 }

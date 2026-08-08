@@ -382,7 +382,7 @@ describe("failure classification", () => {
         if (sleeps.length === 1) {
           await writeFile(
             path.join(engine.store.runDirectory(runId), "cancel.request"),
-            "1",
+            JSON.stringify({ at: new Date().toISOString(), by: "test" }),
             "utf8",
           );
         }
@@ -393,9 +393,8 @@ describe("failure classification", () => {
     const state = await engine.advance(runId);
     // One 100ms chunk, then cancel.request is noticed — not the full 1s backoff.
     expect(sleeps).toEqual([100]);
-    expect(state.phase).toBe("blocked");
-    expect(state.failure).toMatch(/cancellation requested/i);
-    expect(state.blockedKind).toBe("internal");
+    expect(state.phase).toBe("cancelled");
+    expect(state.blockedKind).toBeUndefined();
   });
 
   it("blocks with blockedKind provider when the backend always throws", async () => {

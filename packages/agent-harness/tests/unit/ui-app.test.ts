@@ -51,6 +51,8 @@ describe("dashboard document", () => {
     expect(html).toContain("data-setting-key");
     expect(html).toContain("Active runs keep their frozen configuration");
     expect(html).toContain("Thinking…");
+    expect(html).toContain("Cancelling…");
+    expect(html).toContain("state.cancelling");
     expect(html).toContain("draftAnswer");
   });
 

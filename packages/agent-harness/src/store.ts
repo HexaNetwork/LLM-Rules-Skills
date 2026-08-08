@@ -167,6 +167,33 @@ export class RunStore {
   }
 
   /**
+   * Like withLock, but polls until `waitMs` elapses instead of failing immediately.
+   * Used by out-of-band cancel so a short wait can complete the transition when the
+   * advancing process is about to release the lock.
+   */
+  async tryWithLock<T>(
+    runId: string,
+    waitMs: number,
+    work: () => Promise<T>,
+    options: { pollMs?: number } = {},
+  ): Promise<{ acquired: true; value: T } | { acquired: false }> {
+    const pollMs = options.pollMs ?? 50;
+    const deadline = Date.now() + Math.max(0, waitMs);
+    for (;;) {
+      try {
+        const value = await this.withLock(runId, work);
+        return { acquired: true, value };
+      } catch (error) {
+        if (!(error instanceof Error) || !/already active/i.test(error.message)) {
+          throw error;
+        }
+        if (Date.now() >= deadline) return { acquired: false };
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+      }
+    }
+  }
+
+  /**
    * Serialises git / working-tree work across runs. Callers that also take a
    * per-run lock must acquire this first (repository → run) to avoid deadlock.
    */

@@ -1,5 +1,6 @@
-import { access } from "node:fs/promises";
+import { access, unlink, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
+import { hostname as localHostname } from "node:os";
 import path from "node:path";
 import {
   CONFIG_VERSION,
@@ -40,7 +41,7 @@ import {
   type RunPhase,
   type RunState,
 } from "./domain.js";
-import { classifyFailure, HarnessFailure } from "./errors.js";
+import { classifyFailure, HarnessFailure, RunCancelledError } from "./errors.js";
 import { GitService } from "./git.js";
 import {
   GraphifyRepositoryLookup,
@@ -66,8 +67,20 @@ export type HarnessDependencies = {
 };
 
 const PROVIDER_RETRY_BACKOFF_MS = [1_000, 4_000, 16_000] as const;
+const CANCEL_LOCK_WAIT_MS = 5_000;
+
+/**
+ * Process-wide: the UI constructs a fresh HarnessEngine per request, but cancel
+ * must still abort an in-flight advance in the same Node process.
+ */
+const activeRuns = new Map<string, AbortController>();
 
 type StepResult = { state: RunState; consumedBudget: boolean };
+
+export type CancelResult = {
+  state: RunState;
+  pending: boolean;
+};
 
 /** `committedBranch` is where the commit landed (audit only); `runBranch` is set only when the order actually produced the run's branch. */
 type PreflightCommitResult = {
@@ -104,6 +117,54 @@ export class HarnessEngine {
     this.git = dependencies.git ?? new GitService(config);
     this.agents = new AgentCoordinator(config, dependencies.backend, this.store, this.knowledge);
     this.sleep = dependencies.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  private signalFor(runId: string): AbortSignal | undefined {
+    return activeRuns.get(runId)?.signal;
+  }
+
+  private cancelRequestPath(runId: string): string {
+    return path.join(this.store.runDirectory(runId), "cancel.request");
+  }
+
+  private async writeCancelRequest(runId: string): Promise<void> {
+    await writeFile(
+      this.cancelRequestPath(runId),
+      JSON.stringify({
+        at: new Date().toISOString(),
+        by: `${localHostname()}:${process.pid}`,
+      }),
+      "utf8",
+    );
+  }
+
+  private async clearCancelRequest(runId: string): Promise<void> {
+    await unlink(this.cancelRequestPath(runId)).catch(() => undefined);
+  }
+
+  private async cancelRequestPresent(runId: string): Promise<boolean> {
+    try {
+      await access(this.cancelRequestPath(runId));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async isCancelRequested(runId: string): Promise<boolean> {
+    if (this.signalFor(runId)?.aborted) return true;
+    return this.cancelRequestPresent(runId);
+  }
+
+  private async completeCancellation(state: RunState): Promise<RunState> {
+    if (terminal(state.phase)) {
+      await this.clearCancelRequest(state.runId);
+      return state;
+    }
+    const cancelled = await this.closeGrillEpisode({ ...state, phase: "cancelled" });
+    const recorded = await this.store.record(cancelled, "run.cancelled");
+    await this.clearCancelRequest(state.runId);
+    return recorded;
   }
 
   async start(
@@ -185,72 +246,101 @@ export class HarnessEngine {
   }
 
   async advance(runId: string, maxSteps = this.config.workflow.maxStepsPerRun): Promise<RunState> {
-    // Lock ordering: repository → run, always (avoid deadlock with paths that take both).
-    return this.store.withRepositoryLock({ runId, action: "advance" }, async () => {
-      return this.store.withLock(runId, async () => {
-        let state = await this.store.load(runId);
-        try {
-          state = await this.ensureCompatibleConfiguration(state);
-          if (terminal(state.phase) || state.phase === "awaiting_input") return state;
-          if (state.yieldedAt) {
-            state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
-          }
-          let remaining = maxSteps;
-          let iterations = 0;
-          const maxIterations = Math.max(maxSteps * 8, 40);
-          while (remaining > 0 && iterations < maxIterations) {
-            iterations += 1;
-            // Enforce spend ceilings between steps only — never abort mid-step.
-            state = await this.accrueUsage(state);
-            this.assertWithinBudget(state);
-            const step = await this.advanceOneWithProviderRetry(state);
-            state = step.state;
-            await this.syncArtifacts(state);
-            if (step.consumedBudget) {
-              remaining -= 1;
-              state = await this.accrueUsage(state);
-            }
+    const controller = new AbortController();
+    activeRuns.set(runId, controller);
+    try {
+      // Lock ordering: repository → run, always (avoid deadlock with paths that take both).
+      return await this.store.withRepositoryLock({ runId, action: "advance" }, async () => {
+        return this.store.withLock(runId, async () => {
+          let state = await this.store.load(runId);
+          try {
+            state = await this.ensureCompatibleConfiguration(state);
             if (terminal(state.phase) || state.phase === "awaiting_input") {
-              state = await this.accrueUsage(state);
+              if (await this.cancelRequestPresent(runId)) {
+                return this.completeCancellation(state);
+              }
               return state;
             }
+            if (await this.isCancelRequested(runId)) {
+              return this.completeCancellation(state);
+            }
+            if (state.yieldedAt) {
+              state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
+            }
+            let remaining = maxSteps;
+            let iterations = 0;
+            const maxIterations = Math.max(maxSteps * 8, 40);
+            while (remaining > 0 && iterations < maxIterations) {
+              iterations += 1;
+              if (await this.isCancelRequested(runId)) {
+                return this.completeCancellation(state);
+              }
+              // Enforce spend ceilings between steps only — never abort mid-step.
+              state = await this.accrueUsage(state);
+              this.assertWithinBudget(state);
+              const step = await this.advanceOneWithProviderRetry(state);
+              state = step.state;
+              await this.syncArtifacts(state);
+              if (step.consumedBudget) {
+                remaining -= 1;
+                state = await this.accrueUsage(state);
+              }
+              if (await this.isCancelRequested(runId)) {
+                return this.completeCancellation(state);
+              }
+              if (terminal(state.phase) || state.phase === "awaiting_input") {
+                state = await this.accrueUsage(state);
+                return state;
+              }
+            }
+            state = await this.accrueUsage(state);
+            state = await this.store.record(
+              { ...state, yieldedAt: new Date().toISOString() },
+              "run.yielded",
+              { maxSteps },
+            );
+            return state;
+          } catch (error) {
+            state = await this.store.load(runId).catch(() => state);
+            if (
+              error instanceof RunCancelledError ||
+              (await this.isCancelRequested(runId))
+            ) {
+              state = await this.completeCancellation(state);
+              await this.syncArtifacts(state);
+              return state;
+            }
+            const message = error instanceof Error ? error.message : String(error);
+            const classified = classifyFailure(error);
+            // Keep the latest accrued usage on the blocked snapshot when available.
+            state = await this.accrueUsage(state).catch(() => state);
+            const blockedFrom =
+              state.phase === "blocked" ? (state.blockedFrom ?? state.phase) : state.phase;
+            state = await this.store.record(
+              {
+                ...state,
+                phase: "blocked",
+                blockedFrom,
+                failure: message,
+                blockedKind: classified.kind,
+                blockedRetriable: classified.retriable,
+              },
+              "run.blocked",
+              {
+                blockedFrom,
+                error: message,
+                blockedKind: classified.kind,
+                blockedRetriable: classified.retriable,
+              },
+            );
+            await this.syncArtifacts(state);
+            return state;
           }
-          state = await this.accrueUsage(state);
-          state = await this.store.record(
-            { ...state, yieldedAt: new Date().toISOString() },
-            "run.yielded",
-            { maxSteps },
-          );
-          return state;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const classified = classifyFailure(error);
-          state = await this.store.load(runId).catch(() => state);
-          // Keep the latest accrued usage on the blocked snapshot when available.
-          state = await this.accrueUsage(state).catch(() => state);
-          const blockedFrom = state.phase === "blocked" ? (state.blockedFrom ?? state.phase) : state.phase;
-          state = await this.store.record(
-            {
-              ...state,
-              phase: "blocked",
-              blockedFrom,
-              failure: message,
-              blockedKind: classified.kind,
-              blockedRetriable: classified.retriable,
-            },
-            "run.blocked",
-            {
-              blockedFrom,
-              error: message,
-              blockedKind: classified.kind,
-              blockedRetriable: classified.retriable,
-            },
-          );
-          await this.syncArtifacts(state);
-          return state;
-        }
+        });
       });
-    });
+    } finally {
+      activeRuns.delete(runId);
+    }
   }
 
   /**
@@ -675,13 +765,34 @@ export class HarnessEngine {
     return { committedBranch, sha: result.sha, files: result.files };
   }
 
-  async cancel(runId: string): Promise<RunState> {
-    return this.store.withLock(runId, async () => {
+  async cancel(runId: string): Promise<CancelResult> {
+    const current = await this.store.load(runId);
+    if (terminal(current.phase)) {
+      await this.clearCancelRequest(runId);
+      return { state: current, pending: false };
+    }
+
+    await this.writeCancelRequest(runId);
+    const controller = activeRuns.get(runId);
+    controller?.abort();
+
+    // In-process advance owns the lock and will complete the cancelled transition.
+    if (controller) {
+      return { state: await this.store.load(runId), pending: true };
+    }
+
+    const locked = await this.store.tryWithLock(runId, CANCEL_LOCK_WAIT_MS, async () => {
       const state = await this.store.load(runId);
-      if (terminal(state.phase)) return state;
-      const cancelled = await this.closeGrillEpisode({ ...state, phase: "cancelled" });
-      return this.store.record(cancelled, "run.cancelled");
+      if (terminal(state.phase)) {
+        await this.clearCancelRequest(runId);
+        return state;
+      }
+      return this.completeCancellation(state);
     });
+    if (locked.acquired) {
+      return { state: locked.value, pending: false };
+    }
+    return { state: await this.store.load(runId), pending: true };
   }
 
   status(runId: string): Promise<RunState> {
@@ -699,6 +810,11 @@ export class HarnessEngine {
       try {
         return await this.advanceOne(state);
       } catch (error) {
+        if (error instanceof RunCancelledError || (await this.isCancelRequested(state.runId))) {
+          throw error instanceof RunCancelledError
+            ? error
+            : new RunCancelledError("Run cancelled");
+        }
         const classified = classifyFailure(error);
         if (classified.kind !== "provider" || !classified.retriable || attempt >= maxRetries) {
           throw error;
@@ -720,8 +836,8 @@ export class HarnessEngine {
   }
 
   /**
-   * Chunk backoff so `<runDir>/cancel.request` can short-circuit without waiting the full delay.
-   * Item 10 will also abort on the run's in-process AbortSignal.
+   * Chunk backoff so `<runDir>/cancel.request` and the in-process AbortSignal
+   * can short-circuit without waiting the full delay.
    */
   private async sleepProviderBackoff(ms: number, runId: string): Promise<void> {
     const chunkMs = 100;
@@ -736,18 +852,9 @@ export class HarnessEngine {
   }
 
   private async throwIfCancelRequested(runId: string): Promise<void> {
-    const cancelPath = path.join(this.store.runDirectory(runId), "cancel.request");
-    try {
-      await access(cancelPath);
-    } catch {
-      return;
+    if (await this.isCancelRequested(runId)) {
+      throw new RunCancelledError("Run cancellation requested during provider retry backoff");
     }
-    // TODO(item 10): complete the cancelled transition instead of blocking.
-    throw new HarnessFailure(
-      "Run cancellation requested during provider retry backoff",
-      "internal",
-      false,
-    );
   }
 
   private async advanceOne(state: RunState): Promise<StepResult> {
@@ -785,6 +892,7 @@ export class HarnessEngine {
       knowledgeQuery: state.idea,
       knowledgeFallbackQuery: compactDomainSeed(state.idea),
       buildPrompt: false,
+      signal: this.signalFor(state.runId),
     });
     const draft = formatReflectRestatement(output);
     state = await this.store.record(
@@ -904,6 +1012,7 @@ export class HarnessEngine {
         .join(" "),
       knowledgeFallbackQuery: compactDomainSeed(state.idea, brief),
       forceFresh: Boolean(coldStart),
+      signal: this.signalFor(state.runId),
     });
     state = invocation.state;
     const output = invocation.output;
@@ -1134,6 +1243,7 @@ export class HarnessEngine {
         .filter(Boolean)
         .join(" "),
       knowledgeFallbackQuery: compactDomainSeed(state.idea, state.reflectBrief?.confirmed),
+      signal: this.signalFor(state.runId),
     });
     const tasks = materializeTasks(output, this.config);
     assertAcyclic(tasks);
@@ -1229,6 +1339,7 @@ export class HarnessEngine {
         task.title,
         task.description,
       ),
+      signal: this.signalFor(state.runId),
     });
     const observedPaths = this.config.git.enabled ? await this.git.changedFiles() : result.changedFiles;
     const testPatterns = this.config.workflow.testPathPatterns;
@@ -1236,7 +1347,7 @@ export class HarnessEngine {
     if (illegal.length > 0) {
       throw new Error(`Test writer changed non-test paths: ${illegal.join(", ")}`);
     }
-    const evidence = await this.runTargetedTest(task, "tdd:red");
+    const evidence = await this.runTargetedTest(state.runId, task, "tdd:red");
     const attempts = { ...task.attempts, tests: task.attempts.tests + 1 };
     const meaningfulRed =
       evidence.exitCode !== 0 &&
@@ -1263,7 +1374,7 @@ export class HarnessEngine {
 
   private async implementTask(state: RunState, task: BuildTask): Promise<RunState> {
     if (task.tdd && task.attempts.implementation > 0) {
-      const recovery = await this.runTargetedTest(task, "tdd:resume-check");
+      const recovery = await this.runTargetedTest(state.runId, task, "tdd:resume-check");
       if (recovery.passed) {
         return this.updateTask(
           state,
@@ -1293,8 +1404,9 @@ export class HarnessEngine {
         task.title,
         task.description,
       ),
+      signal: this.signalFor(state.runId),
     });
-    const evidence = await this.runTargetedTest(task, task.tdd ? "tdd:green" : "test");
+    const evidence = await this.runTargetedTest(state.runId, task, task.tdd ? "tdd:green" : "test");
     const attempts = {
       ...task.attempts,
       implementation: task.attempts.implementation + 1,
@@ -1361,7 +1473,11 @@ export class HarnessEngine {
       const result = await runCommand(gate.command, {
         cwd: this.config.repositoryRoot,
         timeoutMs: gate.timeoutMs,
+        signal: this.signalFor(state.runId),
       });
+      if (result.cancelled) {
+        throw new RunCancelledError(`Gate ${gate.id} cancelled`);
+      }
       evidence.push(commandEvidence(`gate:${gate.id}`, result));
     }
     const passed = evidence.every((item) => item.passed);
@@ -1393,6 +1509,7 @@ export class HarnessEngine {
       expectedOutput: "{approved,summary,findings:[{severity,message}]}",
       schema: ReviewOutputSchema,
       knowledgeQuery: [task.title, task.description, ...task.acceptanceCriteria].join(" "),
+      signal: this.signalFor(state.runId),
       knowledgeFallbackQuery: compactDomainSeed(
         state.idea,
         state.reflectBrief?.confirmed,
@@ -1493,19 +1610,25 @@ export class HarnessEngine {
         schema: MessageOutputSchema,
         buildPrompt: false,
         retrieval: false,
+        signal: this.signalFor(runId),
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof RunCancelledError || this.signalFor(runId)?.aborted) throw error;
       return MessageOutputSchema.parse(fallback);
     }
   }
 
-  private async runTargetedTest(task: BuildTask, purpose: string) {
+  private async runTargetedTest(runId: string, task: BuildTask, purpose: string) {
     const command = task.testCommand ?? this.config.commands.test;
     const gate = this.config.commands.gates.find((item) => item.command === command);
     const result = await runCommand(command, {
       cwd: this.config.repositoryRoot,
       timeoutMs: gate?.timeoutMs ?? 10 * 60 * 1000,
+      signal: this.signalFor(runId),
     });
+    if (result.cancelled) {
+      throw new RunCancelledError(`Command cancelled: ${purpose}`);
+    }
     return commandEvidence(purpose, result);
   }
 

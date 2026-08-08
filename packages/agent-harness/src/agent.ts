@@ -7,7 +7,7 @@ import {
   type AgentRole,
   type WorkPacket,
 } from "./domain.js";
-import { HarnessFailure } from "./errors.js";
+import { HarnessFailure, RunCancelledError } from "./errors.js";
 import { LocalKnowledgeBase } from "./knowledge.js";
 import { buildWorkPacket } from "./packet.js";
 import {
@@ -79,6 +79,8 @@ type InvokeBase<T> = {
   knowledgeFallbackQuery?: string;
   buildPrompt?: boolean;
   previousGuidanceFingerprint?: string;
+  /** Out-of-band cancellation from the harness engine. */
+  signal?: AbortSignal;
 };
 
 /** Retrieval-disabled calls must not invent a JSON-blob knowledge query. */
@@ -235,9 +237,11 @@ export class AgentCoordinator {
           renderPromptBuilderPrompt(packet),
           PromptBuilderOutputSchema,
           packetPath,
+          { signal: input.signal },
         );
         prompt = built.value.prompt;
-      } catch {
+      } catch (error) {
+        if (error instanceof RunCancelledError || input.signal?.aborted) throw error;
         // Prompt compilation is an optional cheap tier. The deterministic
         // renderer remains a complete handoff if that tier is unavailable.
         prompt = renderPrompt(packet);
@@ -261,6 +265,7 @@ export class AgentCoordinator {
           : undefined,
         retainProviderSession: episode.retainProviderSession,
         mode: episode.mode,
+        signal: input.signal,
       },
     );
     return { ...invocation, guidanceFingerprint };
@@ -278,6 +283,7 @@ export class AgentCoordinator {
       continuationPrompt?: string;
       retainProviderSession?: boolean;
       mode?: "agent" | "plan";
+      signal?: AbortSignal;
     } = {},
   ): Promise<AgentInvocation<T>> {
     let prompt = initialPrompt;
@@ -324,6 +330,7 @@ export class AgentCoordinator {
               }),
             this.config.agent.timeoutMs,
             `${role} agent`,
+            options.signal,
           );
         } catch (error) {
           lastError = error;
@@ -333,6 +340,8 @@ export class AgentCoordinator {
             failure.output,
             failure.createPlanBodies,
           );
+          const cancelled =
+            error instanceof RunCancelledError || options.signal?.aborted === true;
           await this.store.writeJson(runId, `sessions/${sessionId}.json`, {
             sessionId,
             invocationId: packet.invocationId,
@@ -341,7 +350,7 @@ export class AgentCoordinator {
             providerSessionId,
             providerRunId: failure.providerRunId,
             providerSessionReused: failure.providerSessionReused,
-            status: "failed",
+            status: cancelled ? "cancelled" : "failed",
             attempt,
             packet: packetPath,
             prompt: failure.submittedPrompt ?? submittedPrompt,
@@ -352,6 +361,11 @@ export class AgentCoordinator {
             error: error instanceof Error ? error.message : String(error),
           });
           // Cancel, timeout, and provider errors are not schema-repairable.
+          if (cancelled && !(error instanceof RunCancelledError)) {
+            throw new RunCancelledError(
+              error instanceof Error ? error.message : "Run cancelled",
+            );
+          }
           throw error;
         }
 
@@ -872,18 +886,45 @@ async function withTimeout<T>(
   operation: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
   label: string,
+  external?: AbortSignal,
 ): Promise<T> {
-  const controller = new AbortController();
+  const timeoutController = new AbortController();
+  const signal =
+    external != null
+      ? AbortSignal.any([external, timeoutController.signal])
+      : timeoutController.signal;
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      controller.abort();
+      timeoutController.abort();
       reject(new HarnessFailure(`${label} timed out after ${timeoutMs}ms`, "provider", true));
     }, timeoutMs);
   });
+  let onExternalAbort: (() => void) | undefined;
+  const cancelled =
+    external != null
+      ? new Promise<never>((_resolve, reject) => {
+          const fail = (): void => {
+            reject(new RunCancelledError(`${label} cancelled`));
+          };
+          if (external.aborted) {
+            fail();
+            return;
+          }
+          onExternalAbort = fail;
+          external.addEventListener("abort", fail, { once: true });
+        })
+      : null;
   try {
-    return await Promise.race([operation(controller.signal), timeout]);
+    return await Promise.race([
+      operation(signal),
+      timeout,
+      ...(cancelled ? [cancelled] : []),
+    ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (external && onExternalAbort) {
+      external.removeEventListener("abort", onExternalAbort);
+    }
   }
 }

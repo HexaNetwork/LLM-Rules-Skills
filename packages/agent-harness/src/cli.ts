@@ -285,7 +285,11 @@ program
   .action(async (options: { runId: string; config?: string }) => {
     const config = await runConfig(options.config, options.runId);
     const engine = new HarnessEngine(config, { backend: createCursorBackend("unused") });
-    printState(await engine.cancel(options.runId));
+    const result = await engine.cancel(options.runId);
+    if (result.pending) {
+      console.log(`Cancellation pending for ${options.runId}; the advancing process will finish it.`);
+    }
+    printState(result.state);
   });
 
 program

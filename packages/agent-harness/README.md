@@ -4,6 +4,8 @@ Agent Harness turns an idea into verified, committed feature slices through a du
 
 ## Quick start
 
+Requires **Node.js 20.3+** (`AbortSignal.any` for cancellable agent timeouts).
+
 ```bash
 npm install
 npm run build

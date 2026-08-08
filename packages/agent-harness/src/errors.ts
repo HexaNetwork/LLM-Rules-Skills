@@ -23,6 +23,14 @@ export class HarnessFailure extends Error {
   }
 }
 
+/** Operator cancellation — must not be classified as blocked/provider-retry. */
+export class RunCancelledError extends Error {
+  constructor(message = "Run cancelled") {
+    super(message);
+    this.name = "RunCancelledError";
+  }
+}
+
 /** Prefer structured fields; fall back to message patterns for pre-classification errors. */
 export function classifyFailure(error: unknown): { kind: FailureKind; retriable: boolean } {
   if (error instanceof HarnessFailure) {

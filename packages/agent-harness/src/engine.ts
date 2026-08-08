@@ -1257,8 +1257,9 @@ function materializeTasks(
 
 /**
  * Reconciles the open-unknowns register against the griller's latest draft.
- * An entry absent from `incoming` becomes "resolved"; "parked" is sticky
- * until re-asked. Entries are never deleted, only transitioned.
+ * Absent priors: asked→resolved, parked→parked (sticky), resolved→resolved,
+ * otherwise (fog/dropped)→dropped. A dropped entry that reappears recomputes
+ * normally (not sticky). Entries are never deleted, only transitioned.
  */
 export function reconcileUnknowns(
   previous: OpenUnknown[],

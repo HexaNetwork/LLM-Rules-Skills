@@ -579,6 +579,7 @@ describe("durable idea-to-feature workflow", () => {
       },
       commands: {
         test: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
+        passEnv: ["HARNESS_FORCE_RED"],
         gates: [],
       },
     });
@@ -644,6 +645,7 @@ describe("durable idea-to-feature workflow", () => {
       },
       commands: {
         test: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
+        passEnv: ["HARNESS_FORCE_RED"],
         gates: [],
       },
     });

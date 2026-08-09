@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { utimes, writeFile } from "node:fs/promises";
+import { readFile, utimes, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -29,6 +29,30 @@ async function deadPid(): Promise<number> {
 }
 
 describe("stall protection", () => {
+  it("does not pass provider credentials to commands and redacts their output", async () => {
+    const root = await fixtureRoot();
+    const originalCursor = process.env.CURSOR_API_KEY;
+    const originalVisible = process.env.HARNESS_VISIBLE_TEST_VALUE;
+    const secret = "cursor-secret-value-123";
+    process.env.CURSOR_API_KEY = secret;
+    process.env.HARNESS_VISIBLE_TEST_VALUE = "allowed";
+    try {
+      const result = await runCommand(
+        `node -e "console.log(process.env.CURSOR_API_KEY || 'absent'); console.log(process.env.HARNESS_VISIBLE_TEST_VALUE); console.log('${secret}')"`,
+        { cwd: root, timeoutMs: 5_000, passEnv: ["HARNESS_VISIBLE_TEST_VALUE"] },
+      );
+      expect(result.stdout).toContain("absent");
+      expect(result.stdout).toContain("allowed");
+      expect(result.stdout).not.toContain(secret);
+      expect(result.stdout).toContain("[REDACTED]");
+    } finally {
+      if (originalCursor == null) delete process.env.CURSOR_API_KEY;
+      else process.env.CURSOR_API_KEY = originalCursor;
+      if (originalVisible == null) delete process.env.HARNESS_VISIBLE_TEST_VALUE;
+      else process.env.HARNESS_VISIBLE_TEST_VALUE = originalVisible;
+    }
+  });
+
   it("kills a timed-out command tree and returns evidence", async () => {
     const root = await fixtureRoot();
     const started = performance.now();
@@ -73,7 +97,7 @@ describe("stall protection", () => {
     await first;
   });
 
-  it("breaks a lock naming a dead pid on the local hostname immediately", async () => {
+  it("requires an explicit unlock for a lock naming a dead pid", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
     const store = new RunStore(config);
@@ -86,9 +110,11 @@ describe("stall protection", () => {
       "utf8",
     );
 
-    const started = performance.now();
+    await expect(store.withLock("stale-dead", async () => undefined)).rejects.toThrow(
+      "already active",
+    );
+    expect((await store.unlock("stale-dead")).run).toBe(true);
     await store.withLock("stale-dead", async () => undefined);
-    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("refuses a lock naming the current process pid regardless of age", async () => {
@@ -128,6 +154,43 @@ describe("stall protection", () => {
     await expect(store.withLock("garbage-lock", async () => undefined)).rejects.toThrow(
       "already active",
     );
+  });
+});
+
+describe("durable transition journal", () => {
+  it("recovers a state write and missing event after an interrupted transition", async () => {
+    const store = new RunStore(fixtureConfig(await fixtureRoot()));
+    await store.initialize();
+    await store.create(createRunState("journal-run", "Journal recovery", new Date().toISOString()));
+    const state = await store.load("journal-run");
+    const event = {
+      sequence: state.lastEventSequence + 1,
+      type: "test.recovered",
+      detail: { source: "fault-injection" },
+      at: new Date().toISOString(),
+    };
+    const next = {
+      ...state,
+      phase: "awaiting_input" as const,
+      lastEventSequence: event.sequence,
+      revision: state.revision + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeFile(
+      path.join(store.runDirectory("journal-run"), "transition.pending.json"),
+      JSON.stringify({ expectedRevision: state.revision, state: next, event }),
+      "utf8",
+    );
+    await writeFile(path.join(store.runDirectory("journal-run"), "events.jsonl"), '{"partial"', "utf8");
+
+    const recovered = await store.load("journal-run");
+    expect(recovered.revision).toBe(next.revision);
+    expect(recovered.lastEventSequence).toBe(event.sequence);
+    const events = await readFile(path.join(store.runDirectory("journal-run"), "events.jsonl"), "utf8");
+    expect(events).toContain('"test.recovered"');
+    // A second load is idempotent: recovery must not append a duplicate event.
+    await store.load("journal-run");
+    expect((await readFile(path.join(store.runDirectory("journal-run"), "events.jsonl"), "utf8")).match(/test\.recovered/g)).toHaveLength(1);
   });
 });
 

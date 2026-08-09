@@ -148,6 +148,10 @@ export const HarnessConfigSchema = z.object({
   commands: z
     .object({
       test: z.string().min(1).default("npm test -- --run"),
+      // Child processes intentionally start with a minimal environment. Projects
+      // can opt individual non-secret variables back in when their test/build
+      // command needs them.
+      passEnv: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).default([]),
       gates: z
         .array(
           z.object({
@@ -455,6 +459,9 @@ workflow:
 
 commands:
   test: npm test -- --run
+  # Child commands receive only runtime variables by default. Add only the
+  # non-secret environment variable names a project command genuinely needs.
+  passEnv: []
   gates:
     - id: typecheck
       command: npm run typecheck

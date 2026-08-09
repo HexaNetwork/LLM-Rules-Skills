@@ -13,9 +13,56 @@ export type CommandResult = {
 
 const OUTPUT_LIMIT = 200_000;
 
+/** Credentials used by the harness must never flow into arbitrary project commands. */
+const PROTECTED_ENV_NAMES = new Set([
+  "CURSOR_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GITHUB_TOKEN",
+  "GH_TOKEN",
+  "NPM_TOKEN",
+]);
+
+const RUNTIME_ENV_NAMES = process.platform === "win32"
+  ? ["PATH", "Path", "SystemRoot", "SYSTEMROOT", "ComSpec", "PATHEXT", "WINDIR", "TEMP", "TMP"]
+  : ["PATH", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL"];
+
+export type CommandEnvironmentOptions = {
+  /** Explicitly allowed project variables; provider credentials stay blocked. */
+  passEnv?: string[];
+  /** Additional provider credentials configured by this harness instance. */
+  protectedEnvNames?: string[];
+};
+
+/**
+ * Builds an execution environment that cannot accidentally leak the harness'
+ * provider credentials through lifecycle hooks, test scripts, or their output.
+ */
+export function buildCommandEnvironment(options: CommandEnvironmentOptions = {}): {
+  env: NodeJS.ProcessEnv;
+  redactions: string[];
+} {
+  const protectedNames = new Set([
+    ...PROTECTED_ENV_NAMES,
+    ...(options.protectedEnvNames ?? []).map((name) => name.toUpperCase()),
+  ]);
+  const env: NodeJS.ProcessEnv = {};
+  for (const name of [...RUNTIME_ENV_NAMES, ...(options.passEnv ?? [])]) {
+    if (protectedNames.has(name.toUpperCase())) continue;
+    const value = process.env[name];
+    if (value != null) env[name] = value;
+  }
+  const redactions = Object.entries(process.env)
+    .filter(([name]) => protectedNames.has(name.toUpperCase()))
+    .map(([, value]) => value)
+    .filter((value): value is string => typeof value === "string" && value.length >= 4)
+    .sort((a, b) => b.length - a.length);
+  return { env, redactions };
+}
+
 export function runCommand(
   command: string,
-  options: { cwd: string; timeoutMs: number; signal?: AbortSignal },
+  options: { cwd: string; timeoutMs: number; signal?: AbortSignal } & CommandEnvironmentOptions,
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
@@ -31,11 +78,12 @@ export function runCommand(
       return;
     }
     const started = Date.now();
+    const commandEnvironment = buildCommandEnvironment(options);
     const child = spawn(command, {
       cwd: options.cwd,
       shell: true,
       windowsHide: true,
-      env: process.env,
+      env: commandEnvironment.env,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
@@ -62,8 +110,11 @@ export function runCommand(
       resolve({
         command,
         exitCode,
-        stdout,
-        stderr: timedOut ? `${stderr}\nCommand timed out after ${options.timeoutMs}ms`.trim() : stderr,
+        stdout: redact(stdout, commandEnvironment.redactions),
+        stderr: redact(
+          timedOut ? `${stderr}\nCommand timed out after ${options.timeoutMs}ms`.trim() : stderr,
+          commandEnvironment.redactions,
+        ),
         durationMs: Date.now() - started,
         timedOut,
         ...(cancelled ? { cancelled: true } : {}),
@@ -98,6 +149,12 @@ export function runCommand(
       finish(cancelled ? 130 : timedOut ? 124 : (code ?? 1));
     });
   });
+}
+
+function redact(value: string, secrets: string[]): string {
+  let result = value;
+  for (const secret of secrets) result = result.replaceAll(secret, "[REDACTED]");
+  return result;
 }
 
 function killTree(pid: number | undefined): void {
@@ -213,7 +270,7 @@ export function buildInstallCommand(
 export async function runApprovedInstall(
   manager: PackageManager,
   packages: string[],
-  options: { cwd: string; timeoutMs: number; signal?: AbortSignal },
+  options: { cwd: string; timeoutMs: number; signal?: AbortSignal } & CommandEnvironmentOptions,
 ): Promise<CommandResult> {
   const command = buildInstallCommand(manager, packages);
   return runCommand(command, options);

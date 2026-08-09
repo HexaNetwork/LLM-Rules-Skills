@@ -16,6 +16,28 @@ const REFLECT_OUTPUT = {
 };
 
 describe("repository lock", () => {
+  it("serializes install resolution with repository work", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    await engine.store.initialize();
+    let release!: () => void;
+    let acquired!: () => void;
+    const ready = new Promise<void>((resolve) => { acquired = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const holder = engine.store.withRepositoryLock({ runId: "other-run", action: "advance" }, async () => {
+      acquired();
+      await held;
+    });
+    await ready;
+
+    await expect(engine.resolveInstalls("missing-run", {})).rejects.toThrow(
+      /repository is in use by run other-run/i,
+    );
+    release();
+    await holder;
+  });
+
   it("fails a concurrent advance fast, names the holding run, and leaves both states loadable", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {

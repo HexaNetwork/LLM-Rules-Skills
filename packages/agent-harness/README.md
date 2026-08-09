@@ -250,7 +250,7 @@ Agents cannot claim a command passed. The harness owns process execution and rec
 
 `start` (preflight / Graphify / knowledge refresh) and `advance` take a process-wide repository lock at `<stateDirectory>/repo.lock`. That serialises working-tree work across runs — including a CLI `advance` beside the UI, or two UI instances — so branch switches and `changedFiles()` reads cannot interleave against one shared tree.
 
-Hold time matches the work: a long `advance` blocks every other run for the same duration. That is intentional with one working tree. `answer`, `answerMany`, `addNote`, `status`, and `cancel` do not take the repository lock, so human input and cancellation stay available while a run is executing. If a holder dies, `agent-harness unlock --run-id <id> --repo` removes a stale `repo.lock`.
+Hold time matches the work: a long `advance` blocks every other run for the same duration. That is intentional with one working tree. `answer`, `answerMany`, `addNote`, `status`, and `cancel` do not take the repository lock, so human input and cancellation stay available while a run is executing. Locks are never taken over automatically, because an age/liveness check cannot safely race another contender; if a holder dies, inspect it and explicitly run `agent-harness unlock --run-id <id> --repo`.
 
 True parallel runs need isolated worktrees; that remains deferred under [Parallel task execution](../../docs/roadmap.md#parallel-task-execution) in the roadmap.
 

@@ -10,8 +10,6 @@ import {
 } from "./domain.js";
 import type { HarnessConfig } from "./config.js";
 
-const LOCK_STALE_MS = 30 * 60 * 1000;
-
 export type RunLoadFailure = { runId: string; error: string };
 
 type LockBody = {
@@ -20,6 +18,13 @@ type LockBody = {
   at: string;
   runId?: string;
   action?: string;
+};
+
+type TransitionJournal = {
+  expectedRevision: number;
+  state: RunState;
+  event: RunEvent;
+  owner?: Pick<LockBody, "pid" | "hostname">;
 };
 
 export class RunStore {
@@ -54,6 +59,7 @@ export class RunStore {
   }
 
   async load(runId: string): Promise<RunState> {
+    await this.recoverPendingTransition(runId);
     const raw = await readStable(path.join(this.runDirectory(runId), "state.json"));
     return RunStateSchema.parse(JSON.parse(raw));
   }
@@ -113,18 +119,33 @@ export class RunStore {
     type: string,
     detail: Record<string, unknown> = {},
   ): Promise<RunState> {
+    // If a previous transition failed after writing its journal, finish it
+    // before creating a later sequence number.
+    await this.recoverPendingTransition(state.runId, { force: true });
     const event: RunEvent = RunEventSchema.parse({
       sequence: state.lastEventSequence + 1,
       type,
       detail,
       at: new Date().toISOString(),
     });
-    const next = await this.writeState({ ...state, lastEventSequence: event.sequence });
-    await appendFile(
-      path.join(this.runDirectory(state.runId), "events.jsonl"),
-      `${JSON.stringify(event)}\n`,
-      "utf8",
-    );
+    const next = RunStateSchema.parse({
+      ...state,
+      lastEventSequence: event.sequence,
+      revision: state.revision + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    const journal: TransitionJournal = {
+      expectedRevision: state.revision,
+      state: next,
+      event,
+      owner: { pid: process.pid, hostname: localHostname() },
+    };
+    // State and history are a recoverable transaction: after a process crash,
+    // load() can finish whichever durable write did not complete.
+    await atomicJson(this.transitionJournalPath(state.runId), journal);
+    await atomicJson(path.join(this.runDirectory(state.runId), "state.json"), next);
+    await this.appendEventOnce(state.runId, event);
+    await unlink(this.transitionJournalPath(state.runId));
     return next;
   }
 
@@ -324,6 +345,64 @@ export class RunStore {
     }
     return target;
   }
+
+  private transitionJournalPath(runId: string): string {
+    return path.join(this.runDirectory(runId), "transition.pending.json");
+  }
+
+  private async recoverPendingTransition(runId: string, options: { force?: boolean } = {}): Promise<void> {
+    const journalPath = this.transitionJournalPath(runId);
+    let raw: string;
+    try {
+      raw = await readStable(journalPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    const pending = parseTransitionJournal(raw);
+    if (!options.force && pending.owner && processIsAlive(pending.owner)) {
+      // A dashboard/status read can overlap a normal record(). Let the owning
+      // writer finish rather than racing its event append.
+      return;
+    }
+    const statePath = path.join(this.runDirectory(runId), "state.json");
+    const current = RunStateSchema.parse(JSON.parse(await readStable(statePath)));
+    if (current.revision === pending.expectedRevision) {
+      await atomicJson(statePath, pending.state);
+    } else if (current.revision !== pending.state.revision) {
+      throw new Error(
+        `Cannot recover transition for run ${runId}: expected revision ${pending.expectedRevision}, found ${current.revision}`,
+      );
+    }
+    await this.appendEventOnce(runId, pending.event);
+    await unlink(journalPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+
+  private async appendEventOnce(runId: string, event: RunEvent): Promise<void> {
+    const eventPath = path.join(this.runDirectory(runId), "events.jsonl");
+    const { events: existing, tornFinalRecord } = await readEvents(eventPath);
+    if (tornFinalRecord) {
+      // A partial JSONL append cannot be continued in place: doing so would
+      // turn it into a malformed middle record. Rebuild the valid prefix.
+      await atomicText(
+        eventPath,
+        existing.length === 0 ? "" : `${existing.map((item) => JSON.stringify(item)).join("\n")}\n`,
+      );
+    }
+    const duplicate = existing.find((candidate) => candidate.sequence === event.sequence);
+    if (duplicate) {
+      if (JSON.stringify(duplicate) !== JSON.stringify(event)) {
+        throw new Error(`Event sequence ${event.sequence} conflicts with existing run history`);
+      }
+      return;
+    }
+    if (existing.some((candidate) => candidate.sequence > event.sequence)) {
+      throw new Error(`Event sequence ${event.sequence} is behind existing run history`);
+    }
+    await appendFile(eventPath, `${JSON.stringify(event)}\n`, "utf8");
+  }
 }
 
 function safeSegment(value: string): string {
@@ -334,9 +413,13 @@ function safeSegment(value: string): string {
 }
 
 async function atomicJson(target: string, value: unknown): Promise<void> {
+  await atomicText(target, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function atomicText(target: string, value: string): Promise<void> {
   await mkdir(path.dirname(target), { recursive: true });
   const temporary = `${target}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await writeFile(temporary, value, "utf8");
   await replaceFile(temporary, target);
 }
 
@@ -385,30 +468,12 @@ async function acquireLockFile(
     return await open(lockPath, "wx");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    if (!(await shouldBreakLock(lockPath))) {
-      const info = await readLockInfo(lockPath);
-      onAlive(info?.body ?? null);
-    }
-    await unlink(lockPath);
-    return open(lockPath, "wx");
+    // Automatic stale-lock takeover is unsafe: another contender can acquire a
+    // fresh lock between the liveness check and deletion. Require an explicit
+    // operator unlock for abandoned locks instead.
+    const info = await readLockInfo(lockPath);
+    onAlive(info?.body ?? null);
   }
-}
-
-async function shouldBreakLock(lockPath: string): Promise<boolean> {
-  try {
-    const raw = await readFile(lockPath, "utf8");
-    const body = parseLockBody(raw);
-    if (body && body.hostname === localHostname()) {
-      const liveness = probePid(body.pid);
-      if (liveness === "dead") return true;
-      if (liveness === "alive") return false;
-      // probe failure → degrade to age rule
-    }
-  } catch {
-    // Unreadable / probe failure → degrade to age rule.
-  }
-  const age = Date.now() - (await stat(lockPath)).mtimeMs;
-  return age >= LOCK_STALE_MS;
 }
 
 function parseLockBody(raw: string): LockBody | null {
@@ -434,17 +499,70 @@ function parseLockBody(raw: string): LockBody | null {
   }
 }
 
-/** process.kill(pid, 0) — ESRCH dead, EPERM alive, no throw alive. */
-function probePid(pid: number): "alive" | "dead" | "unknown" {
-  try {
-    process.kill(pid, 0);
-    return "alive";
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ESRCH") return "dead";
-    if (code === "EPERM") return "alive";
-    return "unknown";
+/** Parses the durable recovery record written before state and event updates. */
+function parseTransitionJournal(raw: string): TransitionJournal {
+  const value = JSON.parse(raw) as Partial<TransitionJournal>;
+  if (
+    typeof value.expectedRevision !== "number" ||
+    !Number.isInteger(value.expectedRevision) ||
+    value.state == null ||
+    value.event == null
+  ) {
+    throw new Error("Invalid pending transition journal");
   }
+  const state = RunStateSchema.parse(value.state);
+  const event = RunEventSchema.parse(value.event);
+  if (state.revision !== value.expectedRevision + 1 || event.sequence !== state.lastEventSequence) {
+    throw new Error("Inconsistent pending transition journal");
+  }
+  const owner = isLockOwner(value.owner) ? value.owner : undefined;
+  return { expectedRevision: value.expectedRevision, state, event, ...(owner ? { owner } : {}) };
+}
+
+function isLockOwner(value: unknown): value is Pick<LockBody, "pid" | "hostname"> {
+  return (
+    typeof value === "object" &&
+    value != null &&
+    typeof (value as Partial<LockBody>).pid === "number" &&
+    Number.isFinite((value as Partial<LockBody>).pid) &&
+    typeof (value as Partial<LockBody>).hostname === "string"
+  );
+}
+
+function processIsAlive(owner: Pick<LockBody, "pid" | "hostname">): boolean {
+  if (owner.hostname !== localHostname()) return true;
+  try {
+    process.kill(owner.pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Reads valid history and ignores a torn final JSONL record left by a crash. */
+async function readEvents(eventPath: string): Promise<{ events: RunEvent[]; tornFinalRecord: boolean }> {
+  let raw: string;
+  try {
+    raw = await readStable(eventPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { events: [], tornFinalRecord: false };
+    throw error;
+  }
+  const lines = raw.split("\n");
+  const events: RunEvent[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!.trim();
+    if (!line) continue;
+    try {
+      events.push(RunEventSchema.parse(JSON.parse(line)));
+    } catch (error) {
+      if (index === lines.length - 1 && !raw.endsWith("\n")) {
+        return { events, tornFinalRecord: true };
+      }
+      throw error;
+    }
+  }
+  return { events, tornFinalRecord: false };
 }
 
 async function readLockInfo(

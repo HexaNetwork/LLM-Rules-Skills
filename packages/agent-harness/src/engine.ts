@@ -1040,7 +1040,9 @@ export class HarnessEngine {
     runId: string,
     decisions: { accepted?: string[]; denied?: string[] },
   ): Promise<RunState> {
-    return this.store.withLock(runId, async () => {
+    // Installs mutate manifests and lockfiles, so they need the same shared
+    // worktree exclusion as an advancing run. Keep repository -> run ordering.
+    return this.store.withRepositoryLock({ runId, action: "resolve-installs" }, () => this.store.withLock(runId, async () => {
       let state = await this.store.load(runId);
       const pending = pendingInstallApprovals(state);
       if (state.phase !== "awaiting_input" || pending.length === 0) {
@@ -1061,6 +1063,8 @@ export class HarnessEngine {
         }
       }
 
+      await this.assertTreeFingerprint(state);
+
       const now = new Date().toISOString();
       const nextInstalls: ProposedInstall[] = [];
       for (const item of state.proposedInstalls) {
@@ -1080,6 +1084,7 @@ export class HarnessEngine {
           cwd: this.config.repositoryRoot,
           timeoutMs: 10 * 60 * 1000,
           signal: this.signalFor(runId),
+          ...this.commandEnvironmentOptions(),
         });
         if (result.cancelled) {
           throw new RunCancelledError(`Install ${item.id} cancelled`);
@@ -1111,7 +1116,12 @@ export class HarnessEngine {
       }
 
       state = await this.store.record(
-        { ...state, proposedInstalls: nextInstalls, phase: "executing" },
+        {
+          ...state,
+          proposedInstalls: nextInstalls,
+          phase: "executing",
+          treeFingerprint: await this.git.treeFingerprint(),
+        },
         "installs.resolved",
         {
           accepted: [...accepted],
@@ -1120,7 +1130,7 @@ export class HarnessEngine {
       );
       await this.syncArtifacts(state);
       return state;
-    });
+    }));
   }
 
   /**
@@ -1932,6 +1942,7 @@ export class HarnessEngine {
         cwd: this.config.repositoryRoot,
         timeoutMs: gate.timeoutMs,
         signal: this.signalFor(state.runId),
+        ...this.commandEnvironmentOptions(),
       });
       if (result.cancelled) {
         throw new RunCancelledError(`Gate ${gate.id} cancelled`);
@@ -2092,6 +2103,18 @@ export class HarnessEngine {
     }
   }
 
+  private commandEnvironmentOptions(): {
+    passEnv: string[];
+    protectedEnvNames: string[];
+  } {
+    return {
+      passEnv: this.config.commands.passEnv,
+      // The embedding key name is configurable, so include it in the hard
+      // deny-list in addition to built-in provider credential names.
+      protectedEnvNames: [this.config.knowledge.embeddings.apiKeyEnv],
+    };
+  }
+
   private async runTargetedTest(runId: string, task: BuildTask, purpose: string) {
     const command = task.testCommand ?? this.config.commands.test;
     const gate = this.config.commands.gates.find((item) => item.command === command);
@@ -2099,6 +2122,7 @@ export class HarnessEngine {
       cwd: this.config.repositoryRoot,
       timeoutMs: gate?.timeoutMs ?? 10 * 60 * 1000,
       signal: this.signalFor(runId),
+      ...this.commandEnvironmentOptions(),
     });
     if (result.cancelled) {
       throw new RunCancelledError(`Command cancelled: ${purpose}`);

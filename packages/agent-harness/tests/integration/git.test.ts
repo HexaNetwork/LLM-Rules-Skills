@@ -213,6 +213,42 @@ describe("harness-owned git", () => {
     ).rejects.toThrow("unreported paths");
   });
 
+  it("commitTask ignores dirty artifact paths covered by ignoredArtifactPatterns", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+
+    const config = fixtureConfig(root, {
+      git: {
+        enabled: true,
+        ignoredArtifactPatterns: ["**/obj/", "*.pdb", "**/*.cache"],
+      } as never,
+    });
+    const service = new GitService(config);
+    await service.ensureRunBranch("artifacts");
+
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await mkdir(path.join(root, "Source", "App", "obj", "Debug"), { recursive: true });
+    await writeFile(path.join(root, "src", "feature.ts"), "export const feature = true;\n", "utf8");
+    await writeFile(
+      path.join(root, "Source", "App", "obj", "Debug", "App.assets.cache"),
+      "cache\n",
+      "utf8",
+    );
+    await writeFile(path.join(root, "Source", "App", "App.pdb"), "pdb\n", "utf8");
+
+    expect(await service.changedFiles()).toEqual(["src/feature.ts"]);
+    const sha = await service.commitTask(
+      "feature-artifacts",
+      { subject: "feat: add feature", body: "Source only." },
+      ["src/feature.ts"],
+    );
+    expect(sha).toMatch(/^[a-f0-9]{40}$/);
+    const files = await git(root, "show", "--pretty=", "--name-only", "HEAD");
+    expect(files).toContain("src/feature.ts");
+    expect(files).not.toContain("obj");
+    expect(files).not.toContain(".pdb");
+  });
+
   it("currentBranch reports the checked-out branch, and undefined when git is disabled", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);

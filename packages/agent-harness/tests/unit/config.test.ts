@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   HarnessConfigSchema,
+  configurationHash,
   defaultConfigYaml,
   deploymentConfigYaml,
   loadRunConfig,
@@ -148,5 +149,67 @@ describe("token-conscious defaults", () => {
     const loaded = await loadRunConfig(project, runId);
 
     expect(loaded.knowledge.guidance.enabled).toBe(false);
+  });
+
+  it("defaults ignoredArtifactPatterns and omits them from configurationHash", () => {
+    const empty = HarnessConfigSchema.parse({});
+    expect(empty.git.ignoredArtifactPatterns).toEqual([
+      "**/obj/",
+      "**/bin/",
+      "*.pdb",
+      "*.user",
+      "**/*.cache",
+      "**/GeneratedMSBuildEditorConfig.editorconfig",
+      "**/AssemblyAttributes.cs",
+    ]);
+    expect(defaultConfigYaml()).toContain("ignoredArtifactPatterns:");
+    expect(defaultConfigYaml()).toContain('"**/obj/"');
+    const deployed = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml()));
+    expect(deployed.git.ignoredArtifactPatterns).toContain("**/obj/");
+
+    const before = configurationHash(empty);
+    const after = configurationHash({
+      ...empty,
+      git: {
+        ...empty.git,
+        ignoredArtifactPatterns: [...empty.git.ignoredArtifactPatterns, "**/Generated/**"],
+      },
+    });
+    expect(after).toBe(before);
+
+    const drift = configurationHash({
+      ...empty,
+      git: { ...empty.git, baseBranch: "develop" },
+    });
+    expect(drift).not.toBe(before);
+  });
+
+  it("persists ignoredArtifactPatterns via project settings and overlays them on frozen runs", async () => {
+    const root = await fixtureRoot();
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    await writeFile(
+      configPath,
+      "version: 2\nrepositoryRoot: .\ngit:\n  ignoredArtifactPatterns: []\n",
+      "utf8",
+    );
+
+    const updated = await writeProjectSettings(configPath, {
+      git: { ignoredArtifactPatterns: ["**/obj/", "*.pdb"] },
+    });
+    expect(updated.config.git.ignoredArtifactPatterns).toEqual(["**/obj/", "*.pdb"]);
+    expect(await readFile(configPath, "utf8")).toContain("**/obj/");
+
+    const runId = "live-artifacts";
+    const runDirectory = path.join(root, ".agent-harness", "runs", runId);
+    await mkdir(runDirectory, { recursive: true });
+    const frozen = HarnessConfigSchema.parse({
+      repositoryRoot: root,
+      git: { ignoredArtifactPatterns: [] },
+    });
+    await writeFile(path.join(runDirectory, "config.json"), `${JSON.stringify(frozen)}\n`, "utf8");
+
+    const loaded = await loadRunConfig(updated.config, runId);
+    expect(loaded.git.ignoredArtifactPatterns).toEqual(["**/obj/", "*.pdb"]);
+    expect(loaded.git.ignoredArtifactPatterns).not.toEqual(frozen.git.ignoredArtifactPatterns);
   });
 });

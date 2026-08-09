@@ -5,9 +5,19 @@ import { relative as pathRelative, resolve as pathResolve } from "node:path";
 import type { HarnessConfig } from "./config.js";
 import type { MessageOutput } from "./domain.js";
 import { HarnessFailure } from "./errors.js";
+import { matchesGlob } from "./knowledge.js";
 
 export class GitService {
   constructor(private readonly config: HarnessConfig) {}
+
+  /**
+   * True when `file` matches any configured artifact glob.
+   * Directory patterns ending in `/` also match everything under that prefix;
+   * patterns without `/` match the basename in any directory (gitignore-like).
+   */
+  matchesArtifactPattern(file: string, patterns: string[] = this.config.git.ignoredArtifactPatterns): boolean {
+    return matchesArtifactPattern(file, patterns);
+  }
 
   branchForRun(runId: string): string {
     const safe = runId.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
@@ -126,6 +136,7 @@ export class GitService {
     const statePrefix = normalize(
       pathRelative(this.config.repositoryRoot, pathResolve(this.config.repositoryRoot, this.config.stateDirectory)),
     );
+    const artifactPatterns = this.config.git.ignoredArtifactPatterns;
     const records = result.stdout.split("\0").filter(Boolean);
     const paths: string[] = [];
     const kept: string[] = [];
@@ -141,6 +152,12 @@ export class GitService {
       const renamePath = second ? normalize(second) : undefined;
       const underState = (file: string) => file === statePrefix || file.startsWith(`${statePrefix}/`);
       if (underState(filePath) || (renamePath != null && underState(renamePath))) {
+        continue;
+      }
+      const isArtifact =
+        matchesArtifactPattern(filePath, artifactPatterns) ||
+        (renamePath != null && matchesArtifactPattern(renamePath, artifactPatterns));
+      if (isArtifact) {
         continue;
       }
       kept.push(record);
@@ -196,7 +213,9 @@ export class GitService {
     if (await this.isTaskCommitted(taskId)) {
       return (await this.git(["rev-parse", "HEAD"])).stdout.trim();
     }
-    const changed = await this.changedFiles();
+    const changed = (await this.changedFiles()).filter(
+      (file) => !matchesArtifactPattern(file, this.config.git.ignoredArtifactPatterns),
+    );
     if (changed.length === 0) {
       throw new HarnessFailure(`Task ${taskId} produced no git changes`, "workspace", true);
     }
@@ -301,6 +320,42 @@ function sanitizeSubject(value: string): string {
 
 function normalize(value: string): string {
   return value.replaceAll("\\", "/");
+}
+
+/**
+ * True when `file` matches any artifact glob.
+ * - Patterns ending in `/` match that directory and everything under it.
+ * - Patterns with no `/` match the basename in any directory (gitignore-like).
+ */
+export function matchesArtifactPattern(file: string, patterns: string[]): boolean {
+  const normalized = normalize(file);
+  return patterns.some((raw) => {
+    let pattern = raw.trim();
+    if (!pattern) return false;
+    if (pattern.endsWith("/")) {
+      pattern = `${pattern}**`;
+    }
+    if (matchesGlob(pattern, normalized)) return true;
+    if (!pattern.includes("/")) {
+      return matchesGlob(`**/${pattern}`, normalized);
+    }
+    return false;
+  });
+}
+
+/**
+ * Convert a dirty path into a folder-oriented ignore glob for project settings.
+ * Files become star-star/parent/star-star; directories become star-star/dir/star-star.
+ */
+export function pathToIgnoredArtifactGlob(filePath: string): string {
+  const normalized = normalize(filePath).replace(/^\.\//, "").replace(/\/+$/, "");
+  if (!normalized) return "**/*";
+  const parts = normalized.split("/");
+  const last = parts[parts.length - 1]!;
+  const looksLikeFile = /\.[A-Za-z0-9]+$/.test(last);
+  const folder = looksLikeFile ? parts.slice(0, -1).join("/") : normalized;
+  if (!folder) return normalized.includes("/") ? normalized : `**/${normalized}`;
+  return `**/${folder}/**`;
 }
 
 function splitDiffSections(diff: string): string[] {

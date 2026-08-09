@@ -52,7 +52,7 @@ describe("dashboard document", () => {
     expect(html).toMatch(/Build progress[\s\S]*?>Repository<\/div>/);
     expect(html).toContain("bootstrap.project.root");
     expect(html).toContain("data-setting-key");
-    expect(html).toContain("Active runs keep their frozen configuration");
+    expect(html).toContain("Ignored build artifacts are live project policy");
     expect(html).toContain("Thinking…");
     expect(html).toContain("Cancelling…");
     expect(html).toContain("state.cancelling");
@@ -377,6 +377,20 @@ describe("dashboard document", () => {
     expect(html).toContain('data-action="accept_tree"');
     expect(html).toContain("Accept current tree and continue");
     expect(html).toContain("Working tree diverged|Diverging paths");
+  });
+
+  it("offers Ignore buttons for diverging/unreported paths and lists ignored artifacts in settings", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function parseBlockedPaths(failureText)");
+    expect(html).toContain("Ignore these paths");
+    expect(html).toContain('data-action="ignore_artifacts"');
+    expect(html).toContain("data-ignore-path=");
+    expect(html).toContain("Ignore all listed paths");
+    expect(html).toContain("Ignored build artifacts");
+    expect(html).toContain("data-remove-artifact-index=");
+    expect(html).toContain("function removeIgnoredArtifact(index)");
+    expect(html).toContain('git.ignoredArtifactPatterns');
   });
 
   it("shows a base-branch caution, using the existing warning visual vocabulary, only when current === base", () => {

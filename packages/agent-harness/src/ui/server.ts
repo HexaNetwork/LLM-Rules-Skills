@@ -10,7 +10,7 @@ import {
 } from "../config.js";
 import type { AgentBackend } from "../agent.js";
 import { HarnessEngine } from "../engine.js";
-import { GitService } from "../git.js";
+import { GitService, pathToIgnoredArtifactGlob } from "../git.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { prepareGraphifyForRun } from "../graphify.js";
 import { RunStore } from "../store.js";
@@ -247,7 +247,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         }
         const body = await readJsonBody(request);
         const values = requiredRecord(body.values, "values");
-        const known = new Set<string>(PROJECT_SETTING_DEFINITIONS.map((setting) => setting.key));
+        const known = new Set<string>([
+          ...PROJECT_SETTING_DEFINITIONS.map((setting) => setting.key),
+          "git.ignoredArtifactPatterns",
+        ]);
         const unknown = Object.keys(values).filter((key) => !known.has(key));
         if (unknown.length) throw new HttpError(400, `Unknown setting: ${unknown.join(", ")}`);
         const maxGrillQuestionsPerEpisode = optionalInteger(
@@ -277,6 +280,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           "git.preflightCommitOrder",
           PREFLIGHT_COMMIT_ORDER_VALUES,
         );
+        const ignoredArtifactPatterns = optionalStringArray(
+          values["git.ignoredArtifactPatterns"],
+          "git.ignoredArtifactPatterns",
+          500,
+        );
         if (maxGrillQuestionsPerEpisode == null) {
           throw new HttpError(400, "workflow.maxGrillQuestionsPerEpisode is required");
         }
@@ -289,11 +297,14 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             staleAnswerMinutes,
             ...(grillQuestionsPerBatch != null ? { grillQuestionsPerBatch } : {}),
           },
-          ...(autoCommitPreflight != null || preflightCommitOrder != null
+          ...(autoCommitPreflight != null ||
+          preflightCommitOrder != null ||
+          ignoredArtifactPatterns != null
             ? {
                 git: {
                   ...(autoCommitPreflight != null ? { autoCommitPreflight } : {}),
                   ...(preflightCommitOrder != null ? { preflightCommitOrder } : {}),
+                  ...(ignoredArtifactPatterns != null ? { ignoredArtifactPatterns } : {}),
                 },
               }
             : {}),
@@ -479,6 +490,28 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             await engine.acceptTree(runId);
             await engine.advance(runId);
           });
+        } else if (action === "ignore_artifacts") {
+          if (!options.configPath) {
+            throw new HttpError(400, "Cannot persist ignored artifacts without a config file path");
+          }
+          const paths = optionalStringArray(body.paths, "paths", 500) ?? [];
+          if (paths.length === 0) {
+            throw new HttpError(400, "paths must be a non-empty string array");
+          }
+          const added = paths.map(pathToIgnoredArtifactGlob);
+          const merged = [
+            ...new Set([...projectConfig.git.ignoredArtifactPatterns, ...added]),
+          ];
+          const updated = await writeProjectSettings(options.configPath, {
+            git: { ignoredArtifactPatterns: merged },
+          });
+          projectConfig = updated.config;
+          const liveConfig = await loadRunConfig(projectConfig, runId);
+          const liveEngine = new HarnessEngine(liveConfig, { backend: options.backend });
+          enqueue(runId, action, async () => {
+            await liveEngine.acceptTree(runId);
+            await liveEngine.advance(runId);
+          });
         } else if (action === "cancel") {
           // Cancel must not wait behind the work it is aborting (or 409 on a busy run).
           const result = await engine.cancel(runId);
@@ -658,6 +691,7 @@ function projectSettings(config: HarnessConfig, configPath?: string): Record<str
       "workflow.grillQuestionsPerBatch": config.workflow.grillQuestionsPerBatch,
       "git.autoCommitPreflight": config.git.autoCommitPreflight,
       "git.preflightCommitOrder": config.git.preflightCommitOrder,
+      "git.ignoredArtifactPatterns": config.git.ignoredArtifactPatterns,
     },
   };
 }
@@ -1053,6 +1087,18 @@ function optionalEnum<T extends string>(
     throw new HttpError(400, `${field} must be one of: ${allowed.join(", ")}`);
   }
   return value as T;
+}
+
+function optionalStringArray(
+  value: unknown,
+  field: string,
+  maxItemLength: number,
+): string[] | undefined {
+  if (value == null) return undefined;
+  if (!Array.isArray(value)) {
+    throw new HttpError(400, `${field} must be an array of strings`);
+  }
+  return value.map((item, index) => requiredString(item, `${field}[${index}]`, maxItemLength));
 }
 
 function assertInside(root: string, target: string): void {

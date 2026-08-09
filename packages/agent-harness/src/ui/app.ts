@@ -692,6 +692,15 @@ export function renderDashboard(): string {
       return out;
     }
 
+    function parseBlockedPaths(failureText) {
+      var text = String(failureText || "");
+      var match = /(?:Diverging paths|changed unreported paths):\s*(.+)$/im.exec(text);
+      if (!match) return [];
+      var raw = String(match[1] || "").trim();
+      if (!raw || raw.indexOf("(HEAD") === 0) return [];
+      return raw.split(/,\s*/).map(function (part) { return part.trim(); }).filter(Boolean);
+    }
+
     // Prefer blockedKind; fall back to message patterns for runs blocked before classification.
     function blockedRemediation(stateOrFailure) {
       var kind = stateOrFailure && typeof stateOrFailure === "object" ? stateOrFailure.blockedKind : undefined;
@@ -1019,6 +1028,23 @@ export function renderDashboard(): string {
             '<button class="btn primary" data-action="accept_tree">Accept current tree and continue</button>' +
             '</div>';
         }
+        var ignoreArtifactControls = "";
+        var divergingPaths = parseBlockedPaths(failureText);
+        var canEditSettings = !!(state.bootstrap && state.bootstrap.project && state.bootstrap.project.settings && state.bootstrap.project.settings.editable);
+        if (divergingPaths.length > 0 && (isTreeDivergence || /changed unreported paths/i.test(failureText)) && canEditSettings) {
+          ignoreArtifactControls =
+            '<div class="ignore-artifacts" style="margin-top:12px">' +
+            '<div class="muted" style="margin-bottom:6px"><strong>Ignore these paths</strong> — add build/generated folders to project config (not .gitignore), then accept the tree and continue.</div>' +
+            '<div style="display:grid;gap:6px">' +
+            divergingPaths.map(function (filePath) {
+              return '<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">' +
+                '<code style="font-size:12px;word-break:break-all">' + esc(filePath) + '</code>' +
+                '<button class="btn small" data-action="ignore_artifacts" data-ignore-path="' + attr(filePath) + '">Ignore</button>' +
+                '</div>';
+            }).join('') +
+            '<div style="margin-top:4px"><button class="btn" data-action="ignore_artifacts" data-ignore-paths="' + attr(JSON.stringify(divergingPaths)) + '">Ignore all listed paths</button></div>' +
+            '</div></div>';
+        }
         var retryControls = "";
         if (s.blockedKind === "budget") {
           var ceilings = (state.detail && state.detail.ceilings) || {};
@@ -1039,7 +1065,7 @@ export function renderDashboard(): string {
         } else if (!isTreeDivergence) {
           retryControls = '<button class="btn danger" data-action="retry">Retry transition</button>';
         }
-        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + acceptTreeControls + '</div>' + retryControls + '</div></div>';
+        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + acceptTreeControls + ignoreArtifactControls + '</div>' + retryControls + '</div></div>';
       }
       if (["grilling","awaiting_input","planning"].includes(s.phase)) {
         html += renderFogCard(s);
@@ -1167,7 +1193,9 @@ export function renderDashboard(): string {
         }).join('');
         return '<section class="settings-group"><h3>' + esc(category.name) + '</h3>' + rows + '</section>';
       }).join('');
-      var persistence = settings.editable ? 'Changes are saved to the project config and apply to new runs. Active runs keep their frozen configuration.' : 'This dashboard was started without a config file path, so settings are read-only.';
+      var persistence = settings.editable
+        ? 'Most changes apply to new runs. Ignored build artifacts are live project policy and also apply to in-progress runs.'
+        : 'This dashboard was started without a config file path, so settings are read-only.';
       var grillLayout = getGrillOptionsLayout();
       var displayGroup = '<section class="settings-group"><h3>Display</h3>' +
         '<label class="setting-row" for="grill-options-layout"><span><strong>Grill options layout</strong><span class="faint">Arrange recommended options as columns or stacked rows</span></span>' +
@@ -1175,7 +1203,20 @@ export function renderDashboard(): string {
           '<option value="columns"' + (grillLayout === "columns" ? ' selected' : '') + '>Columns</option>' +
           '<option value="rows"' + (grillLayout === "rows" ? ' selected' : '') + '>Rows</option>' +
         '</select></label></section>';
-      $("settingsBody").innerHTML = '<p class="settings-intro">Tune token use and workflow behavior from one place. More settings can be added to this menu as the harness grows.</p>' + fields + displayGroup + '<div class="settings-scope">' + esc(persistence) + '</div>';
+      var artifactPatterns = Array.isArray(values["git.ignoredArtifactPatterns"]) ? values["git.ignoredArtifactPatterns"] : [];
+      var artifactRows = artifactPatterns.length
+        ? artifactPatterns.map(function (pattern, index) {
+            return '<div class="setting-row" style="align-items:center"><code style="font-size:12px;word-break:break-all">' + esc(pattern) + '</code>' +
+              (settings.editable
+                ? '<button type="button" class="btn small danger" data-remove-artifact-index="' + attr(String(index)) + '">Remove</button>'
+                : '') +
+              '</div>';
+          }).join('')
+        : '<div class="muted">No ignored artifact patterns yet.</div>';
+      var artifactGroup = '<section class="settings-group" id="ignoredArtifactsGroup"><h3>Ignored build artifacts</h3>' +
+        '<p class="faint" style="margin:0 0 8px">Harness-local globs skipped for dirty-tree and unreported-path checks. Does not edit .gitignore.</p>' +
+        '<div id="ignoredArtifactsList" style="display:grid;gap:8px">' + artifactRows + '</div></section>';
+      $("settingsBody").innerHTML = '<p class="settings-intro">Tune token use and workflow behavior from one place. More settings can be added to this menu as the harness grows.</p>' + fields + artifactGroup + displayGroup + '<div class="settings-scope">' + esc(persistence) + '</div>';
       $("saveSettingsBtn").disabled = !settings.editable;
       var layoutSelect = $("grill-options-layout");
       if (layoutSelect) {
@@ -1193,6 +1234,35 @@ export function renderDashboard(): string {
         renderSettings(state.settings);
         $("settingsDialog").showModal();
       } catch (error) { toast(error.message,true); }
+    }
+
+    async function removeIgnoredArtifact(index) {
+      if (!state.settings || !state.settings.editable) return;
+      var current = Array.isArray(state.settings.values["git.ignoredArtifactPatterns"])
+        ? state.settings.values["git.ignoredArtifactPatterns"].slice()
+        : [];
+      if (index < 0 || index >= current.length) return;
+      current.splice(index, 1);
+      try {
+        var values = collectSettingsValues();
+        values["git.ignoredArtifactPatterns"] = current;
+        var data = await api('/api/settings', { method: 'PUT', body: { values: values } });
+        state.settings = data.settings;
+        if (state.bootstrap) state.bootstrap.project.settings = data.settings;
+        renderSettings(state.settings);
+        toast('Ignored artifact pattern removed');
+      } catch (error) { toast(error.message, true); }
+    }
+
+    function collectSettingsValues() {
+      var values = {};
+      $("settingsForm").querySelectorAll('[data-setting-key]').forEach(function (input) {
+        var type = input.dataset.settingType;
+        values[input.dataset.settingKey] = type === 'integer' ? Number(input.value) : (type === 'boolean' ? input.checked : input.value);
+      });
+      var patterns = (state.settings && state.settings.values && state.settings.values["git.ignoredArtifactPatterns"]) || [];
+      values["git.ignoredArtifactPatterns"] = Array.isArray(patterns) ? patterns.slice() : [];
+      return values;
     }
 
     async function waitForJob(runId) {
@@ -1237,7 +1307,7 @@ export function renderDashboard(): string {
           toast(result.error, true);
           return;
         }
-        toast(action === 'answer' ? 'Answer recorded' : 'Action completed');
+        toast(action === 'answer' ? 'Answer recorded' : (action === 'ignore_artifacts' ? 'Ignored artifacts and continued' : 'Action completed'));
       } catch (error) {
         state.pinScrollTop = false;
         toast(error.message,true);
@@ -1527,6 +1597,15 @@ export function renderDashboard(): string {
         if (target.dataset.action === 'cancel' && !confirm('Cancel this run?')) return;
         if (target.dataset.action === 'commit_preflight') {
           runAction(target.dataset.action, { order: target.dataset.preflightOrder });
+        } else if (target.dataset.action === 'ignore_artifacts') {
+          var ignorePaths = [];
+          if (target.dataset.ignorePath) {
+            ignorePaths = [target.dataset.ignorePath];
+          } else if (target.dataset.ignorePaths) {
+            try { ignorePaths = JSON.parse(target.dataset.ignorePaths); } catch (error) { ignorePaths = []; }
+          }
+          if (!ignorePaths.length) { toast('No paths to ignore', true); return; }
+          runAction('ignore_artifacts', { paths: ignorePaths });
         } else if (target.dataset.action === 'raise_budget_retry') {
           var tokenInput = document.getElementById('raiseMaxRunTokens');
           var costInput = document.getElementById('raiseMaxRunCostUsd');
@@ -1542,6 +1621,10 @@ export function renderDashboard(): string {
       if (target.dataset.artifact) openArtifact(target.dataset.artifact);
       if (target.dataset.session) openSession(target.dataset.session);
       if (target.id === 'settingsBtn') openSettings();
+      if (target.dataset.removeArtifactIndex != null) {
+        event.preventDefault();
+        removeIgnoredArtifact(Number(target.dataset.removeArtifactIndex));
+      }
       // data-question-choice: legacy single-question click; batch card uses data-batch-choice.
       if (target.dataset.questionChoice) {
         var answerForm = target.closest('.question-card').querySelector('#answerForm');
@@ -1656,11 +1739,7 @@ export function renderDashboard(): string {
     $("settingsForm").addEventListener('submit', async function (event) {
       event.preventDefault();
       try {
-        var values = {};
-        event.target.querySelectorAll('[data-setting-key]').forEach(function (input) {
-          var type = input.dataset.settingType;
-          values[input.dataset.settingKey] = type === 'integer' ? Number(input.value) : (type === 'boolean' ? input.checked : input.value);
-        });
+        var values = collectSettingsValues();
         var data = await api('/api/settings',{method:'PUT',body:{values:values}});
         state.settings = data.settings;
         if (state.bootstrap) state.bootstrap.project.settings = data.settings;

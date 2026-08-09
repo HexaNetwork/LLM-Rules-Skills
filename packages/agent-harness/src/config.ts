@@ -19,12 +19,25 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  */
 export const CONFIG_VERSION = 5;
 
-/** Environment paths — omitted from configurationHash (policy only). */
+/** Environment paths / live project policy — omitted from configurationHash. */
 const CONFIG_HASH_OMIT_PATHS = new Set([
   "repositoryRoot",
   "stateDirectory",
   "knowledge.sharedIndexDirectory",
+  // Read fresh at commit-time so operators can add folders without config-drift blocks.
+  "git.ignoredArtifactPatterns",
 ]);
+
+/** Default build/generated globs ignored when deciding dirty / unreported paths. */
+export const DEFAULT_IGNORED_ARTIFACT_PATTERNS = [
+  "**/obj/",
+  "**/bin/",
+  "*.pdb",
+  "*.user",
+  "**/*.cache",
+  "**/GeneratedMSBuildEditorConfig.editorconfig",
+  "**/AssemblyAttributes.cs",
+] as const;
 
 export const PreflightCommitOrderSchema = z.enum(["branch-then-commit", "commit-then-branch"]);
 export type PreflightCommitOrder = z.infer<typeof PreflightCommitOrderSchema>;
@@ -159,6 +172,11 @@ export const HarnessConfigSchema = z.object({
       // branch-then-commit deviates from baseBranch branching: the run branch is cut from
       // current HEAD so the dirty tree rides onto it, not from config.git.baseBranch.
       preflightCommitOrder: PreflightCommitOrderSchema.default("branch-then-commit"),
+      // Globs ignored when deciding whether the tree is dirty / a path is unreported.
+      // Live project policy (omitted from configurationHash); read fresh, not frozen per-run.
+      ignoredArtifactPatterns: z
+        .array(z.string().min(1))
+        .default([...DEFAULT_IGNORED_ARTIFACT_PATTERNS]),
     })
     .default({}),
   knowledge: z
@@ -256,6 +274,7 @@ export const ProjectSettingsPatchSchema = z
       .object({
         autoCommitPreflight: z.boolean().optional(),
         preflightCommitOrder: PreflightCommitOrderSchema.optional(),
+        ignoredArtifactPatterns: z.array(z.string().min(1)).optional(),
       })
       .strict()
       .optional(),
@@ -349,17 +368,28 @@ export async function loadRunConfig(
     : { configVersion: undefined };
   // Frozen runs predate smart guidance. Preserve their exact retrieval
   // behavior instead of silently changing an in-progress delivery.
+  let frozen: HarnessConfig;
   if (
     isRecord(withoutVersion) &&
     isRecord(withoutVersion.knowledge) &&
     !Object.hasOwn(withoutVersion.knowledge, "guidance")
   ) {
-    return HarnessConfigSchema.parse({
+    frozen = HarnessConfigSchema.parse({
       ...withoutVersion,
       knowledge: { ...withoutVersion.knowledge, guidance: { enabled: false } },
     });
+  } else {
+    frozen = HarnessConfigSchema.parse(withoutVersion);
   }
-  return HarnessConfigSchema.parse(withoutVersion);
+  // Live project policy: artifact ignore list is read fresh so in-progress runs
+  // recover when the operator adds folders (excluded from configurationHash).
+  return {
+    ...frozen,
+    git: {
+      ...frozen.git,
+      ignoredArtifactPatterns: projectConfig.git.ignoredArtifactPatterns,
+    },
+  };
 }
 
 const SMALL_ROLES = new Set<AgentRole>(["prompt-builder", "message-writer"]);
@@ -443,6 +473,16 @@ git:
   # branch-then-commit cuts the run branch from current HEAD (not baseBranch) so a dirty
   # tree rides onto it. commit-then-branch commits on the current branch first instead.
   preflightCommitOrder: branch-then-commit
+  # Build/generated paths ignored for dirty-tree and unreported-path checks (not .gitignore).
+  # Live project policy — changes apply to in-progress runs without config-drift blocks.
+  ignoredArtifactPatterns:
+    - "**/obj/"
+    - "**/bin/"
+    - "*.pdb"
+    - "*.user"
+    - "**/*.cache"
+    - "**/GeneratedMSBuildEditorConfig.editorconfig"
+    - "**/AssemblyAttributes.cs"
 
 tracker:
   kind: local

@@ -1,9 +1,11 @@
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend, stepPersistenceLimits } from "../../src/agent.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
+import { createRunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
@@ -75,6 +77,9 @@ describe("central dashboard", () => {
     expect(initialBody.settings.values["workflow.grillQuestionsPerBatch"]).toBe(3);
     expect(initialBody.settings.values["git.autoCommitPreflight"]).toBe(false);
     expect(initialBody.settings.values["git.preflightCommitOrder"]).toBe("branch-then-commit");
+    expect(initialBody.settings.values["git.ignoredArtifactPatterns"]).toEqual(
+      expect.arrayContaining(["**/obj/", "**/bin/", "*.pdb"]),
+    );
 
     const invalid = await request(ui, "/api/settings", {
       method: "PUT",
@@ -923,6 +928,122 @@ describe("central dashboard", () => {
     } finally {
       await otherUi.close();
     }
+  });
+
+  it("ignore_artifacts appends folder globs and continues a tree-divergence block", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    await writeFile(
+      configPath,
+      "version: 2\nrepositoryRoot: .\ngit:\n  enabled: true\n  ignoredArtifactPatterns: []\n",
+      "utf8",
+    );
+
+    const config = fixtureConfig(root, {
+      git: { enabled: true, ignoredArtifactPatterns: [] } as never,
+      workflow: { ...fixtureConfig(root).workflow, maxStepsPerRun: 1, tdd: false },
+      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
+      },
+    });
+    const backend = createFakeBackend({
+      implementer: () => ({ summary: "built", changedFiles: ["src/a.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: a", body: "" }),
+    });
+    const engine = new HarnessEngine(config, { backend });
+    let state = {
+      ...createRunState("ui-ignore-artifacts", "Build one", new Date().toISOString(), configurationHash(config), CONFIG_VERSION),
+      phase: "executing" as const,
+      tasks: [
+        {
+          id: "t1",
+          title: "Ship one",
+          description: "Ship one",
+          acceptanceCriteria: ["works"],
+          affectedPaths: [],
+          blockedBy: [],
+          tdd: false,
+          testCommand: 'node -e "process.exit(0)"',
+          status: "pending" as const,
+          step: "pending" as const,
+          attempts: { tests: 0, implementation: 0, review: 0 },
+          evidence: [],
+          testPaths: [],
+          changedFiles: [],
+        },
+      ],
+      reflectBrief: {
+        draft: "d",
+        confirmed: "confirmed",
+        confirmedAt: new Date().toISOString(),
+      },
+    };
+    await engine.store.initialize();
+    await engine.store.create(state);
+    await engine.store.writeJson(state.runId, "config.json", {
+      ...config,
+      configVersion: CONFIG_VERSION,
+    });
+
+    state = await engine.advance(state.runId, 1);
+    expect(state.phase).toBe("executing");
+    expect(state.treeFingerprint).toBeTruthy();
+
+    await mkdir(path.join(root, "Source", "App", "obj", "Debug"), { recursive: true });
+    await writeFile(
+      path.join(root, "Source", "App", "obj", "Debug", "App.assets.cache"),
+      "cache\n",
+      "utf8",
+    );
+
+    state = await engine.advance(state.runId, 1);
+    expect(state.phase).toBe("blocked");
+    expect(state.failure).toMatch(/diverg/i);
+
+    ui = await startUiServer({
+      config,
+      backend,
+      configPath,
+      port: 0,
+      token: "ui-test",
+    });
+    const accepted = await request(ui, `/api/runs/${state.runId}/actions`, {
+      method: "POST",
+      body: {
+        action: "ignore_artifacts",
+        paths: ["Source/App/obj/Debug/App.assets.cache"],
+      },
+    });
+    expect(accepted.status).toBe(202);
+
+    const deadline = Date.now() + 15_000;
+    let detail: { state: { phase: string }; job?: { status?: string; error?: string } } | undefined;
+    while (Date.now() < deadline) {
+      const response = await request(ui, `/api/runs/${state.runId}`);
+      detail = (await response.json()) as typeof detail;
+      if (detail && !detail.job && detail.state.phase !== "blocked") break;
+      if (detail?.job?.status === "failed") {
+        throw new Error(detail.job.error ?? "ignore_artifacts job failed");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(detail?.state.phase).not.toBe("blocked");
+
+    const saved = await readFile(configPath, "utf8");
+    expect(saved).toContain("**/Source/App/obj/Debug/**");
+
+    const settings = await request(ui, "/api/settings");
+    const settingsBody = (await settings.json()) as {
+      settings: { values: { "git.ignoredArtifactPatterns": string[] } };
+    };
+    expect(settingsBody.settings.values["git.ignoredArtifactPatterns"]).toContain(
+      "**/Source/App/obj/Debug/**",
+    );
   });
 });
 

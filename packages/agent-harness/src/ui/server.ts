@@ -642,7 +642,8 @@ async function readEvents(store: RunStore, runId: string): Promise<unknown[]> {
 }
 
 async function readSessionSummaries(store: RunStore, runId: string): Promise<unknown[]> {
-  const files = await store.listFiles(runId, "sessions");
+  // sessions/ also holds <id>.steps.jsonl (NDJSON); only *.json are session records.
+  const files = (await store.listFiles(runId, "sessions")).filter((file) => file.endsWith(".json"));
   const sessions = await Promise.all(
     files.map(async (file) => {
       const value = (await store.readJson(runId, file)) as Record<string, unknown>;
@@ -757,7 +758,7 @@ async function submittedPrompt(
   if (!packet) return { source: "unavailable: packet missing" };
 
   const role = String(session.role ?? "");
-  const files = await store.listFiles(runId, "sessions");
+  const files = (await store.listFiles(runId, "sessions")).filter((file) => file.endsWith(".json"));
   const related = await Promise.all(
     files.map(async (file) => (await store.readJson(runId, file)) as Record<string, unknown>),
   );

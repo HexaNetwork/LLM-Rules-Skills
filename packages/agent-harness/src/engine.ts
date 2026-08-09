@@ -391,7 +391,9 @@ export class HarnessEngine {
    * Idempotent: reading the same files twice yields the same totals.
    */
   private async accrueUsage(state: RunState): Promise<RunState> {
-    const files = await this.store.listFiles(state.runId, "sessions");
+    const files = (await this.store.listFiles(state.runId, "sessions")).filter((file) =>
+      file.endsWith(".json"),
+    );
     let inputTokens = 0;
     let outputTokens = 0;
     let cacheReadTokens = 0;

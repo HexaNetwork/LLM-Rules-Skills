@@ -77,7 +77,9 @@ describe("out-of-band cancellation", () => {
     expect(state.phase).not.toBe("blocked");
     expect(cancelResult.state.phase === "cancelled" || cancelResult.pending).toBe(true);
 
-    const sessions = await engine.store.listFiles(started.runId, "sessions");
+    const sessions = (await engine.store.listFiles(started.runId, "sessions")).filter((file) =>
+      file.endsWith(".json"),
+    );
     const bodies = await Promise.all(
       sessions.map((file) => engine.store.readJson(started.runId, file)),
     );

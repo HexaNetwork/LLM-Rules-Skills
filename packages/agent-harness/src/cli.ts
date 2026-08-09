@@ -455,7 +455,9 @@ async function aggregateSessionUsage(
   totalTokens: number;
   sessions: number;
 }> {
-  const files = await engine.store.listFiles(runId, "sessions");
+  const files = (await engine.store.listFiles(runId, "sessions")).filter((file) =>
+    file.endsWith(".json"),
+  );
   let inputTokens = 0;
   let outputTokens = 0;
   let totalTokens = 0;

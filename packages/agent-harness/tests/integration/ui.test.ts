@@ -271,6 +271,71 @@ describe("central dashboard", () => {
     });
   });
 
+  it("polls run detail while a multi-line steps.jsonl exists", async () => {
+    const root = await fixtureRoot();
+    const runId = "steps-jsonl-poll-run";
+    const config = fixtureConfig(root, {
+      agent: { promptBuilder: false, timeoutMs: 10_000, schemaRepairAttempts: 0 } as never,
+    });
+    let releaseReflect!: () => void;
+    const holdReflect = new Promise<void>((resolve) => {
+      releaseReflect = resolve;
+    });
+    const backend = createFakeBackend({
+      reflector: async (request) => {
+        request.onStep?.({ type: "thinkingMessage", summary: "thinkingMessage" });
+        request.onStep?.({ type: "assistantMessage", summary: "assistantMessage" });
+        request.onStep?.({
+          type: "toolCall",
+          toolName: "readFile",
+          summary: "readFile README.md",
+        });
+        await holdReflect;
+        return REFLECT_OUTPUT;
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+    await engine.start("Poll with steps.jsonl", runId, false);
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+
+    const resume = request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: { action: "resume" },
+    });
+
+    const sessionsDir = path.join(root, ".agent-harness", "runs", runId, "sessions");
+    const { readdir } = await import("node:fs/promises");
+    const deadline = Date.now() + 5_000;
+    let stepsRaw = "";
+    while (Date.now() < deadline) {
+      try {
+        const stepsFile = (await readdir(sessionsDir)).find((name) => name.endsWith(".steps.jsonl"));
+        if (stepsFile) {
+          stepsRaw = await readFile(path.join(sessionsDir, stepsFile), "utf8");
+          if (stepsRaw.split(/\r?\n/).filter(Boolean).length >= 2) break;
+        }
+      } catch {
+        // still writing
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(stepsRaw.split(/\r?\n/).filter(Boolean).length).toBeGreaterThanOrEqual(2);
+
+    const midRun = await request(ui, `/api/runs/${runId}`);
+    expect(midRun.status).toBe(200);
+    const midBody = (await midRun.json()) as {
+      error?: string;
+      sessions: Array<{ path: string; role?: string }>;
+    };
+    expect(midBody.error).toBeUndefined();
+    expect(midBody.sessions.every((session) => session.path.endsWith(".json"))).toBe(true);
+    expect(midBody.sessions.some((session) => session.path.endsWith(".steps.jsonl"))).toBe(false);
+
+    releaseReflect();
+    await resume;
+    await waitForPhase(ui, runId, "awaiting_input");
+  });
+
   it("never persists raw tool args in steps.jsonl", async () => {
     const root = await fixtureRoot();
     const runId = "redact-args-run";

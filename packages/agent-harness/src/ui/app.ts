@@ -109,6 +109,10 @@ export function renderDashboard(): string {
     .metric { font-size:34px; line-height:1; letter-spacing:-.04em; margin:10px 0 8px; font-weight:720; }
     .muted { color:var(--muted); }
     .faint { color:var(--faint); }
+    .repo-label { display:flex; align-items:center; gap:6px; margin-top:12px; }
+    .copy-path-btn { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; border:0; border-radius:6px; background:transparent; color:var(--faint); cursor:pointer; }
+    .copy-path-btn:hover { color:var(--text); background:var(--surface-3); }
+    .copy-path-btn svg { display:block; }
     .progress { height:7px; background:#090b0d; border-radius:99px; overflow:hidden; margin-top:13px; }
     .progress > i { display:block; height:100%; background:linear-gradient(90deg,var(--lime-2),var(--lime)); border-radius:99px; }
     .question-card { border-color:rgba(255,157,92,.28); background:linear-gradient(145deg,rgba(255,157,92,.09),var(--surface)); }
@@ -1191,7 +1195,10 @@ export function renderDashboard(): string {
         html += renderNoteBox(s);
       }
       var repoRoot = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.root) || "";
-      html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div><div class="muted" style="margin-top:12px">Repository</div><div style="margin-top:4px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div></div>';
+      var repoCopyBtn = repoRoot
+        ? '<button type="button" class="copy-path-btn" data-copy-path="' + attr(repoRoot) + '" title="Copy path" aria-label="Copy repository path"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg></button>'
+        : '';
+      html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div><div class="muted repo-label">Repository' + repoCopyBtn + '</div><div style="margin-top:4px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div></div>';
       html += '<div class="card third"><div class="card-label">Grill resolutions</div><div class="metric">' + grillTotal + '</div><div class="muted">' + (unknowns.length ? (openUnknownCount + ' open unknown(s) · ' + unknowns.length + ' in register') : 'decisions locked in') + '</div></div>';
       var episode = s.grillEpisode;
       var usage = s.usage || {};
@@ -1768,6 +1775,26 @@ export function renderDashboard(): string {
 
     document.addEventListener('click', function (event) {
       var target = event.target.closest('button,a'); if (!target) return;
+      if (target.dataset.copyPath != null) {
+        var path = target.dataset.copyPath;
+        if (!path) { toast('No repository path', true); return; }
+        var copied = function () { toast('Path copied'); };
+        var failed = function () { toast('Could not copy path', true); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(path).then(copied).catch(failed);
+        } else {
+          var area = document.createElement('textarea');
+          area.value = path;
+          area.setAttribute('readonly', '');
+          area.style.position = 'fixed';
+          area.style.opacity = '0';
+          document.body.appendChild(area);
+          area.select();
+          try { if (document.execCommand('copy')) copied(); else failed(); } catch (error) { failed(); }
+          document.body.removeChild(area);
+        }
+        return;
+      }
       if (target.dataset.run) { document.body.classList.remove('menu-open'); loadRun(target.dataset.run); }
       if (target.dataset.tab) { state.tab = target.dataset.tab; renderRun(); }
       if (target.dataset.action) {

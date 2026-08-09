@@ -53,7 +53,9 @@ describe("dashboard document", () => {
     expect(html).toContain("Project settings");
     expect(html).toContain("settingsBtn");
     expect(html).toContain('projectName").title = data.project.root');
-    expect(html).toMatch(/Build progress[\s\S]*?>Repository<\/div>/);
+    expect(html).toMatch(/Build progress[\s\S]*?Repository/);
+    expect(html).toContain("data-copy-path");
+    expect(html).toContain("copy-path-btn");
     expect(html).toContain("bootstrap.project.root");
     expect(html).toContain("data-setting-key");
     expect(html).toContain("Ignored build artifacts are live project policy");

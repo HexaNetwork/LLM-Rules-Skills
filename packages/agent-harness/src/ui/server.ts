@@ -400,11 +400,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         if (since && since === signature) {
           return json(response, 200, { unchanged: true, signature });
         }
-        const [events, sessions, artifacts, runConfig] = await Promise.all([
+        const [events, sessions, artifacts, runConfig, installLog] = await Promise.all([
           readEvents(store, runId),
           readSessionSummaries(store, runId),
           listArtifacts(store, runId),
           loadRunConfig(projectConfig, runId).catch(() => null),
+          readInstallLog(store, runId),
         ]);
         // git.currentBranch spawns a subprocess; only pay for it when the UI
         // actually needs it (blocked runs), and never fold it into the signature.
@@ -429,6 +430,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           sessions,
           artifacts,
           activity,
+          installLog,
           signature,
           ...(git ? { git } : {}),
           ...(ceilings ? { ceilings } : {}),
@@ -440,7 +442,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         const runId = decodeURIComponent(actionMatch[1]!);
         const body = await readJsonBody(request);
         const action = requiredString(body.action, "action", 40);
-        if (action !== "cancel" && action !== "note" && !agentReadiness.ready) {
+        if (action !== "cancel" && action !== "note" && action !== "stop" && !agentReadiness.ready) {
           throw new HttpError(503, agentReadiness.message ?? "The configured agent backend is unavailable");
         }
         const runConfig = await loadRunConfig(projectConfig, runId);
@@ -519,6 +521,22 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             });
             await liveEngine.advance(runId);
           });
+        } else if (action === "resolve_installs") {
+          const accepted = optionalStringArray(body.accepted, "accepted", 200) ?? [];
+          const denied = optionalStringArray(body.denied, "denied", 200) ?? [];
+          enqueue(runId, action, async () => {
+            await engine.resolveInstalls(runId, { accepted, denied });
+            await engine.advance(runId);
+          });
+        } else if (action === "set_tdd") {
+          const tdd = optionalBoolean(body.tdd, "tdd");
+          if (tdd == null) throw new HttpError(400, "tdd must be a boolean");
+          const taskId = optionalString(body.taskId, "taskId", 200);
+          enqueue(runId, action, () => engine.setTdd(runId, tdd, taskId));
+        } else if (action === "stop") {
+          // Stop must not wait behind the work it is pausing after (same as cancel).
+          const state = await engine.requestStop(runId);
+          return json(response, 200, { accepted: true, state });
         } else if (action === "cancel") {
           // Cancel must not wait behind the work it is aborting (or 409 on a busy run).
           const result = await engine.cancel(runId);
@@ -899,7 +917,16 @@ async function listArtifacts(store: RunStore, runId: string): Promise<string[]> 
       store.listFiles(runId, directory),
     ),
   );
-  const fixed = ["idea.md", "brief.md", "grill.md", "unknowns.md", "events.jsonl", "state.json", "config.json"];
+  const fixed = [
+    "idea.md",
+    "brief.md",
+    "grill.md",
+    "unknowns.md",
+    "events.jsonl",
+    "state.json",
+    "config.json",
+    "installs.jsonl",
+  ];
   const available: string[] = [];
   for (const file of fixed) {
     try {
@@ -914,12 +941,42 @@ async function listArtifacts(store: RunStore, runId: string): Promise<string[]> 
 
 function allowedArtifact(value: string): boolean {
   return (
-    ["idea.md", "brief.md", "grill.md", "unknowns.md", "events.jsonl", "state.json", "config.json"].includes(
-      value,
-    ) ||
+    [
+      "idea.md",
+      "brief.md",
+      "grill.md",
+      "unknowns.md",
+      "events.jsonl",
+      "state.json",
+      "config.json",
+      "installs.jsonl",
+    ].includes(value) ||
     /^(issues|tasks|packets|sessions)\/[A-Za-z0-9._-]+$/.test(value) ||
     /^sessions\/[A-Za-z0-9][A-Za-z0-9._-]*\.steps\.jsonl$/.test(value)
   );
+}
+
+async function readInstallLog(
+  store: RunStore,
+  runId: string,
+): Promise<Array<Record<string, unknown>>> {
+  try {
+    const raw = await store.readText(runId, "installs.jsonl");
+    return raw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          return { commandSummary: line };
+        }
+      });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
 }
 
 function authorized(request: IncomingMessage, url: URL, token: string): boolean {

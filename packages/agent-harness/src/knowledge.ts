@@ -21,12 +21,17 @@ export type GuidanceKind = z.infer<typeof GuidanceKindSchema>;
 
 const GuidanceMetadataSchema = z.object({
   kind: GuidanceKindSchema.default("document"),
+  /** Stable override key: skill front-matter name, else rule basename / skill folder. */
+  name: z.string().default(""),
   description: z.string().default(""),
   globs: z.array(z.string()).default([]),
   alwaysApply: z.boolean().default(false),
   roles: z.array(z.string()).default([]),
 });
 type GuidanceMetadata = z.infer<typeof GuidanceMetadataSchema>;
+
+/** Prefer project guidance over otherwise-comparable global guidance (stronger than search +0.001). */
+const PROJECT_SCOPE_GUIDANCE_BONUS = 10;
 
 const DocumentSchema = z.object({
   id: z.string(),
@@ -161,6 +166,8 @@ export type GuidanceOmission = {
 export type GuidanceSelectionAudit = {
   selected: GuidanceSelection[];
   omittedAlwaysApply: GuidanceOmission[];
+  /** Global guidance dropped because a same-name project entry won. */
+  omittedOverrides: GuidanceOmission[];
 };
 
 const TEXT_EXTENSIONS = new Set([
@@ -582,7 +589,7 @@ export class LocalKnowledgeBase {
     const maxResults = options.maxResults ?? this.config.knowledge.guidance.maxResults;
     const maxCharacters = options.maxCharacters ?? this.config.knowledge.guidance.maxCharacters;
     if (terms.length === 0 || maxResults <= 0 || maxCharacters <= 0) {
-      return { selected: [], omittedAlwaysApply: [] };
+      return { selected: [], omittedAlwaysApply: [], omittedOverrides: [] };
     }
     const activeProjectId = options.projectId ?? this.config.knowledge.projectId;
     const knownPaths = uniquePaths(options.knownPaths ?? []);
@@ -592,7 +599,7 @@ export class LocalKnowledgeBase {
         isVisibleToProject(document, activeProjectId, options.includeProjects ?? []),
     );
 
-    const candidates = documents
+    const scored = documents
       .flatMap((document) => {
         const guidance = document.guidance;
         if (guidance.roles.length > 0 && !guidance.roles.includes(options.role)) return [];
@@ -614,17 +621,40 @@ export class LocalKnowledgeBase {
         // `alwaysApply` preserves its authors' intent as a strong ranking
         // signal, but never turns unrelated rules into universal prompt bloat.
         if (!roleMatch && !globMatch && lexicalScore === 0) return [];
+        const projectScope =
+          document.scope === "project" &&
+          (document.projectId === undefined || document.projectId === activeProjectId);
         const score = lexicalScore + (roleMatch ? 100 : 0) + (globMatch ? 80 : 0) +
-          (guidance.alwaysApply ? 20 : 0);
+          (guidance.alwaysApply ? 20 : 0) +
+          (projectScope ? PROJECT_SCOPE_GUIDANCE_BONUS : 0);
         const reason = [
           ...(roleMatch ? ["role match"] : []),
           ...(globMatch ? [`path matches ${matchingGlobs.join(", ")}`] : []),
           ...(guidance.alwaysApply ? ["alwaysApply priority"] : []),
+          ...(projectScope ? ["project scope"] : []),
           ...(lexicalScore > 0 ? ["lexical relevance"] : []),
         ].join("; ");
         return [{ document, score: Number(score.toFixed(6)), reason }];
       })
       .sort((a, b) => b.score - a.score || a.document.id.localeCompare(b.document.id));
+
+    const projectGuidanceNames = new Set(
+      scored
+        .filter((candidate) => candidate.document.scope === "project")
+        .map((candidate) => guidanceOverrideName(candidate.document)),
+    );
+    const omittedOverrides: GuidanceOmission[] = [];
+    const candidates = scored.filter((candidate) => {
+      if (candidate.document.scope !== "global") return true;
+      const name = guidanceOverrideName(candidate.document);
+      if (!projectGuidanceNames.has(name)) return true;
+      omittedOverrides.push({
+        source: candidate.document.source,
+        title: candidate.document.title,
+        reason: "overridden by project guidance",
+      });
+      return false;
+    });
 
     let remaining = maxCharacters;
     const selected: GuidanceSelection[] = [];
@@ -644,9 +674,15 @@ export class LocalKnowledgeBase {
       remaining -= excerpt.length;
     }
     const selectedSources = new Set(selected.map((item) => item.source));
+    const overriddenSources = new Set(omittedOverrides.map((item) => item.source));
     const candidateSources = new Set(candidates.map((item) => item.document.source));
     const omittedAlwaysApply = documents
-      .filter((document) => document.guidance.alwaysApply && !selectedSources.has(document.source))
+      .filter(
+        (document) =>
+          document.guidance.alwaysApply &&
+          !selectedSources.has(document.source) &&
+          !overriddenSources.has(document.source),
+      )
       .map((document) => ({
         source: document.source,
         title: document.title,
@@ -654,7 +690,7 @@ export class LocalKnowledgeBase {
           ? "lower-ranked or omitted by the guidance budget"
           : omissionReason(document, options.role, knownPaths, terms),
       }));
-    return { selected, omittedAlwaysApply };
+    return { selected, omittedAlwaysApply, omittedOverrides };
   }
 
   private async loadDocuments(): Promise<KnowledgeDocument[]> {
@@ -920,7 +956,21 @@ function cloneGuidanceAudit(value: GuidanceSelectionAudit): GuidanceSelectionAud
   return {
     selected: value.selected.map((item) => ({ ...item })),
     omittedAlwaysApply: value.omittedAlwaysApply.map((item) => ({ ...item })),
+    omittedOverrides: (value.omittedOverrides ?? []).map((item) => ({ ...item })),
   };
+}
+
+/** Same-name override key: skill `name:` / folder, or rule basename without extension. */
+function guidanceOverrideName(document: Pick<KnowledgeDocument, "source" | "guidance">): string {
+  const explicit = document.guidance.name.trim().toLowerCase();
+  if (explicit) return explicit;
+  const normalized = normalizePath(document.source);
+  if (document.guidance.kind === "skill") {
+    const parts = normalized.split("/");
+    const skillIndex = parts.findIndex((part) => part.toLowerCase() === "skill.md");
+    if (skillIndex > 0) return parts[skillIndex - 1]!.toLowerCase();
+  }
+  return path.basename(normalized, path.extname(normalized)).toLowerCase();
 }
 
 function toKeptEntry(result: SearchResult): RetrievalAudit["kept"][number] {
@@ -1013,8 +1063,17 @@ function guidanceMetadata(source: string, content: string): GuidanceMetadata {
   if (kind === "document") return GuidanceMetadataSchema.parse({ kind });
   const frontMatter = parseFrontMatter(content);
   const globs = frontMatter.globs;
+  const explicitName = typeof frontMatter.name === "string" ? frontMatter.name.trim() : "";
+  const fallbackName = kind === "skill"
+    ? (() => {
+        const parts = normalizePath(source).split("/");
+        const skillIndex = parts.findIndex((part) => part.toLowerCase() === "skill.md");
+        return skillIndex > 0 ? parts[skillIndex - 1]! : path.basename(source, path.extname(source));
+      })()
+    : path.basename(source, path.extname(source));
   return GuidanceMetadataSchema.parse({
     kind,
+    name: explicitName || fallbackName,
     description: typeof frontMatter.description === "string" ? frontMatter.description : "",
     globs: typeof globs === "string" ? splitGlobList(globs) : Array.isArray(globs)
       ? globs.filter((value): value is string => typeof value === "string")

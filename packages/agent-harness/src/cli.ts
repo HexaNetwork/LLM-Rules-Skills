@@ -15,6 +15,11 @@ import {
   type HarnessConfig,
 } from "./config.js";
 import { HarnessEngine } from "./engine.js";
+import {
+  seedGlobalGuidance,
+  withGlobalGuidanceSource,
+  type GuidanceSeedResult,
+} from "./guidance-seed.js";
 import { LocalKnowledgeBase } from "./knowledge.js";
 import { startUiServer } from "./ui/server.js";
 
@@ -27,17 +32,53 @@ program
   .command("init")
   .description("Create a v2 harness config and local artifact directory")
   .option("--force", "replace an existing config", false)
-  .action(async (options: { force: boolean }) => {
-    const target = path.join(process.cwd(), "agent-harness.config.yaml");
+  .option("--no-seed-guidance", "skip seeding package General/ rules and skills")
+  .action(async (options: { force: boolean; seedGuidance: boolean }) => {
+    const project = process.cwd();
+    const target = path.join(project, "agent-harness.config.yaml");
     if (!options.force && (await exists(target))) {
       throw new Error(`${target} already exists; use --force to replace it`);
     }
-    await writeFile(target, defaultConfigYaml(), "utf8");
-    await mkdir(path.join(process.cwd(), ".agent-harness"), { recursive: true });
-    await ensureIgnored(path.join(process.cwd(), ".gitignore"), ".agent-harness/");
-    await ensureIgnored(path.join(process.cwd(), ".gitignore"), "graphify-out/");
-    await writeGraphifySetupScripts(process.cwd(), false);
+    const guidance = await seedGlobalGuidance(project, { enabled: options.seedGuidance });
+    if (guidance.sourcePath === "agent-harness/guidance/General" || !guidance.sourcePath) {
+      // Keep the commented default template when the seeded path matches it (or seed was skipped).
+      let yaml = defaultConfigYaml();
+      if (!guidance.sourcePath) {
+        yaml = deploymentConfigYaml({
+          sources: [
+            { path: "README.md", scope: "project" },
+            { path: "docs", scope: "project" },
+          ],
+        });
+      }
+      await writeFile(target, yaml, "utf8");
+    } else {
+      // Reusing an existing root General/ — point sources at that path instead.
+      await writeFile(
+        target,
+        deploymentConfigYaml({
+          sources: withGlobalGuidanceSource(
+            [
+              { path: "README.md", scope: "project", visibility: "private" },
+              { path: "docs", scope: "project", visibility: "private" },
+            ],
+            guidance.sourcePath,
+          ),
+        }),
+        "utf8",
+      );
+    }
+    await mkdir(path.join(project, ".agent-harness"), { recursive: true });
+    await ensureIgnored(path.join(project, ".gitignore"), ".agent-harness/");
+    await ensureIgnored(path.join(project, ".gitignore"), "graphify-out/");
+    await writeGraphifySetupScripts(project, false);
     console.log(`Wrote ${target}`);
+    logGuidanceSeed(guidance);
+    if (guidance.sourcePath) {
+      const { config } = await loadConfig(target);
+      const changed = await new LocalKnowledgeBase(config).refresh();
+      console.log(`Indexed ${changed} changed document(s) after guidance seed`);
+    }
   });
 
 program
@@ -53,6 +94,7 @@ program
   .option("--install-graphify-prerequisite", "allow the setup script to install uv if needed", false)
   .option("--reset-graphify-scripts", "replace customized Graphify setup scripts with harness defaults", false)
   .option("--refresh", "build the first knowledge index", false)
+  .option("--no-seed-guidance", "skip seeding package General/ rules and skills")
   .action(async (options: {
     project: string;
     force: boolean;
@@ -64,6 +106,7 @@ program
     installGraphifyPrerequisite: boolean;
     resetGraphifyScripts: boolean;
     refresh: boolean;
+    seedGuidance: boolean;
   }) => {
     const project = path.resolve(options.project);
     const info = await stat(project);
@@ -72,9 +115,18 @@ program
     if (!options.force && (await exists(target))) {
       throw new Error(`${target} already exists; use --force to replace it`);
     }
-    const sources = options.sources
+    const guidance = await seedGlobalGuidance(project, { enabled: options.seedGuidance });
+    const projectSources = options.sources
       ? options.sources.split(",").map((source) => source.trim()).filter(Boolean)
       : await discoverDeploymentSources(project);
+    const sources = withGlobalGuidanceSource(
+      projectSources.map((sourcePath) => ({
+        path: sourcePath,
+        scope: "project" as const,
+        visibility: "private" as const,
+      })),
+      guidance.sourcePath,
+    );
     await writeFile(target, deploymentConfigYaml({
       sources,
       ollama: options.ollama,
@@ -86,7 +138,10 @@ program
     await ensureIgnored(path.join(project, ".gitignore"), "graphify-out/");
     const graphifyScripts = await writeGraphifySetupScripts(project, options.resetGraphifyScripts);
     console.log(`Deployed harness config to ${target}`);
-    console.log(`Knowledge sources: ${sources.join(", ") || "none"}`);
+    console.log(
+      `Knowledge sources: ${sources.map((source) => `${source.path} (${source.scope})`).join(", ") || "none"}`,
+    );
+    logGuidanceSeed(guidance);
     if (options.ollama) console.log(`Semantic retrieval: Ollama / ${options.model}`);
     console.log(
       options.graphify
@@ -97,16 +152,21 @@ program
     if (options.installGraphify) {
       await runGraphifySetupScript(project, options.installGraphifyPrerequisite);
     }
-    if (options.refresh) {
+    // Seeded guidance should be searchable on the first run; --refresh also covers project docs.
+    if (options.refresh || guidance.sourcePath) {
       const { config } = await loadConfig(target);
       const changed = await new LocalKnowledgeBase(config).refresh();
       console.log(`Indexed ${changed} changed document(s)`);
     }
     await warnIfNotGitRepository(project);
+    const seededGuidanceFiles = guidance.copied
+      ? [path.join(project, "agent-harness", "guidance", "General")]
+      : [];
     await warnIfDeployedFilesUntracked(project, [
       target,
       path.join(graphifyScripts, "setup-graphify.ps1"),
       path.join(graphifyScripts, "setup-graphify.sh"),
+      ...seededGuidanceFiles,
     ]);
   });
 
@@ -518,6 +578,18 @@ async function exists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function logGuidanceSeed(guidance: GuidanceSeedResult): void {
+  if (!guidance.sourcePath) {
+    console.log("Global guidance: skipped (--no-seed-guidance)");
+    return;
+  }
+  if (guidance.copied) {
+    console.log(`Global guidance: seeded ${guidance.sourcePath} (scope: global)`);
+    return;
+  }
+  console.log(`Global guidance: reusing ${guidance.sourcePath} (scope: global)`);
 }
 
 async function ensureIgnored(filePath: string, entry: string): Promise<void> {

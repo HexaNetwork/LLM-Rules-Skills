@@ -57,6 +57,12 @@ describe("dashboard document", () => {
     expect(html).toContain("Cancelling…");
     expect(html).toContain("state.cancelling");
     expect(html).toContain("draftAnswer");
+    expect(html).toContain("Stop after task");
+    expect(html).toContain("Approve dependency installs");
+    expect(html).toContain("Installs observed");
+    expect(html).toContain("harnessSoundsMuted");
+    expect(html).toContain("set_tdd");
+    expect(html).toContain("resolve_installs");
   });
 
   it("preserves HITL editing state across background polling", () => {

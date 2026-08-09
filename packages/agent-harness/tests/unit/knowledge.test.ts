@@ -419,6 +419,66 @@ describe("LocalKnowledgeBase", () => {
         reason: "lower-ranked or omitted by the guidance budget",
       }),
     ]);
+    expect(audit.omittedOverrides).toEqual([]);
+  });
+
+  it("prefers project-scope guidance and overrides same-name global entries", async () => {
+    const root = await fixtureRoot();
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+    await knowledge.upsertText(
+      "agent-harness/guidance/General/rules/no-legacy-fallback-code.mdc",
+      "Global no-legacy",
+      "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nglobal authorization fallback text.",
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "project/rules/no-legacy-fallback-code.mdc",
+      "Project no-legacy",
+      "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nproject authorization fallback text.",
+      { scope: "project" },
+    );
+    await knowledge.upsertText(
+      "agent-harness/guidance/General/skills/tdd/SKILL.md",
+      "Global TDD",
+      "---\nname: tdd\ndescription: authorization tests\nroles: [test-writer]\n---\n\nglobal authorization test skill.",
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "project/skills/tdd/SKILL.md",
+      "Project TDD",
+      "---\nname: tdd\ndescription: authorization tests\nroles: [test-writer]\n---\n\nproject authorization test skill.",
+      { scope: "project" },
+    );
+
+    const implementer = await knowledge.selectGuidanceWithAudit("authorization fallback", {
+      role: "implementer",
+    });
+    expect(implementer.selected.map((item) => item.source)).toEqual([
+      "project/rules/no-legacy-fallback-code.mdc",
+    ]);
+    expect(implementer.selected[0]?.reason).toContain("project scope");
+    expect(implementer.omittedOverrides).toEqual([
+      expect.objectContaining({
+        source: "agent-harness/guidance/General/rules/no-legacy-fallback-code.mdc",
+        reason: "overridden by project guidance",
+      }),
+    ]);
+
+    const testWriter = await knowledge.selectGuidanceWithAudit("authorization tests", {
+      role: "test-writer",
+    });
+    expect(testWriter.selected.map((item) => item.source)).toContain("project/skills/tdd/SKILL.md");
+    expect(testWriter.selected.map((item) => item.source)).not.toContain(
+      "agent-harness/guidance/General/skills/tdd/SKILL.md",
+    );
+    expect(testWriter.omittedOverrides).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "agent-harness/guidance/General/skills/tdd/SKILL.md",
+          reason: "overridden by project guidance",
+        }),
+      ]),
+    );
   });
 
   it("filters leftover run artifact chunks so only the active runId can retrieve them", async () => {

@@ -20,7 +20,8 @@
   ],
   "scripts": {
     "clean": "node ./scripts/clean.mjs",
-    "build": "npm run clean && tsc -p tsconfig.json",
+    "sync-guidance": "node ./scripts/sync-guidance-templates.mjs",
+    "build": "npm run clean && npm run sync-guidance && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest",
     "test:run": "vitest run",

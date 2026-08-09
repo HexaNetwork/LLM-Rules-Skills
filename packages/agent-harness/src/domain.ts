@@ -149,6 +149,41 @@ export const CommandEvidenceSchema = z.object({
 });
 export type CommandEvidence = z.infer<typeof CommandEvidenceSchema>;
 
+export const PackageManagerSchema = z.enum([
+  "npm",
+  "pnpm",
+  "yarn",
+  "bun",
+  "pip",
+  "uv",
+  "cargo",
+]);
+export type PackageManager = z.infer<typeof PackageManagerSchema>;
+
+export const ProposedInstallSchema = z.object({
+  id: z.string().min(1),
+  manager: PackageManagerSchema,
+  packages: z.array(z.string().min(1)).min(1),
+  reason: z.string().min(1),
+  // Optional hint from the planner; the harness rebuilds the allowlisted command.
+  command: z.string().optional(),
+  decision: z.enum(["accepted", "denied"]).optional(),
+  decidedAt: z.string().optional(),
+  evidence: CommandEvidenceSchema.optional(),
+});
+export type ProposedInstall = z.infer<typeof ProposedInstallSchema>;
+
+export const InstallLogEntrySchema = z.object({
+  at: z.string(),
+  role: z.string().min(1),
+  taskId: z.string().optional(),
+  manager: PackageManagerSchema,
+  commandSummary: z.string().min(1),
+  packages: z.array(z.string()).default([]),
+  source: z.enum(["agent", "harness"]).default("agent"),
+});
+export type InstallLogEntry = z.infer<typeof InstallLogEntrySchema>;
+
 export const BuildTaskSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -225,6 +260,8 @@ export const RunStateSchema = z.object({
   // Unprompted human input the griller has not yet consumed.
   operatorNotes: z.array(OperatorNoteSchema).default([]),
   tasks: z.array(BuildTaskSchema).default([]),
+  // Planner-proposed dependency installs gated before executing.
+  proposedInstalls: z.array(ProposedInstallSchema).default([]),
   activeQuestionId: z.string().optional(),
   branchName: z.string().optional(),
   pullRequestUrl: z.string().optional(),
@@ -238,6 +275,9 @@ export const RunStateSchema = z.object({
   grillEpisode: GrillEpisodeSchema.optional(),
   // Distinguishes a yielded run from one paused on human input.
   yieldedAt: z.string().optional(),
+  // Finish the active task, then halt before starting the next frontier task.
+  stopAfterTask: z.boolean().optional(),
+  stoppedAfterTaskAt: z.string().optional(),
   // Recomputed from sessions/*.json after budget-consuming steps (not incremented).
   usage: z
     .object({
@@ -329,6 +369,18 @@ export const PlannerOutputSchema = z.object({
       }),
     )
     .min(1),
+  // Packages the operator should approve before implementation starts.
+  proposedInstalls: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        manager: PackageManagerSchema,
+        packages: z.array(z.string().min(1)).min(1),
+        reason: z.string().min(1),
+        command: z.string().optional(),
+      }),
+    )
+    .default([]),
 });
 export type PlannerOutput = z.infer<typeof PlannerOutputSchema>;
 

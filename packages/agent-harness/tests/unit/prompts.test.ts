@@ -65,6 +65,12 @@ describe("prompt rendering", () => {
     expect(GRILL_EXPECTED_OUTPUT).toContain("resolutionSummaries");
   });
 
+  it("asks the planner to propose installs without installing them", () => {
+    const plannerPacket: WorkPacket = { ...packet, role: "planner" };
+    expect(renderPrompt(plannerPacket)).toContain("proposedInstalls");
+    expect(renderPrompt(plannerPacket)).toContain("do not install them yourself");
+  });
+
   it("instructs grillers to return per-question resolutionSummaries", () => {
     const grillPacket: WorkPacket = { ...packet, role: "griller" };
     expect(renderPrompt(grillPacket)).toContain("resolutionSummaries");

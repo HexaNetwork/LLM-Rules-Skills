@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { CommandEvidence } from "./domain.js";
+import type { CommandEvidence, PackageManager } from "./domain.js";
 
 export type CommandResult = {
   command: string;
@@ -174,4 +174,130 @@ export function recentEvidenceOutput(
       return `${item.purpose}: ${item.passed ? "PASS" : "FAIL"}\nCommand: ${item.command}\nExit: ${item.exitCode}\n${output}`;
     })
     .join("\n\n");
+}
+
+const PACKAGE_TOKEN = /^[@a-zA-Z0-9][a-zA-Z0-9._+/-]*$/;
+const MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "pip", "uv", "cargo"]);
+
+export type DetectedInstall = {
+  manager: PackageManager;
+  packages: string[];
+  commandSummary: string;
+};
+
+/** Build an allowlisted install command (manager + package args only). */
+export function buildInstallCommand(
+  manager: PackageManager,
+  packages: string[],
+): string {
+  const safe = packages.map(assertSafePackageArg);
+  if (safe.length === 0) throw new Error("At least one package is required");
+  switch (manager) {
+    case "npm":
+      return ["npm", "install", ...safe].join(" ");
+    case "pnpm":
+      return ["pnpm", "add", ...safe].join(" ");
+    case "yarn":
+      return ["yarn", "add", ...safe].join(" ");
+    case "bun":
+      return ["bun", "add", ...safe].join(" ");
+    case "pip":
+      return ["pip", "install", ...safe].join(" ");
+    case "uv":
+      return ["uv", "add", ...safe].join(" ");
+    case "cargo":
+      return ["cargo", "add", ...safe].join(" ");
+  }
+}
+
+export async function runApprovedInstall(
+  manager: PackageManager,
+  packages: string[],
+  options: { cwd: string; timeoutMs: number; signal?: AbortSignal },
+): Promise<CommandResult> {
+  const command = buildInstallCommand(manager, packages);
+  return runCommand(command, options);
+}
+
+/**
+ * Detect package-manager install invocations in a shell-like command string.
+ * Passive logging only — never blocks the agent.
+ */
+export function detectInstallFromCommand(command: string): DetectedInstall | undefined {
+  const normalized = command.replace(/\r?\n/g, " ").trim();
+  if (!normalized) return undefined;
+  // Walk simple && / ; / | chains and return the first install-like segment.
+  for (const segment of normalized.split(/(?:&&|;|\|)/)) {
+    const detected = detectInstallSegment(segment.trim());
+    if (detected) return detected;
+  }
+  return undefined;
+}
+
+function detectInstallSegment(segment: string): DetectedInstall | undefined {
+  const tokens = tokenizeShell(segment);
+  if (tokens.length < 2) return undefined;
+  let index = 0;
+  // Skip env assignments: FOO=bar npm install …
+  while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(tokens[index]!)) {
+    index += 1;
+  }
+  const managerToken = tokens[index]?.toLowerCase();
+  if (!managerToken || !MANAGERS.has(managerToken)) return undefined;
+  const manager = managerToken as PackageManager;
+  index += 1;
+  const verb = tokens[index]?.toLowerCase();
+  if (!verb) return undefined;
+
+  let packagesStart = index + 1;
+  let matched = false;
+  if (manager === "npm" && (verb === "install" || verb === "i" || verb === "add")) {
+    matched = true;
+  } else if ((manager === "pnpm" || manager === "yarn" || manager === "bun") && (verb === "add" || verb === "install")) {
+    matched = true;
+  } else if (manager === "pip" && verb === "install") {
+    matched = true;
+  } else if (manager === "uv" && verb === "add") {
+    matched = true;
+  } else if (manager === "uv" && verb === "pip" && tokens[index + 1]?.toLowerCase() === "install") {
+    matched = true;
+    packagesStart = index + 2;
+  } else if (manager === "cargo" && verb === "add") {
+    matched = true;
+  }
+  if (!matched) return undefined;
+
+  const packages: string[] = [];
+  for (let i = packagesStart; i < tokens.length; i += 1) {
+    const token = tokens[i]!;
+    if (token.startsWith("-")) continue;
+    if (!PACKAGE_TOKEN.test(token)) continue;
+    packages.push(token);
+  }
+  const commandSummary = [manager, verb, ...packages].join(" ").slice(0, 200);
+  return { manager, packages, commandSummary };
+}
+
+function tokenizeShell(command: string): string[] {
+  const tokens: string[] = [];
+  const re = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'|[^\s"']+/g;
+  for (const match of command.matchAll(re)) {
+    let token = match[0]!;
+    if (
+      (token.startsWith('"') && token.endsWith('"')) ||
+      (token.startsWith("'") && token.endsWith("'"))
+    ) {
+      token = token.slice(1, -1);
+    }
+    if (token) tokens.push(token);
+  }
+  return tokens;
+}
+
+function assertSafePackageArg(value: string): string {
+  const trimmed = value.trim();
+  if (!PACKAGE_TOKEN.test(trimmed)) {
+    throw new Error(`Unsafe package argument: ${value}`);
+  }
+  return trimmed;
 }

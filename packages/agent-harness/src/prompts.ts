@@ -23,6 +23,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "Each task must be verifiable in one fresh agent context.",
     "Declare only genuine blocking edges and use the agreed domain vocabulary.",
     "Plan from the confirmed reflect brief and grill resolutions only.",
+    "Propose dependency installs needed before implementation in proposedInstalls; do not install them yourself.",
   ],
   "prompt-builder": [
     "Turn the packet into a precise prompt without changing scope or inventing facts.",

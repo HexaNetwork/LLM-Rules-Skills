@@ -270,6 +270,10 @@ export function renderDashboard(): string {
     .toast-dismiss { flex:none; width:28px; height:28px; padding:0; border:0; border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; font-size:18px; line-height:1; }
     .toast-dismiss:hover { color:var(--text); background:rgba(255,255,255,.06); }
     .toast-dismiss[hidden] { display:none; }
+    .install-item { border:1px solid var(--line-soft); border-radius:10px; padding:12px 14px; margin-bottom:10px; }
+    .install-item label { display:flex; gap:10px; align-items:flex-start; cursor:pointer; }
+    .install-item .pkg { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; }
+    .sound-toggle { font-size:12px; color:var(--muted); }
     .markdown-view { min-height:300px; max-height:70vh; overflow:auto; background:#090b0d; }
     @media (max-width: 900px) {
       .shell { grid-template-columns:1fr; }
@@ -318,7 +322,7 @@ export function renderDashboard(): string {
     <main class="main">
       <header class="topbar">
         <div class="crumb"><button class="btn ghost icon-btn mobile-menu" id="menuBtn">☰</button><span id="projectName">Workspace</span><span>›</span><strong id="crumbTitle">Overview</strong></div>
-        <div class="top-actions"><div class="top-action-slot" id="topActions"></div><button class="btn icon-btn" id="settingsBtn" title="Project settings" aria-label="Project settings">&#9881;</button></div>
+        <div class="top-actions"><button type="button" class="btn ghost sound-toggle" id="soundMuteBtn" title="Toggle notification sounds">Sound on</button><div class="top-action-slot" id="topActions"></div><button class="btn icon-btn" id="settingsBtn" title="Project settings" aria-label="Project settings">&#9881;</button></div>
       </header>
       <section class="content" id="content"></section>
     </main>
@@ -375,6 +379,8 @@ export function renderDashboard(): string {
       noteText: "", noteAsUnknown: false,
       elapsedTimer: null,
       cancelling: false,
+      lastSoundPhase: null,
+      installSelections: {},
       // After reflect confirm / grill batch submit, keep the viewport at the top
       // even if a silent poll captures scroll mid-flight.
       pinScrollTop: false
@@ -397,6 +403,53 @@ export function renderDashboard(): string {
       var layout = value === "rows" ? "rows" : "columns";
       try { localStorage.setItem("harnessGrillOptionsLayout", layout); } catch (error) { /* ignore quota / private mode */ }
       return layout;
+    }
+    function soundsMuted() {
+      try { return localStorage.getItem("harnessSoundsMuted") === "1"; } catch (error) { return false; }
+    }
+    function setSoundsMuted(muted) {
+      try { localStorage.setItem("harnessSoundsMuted", muted ? "1" : "0"); } catch (error) { /* ignore */ }
+      var btn = $("soundMuteBtn");
+      if (btn) btn.textContent = muted ? "Sound off" : "Sound on";
+    }
+    function playTone(kind) {
+      if (soundsMuted()) return;
+      try {
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        if (!playTone.ctx) playTone.ctx = new Ctx();
+        var ctx = playTone.ctx;
+        if (ctx.state === "suspended") ctx.resume();
+        var now = ctx.currentTime;
+        var specs = {
+          awaiting_input: [523.25, 659.25, 0.08, 0.12],
+          error: [220, 164.81, 0.12, 0.18],
+          completed: [392, 523.25, 0.1, 0.16]
+        };
+        var spec = specs[kind] || specs.awaiting_input;
+        [spec[0], spec[1]].forEach(function (freq, index) {
+          var osc = ctx.createOscillator();
+          var gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.0001, now);
+          gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02 + index * spec[2]);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + spec[3] + index * spec[2]);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + index * spec[2]);
+          osc.stop(now + spec[3] + index * spec[2] + 0.05);
+        });
+      } catch (error) { /* Web Audio unavailable */ }
+    }
+    function maybePlayPhaseSound(phase) {
+      if (!phase || phase === state.lastSoundPhase) return;
+      var previous = state.lastSoundPhase;
+      state.lastSoundPhase = phase;
+      if (previous == null) return;
+      if (phase === "awaiting_input") playTone("awaiting_input");
+      else if (phase === "blocked") playTone("error");
+      else if (phase === "completed") playTone("completed");
     }
     function applyGrillOptionsLayout() {
       var rows = getGrillOptionsLayout() === "rows";
@@ -620,9 +673,11 @@ export function renderDashboard(): string {
         if (silent) captureScrolls();
         renderRun();
         state.signature = detail.signature || "";
+        if (detail.state) maybePlayPhaseSound(detail.state.phase);
         if (silent) restoreScrolls();
       } catch (error) {
         toast(error.message, true);
+        playTone('error');
         // A background poll must not blow away a good render; only a foreground
         // load (refresh, run switch) is allowed to replace the content area.
         if (!silent) renderLoadError("This run could not be loaded.", error.message);
@@ -681,7 +736,14 @@ export function renderDashboard(): string {
       }
       if (phase === "queued" || phase === "running") return '<span class="badge ' + phase + '"><i class="dot ' + phase + '"></i>' + phase + '</span>';
       var out = "";
-      if (!["completed","cancelled","awaiting_input","blocked"].includes(s.phase)) out += '<button class="btn small primary" data-action="resume">Resume run</button>';
+      if (s.stoppedAfterTaskAt || (!["completed","cancelled","awaiting_input","blocked"].includes(s.phase))) {
+        out += '<button class="btn small primary" data-action="resume">Resume run</button>';
+      }
+      if (s.phase === "executing" && !s.stoppedAfterTaskAt) {
+        out += s.stopAfterTask
+          ? '<span class="badge running"><i class="dot running"></i>Stopping after task…</span>'
+          : '<button class="btn small" data-action="stop" title="Finish the current task, then halt">Stop after task</button>';
+      }
       if (s.phase === "blocked") {
         out += s.blockedRetriable === false
           ? '<button class="btn small primary" data-action="retry" data-force="true">Retry anyway</button>'
@@ -833,6 +895,31 @@ export function renderDashboard(): string {
       return '<div class="card note-box"><div class="card-label">Add a constraint or note</div><form id="noteForm"><textarea id="noteText" placeholder="Add a constraint, correction, or context the griller should account for…">' + esc(state.noteText) + '</textarea><div class="note-row"><label><input type="checkbox" id="noteAsUnknown"' + (state.noteAsUnknown ? ' checked' : '') + '> Ask me about this</label><button class="btn small primary" type="submit">Add note</button></div></form>' + list + '</div>';
     }
 
+    function renderInstallApproval(installs) {
+      var rows = installs.map(function (item) {
+        var selected = state.installSelections[item.id];
+        if (selected == null) selected = "accept";
+        return '<div class="install-item"><div class="item-head"><div><strong>' + esc(item.manager) + '</strong> <span class="pkg">' + esc((item.packages || []).join(" ")) + '</span></div></div><div class="muted" style="margin:6px 0 10px">' + esc(item.reason) + '</div><div style="display:flex;gap:14px;flex-wrap:wrap"><label><input type="radio" name="install-' + attr(item.id) + '" data-install-id="' + attr(item.id) + '" value="accept"' + (selected === "accept" ? " checked" : "") + '> Accept</label><label><input type="radio" name="install-' + attr(item.id) + '" data-install-id="' + attr(item.id) + '" value="deny"' + (selected === "deny" ? " checked" : "") + '> Deny</label></div></div>';
+      }).join("");
+      return '<div class="card question-card" id="installApprovalCard"><div class="card-label">Approve dependency installs</div><p class="muted">The planner proposed these installs before implementation. Accept or deny each item, then continue.</p>' + rows + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" class="btn" id="acceptAllInstallsBtn">Accept all</button><button type="button" class="btn" id="denyAllInstallsBtn">Deny all</button><button type="button" class="btn primary" id="submitInstallsBtn">Continue</button></div></div>';
+    }
+
+    function renderRunTddControl(s) {
+      var locked = ["completed","cancelled"].includes(s.phase);
+      var enabled = s.tasks.length ? s.tasks.some(function (t) { return t.tdd; }) : !!(state.bootstrap && state.bootstrap.project && state.bootstrap.project.defaults && state.bootstrap.project.defaults.tdd);
+      if (locked) return '<strong>' + (enabled ? "Enabled" : "Disabled") + '</strong>';
+      return '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runTddToggle"' + (enabled ? " checked" : "") + '> <strong>' + (enabled ? "Enabled" : "Disabled") + '</strong></label><div class="faint" style="margin-top:4px">Applies to the run default and pending tasks</div>';
+    }
+
+    function renderInstallLogPanel() {
+      var entries = (state.detail && state.detail.installLog) || [];
+      if (!entries.length) return '';
+      var rows = entries.slice(-20).reverse().map(function (entry) {
+        return '<div class="install-item"><div class="item-head"><div class="pkg">' + esc(entry.commandSummary || entry.manager || "install") + '</div><span class="tag">' + esc(entry.source || "agent") + '</span></div><div class="faint" style="margin-top:4px">' + esc(entry.role || "") + (entry.taskId ? " · task " + esc(entry.taskId) : "") + (entry.at ? " · " + esc(ago(entry.at)) : "") + '</div></div>';
+      }).join("");
+      return '<div class="card"><div class="card-label">Installs observed</div><p class="muted" style="margin:0 0 10px">Passive log of package installs seen during agent work (review only).</p>' + rows + '</div>';
+    }
+
     function batchQuestionAnswered(q) {
       if (state.parked[q.id]) return false; // parked counts separately, not "answered"
       if (state.clarifications[q.id] != null) return false; // clarifying counts separately
@@ -980,15 +1067,22 @@ export function renderDashboard(): string {
         html += '<div class="thinking-strip" role="status" aria-live="polite"><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="thinking-copy"><strong>Thinking…</strong><span>' + esc(thinkingDetail) + '</span>' + (thinkingSince && !activityText ? '<span id="thinkingElapsed">' + esc(elapsed(thinkingSince)) + '</span>' : '') + '</div></div>';
       }
       if (s.phase === "awaiting_input") {
-        var q = s.questions.find(function (item) { return item.id === s.activeQuestionId; });
-        if (q) {
-          if (q.purpose === "reflect") html += renderReflectEditor(q, s);
-          else html += renderQuestionBatch(s, q);
+        var pendingInstalls = (s.proposedInstalls || []).filter(function (item) { return !item.decision; });
+        if (pendingInstalls.length) {
+          html += renderInstallApproval(pendingInstalls);
+        } else {
+          var q = s.questions.find(function (item) { return item.id === s.activeQuestionId; });
+          if (q) {
+            if (q.purpose === "reflect") html += renderReflectEditor(q, s);
+            else html += renderQuestionBatch(s, q);
+          }
         }
       }
-      if (s.yieldedAt) {
+      if (s.stoppedAfterTaskAt) {
+        html += '<div class="card"><div class="alert warning"><div><strong>Stopped after task</strong><div class="muted" style="margin-top:5px">The current task finished and the next frontier task was not started. Resume continues from here. Cancel remains available to abort immediately.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
+      } else if (s.yieldedAt) {
         html += '<div class="card"><div class="alert warning"><div><strong>Run yielded to its step budget</strong><div class="muted" style="margin-top:5px">This run hit its maxStepsPerRun limit mid-transition and stopped to avoid runaway work, not because it is waiting on you. Resume continues it from exactly where it left off.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
-      } else if (!state.detail.job && !["completed","cancelled","awaiting_input","blocked"].includes(s.phase)) {
+      } else if (!state.detail.job && !["completed","cancelled","awaiting_input","blocked"].includes(s.phase) && !s.stopAfterTask) {
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">Dashboard work does not continue automatically after a restart. Resume queues the next transition and refreshes the document index first.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }
       if (s.phase === "blocked") {
@@ -1090,7 +1184,8 @@ export function renderDashboard(): string {
       var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");
       var briefBody = brief ? (brief.confirmed || brief.draft) : "The reflector will restate the idea for your confirmation before grilling begins.";
       html += '<div class="card two-thirds"><div class="card-label">' + esc(briefTitle) + '</div><pre class="brief-body" data-scroll-key="brief">' + esc(briefBody) + '</pre></div>';
-      html += '<div class="card third"><div class="card-label">Delivery</div><div class="muted">Branch</div><div style="margin:4px 0 13px"><code>' + esc(s.branchName || "Not created yet") + '</code></div><div class="muted">TDD</div><div style="margin-top:4px"><strong>' + (s.tasks.length ? (s.tasks.some(function(t){return t.tdd;}) ? "Enabled" : "Disabled") : (state.bootstrap.project.defaults.tdd ? "Default on" : "Default off")) + '</strong></div></div>';
+      html += '<div class="card third"><div class="card-label">Delivery</div><div class="muted">Branch</div><div style="margin:4px 0 13px"><code>' + esc(s.branchName || "Not created yet") + '</code></div><div class="muted">TDD</div><div style="margin-top:4px">' + renderRunTddControl(s) + '</div></div>';
+      html += renderInstallLogPanel();
       html += '<div class="card"><div class="card-label">Recent activity</div><div class="timeline">' + (state.detail.events.slice(-10).reverse().map(renderEvent).join("") || '<div class="muted">No events yet.</div>') + '</div></div>';
       html += '</div>';
       $("tabBody").innerHTML = html;
@@ -1112,7 +1207,11 @@ export function renderDashboard(): string {
         var taskKey = task.id || ("task-" + index);
         var criteria = '<ul>' + task.acceptanceCriteria.map(function (criterion) { return '<li>' + esc(criterion) + '</li>'; }).join("") + '</ul>';
         var evidence = task.evidence.length ? '<details data-details-key="' + attr(taskKey + "-evidence") + '"><summary>' + task.evidence.length + ' command result(s)</summary>' + task.evidence.map(function (item, evidenceIndex) { var output = [item.stderr,item.stdout].filter(Boolean).join(String.fromCharCode(10)); return '<div class="evidence"><div class="evidence-head"><span>' + esc(item.purpose) + ' · <code>' + esc(item.command) + '</code></span><strong class="' + (item.passed ? "pass" : "fail") + '">' + (item.passed ? "PASS" : "FAIL") + ' / ' + item.exitCode + '</strong></div>' + (output ? '<pre data-scroll-key="' + attr(taskKey + "-evidence-" + evidenceIndex) + '">' + esc(output.slice(-8000)) + '</pre>' : '') + '</div>'; }).join("") + '</details>' : '';
-        return '<article class="item"><div class="item-head"><div><div class="card-label">Task ' + String(index + 1).padStart(2,"0") + '</div><div class="item-title">' + esc(task.title) + '</div><div class="muted" style="margin-top:5px">' + esc(task.description) + '</div></div><span class="badge ' + attr(task.status === "done" ? "completed" : task.status) + '">' + esc(task.status + " · " + task.step) + '</span></div><div class="tags"><span class="tag">TDD ' + (task.tdd ? "on" : "off") + '</span>' + (task.blockedBy.length ? '<span class="tag">after ' + esc(task.blockedBy.join(", ")) + '</span>' : '') + (task.commitSha ? '<span class="tag">' + esc(task.commitSha.slice(0,8)) + '</span>' : '') + '</div><details data-details-key="' + attr(taskKey + "-criteria") + '"><summary>Acceptance criteria</summary>' + criteria + '</details>' + evidence + (task.failure ? '<div class="resolution" style="border-color:var(--red)">' + esc(task.failure) + '</div>' : '') + '</article>';
+        var canToggle = task.status === "pending" && task.step === "pending" && !["completed","cancelled"].includes(s.phase);
+        var tddControl = canToggle
+          ? '<button type="button" class="tag" data-action="set_tdd" data-task-id="' + attr(task.id) + '" data-tdd="' + (task.tdd ? "false" : "true") + '" title="Toggle TDD for this pending task">TDD ' + (task.tdd ? "on" : "off") + ' · click</button>'
+          : '<span class="tag" title="TDD is locked once the task starts">TDD ' + (task.tdd ? "on" : "off") + '</span>';
+        return '<article class="item"><div class="item-head"><div><div class="card-label">Task ' + String(index + 1).padStart(2,"0") + '</div><div class="item-title">' + esc(task.title) + '</div><div class="muted" style="margin-top:5px">' + esc(task.description) + '</div></div><span class="badge ' + attr(task.status === "done" ? "completed" : task.status) + '">' + esc(task.status + " · " + task.step) + '</span></div><div class="tags">' + tddControl + (task.blockedBy.length ? '<span class="tag">after ' + esc(task.blockedBy.join(", ")) + '</span>' : '') + (task.commitSha ? '<span class="tag">' + esc(task.commitSha.slice(0,8)) + '</span>' : '') + '</div><details data-details-key="' + attr(taskKey + "-criteria") + '"><summary>Acceptance criteria</summary>' + criteria + '</details>' + evidence + (task.failure ? '<div class="resolution" style="border-color:var(--red)">' + esc(task.failure) + '</div>' : '') + '</article>';
       }).join("") + '</div>' : '<div class="empty">Implementation tasks appear after grilling reaches shared understanding.</div>';
       $("tabBody").innerHTML = html;
     }
@@ -1293,23 +1392,36 @@ export function renderDashboard(): string {
           await bootstrap(true);
           return;
         }
+        if (action === 'stop') {
+          toast(response && response.state && response.state.stoppedAfterTaskAt ? 'Stopped after task' : 'Will stop after the current task');
+          await bootstrap(true);
+          return;
+        }
         // Reflect confirm / grill batch can queue a long agent job; scroll before
         // waiting so the thinking strip at the top is visible while it works.
         if (action === 'answer') scrollMainToTop();
+        if (action === 'resolve_installs') scrollMainToTop();
         loading(true);
         var result;
         try { result = await waitForJob(state.selected); }
         finally { loading(false); }
         await bootstrap(true);
         if (action === 'answer') scrollMainToTop();
+        if (action === 'resolve_installs') scrollMainToTop();
         state.pinScrollTop = false;
         if (!result.ok) {
+          playTone('error');
           toast(result.error, true);
           return;
         }
-        toast(action === 'answer' ? 'Answer recorded' : (action === 'ignore_artifacts' ? 'Ignored artifacts and continued' : 'Action completed'));
+        var doneMsg = action === 'answer' ? 'Answer recorded'
+          : (action === 'ignore_artifacts' ? 'Ignored artifacts and continued'
+          : (action === 'resolve_installs' ? 'Install decisions applied'
+          : (action === 'set_tdd' ? 'TDD updated' : 'Action completed')));
+        toast(doneMsg);
       } catch (error) {
         state.pinScrollTop = false;
+        playTone('error');
         toast(error.message,true);
       }
     }
@@ -1595,7 +1707,13 @@ export function renderDashboard(): string {
       if (target.dataset.tab) { state.tab = target.dataset.tab; renderRun(); }
       if (target.dataset.action) {
         if (target.dataset.action === 'cancel' && !confirm('Cancel this run?')) return;
-        if (target.dataset.action === 'commit_preflight') {
+        if (target.dataset.action === 'stop' && !confirm('Finish the current task, then stop before starting the next one?')) return;
+        if (target.dataset.action === 'set_tdd') {
+          runAction('set_tdd', {
+            tdd: target.dataset.tdd === 'true',
+            taskId: target.dataset.taskId || undefined
+          });
+        } else if (target.dataset.action === 'commit_preflight') {
           runAction(target.dataset.action, { order: target.dataset.preflightOrder });
         } else if (target.dataset.action === 'ignore_artifacts') {
           var ignorePaths = [];
@@ -1617,6 +1735,29 @@ export function renderDashboard(): string {
         } else {
           runAction(target.dataset.action);
         }
+      }
+      if (target.id === 'acceptAllInstallsBtn') {
+        var pending = ((state.detail && state.detail.state && state.detail.state.proposedInstalls) || []).filter(function (item) { return !item.decision; });
+        pending.forEach(function (item) { state.installSelections[item.id] = 'accept'; });
+        renderRun();
+      }
+      if (target.id === 'denyAllInstallsBtn') {
+        var denyPending = ((state.detail && state.detail.state && state.detail.state.proposedInstalls) || []).filter(function (item) { return !item.decision; });
+        denyPending.forEach(function (item) { state.installSelections[item.id] = 'deny'; });
+        renderRun();
+      }
+      if (target.id === 'submitInstallsBtn') {
+        var installPending = ((state.detail && state.detail.state && state.detail.state.proposedInstalls) || []).filter(function (item) { return !item.decision; });
+        var accepted = [], denied = [];
+        installPending.forEach(function (item) {
+          var choice = state.installSelections[item.id] || 'accept';
+          if (choice === 'deny') denied.push(item.id); else accepted.push(item.id);
+        });
+        state.installSelections = {};
+        runAction('resolve_installs', { accepted: accepted, denied: denied });
+      }
+      if (target.id === 'soundMuteBtn') {
+        setSoundsMuted(!soundsMuted());
       }
       if (target.dataset.artifact) openArtifact(target.dataset.artifact);
       if (target.dataset.session) openSession(target.dataset.session);
@@ -1688,6 +1829,12 @@ export function renderDashboard(): string {
     });
     document.addEventListener('change', function (event) {
       if (event.target.id === 'noteAsUnknown') state.noteAsUnknown = event.target.checked;
+      if (event.target.dataset && event.target.dataset.installId) {
+        state.installSelections[event.target.dataset.installId] = event.target.value;
+      }
+      if (event.target.id === 'runTddToggle') {
+        runAction('set_tdd', { tdd: event.target.checked });
+      }
     });
     document.addEventListener('keydown', function (event) {
       var answerForm = event.target.closest && event.target.closest('#answerForm');
@@ -1806,6 +1953,7 @@ export function renderDashboard(): string {
       $("newRunDialog").showModal();
     }
     bootstrap(false);
+    setSoundsMuted(soundsMuted());
     setInterval(function () {
       if (document.visibilityState !== 'visible' || !state.bootstrap) return;
       api('/api/bootstrap', undefined, true).then(function (data) {

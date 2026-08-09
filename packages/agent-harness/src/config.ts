@@ -492,6 +492,9 @@ knowledge:
   # Optional shared directory used by several project configs.
   # sharedIndexDirectory: ../shared-rag-index
   sources:
+    # Seeded by init/deploy from package templates (use --no-seed-guidance to skip).
+    - path: agent-harness/guidance/General
+      scope: global
     - path: README.md
       scope: project
     - path: docs
@@ -560,7 +563,7 @@ knowledge:
 }
 
 export function deploymentConfigYaml(options: {
-  sources?: string[];
+  sources?: Array<string | { path: string; scope?: KnowledgeScope; visibility?: KnowledgeVisibility }>;
   ollama?: boolean;
   model?: string;
   graphify?: boolean;
@@ -569,7 +572,15 @@ export function deploymentConfigYaml(options: {
   if (!isRecord(value) || !isRecord(value.knowledge)) {
     throw new Error("Default harness configuration is invalid");
   }
-  const sources = options.sources?.map((source) => ({ path: source, scope: "project" }));
+  const sources = options.sources?.map((source) =>
+    typeof source === "string"
+      ? { path: source, scope: "project" as const, visibility: "private" as const }
+      : {
+          path: source.path,
+          scope: source.scope ?? ("project" as const),
+          visibility: source.visibility ?? ("private" as const),
+        },
+  );
   const knowledge = {
     ...value.knowledge,
     ...(sources ? { sources } : {}),

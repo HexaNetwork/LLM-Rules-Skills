@@ -15,7 +15,7 @@ import {
   type AgentBackend,
   type InvokeInput,
 } from "./agent.js";
-import { commandEvidence, recentEvidenceOutput, runCommand } from "./commands.js";
+import { commandEvidence, recentEvidenceOutput, runApprovedInstall, runCommand } from "./commands.js";
 import {
   GRILL_EXPECTED_OUTPUT,
   GrillOutputSchema,
@@ -37,6 +37,7 @@ import {
   type OpenUnknown,
   type OpenUnknownDraft,
   type OperatorNote,
+  type ProposedInstall,
   type QuestionPurpose,
   type ReflectOutput,
   type RunPhase,
@@ -128,9 +129,24 @@ export class HarnessEngine {
     return path.join(this.store.runDirectory(runId), "cancel.request");
   }
 
+  private stopRequestPath(runId: string): string {
+    return path.join(this.store.runDirectory(runId), "stop.request");
+  }
+
   private async writeCancelRequest(runId: string): Promise<void> {
     await writeFile(
       this.cancelRequestPath(runId),
+      JSON.stringify({
+        at: new Date().toISOString(),
+        by: `${localHostname()}:${process.pid}`,
+      }),
+      "utf8",
+    );
+  }
+
+  private async writeStopRequest(runId: string): Promise<void> {
+    await writeFile(
+      this.stopRequestPath(runId),
       JSON.stringify({
         at: new Date().toISOString(),
         by: `${localHostname()}:${process.pid}`,
@@ -143,6 +159,10 @@ export class HarnessEngine {
     await unlink(this.cancelRequestPath(runId)).catch(() => undefined);
   }
 
+  private async clearStopRequest(runId: string): Promise<void> {
+    await unlink(this.stopRequestPath(runId)).catch(() => undefined);
+  }
+
   private async cancelRequestPresent(runId: string): Promise<boolean> {
     try {
       await access(this.cancelRequestPath(runId));
@@ -152,9 +172,23 @@ export class HarnessEngine {
     }
   }
 
+  private async stopRequestPresent(runId: string): Promise<boolean> {
+    try {
+      await access(this.stopRequestPath(runId));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private async isCancelRequested(runId: string): Promise<boolean> {
     if (this.signalFor(runId)?.aborted) return true;
     return this.cancelRequestPresent(runId);
+  }
+
+  private async isStopRequested(runId: string, state: RunState): Promise<boolean> {
+    if (state.stopAfterTask) return true;
+    return this.stopRequestPresent(runId);
   }
 
   private async completeCancellation(state: RunState): Promise<RunState> {
@@ -298,8 +332,16 @@ export class HarnessEngine {
         if (await this.isCancelRequested(runId)) {
           state = await this.completeCancellation(state);
         } else {
-          if (state.yieldedAt) {
-            state = await this.store.record({ ...state, yieldedAt: undefined }, "run.resumed");
+          if (state.yieldedAt || state.stoppedAfterTaskAt) {
+            state = await this.store.record(
+              {
+                ...state,
+                yieldedAt: undefined,
+                stoppedAfterTaskAt: undefined,
+              },
+              "run.resumed",
+            );
+            await this.clearStopRequest(runId);
           }
           await this.assertTreeFingerprint(state);
           let remaining = maxSteps;
@@ -325,7 +367,11 @@ export class HarnessEngine {
               state = await this.completeCancellation(state);
               break;
             }
-            if (terminal(state.phase) || state.phase === "awaiting_input") {
+            if (
+              terminal(state.phase) ||
+              state.phase === "awaiting_input" ||
+              state.stoppedAfterTaskAt
+            ) {
               state = await this.accrueUsage(state);
               break;
             }
@@ -334,6 +380,7 @@ export class HarnessEngine {
           if (
             !terminal(state.phase) &&
             state.phase !== "awaiting_input" &&
+            !state.stoppedAfterTaskAt &&
             !(await this.isCancelRequested(runId))
           ) {
             state = await this.accrueUsage(state);
@@ -934,6 +981,201 @@ export class HarnessEngine {
     return { state: await this.store.load(runId), pending: true };
   }
 
+  /** Finish the current task, then halt before starting the next frontier task. */
+  async requestStop(runId: string): Promise<RunState> {
+    const current = await this.store.load(runId);
+    if (terminal(current.phase)) {
+      throw new Error(`Run ${runId} is already ${current.phase}`);
+    }
+    if (current.phase !== "executing") {
+      throw new Error(`Stop after task is only available while executing (phase=${current.phase})`);
+    }
+    if (current.stoppedAfterTaskAt) {
+      return current;
+    }
+
+    await this.writeStopRequest(runId);
+
+    // Prefer durable state update; if advance holds the lock, the stop.request
+    // file is enough for the in-flight loop to halt after the current task.
+    const locked = await this.store.tryWithLock(runId, 250, async () => {
+      const state = await this.store.load(runId);
+      if (terminal(state.phase) || state.phase !== "executing") {
+        await this.clearStopRequest(runId);
+        return state;
+      }
+      if (state.stoppedAfterTaskAt) {
+        await this.clearStopRequest(runId);
+        return state;
+      }
+      const active = state.tasks.find((task) => task.status === "active");
+      if (!active) {
+        if (state.tasks.every((task) => task.status === "done")) {
+          await this.clearStopRequest(runId);
+          throw new Error("All tasks are already done; nothing left to stop before");
+        }
+        const stopped = await this.store.record(
+          {
+            ...state,
+            stopAfterTask: false,
+            stoppedAfterTaskAt: new Date().toISOString(),
+          },
+          "run.stopped_after_task",
+        );
+        await this.clearStopRequest(runId);
+        return stopped;
+      }
+      if (state.stopAfterTask) return state;
+      return this.store.record({ ...state, stopAfterTask: true }, "run.stop_requested");
+    });
+    if (locked.acquired) return locked.value;
+    return this.store.load(runId);
+  }
+
+  /**
+   * Accept/deny planner-proposed installs, run accepted ones via the allowlisted
+   * installer, then enter executing.
+   */
+  async resolveInstalls(
+    runId: string,
+    decisions: { accepted?: string[]; denied?: string[] },
+  ): Promise<RunState> {
+    return this.store.withLock(runId, async () => {
+      let state = await this.store.load(runId);
+      const pending = pendingInstallApprovals(state);
+      if (state.phase !== "awaiting_input" || pending.length === 0) {
+        throw new Error(`Run ${runId} is not awaiting install approval`);
+      }
+      const accepted = new Set(decisions.accepted ?? []);
+      const denied = new Set(decisions.denied ?? []);
+      for (const id of accepted) {
+        if (denied.has(id)) throw new Error(`Install ${id} cannot be both accepted and denied`);
+      }
+      const pendingIds = new Set(pending.map((item) => item.id));
+      for (const id of [...accepted, ...denied]) {
+        if (!pendingIds.has(id)) throw new Error(`Unknown pending install id: ${id}`);
+      }
+      for (const item of pending) {
+        if (!accepted.has(item.id) && !denied.has(item.id)) {
+          throw new Error(`Install ${item.id} still needs an accept or deny decision`);
+        }
+      }
+
+      const now = new Date().toISOString();
+      const nextInstalls: ProposedInstall[] = [];
+      for (const item of state.proposedInstalls) {
+        if (item.decision) {
+          nextInstalls.push(item);
+          continue;
+        }
+        if (denied.has(item.id)) {
+          nextInstalls.push({ ...item, decision: "denied", decidedAt: now });
+          continue;
+        }
+        if (!accepted.has(item.id)) {
+          nextInstalls.push(item);
+          continue;
+        }
+        const result = await runApprovedInstall(item.manager, item.packages, {
+          cwd: this.config.repositoryRoot,
+          timeoutMs: 10 * 60 * 1000,
+          signal: this.signalFor(runId),
+        });
+        if (result.cancelled) {
+          throw new RunCancelledError(`Install ${item.id} cancelled`);
+        }
+        const evidence = commandEvidence(`install:${item.id}`, result);
+        if (!evidence.passed) {
+          throw new HarnessFailure(
+            `Approved install failed (${item.manager} ${item.packages.join(" ")}): ${
+              evidence.stderr || evidence.stdout || `exit ${evidence.exitCode}`
+            }`.slice(0, 2_000),
+            "workspace",
+            true,
+          );
+        }
+        await this.store.appendJsonl(runId, "installs.jsonl", {
+          at: now,
+          role: "harness",
+          manager: item.manager,
+          commandSummary: evidence.command.slice(0, 200),
+          packages: item.packages,
+          source: "harness",
+        });
+        nextInstalls.push({
+          ...item,
+          decision: "accepted",
+          decidedAt: now,
+          evidence,
+        });
+      }
+
+      state = await this.store.record(
+        { ...state, proposedInstalls: nextInstalls, phase: "executing" },
+        "installs.resolved",
+        {
+          accepted: [...accepted],
+          denied: [...denied],
+        },
+      );
+      await this.syncArtifacts(state);
+      return state;
+    });
+  }
+
+  /**
+   * Toggle TDD for the run default and/or a still-pending task.
+   * Refuses once a task has entered writing_tests / implementing work.
+   */
+  async setTdd(runId: string, tdd: boolean, taskId?: string): Promise<RunState> {
+    return this.store.withLock(runId, async () => {
+      let state = await this.store.load(runId);
+      if (terminal(state.phase)) {
+        throw new Error(`Run ${runId} is already ${state.phase}`);
+      }
+
+      if (taskId) {
+        const task = state.tasks.find((item) => item.id === taskId);
+        if (!task) throw new Error(`Unknown task id: ${taskId}`);
+        if (!canToggleTaskTdd(task)) {
+          throw new Error(
+            `Cannot change TDD for task ${taskId} once past pending (step=${task.step})`,
+          );
+        }
+        state = await this.updateTask(
+          state,
+          { ...task, tdd },
+          "task.tdd_updated",
+          { tdd },
+        );
+        await this.syncArtifacts(state);
+        return state;
+      }
+
+      this.config.workflow.tdd = tdd;
+      const parsed = HarnessConfigSchema.parse(this.config);
+      this.config.workflow.tdd = parsed.workflow.tdd;
+      const raw = (await this.store.readJson(state.runId, "config.json")) as Record<string, unknown>;
+      const frozenVersion =
+        typeof raw.configVersion === "number" ? raw.configVersion : state.configVersion;
+      await this.store.writeJson(state.runId, "config.json", {
+        ...this.config,
+        configVersion: frozenVersion,
+      });
+      const nextHash = configurationHash(this.config);
+      const previous = state.tasks;
+      const tasks = previous.map((task) => (canToggleTaskTdd(task) ? { ...task, tdd } : task));
+      const tasksUpdated = tasks.filter((task, index) => task.tdd !== previous[index]?.tdd).length;
+      state = await this.store.record(
+        { ...state, tasks, configurationHash: nextHash },
+        "run.tdd_updated",
+        { tdd, tasksUpdated },
+      );
+      await this.syncArtifacts(state);
+      return state;
+    });
+  }
+
   status(runId: string): Promise<RunState> {
     return this.store.load(runId);
   }
@@ -1363,10 +1605,11 @@ export class HarnessEngine {
     // Idempotent resume: a prior plan.created may have persisted tasks before a
     // post-planner workspace block. Do not re-invoke the planner.
     if (state.tasks.length > 0) {
+      const phase = pendingInstallApprovals(state).length > 0 ? "awaiting_input" : "executing";
       return this.store.record(
-        { ...state, branchName: branchName ?? state.branchName, phase: "executing" },
+        { ...state, branchName: branchName ?? state.branchName, phase },
         "plan.resumed",
-        { tasks: state.tasks.length },
+        { tasks: state.tasks.length, pendingInstalls: pendingInstallApprovals(state).length },
       );
     }
 
@@ -1383,7 +1626,7 @@ export class HarnessEngine {
         defaultTestCommand: this.config.commands.test,
       },
       expectedOutput:
-        "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,tdd?,testCommand?}]}",
+        "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,tdd?,testCommand?}],proposedInstalls?:[{id,manager,packages,reason,command?}]}",
       schema: PlannerOutputSchema,
       knowledgeQuery: [
         state.reflectBrief?.confirmed ?? state.idea,
@@ -1400,6 +1643,8 @@ export class HarnessEngine {
     });
     const tasks = materializeTasks(output, this.config);
     assertAcyclic(tasks);
+    const proposedInstalls = materializeProposedInstalls(output.proposedInstalls ?? []);
+    const nextPhase = proposedInstalls.length > 0 ? "awaiting_input" : "executing";
 
     // Planner sessions can still dirty the tree; persist the plan first so a
     // workspace block does not discard it, then refuse to enter executing.
@@ -1407,9 +1652,13 @@ export class HarnessEngine {
       const dirty = await this.git.changedFiles();
       if (dirty.length > 0) {
         await this.store.record(
-          { ...state, tasks, branchName, phase: "planning" },
+          { ...state, tasks, proposedInstalls, branchName, phase: "planning" },
           "plan.created",
-          { tasks: tasks.length, tdd: tasks.filter((task) => task.tdd).length },
+          {
+            tasks: tasks.length,
+            tdd: tasks.filter((task) => task.tdd).length,
+            proposedInstalls: proposedInstalls.length,
+          },
         );
         throw new HarnessFailure(
           `Refusing to start on a dirty working tree. Commit or stash first: ${dirty.join(", ")}`,
@@ -1420,9 +1669,13 @@ export class HarnessEngine {
     }
 
     return this.store.record(
-      { ...state, tasks, branchName, phase: "executing" },
+      { ...state, tasks, proposedInstalls, branchName, phase: nextPhase },
       "plan.created",
-      { tasks: tasks.length, tdd: tasks.filter((task) => task.tdd).length },
+      {
+        tasks: tasks.length,
+        tdd: tasks.filter((task) => task.tdd).length,
+        proposedInstalls: proposedInstalls.length,
+      },
     );
   }
 
@@ -1436,14 +1689,31 @@ export class HarnessEngine {
       );
     }
     const active = state.tasks.find((task) => task.status === "active");
-    const task = active ?? taskFrontier(state.tasks)[0];
-    if (!task) {
+    if (!active) {
       if (state.tasks.every((item) => item.status === "done")) {
         return {
           state: await this.store.record({ ...state, phase: "publishing" }, "implementation.completed"),
           consumedBudget: false,
         };
       }
+      if (await this.isStopRequested(state.runId, state)) {
+        const stopped = await this.store.record(
+          {
+            ...state,
+            stopAfterTask: false,
+            stoppedAfterTaskAt: new Date().toISOString(),
+          },
+          "run.stopped_after_task",
+        );
+        await this.clearStopRequest(state.runId);
+        return { state: stopped, consumedBudget: false };
+      }
+      if (state.stoppedAfterTaskAt) {
+        return { state, consumedBudget: false };
+      }
+    }
+    const task = active ?? taskFrontier(state.tasks)[0];
+    if (!task) {
       throw new HarnessFailure(
         "Build frontier is empty while pending tasks remain",
         "internal",
@@ -1940,6 +2210,42 @@ function materializeTasks(
     testPaths: [],
     changedFiles: [],
   }));
+}
+
+function materializeProposedInstalls(
+  installs: Array<{
+    id: string;
+    manager: ProposedInstall["manager"];
+    packages: string[];
+    reason: string;
+    command?: string;
+  }>,
+): ProposedInstall[] {
+  const used = new Set<string>();
+  return installs.map((item, index) => {
+    let id = safeId(item.id, `install-${index + 1}`);
+    let suffix = 2;
+    while (used.has(id)) {
+      id = `${safeId(item.id, `install-${index + 1}`)}-${suffix}`;
+      suffix += 1;
+    }
+    used.add(id);
+    return {
+      id,
+      manager: item.manager,
+      packages: item.packages,
+      reason: item.reason,
+      ...(item.command ? { command: item.command } : {}),
+    };
+  });
+}
+
+function pendingInstallApprovals(state: RunState): ProposedInstall[] {
+  return state.proposedInstalls.filter((item) => !item.decision);
+}
+
+function canToggleTaskTdd(task: BuildTask): boolean {
+  return task.status === "pending" && task.step === "pending";
 }
 
 /**

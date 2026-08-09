@@ -1,0 +1,44 @@
+---
+description: Kitchen-sink visual playground — always reuse sink elements; document deviations; keep the playground updated
+globs: "**/*.{ts,tsx,js,jsx,css,scss,vue,svelte,kt,swift,cs,java,gd,uxml,xaml,json,yaml,yml}"
+alwaysApply: false
+---
+
+# Kitchen Sink / Visual Playground
+
+Shared UI has one visual contract: the kitchen-sink playground (stand-alone host or DEV-only/debug surface — never product navigation).
+
+## Always reuse sink elements
+
+Product UI must reuse kitchen-sink catalogued elements, variants, and tokens. Search the catalog first (`**/kitchen-sink/`, `**/uiCatalog/`, or the project’s documented playground path). Do not invent parallel components or styles for a job the sink already covers.
+
+## Document deviations
+
+If product UI must diverge from a catalogued pattern, document it in the catalog entry (`doNotUse`, `whenToUse`, or `summary`) and near the call site. State why the exception exists and whether it is temporary. Undocumented one-offs are not allowed.
+
+## Keep it updated
+
+Any change to shared UI, tokens, or visual patterns must update the kitchen sink in the same change (metadata + live demo). Do not leave the playground stale.
+
+## When introducing a shared building block
+
+1. Add or update section metadata (`whenToUse`, `summary`, `variants`, `tokens`, `doNotUse`).
+2. Add or update the matching section demo with live examples.
+3. Ensure every `sinkAnchor` exists as a stable id in that demo; section root id matches `section.id`.
+4. Register new section families in the ordered catalog (sidebar order).
+5. Keep the playground non-shipping — debug/DEV entry only.
+
+## Do / Don't
+
+```text
+✅ Always reuse catalogued sink elements / variants / tokens
+✅ Document deviations (why + temporary?) in catalog + call site
+✅ Update kitchen sink in the same change as shared UI
+✅ Cite sinkAnchor in plans/reviews (e.g. button-variants)
+❌ Parallel “primary-ish” styles beside a catalogued pattern
+❌ Undocumented one-offs
+❌ Shared UI change with a stale playground
+❌ Ship the playground as end-user product UX
+```
+
+For bootstrap or full structure, use the `kitchen-sink` skill (`STRUCTURE.md`, `SECTIONS.md`).

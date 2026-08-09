@@ -8,6 +8,7 @@ import {
   type WorkPacket,
 } from "./domain.js";
 import { HarnessFailure, RunCancelledError } from "./errors.js";
+import { detectInstallFromCommand } from "./commands.js";
 import { LocalKnowledgeBase } from "./knowledge.js";
 import { buildWorkPacket } from "./packet.js";
 import {
@@ -23,6 +24,14 @@ export type AgentStepEvent = {
   summary?: string;
 };
 
+export type ObservedInstallEvent = {
+  manager: import("./domain.js").PackageManager;
+  packages: string[];
+  commandSummary: string;
+  role: AgentRole;
+  taskId?: string;
+};
+
 export type AgentRequest = {
   role: AgentRole;
   model: string;
@@ -35,6 +44,9 @@ export type AgentRequest = {
   signal: AbortSignal;
   /** Redacted live step ticker; never includes raw tool args. */
   onStep?: (step: AgentStepEvent) => void;
+  /** Passive install observation from shell-like tool calls (never blocks). */
+  onInstallObserved?: (entry: ObservedInstallEvent) => void;
+  taskId?: string;
 };
 
 /** Mutable so tests can exercise the cap without writing thousands of lines. */
@@ -155,6 +167,7 @@ export class AgentCoordinator {
     let guidanceAudit: Awaited<ReturnType<LocalKnowledgeBase["selectGuidanceWithAudit"]>> = {
       selected: [],
       omittedAlwaysApply: [],
+      omittedOverrides: [],
     };
     let retrieval: Awaited<ReturnType<LocalKnowledgeBase["searchWithAudit"]>> = {
       results: [],
@@ -183,7 +196,7 @@ export class AgentCoordinator {
               role: input.role,
               knownPaths: knownPaths(input.input),
             })
-          : Promise.resolve({ selected: [], omittedAlwaysApply: [] }),
+          : Promise.resolve({ selected: [], omittedAlwaysApply: [], omittedOverrides: [] }),
         this.knowledge.searchWithAudit(
           knowledgeQuery,
           this.config.workflow.contextResults,
@@ -342,6 +355,7 @@ export class AgentCoordinator {
 
         let result: AgentBackendResult;
         try {
+          const taskId = taskIdFromPacketInput(packet.input);
           result = await withTimeout(
             (signal) =>
               this.backend.run({
@@ -354,8 +368,22 @@ export class AgentCoordinator {
                 mode: options.mode,
                 cwd: this.config.repositoryRoot,
                 signal,
+                taskId,
                 onStep: (step) => {
                   void activity.recordStep(step);
+                },
+                onInstallObserved: (entry) => {
+                  void this.store
+                    .appendJsonl(runId, "installs.jsonl", {
+                      at: new Date().toISOString(),
+                      role: entry.role,
+                      ...(entry.taskId ? { taskId: entry.taskId } : {}),
+                      manager: entry.manager,
+                      commandSummary: entry.commandSummary,
+                      packages: entry.packages,
+                      source: "agent",
+                    })
+                    .catch(() => undefined);
                 },
               }),
             this.config.agent.timeoutMs,
@@ -647,6 +675,14 @@ export function createCursorBackend(
           model: { id: request.model },
           mode: request.mode,
           onStep: ({ step }: { step: { type: string; message?: { type?: string; args?: unknown } } }) => {
+            const observed = detectInstallFromToolStep(step);
+            if (observed) {
+              request.onInstallObserved?.({
+                ...observed,
+                role: request.role,
+                ...(request.taskId ? { taskId: request.taskId } : {}),
+              });
+            }
             request.onStep?.(summarizeAgentStep(step));
             if (step.type !== "toolCall") return;
             const planBody = createPlanBodyFromTool(step.message);
@@ -1028,6 +1064,48 @@ export function summarizeAgentStep(step: {
     ...(toolName ? { toolName } : {}),
     summary,
   };
+}
+
+const SHELL_TOOL_NAMES = new Set([
+  "shell",
+  "bash",
+  "Shell",
+  "Bash",
+  "run_terminal_cmd",
+  "run_command",
+  "terminal",
+]);
+
+/** Detect install-like shell tool calls for passive logging. */
+export function detectInstallFromToolStep(step: {
+  type: string;
+  message?: { type?: string; args?: unknown };
+}): { manager: import("./domain.js").PackageManager; packages: string[]; commandSummary: string } | undefined {
+  if (step.type !== "toolCall") return undefined;
+  const toolName = typeof step.message?.type === "string" ? step.message.type : "";
+  if (!SHELL_TOOL_NAMES.has(toolName) && !/shell|bash|terminal|command/i.test(toolName)) {
+    return undefined;
+  }
+  const command = shellCommandFromToolArgs(step.message?.args);
+  if (!command) return undefined;
+  return detectInstallFromCommand(command);
+}
+
+function shellCommandFromToolArgs(args: unknown): string | undefined {
+  if (!isRecord(args)) return undefined;
+  for (const key of ["command", "cmd", "script", "code", "input"]) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function taskIdFromPacketInput(input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  if (typeof input.taskId === "string" && input.taskId.trim()) return input.taskId.trim();
+  const task = input.task;
+  if (isRecord(task) && typeof task.id === "string" && task.id.trim()) return task.id.trim();
+  return undefined;
 }
 
 function filePathFromToolArgs(args: unknown): string | undefined {

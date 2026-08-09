@@ -939,6 +939,8 @@ describe("central dashboard", () => {
       "version: 2\nrepositoryRoot: .\ngit:\n  enabled: true\n  ignoredArtifactPatterns: []\n",
       "utf8",
     );
+    await git(root, "add", "--", "agent-harness.config.yaml");
+    await git(root, "commit", "-m", "add harness config");
 
     const config = fixtureConfig(root, {
       git: { enabled: true, ignoredArtifactPatterns: [] } as never,
@@ -1022,7 +1024,7 @@ describe("central dashboard", () => {
     expect(accepted.status).toBe(202);
 
     const deadline = Date.now() + 15_000;
-    let detail: { state: { phase: string }; job?: { status?: string; error?: string } } | undefined;
+    let detail: { state: { phase: string; failure?: string }; job?: { status?: string; error?: string } } | undefined;
     while (Date.now() < deadline) {
       const response = await request(ui, `/api/runs/${state.runId}`);
       detail = (await response.json()) as typeof detail;
@@ -1033,9 +1035,18 @@ describe("central dashboard", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(detail?.state.phase).not.toBe("blocked");
+    expect(detail?.state.failure ?? "").not.toMatch(/agent-harness\.config/i);
 
     const saved = await readFile(configPath, "utf8");
     expect(saved).toContain("**/Source/App/obj/Debug/**");
+
+    const runAfter = await request(ui, `/api/runs/${state.runId}`);
+    const runBody = (await runAfter.json()) as {
+      state: { tasks: Array<{ changedFiles: string[] }> };
+    };
+    expect(runBody.state.tasks.some((task) => task.changedFiles.includes("agent-harness.config.yaml"))).toBe(
+      true,
+    );
 
     const settings = await request(ui, "/api/settings");
     const settingsBody = (await settings.json()) as {

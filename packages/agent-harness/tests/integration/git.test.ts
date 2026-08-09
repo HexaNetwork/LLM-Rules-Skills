@@ -249,6 +249,56 @@ describe("harness-owned git", () => {
     expect(files).not.toContain(".pdb");
   });
 
+  it("commitTask requires the dirty harness config to be reported", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    await writeFile(
+      configPath,
+      "version: 2\nrepositoryRoot: .\ngit:\n  enabled: true\n  ignoredArtifactPatterns: []\n",
+      "utf8",
+    );
+    await git(root, "add", "--", "agent-harness.config.yaml");
+    await git(root, "commit", "-m", "add harness config");
+
+    const config = fixtureConfig(root, {
+      git: { enabled: true, ignoredArtifactPatterns: ["**/obj/"] } as never,
+    });
+    const service = new GitService(config);
+    await service.ensureRunBranch("config-dirty");
+
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "feature.ts"), "export const feature = true;\n", "utf8");
+    // Simulate ignore_artifacts / settings write leaving the project config dirty.
+    await writeFile(
+      configPath,
+      "version: 2\nrepositoryRoot: .\ngit:\n  enabled: true\n  ignoredArtifactPatterns:\n    - '**/obj/'\n",
+      "utf8",
+    );
+
+    expect(await service.changedFiles()).toEqual([
+      "agent-harness.config.yaml",
+      "src/feature.ts",
+    ]);
+    await expect(
+      service.commitTask(
+        "feature-config-dirty",
+        { subject: "feat: add feature", body: "Source only." },
+        ["src/feature.ts"],
+      ),
+    ).rejects.toThrow(/unreported paths.*agent-harness\.config\.yaml/i);
+
+    const sha = await service.commitTask(
+      "feature-config-reported",
+      { subject: "feat: add feature", body: "Includes harness ignore update." },
+      ["src/feature.ts", "agent-harness.config.yaml"],
+    );
+    expect(sha).toMatch(/^[a-f0-9]{40}$/);
+    const files = await git(root, "show", "--pretty=", "--name-only", "HEAD");
+    expect(files).toContain("src/feature.ts");
+    expect(files).toContain("agent-harness.config.yaml");
+  });
+
   it("currentBranch reports the checked-out branch, and undefined when git is disabled", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
@@ -340,6 +390,57 @@ describe("working-tree divergence guard", () => {
 
     state = await engine.advance(state.runId, 1);
     expect(state.phase).not.toBe("blocked");
+  });
+
+  it("acceptTree reportPaths attaches operator-owned files to the active task", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    await writeFile(
+      configPath,
+      "version: 2\nrepositoryRoot: .\ngit:\n  enabled: true\n  ignoredArtifactPatterns: []\n",
+      "utf8",
+    );
+    await git(root, "add", "--", "agent-harness.config.yaml");
+    await git(root, "commit", "-m", "add harness config");
+
+    const config = fixtureConfig(root, {
+      workflow: { ...fixtureConfig(root).workflow, maxStepsPerRun: 1, tdd: false },
+      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      git: { enabled: true } as never,
+    });
+    const backend = createFakeBackend({
+      implementer: () => ({ summary: "built", changedFiles: ["src/a.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: a", body: "" }),
+    });
+    const engine = new HarnessEngine(config, { backend });
+    let state = await seedExecutingRun(engine, config, "accept-report-paths", [
+      pendingTask("t1", "Ship one"),
+    ]);
+
+    state = await engine.advance(state.runId, 1);
+    await writeFile(path.join(root, "external-edit.txt"), "mutated outside the harness\n", "utf8");
+    await writeFile(
+      configPath,
+      "version: 2\nrepositoryRoot: .\ngit:\n  enabled: true\n  ignoredArtifactPatterns:\n    - '**/obj/'\n",
+      "utf8",
+    );
+    state = await engine.advance(state.runId, 1);
+    expect(state.phase).toBe("blocked");
+
+    state = await engine.acceptTree(state.runId, {
+      reportPaths: ["agent-harness.config.yaml"],
+    });
+    expect(state.phase).toBe("executing");
+    expect(state.tasks[0]?.changedFiles).toContain("agent-harness.config.yaml");
+
+    const events = (await engine.store.readText(state.runId, "events.jsonl"))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { type: string; detail: Record<string, unknown> });
+    const accepted = events.find((event) => event.type === "run.tree_accepted");
+    expect(accepted!.detail.reportPaths).toEqual(["agent-harness.config.yaml"]);
   });
 
   it("never blocks on tree divergence when git.enabled is false", async () => {

@@ -506,10 +506,17 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             git: { ignoredArtifactPatterns: merged },
           });
           projectConfig = updated.config;
+          const configRelative = path
+            .relative(projectConfig.repositoryRoot, options.configPath)
+            .replaceAll("\\", "/");
           const liveConfig = await loadRunConfig(projectConfig, runId);
           const liveEngine = new HarnessEngine(liveConfig, { backend: options.backend });
           enqueue(runId, action, async () => {
-            await liveEngine.acceptTree(runId);
+            // Persist the config edit as a reported path on the active task so later
+            // commitTask / divergence checks treat it as intentional harness work.
+            await liveEngine.acceptTree(runId, {
+              reportPaths: configRelative && !configRelative.startsWith("..") ? [configRelative] : [],
+            });
             await liveEngine.advance(runId);
           });
         } else if (action === "cancel") {

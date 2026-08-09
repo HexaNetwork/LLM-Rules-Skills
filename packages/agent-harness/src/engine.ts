@@ -808,27 +808,48 @@ export class HarnessEngine {
   /**
    * Operator accepts the current working tree after a divergence block: re-stamps
    * `treeFingerprint`, clears the block, and audits `run.tree_accepted`.
+   * Optional `reportPaths` are appended to the active task's `changedFiles` so a
+   * follow-on commit (e.g. after ignore_artifacts dirties the project config) treats
+   * them as intentional rather than unreported.
    */
-  async acceptTree(runId: string): Promise<RunState> {
+  async acceptTree(runId: string, options?: { reportPaths?: string[] }): Promise<RunState> {
     return this.store.withRepositoryLock({ runId, action: "acceptTree" }, async () =>
       this.store.withLock(runId, async () => {
         let state = await this.store.load(runId);
         if (state.phase !== "blocked" || !state.blockedFrom) {
           throw new Error(`Run ${runId} is not resumably blocked`);
         }
+        const resumePhase = state.blockedFrom;
         const previousFingerprint = state.treeFingerprint;
+        const reportPaths = unique(
+          (options?.reportPaths ?? []).map((file) => file.replaceAll("\\", "/")),
+        );
+        if (reportPaths.length > 0) {
+          const targetIndex = indexOfTaskForReportedPaths(state);
+          if (targetIndex >= 0) {
+            state = {
+              ...state,
+              tasks: state.tasks.map((task, index) =>
+                index === targetIndex
+                  ? { ...task, changedFiles: unique([...task.changedFiles, ...reportPaths]) }
+                  : task,
+              ),
+            };
+          }
+        }
         const recorded = new Set(state.tasks.flatMap((task) => task.changedFiles));
         const current = this.config.git.enabled ? await this.git.changedFiles() : [];
         const divergingPaths = current.filter((file) => !recorded.has(file));
         const listed = divergingPaths.length > 0 ? divergingPaths : current;
         const treeFingerprint = await this.git.treeFingerprint();
         state = await this.store.record(
-          { ...clearBlock(state, state.blockedFrom), treeFingerprint },
+          { ...clearBlock(state, resumePhase), treeFingerprint },
           "run.tree_accepted",
           {
             previousFingerprint,
             treeFingerprint,
             divergingPaths: listed,
+            ...(reportPaths.length > 0 ? { reportPaths } : {}),
           },
         );
         return state;
@@ -1993,6 +2014,13 @@ function unique(values: string[]): string[] {
     result.push(trimmed);
   }
   return result;
+}
+
+/** Prefer the in-flight task when attaching operator-accepted paths (ignore_artifacts, etc.). */
+function indexOfTaskForReportedPaths(state: RunState): number {
+  const active = state.tasks.findIndex((task) => task.status === "active");
+  if (active >= 0) return active;
+  return state.tasks.findIndex((task) => task.status === "pending");
 }
 
 function safeId(value: string, fallback: string): string {

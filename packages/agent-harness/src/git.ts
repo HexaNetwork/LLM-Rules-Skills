@@ -240,8 +240,21 @@ export class GitService {
     return result.stdout.trim().split(/\r?\n/).at(-1);
   }
 
-  private git(args: string[], allowFailure = false): Promise<ProgramResult> {
-    return runProgram("git", args, this.config.repositoryRoot, allowFailure);
+  private async git(args: string[], allowFailure = false): Promise<ProgramResult> {
+    try {
+      return await runProgram("git", args, this.config.repositoryRoot, allowFailure);
+    } catch (error) {
+      if (error instanceof Error && /not a git repository/i.test(error.message)) {
+        throw new HarnessFailure(
+          `git.enabled is true but ${this.config.repositoryRoot} is not a git repository. ` +
+            "Run `git init` and make an initial commit, or set git.enabled: false in agent-harness.config.yaml.",
+          "workspace",
+          true,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
   }
 }
 

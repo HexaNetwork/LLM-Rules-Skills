@@ -354,6 +354,24 @@ if [[ ! -d "$PROJECT_PATH" ]]; then
   fi
 fi
 note "Project: $PROJECT_PATH"
+# Deploy defaults to git.enabled: true; Start reflect needs a real git repo.
+INITIALIZED_GIT_REPO=0
+if [[ -e "$PROJECT_PATH/.git" ]]; then
+  note "Git repository already present."
+elif ! command -v git >/dev/null 2>&1; then
+  warn "git is not on PATH — cannot initialize a repository."
+  note "Install git, or set git.enabled: false in agent-harness.config.yaml after deploy."
+  SKIPPED+=("git repository (git not installed)")
+else
+  say "No .git found — initializing a git repository (required for harness runs)."
+  if (cd "$PROJECT_PATH" && { git init -b main 2>/dev/null || git init; }); then
+    INITIALIZED_GIT_REPO=1
+    printf '  %s✓ initialized git repository%s (will commit after deploy so the tree is clean)\n' "$GREEN" "$RESET"
+  else
+    warn "git init failed — fix manually or set git.enabled: false after deploy."
+    SKIPPED+=("git init in target project")
+  fi
+fi
 pause "Continue to optional Ollama embeddings?"
 
 # ── 5. Optional: Ollama ───────────────────────────────────────────────────
@@ -420,6 +438,27 @@ fi
 if (( ${#DEPLOY_ARGS[@]} )); then
   node "$CLI" "${DEPLOY_ARGS[@]}"
   printf '  %s✓ deploy finished%s\n' "$GREEN" "$RESET"
+  if [[ "$INITIALIZED_GIT_REPO" -eq 1 ]]; then
+    # Local identity only if unset — avoids failing commit on machines without global git config.
+    if ! git -C "$PROJECT_PATH" config --get user.email >/dev/null 2>&1; then
+      git -C "$PROJECT_PATH" config user.email "agent-harness@localhost"
+    fi
+    if ! git -C "$PROJECT_PATH" config --get user.name >/dev/null 2>&1; then
+      git -C "$PROJECT_PATH" config user.name "Agent Harness"
+    fi
+    git -C "$PROJECT_PATH" add -A
+    if [[ -n "$(git -C "$PROJECT_PATH" status --porcelain 2>/dev/null || true)" ]]; then
+      if git -C "$PROJECT_PATH" commit -m "chore: initial commit (agent-harness install)"; then
+        git -C "$PROJECT_PATH" branch -M main 2>/dev/null || true
+        printf '  %s✓ created initial commit on main%s (working tree clean for Start reflect)\n' "$GREEN" "$RESET"
+      else
+        warn "initial git commit failed — commit manually before Start reflect."
+        SKIPPED+=("initial git commit")
+      fi
+    else
+      note "nothing to commit after deploy"
+    fi
+  fi
 fi
 pause "Continue to dashboard startup?"
 

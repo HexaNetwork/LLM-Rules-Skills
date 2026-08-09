@@ -41,7 +41,11 @@ export function classifyFailure(error: unknown): { kind: FailureKind; retriable:
 }
 
 function classifyByMessage(message: string): { kind: FailureKind; retriable: boolean } {
-  if (/dirty working tree|uncommitted changes|working tree is not clean|changed unreported paths|produced no git changes/i.test(message)) {
+  if (
+    /dirty working tree|uncommitted changes|working tree is not clean|changed unreported paths|produced no git changes|not a git repository/i.test(
+      message,
+    )
+  ) {
     return { kind: "workspace", retriable: true };
   }
   if (/graphify-out[/\\]graph\.json|graphify graph|missing graph/i.test(message)) {

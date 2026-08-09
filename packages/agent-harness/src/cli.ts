@@ -102,6 +102,7 @@ program
       const changed = await new LocalKnowledgeBase(config).refresh();
       console.log(`Indexed ${changed} changed document(s)`);
     }
+    await warnIfNotGitRepository(project);
     await warnIfDeployedFilesUntracked(project, [
       target,
       path.join(graphifyScripts, "setup-graphify.ps1"),
@@ -527,6 +528,19 @@ async function ensureIgnored(filePath: string, entry: string): Promise<void> {
 }
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Default deploy writes git.enabled: true. Starting a run against a plain folder
+ * then fails at the dirty-tree preflight with a raw `git status` exit 128 — warn now.
+ */
+async function warnIfNotGitRepository(project: string): Promise<void> {
+  if (await isGitRepository(project)) return;
+  console.log("");
+  console.log("This project is not a git repository, but the deployed config has git.enabled: true.");
+  console.log("Starting a run (dashboard Start reflect) will block until you either:");
+  console.log(`  1. git init && git add . && git commit -m "initial"   (in ${project})`);
+  console.log("  2. set git.enabled: false in agent-harness.config.yaml");
+}
 
 /**
  * Deploy leaves committable files (config + scripts, see writeGraphifySetupScripts)

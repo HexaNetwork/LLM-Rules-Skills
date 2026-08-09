@@ -49,6 +49,22 @@ describe("run-start git preflight", () => {
     expect(state.phase).toBe("new");
   });
 
+  it("blocks with a clear workspace message when git.enabled but the project is not a git repository", async () => {
+    const root = await fixtureRoot();
+    // Deliberately skip initGitRepo — mirrors install-wizard deploy into a plain folder.
+
+    const config = fixtureConfig(root, { git: { enabled: true } as never });
+    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+
+    const state = await engine.start("Add a feature");
+    expect(state.phase).toBe("blocked");
+    expect(state.blockedFrom).toBe("new");
+    expect(state.blockedKind).toBe("workspace");
+    expect(state.failure).toMatch(/not a git repository/i);
+    expect(state.failure).toMatch(/git\.enabled:\s*false|git init/i);
+    expect(state.failure).not.toMatch(/failed \(128\)/);
+  });
+
   it("truncates the offending-path list for a large dirty tree", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);

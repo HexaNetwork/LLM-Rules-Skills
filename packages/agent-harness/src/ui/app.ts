@@ -656,6 +656,13 @@ export function renderDashboard(): string {
           hint: "Inspect the unexpected changes. Accept the current tree to continue from here, or restore the tree and retry.",
         };
       }
+      if (/not a git repository/i.test(text)) {
+        return {
+          id: "not-a-git-repo",
+          title: "This project is not a git repository",
+          hint: "Run git init and make an initial commit in the project folder, or set git.enabled: false in agent-harness.config.yaml, then retry.",
+        };
+      }
       if (kind && byKind[kind]) return byKind[kind];
       var patterns = [
         { id: "dirty-tree",

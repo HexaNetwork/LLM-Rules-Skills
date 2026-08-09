@@ -299,6 +299,7 @@ describe("dashboard document", () => {
     expect(html).toContain("function blockedRemediation(stateOrFailure)");
     expect(html).toContain("blockedKind");
     expect(html).toContain("dirty working tree|uncommitted changes");
+    expect(html).toContain("not a git repository");
     expect(html).toContain("CURSOR_API_KEY");
     expect(html).toContain("graphify-out");
     expect(html).toContain("run configuration changed");

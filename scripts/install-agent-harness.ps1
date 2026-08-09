@@ -311,6 +311,35 @@ if (-not (Test-Path -LiteralPath $ProjectPath)) {
   }
 }
 Write-Note "Project: $ProjectPath"
+# Deploy defaults to git.enabled: true; Start reflect needs a real git repo.
+$script:InitializedGitRepo = $false
+$GitCmd = Get-Command git -ErrorAction SilentlyContinue
+$GitDir = Join-Path $ProjectPath ".git"
+if (Test-Path -LiteralPath $GitDir) {
+  Write-Note "Git repository already present."
+} elseif (-not $GitCmd) {
+  Write-WarnLine "git is not on PATH - cannot initialize a repository."
+  Write-Note "Install git, or set git.enabled: false in agent-harness.config.yaml after deploy."
+  $script:SKIPPED.Add("git repository (git not installed)") | Out-Null
+} else {
+  Write-Say "No .git found - initializing a git repository (required for harness runs)."
+  Push-Location -LiteralPath $ProjectPath
+  try {
+    & git init -b main 2>$null
+    if ($LASTEXITCODE -ne 0) {
+      & git init
+    }
+    if ($LASTEXITCODE -ne 0) {
+      Write-WarnLine "git init failed - fix manually or set git.enabled: false after deploy."
+      $script:SKIPPED.Add("git init in target project") | Out-Null
+    } else {
+      $script:InitializedGitRepo = $true
+      Write-Ok "initialized git repository (will commit after deploy so the tree is clean)"
+    }
+  } finally {
+    Pop-Location
+  }
+}
 Invoke-Pause "Continue to optional Ollama embeddings?"
 
 # -- 5. Optional: Ollama ---------------------------------------------------
@@ -387,6 +416,36 @@ if ($RunDeploy) {
     exit 1
   }
   Write-Ok "deploy finished"
+  if ($script:InitializedGitRepo) {
+    Push-Location -LiteralPath $ProjectPath
+    try {
+      # Local identity only if unset — avoids failing commit on machines without global git config.
+      $email = (& git config --get user.email 2>$null)
+      $name = (& git config --get user.name 2>$null)
+      if ([string]::IsNullOrWhiteSpace($email)) {
+        & git config user.email "agent-harness@localhost"
+      }
+      if ([string]::IsNullOrWhiteSpace($name)) {
+        & git config user.name "Agent Harness"
+      }
+      & git add -A
+      $porcelain = (& git status --porcelain 2>$null)
+      if (-not [string]::IsNullOrWhiteSpace($porcelain)) {
+        & git commit -m "chore: initial commit (agent-harness install)"
+        if ($LASTEXITCODE -ne 0) {
+          Write-WarnLine "initial git commit failed - commit manually before Start reflect."
+          $script:SKIPPED.Add("initial git commit") | Out-Null
+        } else {
+          & git branch -M main 2>$null
+          Write-Ok "created initial commit on main (working tree clean for Start reflect)"
+        }
+      } else {
+        Write-Note "nothing to commit after deploy"
+      }
+    } finally {
+      Pop-Location
+    }
+  }
 }
 Invoke-Pause "Continue to dashboard startup?"
 

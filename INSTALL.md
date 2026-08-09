@@ -188,6 +188,7 @@ Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`se
 | Dashboard access denied / `Invalid or missing dashboard token` | Close the tab, copy the **full** URL printed by the current `ui` process (including `?token=...`), and open that. Restarting `ui` invalidates the old token; an old tab or a bookmark without `?token=` will fail on Start reflect. |
 | Agent backend / missing API key | Set `CURSOR_API_KEY` in the same environment that runs the harness, then restart `ui` |
 | Config already exists | Redeploy with `--force`, or edit the existing `agent-harness.config.yaml` |
+| `not a git repository` / `git status failed (128)` on Start reflect | The target folder is not a git repo but `git.enabled` is true (deploy default). The install wizard auto-inits git and commits after deploy; for a manual deploy, either `git init` + initial commit, or set `git.enabled: false` in `agent-harness.config.yaml` |
 
 ## More detail
 

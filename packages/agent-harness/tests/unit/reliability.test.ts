@@ -259,6 +259,10 @@ describe("failure classification", () => {
       kind: "workspace",
       retriable: true,
     });
+    expect(classifyFailure(new Error("git.enabled is true but /tmp/x is not a git repository"))).toEqual({
+      kind: "workspace",
+      retriable: true,
+    });
     expect(classifyFailure(new Error("Run configuration changed; resume with the persisted run config"))).toEqual({
       kind: "config",
       retriable: false,

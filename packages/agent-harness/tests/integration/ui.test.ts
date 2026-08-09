@@ -835,6 +835,58 @@ describe("central dashboard", () => {
     );
     expect(sessionTraversal.status).toBe(400);
   });
+  it("commit_preflight unblocks a dirty-tree run and advances with the fake backend", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await writeFile(path.join(root, "surprise.txt"), "dirty\n", "utf8");
+
+    const config = fixtureConfig(root, {
+      git: { enabled: true, autoCommitPreflight: false } as never,
+      workflow: { tdd: false } as never,
+    });
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => ({
+        status: "ready_to_plan",
+        summary: "No grill needed",
+        resolutions: [],
+        openUnknowns: [],
+      }),
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "dashboard",
+            title: "Deliver dashboard",
+            description: "Expose the feature.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: () => ({ summary: "Built", changedFiles: ["src/dashboard.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: dashboard", body: "ok" }),
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const blocked = await engine.start("Commit preflight via UI", "ui-commit-preflight", false);
+    expect(blocked.phase).toBe("blocked");
+    expect(blocked.blockedFrom).toBe("new");
+
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+    const accepted = await request(ui, `/api/runs/${blocked.runId}/actions`, {
+      method: "POST",
+      body: { action: "commit_preflight", order: "branch-then-commit" },
+    });
+    expect(accepted.status).toBe(202);
+
+    const detail = await waitForPhase(ui, blocked.runId, "awaiting_input");
+    expect(detail.state.phase).toBe("awaiting_input");
+    expect(detail.state.questions[0]?.purpose).toBe("reflect");
+  });
+
   it("includes git.currentBranch/baseBranch only for a blocked run, never for other phases", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);

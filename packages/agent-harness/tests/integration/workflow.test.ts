@@ -849,6 +849,89 @@ describe("durable idea-to-feature workflow", () => {
     expect(state.openUnknowns.find((u) => u.id === "skip")?.status).toBe("parked");
   });
 
+  it("parks a clarified question and seeds an operator note without a resolution", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, grillQuestionsPerBatch: 3 } as never,
+    });
+    let grillCalls = 0;
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: (request) => {
+        grillCalls += 1;
+        if (grillCalls === 1) {
+          return {
+            status: "needs_input",
+            summary: "Two decisions",
+            questions: [
+              { ...FIRST_GRILL_QUESTION, prompt: "Keep: formal or casual?", unknownId: "keep" },
+              { ...FIRST_GRILL_QUESTION, prompt: "Clarify: formal or casual?", unknownId: "clarify" },
+            ],
+            openUnknowns: [
+              { id: "keep", title: "Keep decision", impact: "shaping" },
+              { id: "clarify", title: "Clarify decision", impact: "minor" },
+            ],
+          };
+        }
+        const prompt = String(request.prompt);
+        expect(prompt).toContain("Clarification requested on grill question");
+        expect(prompt).toContain("What does formal mean for onboarding copy?");
+        return {
+          status: "ready_to_plan",
+          summary: "Done after clarification",
+          resolutions: [],
+          openUnknowns: [{ id: "clarify", title: "Clarify decision", impact: "minor" }],
+        };
+      },
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render greeting.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: greet", body: "ok" }),
+    });
+
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    state = await engine.advance(state.runId);
+    const keepId = state.questions.find((q) => q.prompt.startsWith("Keep"))!.id;
+    const clarifyId = state.questions.find((q) => q.prompt.startsWith("Clarify"))!.id;
+
+    state = await engine.answerMany(
+      state.runId,
+      [{ questionId: keepId, answer: "Kept answer" }],
+      [],
+      [{ questionId: clarifyId, text: "What does formal mean for onboarding copy?" }],
+    );
+    expect(state.questions.find((q) => q.id === clarifyId)?.status).toBe("parked");
+    expect(state.operatorNotes.some((note) => note.text.includes("Clarification requested"))).toBe(
+      true,
+    );
+    expect(
+      state.openUnknowns.some((unknown) =>
+        unknown.title.includes("What does formal mean for onboarding copy?"),
+      ),
+    ).toBe(true);
+
+    state = await engine.advance(state.runId);
+    expect(state.phase).toBe("completed");
+    expect(state.grillResolutions).toHaveLength(1);
+    expect(state.grillResolutions[0]?.id).toBe(keepId);
+  });
+
   it("computes staleness once per batch and cold-starts the next griller turn", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {

@@ -141,11 +141,16 @@ export function renderDashboard(): string {
     .reflect-editor { display:grid; gap:12px; }
     .reflect-editor textarea { min-height:380px; width:100%; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; line-height:1.45; }
     .reflect-fields { display:grid; gap:14px; }
-    .reflect-fields textarea { min-height:80px; }
+    .reflect-fields textarea { min-height:220px; overflow:hidden; }
+    .reflect-fields textarea.reflect-goal { min-height:100px; }
     .reflect-list-section h3 { margin:0 0 6px; font-size:12px; color:var(--faint); text-transform:uppercase; letter-spacing:.09em; }
-    .reflect-list-row { display:flex; gap:8px; align-items:center; margin-bottom:7px; }
-    .reflect-list-row input { flex:1; }
-    .reflect-list-row button { flex:none; }
+    .reflect-list-row { display:flex; gap:8px; align-items:flex-start; margin-bottom:7px; }
+    .reflect-list-row textarea { flex:1; min-height:56px; resize:vertical; overflow:hidden; }
+    .reflect-list-row button { flex:none; margin-top:4px; }
+    .batch-question.clarifying { opacity:1; }
+    .batch-clarify-box { margin-top:8px; }
+    .batch-clarify-box textarea { min-height:72px; }
+    .batch-question-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:8px; flex-wrap:wrap; }
     .brief-body { margin:8px 0 0; color:var(--muted); font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
     .question-option.selected { border-color:var(--lime-2); background:rgba(199,243,107,.08); box-shadow:0 0 0 2px rgba(199,243,107,.15) inset; }
     .selected-badge { position:absolute; top:11px; right:11px; color:var(--lime); font-size:9px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
@@ -153,7 +158,6 @@ export function renderDashboard(): string {
     .batch-question:focus { outline:2px solid var(--orange); outline-offset:2px; }
     .batch-question.parked { opacity:.55; }
     .batch-question textarea { min-height:64px; margin-top:8px; }
-    .batch-question-foot { display:flex; justify-content:flex-end; margin-top:8px; }
     .keyboard-hint { margin:2px 0 14px; }
     .batch-footer { position:sticky; bottom:-20px; margin:14px -20px -20px; padding:12px 20px; background:var(--surface); border-top:1px solid var(--line-soft); display:flex; align-items:center; justify-content:space-between; gap:12px; border-radius:0 0 var(--radius) var(--radius); flex-wrap:wrap; }
     .fog-card .card-label { margin-bottom:4px; }
@@ -360,7 +364,7 @@ export function renderDashboard(): string {
     var state = {
       bootstrap: null, runs: [], unreadableRuns: [], selected: null, detail: null, signature: "", scrolls: null,
       tab: "overview", view: "runs", busy: 0, filter: "", answerDrafts: {}, settings: null,
-      selectedOptions: {}, parked: {}, batchFeedback: "",
+      selectedOptions: {}, parked: {}, clarifications: {}, batchFeedback: "",
       reflectDrafts: {},
       noteText: "", noteAsUnknown: false,
       elapsedTimer: null,
@@ -446,6 +450,7 @@ export function renderDashboard(): string {
         var qid = nodes[i].getAttribute("data-batch-question");
         if (state.selectedOptions[qid] != null) return true;
         if (state.parked[qid]) return true;
+        if (state.clarifications[qid] != null) return true;
         if (state.answerDrafts[qid] && String(state.answerDrafts[qid]).trim().length) return true;
       }
       return false;
@@ -753,9 +758,14 @@ export function renderDashboard(): string {
 
     function batchQuestionAnswered(q) {
       if (state.parked[q.id]) return false; // parked counts separately, not "answered"
+      if (state.clarifications[q.id] != null) return false; // clarifying counts separately
       if (state.selectedOptions[q.id] != null) return true;
       var draft = state.answerDrafts[q.id];
       return Boolean(draft && draft.trim().length);
+    }
+
+    function batchQuestionHandled(q) {
+      return Boolean(state.parked[q.id] || state.clarifications[q.id] != null || batchQuestionAnswered(q));
     }
 
     function renderBatchQuestion(q, index, total) {
@@ -763,21 +773,31 @@ export function renderDashboard(): string {
       if (draft == null) draft = q.draftAnswer || "";
       var selected = state.selectedOptions[q.id];
       var parked = Boolean(state.parked[q.id]);
+      var clarifying = state.clarifications[q.id] != null;
+      var clarifyText = clarifying ? state.clarifications[q.id] : "";
       var questionOptions = Array.isArray(q.options) ? q.options : [];
-      var options = questionOptions.length ? '<div class="question-options">' + questionOptions.map(function (option, i) {
+      var options = (!clarifying && questionOptions.length) ? '<div class="question-options">' + questionOptions.map(function (option, i) {
         var recommended = option.id === q.recommendedOptionId;
         var isSelected = selected === option.id;
         return '<button type="button" class="question-option' + (recommended ? ' recommended' : '') + (isSelected ? ' selected' : '') + '" data-batch-choice="' + attr(q.id) + '" data-option-id="' + attr(option.id) + '" data-option-index="' + i + '"><strong>' + esc(option.label) + '</strong>' + (isSelected ? '<span class="selected-badge">Selected</span>' : (recommended ? '<span class="recommendation-badge">Recommended</span>' : '')) + '<small>' + esc(option.description) + '</small></button>';
       }).join("") + '</div>' : '';
       var context = q.context ? '<div class="question-context">' + esc(q.context) + '</div>' : '';
-      var recommendation = q.recommendation ? '<div class="recommendation"><strong>Our recommendation:</strong>' + esc(q.recommendation) + '</div>' : '';
+      var recommendation = (!clarifying && q.recommendation) ? '<div class="recommendation"><strong>Our recommendation:</strong>' + esc(q.recommendation) + '</div>' : '';
       var answered = batchQuestionAnswered(q);
-      var statusTag = parked ? '<span class="tag">Skipped</span>' : (answered ? '<span class="tag hitl">Answered</span>' : '<span class="tag">Unanswered</span>');
-      return '<div class="batch-question' + (parked ? ' parked' : '') + '" data-batch-question="' + attr(q.id) + '" tabindex="0">' +
+      var statusTag = clarifying
+        ? '<span class="tag">Wait what?</span>'
+        : (parked ? '<span class="tag">Skipped</span>' : (answered ? '<span class="tag hitl">Answered</span>' : '<span class="tag">Unanswered</span>'));
+      var answerArea = clarifying
+        ? '<div class="batch-clarify-box"><textarea data-batch-clarify-text="' + attr(q.id) + '" placeholder="What is unclear? Ask the griller to rephrase or add precision…">' + esc(clarifyText) + '</textarea></div>'
+        : '<textarea data-batch-answer="' + attr(q.id) + '" placeholder="Optional notes, or answer in your own words…">' + esc(draft) + '</textarea>';
+      return '<div class="batch-question' + (parked ? ' parked' : '') + (clarifying ? ' clarifying' : '') + '" data-batch-question="' + attr(q.id) + '" tabindex="0">' +
         '<div class="item-head"><div class="card-label">Question ' + (index + 1) + ' of ' + total + '</div>' + statusTag + '</div>' +
         '<div class="question">' + esc(q.prompt) + '</div>' + context + options + recommendation +
-        '<textarea data-batch-answer="' + attr(q.id) + '" placeholder="Optional notes, or answer in your own words…">' + esc(draft) + '</textarea>' +
-        '<div class="batch-question-foot"><button type="button" class="btn ghost small" data-batch-skip="' + attr(q.id) + '">' + (parked ? 'Unskip' : 'Skip for now') + '</button></div>' +
+        answerArea +
+        '<div class="batch-question-foot">' +
+          '<button type="button" class="btn ghost small" data-batch-clarify="' + attr(q.id) + '">' + (clarifying ? 'Cancel Wait what?' : 'Wait what?') + '</button>' +
+          '<button type="button" class="btn ghost small" data-batch-skip="' + attr(q.id) + '">' + (parked ? 'Unskip' : 'Skip for now') + '</button>' +
+        '</div>' +
         '</div>';
     }
 
@@ -785,7 +805,7 @@ export function renderDashboard(): string {
       var batchId = activeQuestion.batchId;
       var batch = batchId ? s.questions.filter(function (item) { return item.status === "open" && item.batchId === batchId; }) : [activeQuestion];
       if (!batch.length) batch = [activeQuestion];
-      var answeredCount = batch.filter(function (q) { return state.parked[q.id] || batchQuestionAnswered(q); }).length;
+      var answeredCount = batch.filter(function (q) { return batchQuestionHandled(q); }).length;
       var html = '<div class="card question-card batch-card" id="batchCard" data-batch-id="' + attr(batchId || activeQuestion.id) + '">';
       html += '<div class="card-label">Grill question' + (batch.length > 1 ? "s" : "") + '</div>';
       html += '<div class="keyboard-hint faint">Keys: 1–4 choose an option for the focused question · ↑/↓ move between questions · Esc skips the focused question</div>';
@@ -798,9 +818,21 @@ export function renderDashboard(): string {
 
     function reflectListSection(key, label, items) {
       var rows = items.map(function (value, index) {
-        return '<div class="reflect-list-row"><input type="text" value="' + attr(value) + '" data-reflect-list="' + attr(key) + '" data-reflect-index="' + index + '"><button type="button" class="btn small ghost" data-reflect-remove="' + attr(key) + ':' + index + '">Remove</button></div>';
+        return '<div class="reflect-list-row"><textarea data-reflect-list="' + attr(key) + '" data-reflect-index="' + index + '" rows="2">' + esc(value) + '</textarea><button type="button" class="btn small ghost" data-reflect-remove="' + attr(key) + ':' + index + '">Remove</button></div>';
       }).join("");
       return '<div class="reflect-list-section"><h3>' + esc(label) + '</h3>' + rows + '<button type="button" class="btn small" data-reflect-add="' + attr(key) + '">+ Add ' + esc(label.toLowerCase()) + '</button></div>';
+    }
+
+    function autoGrowTextarea(node) {
+      if (!node || !node.style || node.tagName !== "TEXTAREA") return;
+      node.style.height = "auto";
+      node.style.height = Math.max(node.scrollHeight, 0) + "px";
+    }
+
+    function autoGrowReflectFields() {
+      var fields = $("reflectFields");
+      if (!fields) return;
+      fields.querySelectorAll("textarea").forEach(autoGrowTextarea);
     }
 
     function renderReflectEditor(q, s) {
@@ -831,7 +863,7 @@ export function renderDashboard(): string {
       var html = '<div class="card question-card reflect-card">' + head;
       html += '<form id="reflectForm" data-question="' + attr(q.id) + '"><div class="reflect-fields" id="reflectFields">';
       html += '<div class="field"><label for="reflectRestatement">Restatement</label><textarea id="reflectRestatement" data-reflect-field="restatement">' + esc(d.restatement) + '</textarea></div>';
-      html += '<div class="field"><label for="reflectGoal">Goal</label><textarea id="reflectGoal" data-reflect-field="goal">' + esc(d.goal) + '</textarea></div>';
+      html += '<div class="field"><label for="reflectGoal">Goal</label><textarea id="reflectGoal" class="reflect-goal" data-reflect-field="goal">' + esc(d.goal) + '</textarea></div>';
       html += reflectListSection("users", "Users", d.users);
       html += reflectListSection("inScope", "In scope", d.inScope);
       html += reflectListSection("outOfScope", "Out of scope", d.outOfScope);
@@ -909,7 +941,7 @@ export function renderDashboard(): string {
             : "";
           commitControls = '<div class="preflight-commit-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
             '<button class="' + defaultBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(defaultOrder) + '">' + esc(orderLabel(defaultOrder)) + ' and retry</button>' +
-            '<button class="' + otherBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(otherOrder) + '">' + esc(orderLabel(otherOrder)) + ' instead</button>' +
+            '<button class="' + otherBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(otherOrder) + '">' + esc(orderLabel(otherOrder)) + ' and retry</button>' +
             '</div>' + cautionNote;
         }
         var acceptTreeControls = "";
@@ -947,7 +979,7 @@ export function renderDashboard(): string {
         html += renderNoteBox(s);
       }
       html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div></div>';
-      html += '<div class="card third"><div class="card-label">Grill resolutions</div><div class="metric">' + grillTotal + (unknowns.length ? '<span class="faint"> / ' + unknowns.length + '</span>' : '') + '</div><div class="muted">' + (unknowns.length ? (openUnknownCount + ' open unknown(s) remain') : 'decisions locked in') + '</div></div>';
+      html += '<div class="card third"><div class="card-label">Grill resolutions</div><div class="metric">' + grillTotal + '</div><div class="muted">' + (unknowns.length ? (openUnknownCount + ' open unknown(s) · ' + unknowns.length + ' in register') : 'decisions locked in') + '</div></div>';
       var episode = s.grillEpisode;
       var usage = s.usage || {};
       var tokenTotals = { tokens: Number(usage.totalTokens || 0), cached: Number(usage.cacheReadTokens || 0) };
@@ -967,6 +999,7 @@ export function renderDashboard(): string {
       html += '<div class="card"><div class="card-label">Recent activity</div><div class="timeline">' + (state.detail.events.slice(-10).reverse().map(renderEvent).join("") || '<div class="muted">No events yet.</div>') + '</div></div>';
       html += '</div>';
       $("tabBody").innerHTML = html;
+      autoGrowReflectFields();
       if (thinkingSince && $("thinkingElapsed")) startElapsedTimer(thinkingSince);
     }
     function renderEvent(event) { return '<div class="event"><div class="event-name">' + esc(event.type) + '</div><div class="event-time">' + esc(date(event.at)) + '</div></div>'; }
@@ -1079,6 +1112,23 @@ export function renderDashboard(): string {
       } catch (error) { toast(error.message,true); }
     }
 
+    async function waitForJob(runId) {
+      var deadline = Date.now() + 120000;
+      while (Date.now() < deadline) {
+        var detail = await api('/api/runs/' + encodeURIComponent(runId), undefined, true);
+        if (detail.unchanged) {
+          await new Promise(function (resolve) { setTimeout(resolve, 150); });
+          continue;
+        }
+        state.detail = detail;
+        var job = detail.job;
+        if (!job) return { ok: true };
+        if (job.status === 'failed') return { ok: false, error: job.error || 'Action failed' };
+        await new Promise(function (resolve) { setTimeout(resolve, 150); });
+      }
+      return { ok: false, error: 'Timed out waiting for the action to finish' };
+    }
+
     async function runAction(action, extra) {
       if (!state.selected) return;
       try {
@@ -1087,10 +1137,24 @@ export function renderDashboard(): string {
         if (action === 'cancel') {
           state.cancelling = !(response && response.state && response.state.phase === 'cancelled');
           toast(state.cancelling ? 'Cancelling…' : 'Run cancelled');
-        } else {
-          toast(action === 'answer' ? 'Answer recorded; run queued' : 'Action queued');
+          await bootstrap(true);
+          return;
         }
+        loading(true);
+        var result;
+        try { result = await waitForJob(state.selected); }
+        finally { loading(false); }
         await bootstrap(true);
+        if (!result.ok) {
+          toast(result.error, true);
+          return;
+        }
+        toast(action === 'answer' ? 'Answer recorded' : 'Action completed');
+        if (action === 'answer') {
+          window.scrollTo(0, 0);
+          var content = $("content");
+          if (content) content.scrollTop = 0;
+        }
       } catch (error) { toast(error.message,true); }
     }
 
@@ -1194,23 +1258,26 @@ export function renderDashboard(): string {
       var node = batchQuestionNode(qid);
       if (!node) return;
       var parked = Boolean(state.parked[qid]);
+      var clarifying = state.clarifications[qid] != null;
       node.classList.toggle('parked', parked);
+      node.classList.toggle('clarifying', clarifying);
       var q = (state.detail.state.questions || []).find(function (item) { return item.id === qid; });
       var answered = q ? batchQuestionAnswered(q) : false;
       var tag = node.querySelector('.item-head .tag');
-      if (tag) tag.textContent = parked ? 'Skipped' : (answered ? 'Answered' : 'Unanswered');
-      if (tag) tag.className = 'tag' + (!parked && answered ? ' hitl' : '');
+      if (tag) tag.textContent = clarifying ? 'Wait what?' : (parked ? 'Skipped' : (answered ? 'Answered' : 'Unanswered'));
+      if (tag) tag.className = 'tag' + (!parked && !clarifying && answered ? ' hitl' : '');
       var skipBtn = node.querySelector('[data-batch-skip]');
       if (skipBtn) skipBtn.textContent = parked ? 'Unskip' : 'Skip for now';
+      var clarifyBtn = node.querySelector('[data-batch-clarify]');
+      if (clarifyBtn) clarifyBtn.textContent = clarifying ? 'Cancel Wait what?' : 'Wait what?';
     }
     function updateBatchFooter() {
       var card = $("batchCard"); if (!card) return;
       var qids = Array.prototype.map.call(card.querySelectorAll('[data-batch-question]'), function (n) { return n.getAttribute('data-batch-question'); });
       var questions = state.detail.state.questions || [];
       var answeredCount = qids.filter(function (qid) {
-        if (state.parked[qid]) return true;
         var q = questions.find(function (item) { return item.id === qid; });
-        return q ? batchQuestionAnswered(q) : false;
+        return q ? batchQuestionHandled(q) : false;
       }).length;
       var countNode = $("batchCount");
       if (countNode) countNode.textContent = answeredCount + ' of ' + qids.length + ' answered';
@@ -1224,7 +1291,27 @@ export function renderDashboard(): string {
       node.hidden = !state.batchFeedback;
     }
     function selectBatchOption(qid, optionId) {
+      if (state.clarifications[qid] != null) {
+        delete state.clarifications[qid];
+        renderRun();
+      }
+      if (state.selectedOptions[qid] === optionId) {
+        delete state.selectedOptions[qid];
+        var clearedNode = batchQuestionNode(qid);
+        if (clearedNode) {
+          clearedNode.querySelectorAll('[data-batch-choice]').forEach(function (btn) {
+            btn.classList.remove('selected');
+            var badge = btn.querySelector('.selected-badge,.recommendation-badge');
+            var recommended = btn.classList.contains('recommended');
+            if (badge) badge.outerHTML = recommended ? '<span class="recommendation-badge">Recommended</span>' : '';
+          });
+        }
+        updateBatchQuestionChrome(qid);
+        updateBatchFooter();
+        return;
+      }
       state.selectedOptions[qid] = optionId;
+      delete state.parked[qid];
       var node = batchQuestionNode(qid);
       if (node) {
         node.querySelectorAll('[data-batch-choice]').forEach(function (btn) {
@@ -1241,9 +1328,32 @@ export function renderDashboard(): string {
     }
     function toggleParked(qid, forceValue) {
       var next = forceValue != null ? forceValue : !state.parked[qid];
-      if (next) state.parked[qid] = true; else delete state.parked[qid];
+      if (next) {
+        state.parked[qid] = true;
+        delete state.selectedOptions[qid];
+        delete state.clarifications[qid];
+        delete state.answerDrafts[qid];
+        renderRun();
+        return;
+      }
+      delete state.parked[qid];
       updateBatchQuestionChrome(qid);
       updateBatchFooter();
+    }
+    function toggleClarify(qid) {
+      if (state.clarifications[qid] != null) {
+        delete state.clarifications[qid];
+      } else {
+        state.clarifications[qid] = '';
+        delete state.selectedOptions[qid];
+        delete state.parked[qid];
+        delete state.answerDrafts[qid];
+      }
+      renderRun();
+      if (state.clarifications[qid] != null) {
+        var box = document.querySelector('[data-batch-clarify-text="' + String(qid).replace(/"/g, '') + '"]');
+        if (box) box.focus();
+      }
     }
     function batchQuestionIds() {
       var card = $("batchCard"); if (!card) return [];
@@ -1268,7 +1378,7 @@ export function renderDashboard(): string {
       for (var step = 1; step <= ids.length; step++) {
         var candidate = ids[(index + step) % ids.length];
         var q = questions.find(function (item) { return item.id === candidate; });
-        if (!state.parked[candidate] && q && !batchQuestionAnswered(q)) { focusQuestion(candidate); return; }
+        if (!state.parked[candidate] && state.clarifications[candidate] == null && q && !batchQuestionAnswered(q)) { focusQuestion(candidate); return; }
       }
       var submitBtn = $("submitBatchBtn");
       if (submitBtn) submitBtn.focus();
@@ -1277,9 +1387,15 @@ export function renderDashboard(): string {
       var card = $("batchCard"); if (!card) return;
       var ids = batchQuestionIds();
       var questions = state.detail.state.questions || [];
-      var answers = [], parked = [], missing = [];
+      var answers = [], parked = [], clarifications = [], missing = [];
       ids.forEach(function (qid) {
         if (state.parked[qid]) { parked.push(qid); return; }
+        if (state.clarifications[qid] != null) {
+          var ask = String(state.clarifications[qid] || '').trim();
+          if (!ask) { missing.push(qid); return; }
+          clarifications.push({ questionId: qid, text: ask });
+          return;
+        }
         var q = questions.find(function (item) { return item.id === qid; });
         var optionId = state.selectedOptions[qid];
         var draft = (state.answerDrafts[qid] || '').trim();
@@ -1290,19 +1406,19 @@ export function renderDashboard(): string {
       });
       if (missing.length) {
         // Explicit block over silent auto-park: an answer must be a deliberate decision.
-        setBatchFeedback(missing.length + ' question(s) still need an answer or a Skip. Answer them or click Skip for now.');
+        setBatchFeedback(missing.length + ' question(s) still need an answer, Skip, or Wait what? with a clarification.');
         focusQuestion(missing[0]);
         return;
       }
-      if (!answers.length && !parked.length) { setBatchFeedback('Answer or skip at least one question.'); return; }
-      ids.forEach(function (qid) { delete state.selectedOptions[qid]; delete state.parked[qid]; delete state.answerDrafts[qid]; });
-      runAction('answer', { answers: answers, parked: parked });
+      if (!answers.length && !parked.length && !clarifications.length) { setBatchFeedback('Answer, skip, or clarify at least one question.'); return; }
+      ids.forEach(function (qid) { delete state.selectedOptions[qid]; delete state.parked[qid]; delete state.answerDrafts[qid]; delete state.clarifications[qid]; });
+      runAction('answer', { answers: answers, parked: parked, clarifications: clarifications });
     }
     function acceptAllRecommendations() {
       var ids = batchQuestionIds();
       var questions = state.detail.state.questions || [];
       ids.forEach(function (qid) {
-        if (state.parked[qid]) return;
+        if (state.parked[qid] || state.clarifications[qid] != null) return;
         var q = questions.find(function (item) { return item.id === qid; });
         if (!q || state.selectedOptions[qid] != null) return;
         if (q.recommendedOptionId) selectBatchOption(qid, q.recommendedOptionId);
@@ -1352,6 +1468,9 @@ export function renderDashboard(): string {
       if (target.dataset.batchSkip) {
         toggleParked(target.dataset.batchSkip);
       }
+      if (target.dataset.batchClarify) {
+        toggleClarify(target.dataset.batchClarify);
+      }
       if (target.id === 'acceptAllBtn') acceptAllRecommendations();
       if (target.id === 'submitBatchBtn') submitBatch();
       if (target.dataset.reflectAdd) {
@@ -1376,14 +1495,22 @@ export function renderDashboard(): string {
         updateBatchQuestionChrome(event.target.dataset.batchAnswer);
         updateBatchFooter();
       }
+      if (event.target.dataset.batchClarifyText) {
+        state.clarifications[event.target.dataset.batchClarifyText] = event.target.value;
+        updateBatchQuestionChrome(event.target.dataset.batchClarifyText);
+        updateBatchFooter();
+        autoGrowTextarea(event.target);
+      }
       if (event.target.dataset.reflectField && event.target.closest('#reflectForm')) {
         var reflectQid = event.target.closest('#reflectForm').dataset.question;
         if (state.reflectDrafts[reflectQid]) state.reflectDrafts[reflectQid][event.target.dataset.reflectField] = event.target.value;
+        autoGrowTextarea(event.target);
       }
       if (event.target.dataset.reflectList && event.target.closest('#reflectForm')) {
         var listQid = event.target.closest('#reflectForm').dataset.question;
         var draftObj = state.reflectDrafts[listQid];
         if (draftObj) draftObj[event.target.dataset.reflectList][Number(event.target.dataset.reflectIndex)] = event.target.value;
+        autoGrowTextarea(event.target);
       }
       if (event.target.id === 'noteText') state.noteText = event.target.value;
     });

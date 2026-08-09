@@ -21,11 +21,15 @@ import { renderDashboard } from "./app.js";
 export type UiJob = {
   runId: string;
   action: string;
-  status: "queued" | "running";
+  status: "queued" | "running" | "failed";
   detail?: string;
+  error?: string;
   queuedAt: string;
   startedAt?: string;
 };
+
+/** How long a failed job stays visible so the dashboard can toast the error. */
+const FAILED_JOB_TTL_MS = 30_000;
 
 export type UiServerOptions = {
   config: HarnessConfig;
@@ -143,7 +147,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
     action: string,
     operation: () => Promise<unknown>,
   ): void => {
-    if (jobs.has(runId)) throw new HttpError(409, `Run ${runId} already has queued work`);
+    const existing = jobs.get(runId);
+    if (existing && existing.status !== "failed") {
+      throw new HttpError(409, `Run ${runId} already has queued work`);
+    }
     const job: UiJob = {
       runId,
       action,
@@ -161,8 +168,19 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         });
         try {
           await operation();
-        } finally {
           jobs.delete(runId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          jobs.set(runId, {
+            ...job,
+            status: "failed",
+            startedAt: jobs.get(runId)?.startedAt ?? new Date().toISOString(),
+            error: message,
+          });
+          setTimeout(() => {
+            const current = jobs.get(runId);
+            if (current?.status === "failed") jobs.delete(runId);
+          }, FAILED_JOB_TTL_MS);
         }
       });
     queue = scheduled.catch(() => undefined);
@@ -432,9 +450,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             await engine.advance(runId);
           });
         } else if (action === "answer") {
-          const { answers, parked } = parseAnswerBody(body);
+          const { answers, parked, clarifications } = parseAnswerBody(body);
           enqueue(runId, action, async () => {
-            await engine.answerMany(runId, answers, parked);
+            await engine.answerMany(runId, answers, parked, clarifications);
             await engine.advance(runId);
           });
         } else if (action === "note") {
@@ -613,7 +631,10 @@ function runSignature(state: RunState, job?: UiJob, activity?: UiActivity | null
   const activityPart = activity
     ? `${activity.lastStepAt ?? ""}:${activity.stepCount ?? 0}`
     : "none";
-  return `${state.revision}:${state.lastEventSequence}:${job ? `${job.status}:${job.detail ?? ""}` : "none"}:${activityPart}`;
+  const jobPart = job
+    ? `${job.status}:${job.detail ?? ""}:${job.error ?? ""}`
+    : "none";
+  return `${state.revision}:${state.lastEventSequence}:${jobPart}:${activityPart}`;
 }
 
 async function readActivity(store: RunStore, runId: string): Promise<UiActivity | null> {
@@ -905,15 +926,17 @@ const MAX_ANSWER_BATCH = 6;
 
 /**
  * Accepts both the legacy CLI shape {questionId, answer} and the batched
- * dashboard shape {answers: [{questionId, answer, optionId?, structured?}], parked?}.
+ * dashboard shape {answers: [{questionId, answer, optionId?, structured?}], parked?, clarifications?}.
  * `structured` is validated here since it is untrusted client input.
  */
-function parseAnswerBody(body: Record<string, unknown>): {
+export function parseAnswerBody(body: Record<string, unknown>): {
   answers: Array<{ questionId: string; answer: string; optionId?: string; structured?: ReflectOutput }>;
   parked: string[];
+  clarifications: Array<{ questionId: string; text: string }>;
 } {
-  if (Array.isArray(body.answers)) {
-    if (body.answers.length > MAX_ANSWER_BATCH) {
+  if (Array.isArray(body.answers) || Array.isArray(body.parked) || Array.isArray(body.clarifications)) {
+    const answerItems = Array.isArray(body.answers) ? body.answers : [];
+    if (answerItems.length > MAX_ANSWER_BATCH) {
       throw new HttpError(400, `answers must include at most ${MAX_ANSWER_BATCH} entries`);
     }
     const parked = Array.isArray(body.parked)
@@ -922,7 +945,18 @@ function parseAnswerBody(body: Record<string, unknown>): {
     if (parked.length > MAX_ANSWER_BATCH) {
       throw new HttpError(400, `parked must include at most ${MAX_ANSWER_BATCH} entries`);
     }
-    const answers = body.answers.map((item, index) => {
+    const clarificationItems = Array.isArray(body.clarifications) ? body.clarifications : [];
+    if (clarificationItems.length > MAX_ANSWER_BATCH) {
+      throw new HttpError(400, `clarifications must include at most ${MAX_ANSWER_BATCH} entries`);
+    }
+    const clarifications = clarificationItems.map((item, index) => {
+      const record = requiredRecord(item, `clarifications[${index}]`);
+      return {
+        questionId: requiredString(record.questionId, `clarifications[${index}].questionId`, 200),
+        text: requiredString(record.text, `clarifications[${index}].text`, 20_000),
+      };
+    });
+    const answers = answerItems.map((item, index) => {
       const record = requiredRecord(item, `answers[${index}]`);
       let structured: ReflectOutput | undefined;
       if (record.structured != null) {
@@ -937,14 +971,32 @@ function parseAnswerBody(body: Record<string, unknown>): {
         structured,
       };
     });
-    if (answers.length === 0 && parked.length === 0) {
-      throw new HttpError(400, "answers must include at least one entry, or parked must be non-empty");
+    if (answers.length === 0 && parked.length === 0 && clarifications.length === 0) {
+      throw new HttpError(
+        400,
+        "answers must include at least one entry, or parked/clarifications must be non-empty",
+      );
     }
-    return { answers, parked };
+    const answerIds = new Set(answers.map((entry) => entry.questionId));
+    const parkedIds = new Set(parked);
+    for (const id of parkedIds) {
+      if (answerIds.has(id)) {
+        throw new HttpError(400, `question ${id} cannot be both answered and parked`);
+      }
+    }
+    for (const entry of clarifications) {
+      if (answerIds.has(entry.questionId) || parkedIds.has(entry.questionId)) {
+        throw new HttpError(
+          400,
+          `question ${entry.questionId} cannot be clarified when it is also answered or parked`,
+        );
+      }
+    }
+    return { answers, parked, clarifications };
   }
   const questionId = requiredString(body.questionId, "questionId", 200);
   const answer = requiredString(body.answer, "answer", 100_000);
-  return { answers: [{ questionId, answer }], parked: [] };
+  return { answers: [{ questionId, answer }], parked: [], clarifications: [] };
 }
 
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {

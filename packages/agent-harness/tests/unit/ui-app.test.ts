@@ -153,7 +153,7 @@ describe("dashboard document", () => {
 
     expect(html).toContain("function submitBatch()");
     expect(html).toContain("missing.push(qid)");
-    expect(html).toContain("still need an answer or a Skip");
+    expect(html).toContain("still need an answer, Skip, or Wait what?");
     // The block path must actually return without submitting.
     expect(html).toMatch(/missing\.push\(qid\)[\s\S]*?if \(missing\.length\) \{[\s\S]*?return;\s*\}/);
   });
@@ -178,6 +178,51 @@ describe("dashboard document", () => {
     expect(html).toContain("state.selectedOptions[qid] = optionId");
     expect(html).toContain("question-option.selected");
     expect(html).toContain("optionId: optionId || undefined");
+  });
+
+  it("toggles off a selected grill option when the same option is clicked again", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("if (state.selectedOptions[qid] === optionId)");
+    expect(html).toContain("delete state.selectedOptions[qid]");
+  });
+
+  it("offers Wait what? clarification that parks via clarifications in the batch submit", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("Wait what?");
+    expect(html).toContain("function toggleClarify(qid)");
+    expect(html).toContain("data-batch-clarify=");
+    expect(html).toContain("data-batch-clarify-text=");
+    expect(html).toContain("clarifications: clarifications");
+    expect(html).toContain("state.clarifications");
+  });
+
+  it("polls the run job to completion after actions and scrolls to top after answers", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function waitForJob(runId)");
+    expect(html).toContain("job.status === 'failed'");
+    expect(html).toContain("window.scrollTo(0, 0)");
+    expect(html).toContain("Action completed");
+  });
+
+  it("labels both dirty-tree preflight buttons with and retry", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("' and retry</button>'");
+    expect(html).not.toContain("' instead</button>'");
+  });
+
+  it("uses multi-line textareas and auto-grow for the structured reflect editor", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("function autoGrowTextarea(node)");
+    expect(html).toContain("function autoGrowReflectFields()");
+    expect(html).toContain('min-height:220px');
+    expect(html).toContain("reflect-goal");
+    expect(html).toContain("<textarea data-reflect-list=");
+    expect(html).not.toContain('<input type="text" value="\' + attr(value)');
   });
 
   it("wires rapid-fire keyboard shortcuts scoped to the focused question container", () => {
@@ -206,10 +251,12 @@ describe("dashboard document", () => {
     expect(html).toContain("fog-entry impact-");
   });
 
-  it("folds the open-unknown count into the grill resolutions metric card", () => {
+  it("shows grill resolutions as a count with open-unknowns as a separate muted line", () => {
     const html = renderDashboard();
 
-    expect(html).toContain("open unknown(s) remain");
+    expect(html).toContain("open unknown(s) · ");
+    expect(html).toContain(" in register");
+    expect(html).not.toContain("grillTotal + (unknowns.length ? '<span class=\"faint\"> / ' + unknowns.length");
   });
 
   it("renders a structured section-wise reflect editor when reflectBrief.structured is present, and falls back to raw markdown otherwise", () => {

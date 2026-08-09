@@ -537,6 +537,7 @@ export class HarnessEngine {
 
   /**
    * Answers and/or parks a batch of open questions in one state transition.
+   * Clarifications park the question and seed an operator note (asUnknown) for the next grill turn.
    * Staleness is computed once per batch (shared askedAt), not per question.
    */
   async answerMany(
@@ -548,17 +549,26 @@ export class HarnessEngine {
       structured?: ReflectOutput;
     }> = [],
     parkedQuestionIds: string[] = [],
+    clarifications: Array<{ questionId: string; text: string }> = [],
   ): Promise<RunState> {
-    if (answers.length === 0 && parkedQuestionIds.length === 0) {
-      throw new Error("At least one answer or parked question id is required");
+    if (answers.length === 0 && parkedQuestionIds.length === 0 && clarifications.length === 0) {
+      throw new Error("At least one answer, parked question id, or clarification is required");
     }
     for (const entry of answers) {
       if (!entry.answer.trim()) throw new Error(`Answer for ${entry.questionId} cannot be empty`);
+    }
+    for (const entry of clarifications) {
+      if (!entry.text.trim()) {
+        throw new Error(`Clarification for ${entry.questionId} cannot be empty`);
+      }
     }
     return this.store.withLock(runId, async () => {
       let state = await this.store.load(runId);
       const now = new Date().toISOString();
       const byId = new Map(state.questions.map((item) => [item.id, item] as const));
+      const clarifyById = new Map(
+        clarifications.map((entry) => [entry.questionId, entry.text.trim()] as const),
+      );
 
       for (const entry of answers) {
         const question = byId.get(entry.questionId);
@@ -570,11 +580,15 @@ export class HarnessEngine {
         const question = byId.get(id);
         if (!question || question.status !== "open") throw new Error(`Question ${id} is not open`);
       }
+      for (const id of clarifyById.keys()) {
+        const question = byId.get(id);
+        if (!question || question.status !== "open") throw new Error(`Question ${id} is not open`);
+      }
 
       const reflectEntry = answers.find((entry) => byId.get(entry.questionId)?.purpose === "reflect");
       if (reflectEntry) {
         // Reflect always asks a single confirmable question; never batched with grill.
-        if (answers.length !== 1 || parkedQuestionIds.length !== 0) {
+        if (answers.length !== 1 || parkedQuestionIds.length !== 0 || clarifyById.size !== 0) {
           throw new Error("The reflect confirmation must be answered on its own");
         }
         const trimmed = reflectEntry.answer.trim();
@@ -607,7 +621,8 @@ export class HarnessEngine {
       }
 
       const answerById = new Map(answers.map((entry) => [entry.questionId, entry] as const));
-      const parkedIds = new Set(parkedQuestionIds);
+      // Clarifications reuse the park path so they never produce a false resolution.
+      const parkedIds = new Set([...parkedQuestionIds, ...clarifyById.keys()]);
       const questions = state.questions.map((item) => {
         const entry = answerById.get(item.id);
         if (entry) {
@@ -638,10 +653,45 @@ export class HarnessEngine {
         if (Number.isFinite(askedAt) && Date.parse(now) - askedAt > staleMs) stale = true;
       }
 
+      let operatorNotes = state.operatorNotes;
+      let openUnknowns = state.openUnknowns;
+      if (clarifyById.size > 0) {
+        const addedNotes: OperatorNote[] = [];
+        const addedUnknowns: OpenUnknown[] = [];
+        for (const [questionId, ask] of clarifyById) {
+          const question = byId.get(questionId);
+          const prompt = question?.prompt?.trim() || questionId;
+          const text = `Clarification requested on grill question:\nQ: ${prompt}\nAsk: ${ask}`;
+          const noteId = `note-${randomUUID()}`;
+          const title = ask.slice(0, 160);
+          addedNotes.push({ id: noteId, text, title, at: now });
+          addedUnknowns.push({
+            id: `unknown-note-${randomUUID()}`,
+            title,
+            whyItMatters: "Raised by an operator clarification request.",
+            impact: "shaping",
+            status: "fog",
+          });
+        }
+        operatorNotes = [...operatorNotes, ...addedNotes];
+        openUnknowns = [...openUnknowns, ...addedUnknowns];
+      }
+
       state = await this.store.record(
-        { ...state, questions, activeQuestionId: undefined, phase: "grilling" },
+        {
+          ...state,
+          questions,
+          activeQuestionId: undefined,
+          phase: "grilling",
+          operatorNotes,
+          openUnknowns,
+        },
         "question.answered",
-        { questionIds: [...answerById.keys(), ...parkedIds], stale },
+        {
+          questionIds: [...answerById.keys(), ...parkedIds],
+          clarifiedQuestionIds: [...clarifyById.keys()],
+          stale,
+        },
       );
 
       if (stale) {

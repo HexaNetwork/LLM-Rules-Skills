@@ -244,6 +244,25 @@ export const RunPhaseSchema = z.enum([
 ]);
 export type RunPhase = z.infer<typeof RunPhaseSchema>;
 
+export const FixerPlanSchema = z.object({
+  summary: z.string().min(1),
+  steps: z.array(z.object({ title: z.string().min(1), description: z.string().min(1) })).min(1),
+  risks: z.array(z.string().min(1)).default([]),
+});
+export type FixerPlan = z.infer<typeof FixerPlanSchema>;
+
+export const FixerRecoverySchema = z.object({
+  guidance: z.string().min(1),
+  failure: z.string().min(1),
+  plan: FixerPlanSchema,
+  status: z.enum(["proposed", "applied"]),
+  proposedAt: z.string(),
+  appliedAt: z.string().optional(),
+  result: z.string().optional(),
+  changedFiles: z.array(z.string()).default([]),
+});
+export type FixerRecovery = z.infer<typeof FixerRecoverySchema>;
+
 export const RunStateSchema = z.object({
   contractVersion: z.literal(CONTRACT_VERSION),
   runId: z.string().min(1),
@@ -270,6 +289,7 @@ export const RunStateSchema = z.object({
   // Structured failure classification (absent on runs blocked before Task 7).
   blockedKind: z.string().optional(),
   blockedRetriable: z.boolean().optional(),
+  fixerRecovery: FixerRecoverySchema.optional(),
   // Last known working-tree fingerprint (HEAD + porcelain); divergence blocks advance.
   treeFingerprint: z.string().optional(),
   grillEpisode: GrillEpisodeSchema.optional(),
@@ -317,6 +337,7 @@ export const AgentRoleSchema = z.enum([
   "implementer",
   "reviewer",
   "message-writer",
+  "fixer",
 ]);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 

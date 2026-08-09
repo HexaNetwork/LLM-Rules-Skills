@@ -52,6 +52,7 @@ describe("central dashboard", () => {
 
   it("validates and persists schema-driven project settings", async () => {
     const root = await fixtureRoot();
+    await mkdir(path.join(root, "sample-app", "tests", "integration"), { recursive: true });
     const configPath = path.join(root, "agent-harness.config.yaml");
     await writeFile(
       configPath,
@@ -71,15 +72,35 @@ describe("central dashboard", () => {
       settings: { editable: boolean; definitions: unknown[]; values: Record<string, number> };
     };
     expect(initialBody.settings.editable).toBe(true);
-    expect(initialBody.settings.definitions).toHaveLength(5);
+    expect(initialBody.settings.definitions).toHaveLength(7);
     expect(initialBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(5);
     expect(initialBody.settings.values["workflow.staleAnswerMinutes"]).toBe(30);
     expect(initialBody.settings.values["workflow.grillQuestionsPerBatch"]).toBe(3);
     expect(initialBody.settings.values["git.autoCommitPreflight"]).toBe(false);
     expect(initialBody.settings.values["git.preflightCommitOrder"]).toBe("branch-then-commit");
+    expect(initialBody.settings.values["workflow.testPathPatterns"]).toEqual(
+      expect.arrayContaining(["tests/**", "src/test/**"]),
+    );
+    expect(initialBody.settings.values["commands.test"]).toBe('node -e "process.exit(0)"');
     expect(initialBody.settings.values["git.ignoredArtifactPatterns"]).toEqual(
       expect.arrayContaining(["**/obj/", "**/bin/", "*.pdb"]),
     );
+
+    const rootFolders = await request(ui, "/api/repository/folders");
+    expect(rootFolders.status).toBe(200);
+    expect((await rootFolders.json()) as { path: string; folders: string[] }).toMatchObject({
+      path: "",
+      folders: expect.arrayContaining(["sample-app"]),
+    });
+    const testFolders = await request(ui, "/api/repository/folders?path=sample-app/tests");
+    expect(testFolders.status).toBe(200);
+    expect((await testFolders.json()) as { path: string; parent: string; folders: string[] }).toMatchObject({
+      path: "sample-app/tests",
+      parent: "sample-app",
+      folders: ["integration"],
+    });
+    const escapedFolders = await request(ui, "/api/repository/folders?path=..%2F..");
+    expect(escapedFolders.status).toBe(400);
 
     const invalid = await request(ui, "/api/settings", {
       method: "PUT",
@@ -98,6 +119,8 @@ describe("central dashboard", () => {
         values: {
           "workflow.maxGrillQuestionsPerEpisode": 10,
           "workflow.staleAnswerMinutes": 45,
+          "workflow.testPathPatterns": ["modules/**/src/test/**", "**/*Test.java"],
+          "commands.test": "./gradlew test",
         },
       },
     });
@@ -109,7 +132,14 @@ describe("central dashboard", () => {
     expect(updatedBody.appliesTo).toBe("new_runs");
     expect(updatedBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(10);
     expect(updatedBody.settings.values["workflow.staleAnswerMinutes"]).toBe(45);
+    expect(updatedBody.settings.values["workflow.testPathPatterns"]).toEqual([
+      "modules/**/src/test/**",
+      "**/*Test.java",
+    ]);
+    expect(updatedBody.settings.values["commands.test"]).toBe("./gradlew test");
     expect(await readFile(configPath, "utf8")).toContain("maxGrillQuestionsPerEpisode: 10");
+    expect(await readFile(configPath, "utf8")).toContain("- modules/**/src/test/**");
+    expect(await readFile(configPath, "utf8")).toContain("test: ./gradlew test");
 
     const bootstrap = await request(ui, "/api/bootstrap");
     const bootstrapBody = (await bootstrap.json()) as {

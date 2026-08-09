@@ -50,6 +50,11 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "Write an imperative conventional-commit subject or a concise pull-request title and body.",
     "Describe only verified changes present in the packet.",
   ],
+  fixer: [
+    "When asked to plan, do not edit files. Explain a minimal, reversible recovery plan grounded in the reported failure and operator guidance.",
+    "When asked to apply an approved plan, edit only what is necessary to address that plan. Do not commit, push, open a pull request, weaken tests, or change scope.",
+    "Treat the reported failure and the operator's guidance as authoritative. Report the files actually changed and validation performed.",
+  ],
 };
 
 export function renderPrompt(packet: WorkPacket): string {

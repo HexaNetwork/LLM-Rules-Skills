@@ -134,11 +134,18 @@ describe("token-conscious defaults", () => {
     );
 
     const updated = await writeProjectSettings(configPath, {
-      workflow: { maxGrillQuestionsPerEpisode: 8, staleAnswerMinutes: 45 },
+      workflow: {
+        maxGrillQuestionsPerEpisode: 8,
+        staleAnswerMinutes: 45,
+        testPathPatterns: ["services/**/src/test/**", "**/*Test.java"],
+      },
+      commands: { test: "./gradlew test" },
     });
 
     expect(updated.config.workflow.maxGrillQuestionsPerEpisode).toBe(8);
     expect(updated.config.workflow.staleAnswerMinutes).toBe(45);
+    expect(updated.config.workflow.testPathPatterns).toEqual(["services/**/src/test/**", "**/*Test.java"]);
+    expect(updated.config.commands.test).toBe("./gradlew test");
     expect(updated.config.repositoryRoot).toBe(root);
     expect(await readFile(configPath, "utf8")).not.toContain(root);
   });
@@ -221,5 +228,31 @@ describe("token-conscious defaults", () => {
     const loaded = await loadRunConfig(updated.config, runId);
     expect(loaded.git.ignoredArtifactPatterns).toEqual(["**/obj/", "*.pdb"]);
     expect(loaded.git.ignoredArtifactPatterns).not.toEqual(frozen.git.ignoredArtifactPatterns);
+  });
+
+  it("treats testPathPatterns as a live recovery policy for frozen runs", async () => {
+    const root = await fixtureRoot();
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    await writeFile(
+      configPath,
+      "version: 2\nrepositoryRoot: .\nworkflow:\n  testPathPatterns:\n    - tests/**\n",
+      "utf8",
+    );
+    const initial = HarnessConfigSchema.parse({
+      repositoryRoot: root,
+      workflow: { testPathPatterns: ["tests/**"] },
+    });
+    const runId = "live-test-paths";
+    const runDirectory = path.join(root, ".agent-harness", "runs", runId);
+    await mkdir(runDirectory, { recursive: true });
+    await writeFile(path.join(runDirectory, "config.json"), `${JSON.stringify(initial)}\n`, "utf8");
+
+    const updated = await writeProjectSettings(configPath, {
+      workflow: { testPathPatterns: ["**/src/main/test/**"] },
+    });
+    const loaded = await loadRunConfig(updated.config, runId);
+
+    expect(loaded.workflow.testPathPatterns).toEqual(["**/src/main/test/**"]);
+    expect(configurationHash(updated.config)).toBe(configurationHash(initial));
   });
 });

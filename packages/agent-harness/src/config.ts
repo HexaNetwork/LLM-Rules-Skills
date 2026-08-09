@@ -24,6 +24,9 @@ const CONFIG_HASH_OMIT_PATHS = new Set([
   "repositoryRoot",
   "stateDirectory",
   "knowledge.sharedIndexDirectory",
+  // Test classification is an operator recovery policy. Read it fresh so a
+  // legitimate test-path correction can unblock an in-progress run.
+  "workflow.testPathPatterns",
   // Read fresh at commit-time so operators can add folders without config-drift blocks.
   "git.ignoredArtifactPatterns",
 ]);
@@ -271,6 +274,13 @@ export const ProjectSettingsPatchSchema = z
         maxGrillQuestionsPerEpisode: z.number().int().positive().max(50).optional(),
         staleAnswerMinutes: z.number().int().positive().max(24 * 60).optional(),
         grillQuestionsPerBatch: z.number().int().min(1).max(6).optional(),
+        testPathPatterns: z.array(z.string().min(1)).max(500).optional(),
+      })
+      .strict()
+      .optional(),
+    commands: z
+      .object({
+        test: z.string().min(1).optional(),
       })
       .strict()
       .optional(),
@@ -338,11 +348,15 @@ export async function writeProjectSettings(
 
   const parsedPatch = ProjectSettingsPatchSchema.parse(patch);
   const workflow = isRecord(value.workflow) ? value.workflow : {};
+  const commands = isRecord(value.commands) ? value.commands : {};
   const git = isRecord(value.git) ? value.git : {};
   const candidate = {
     ...value,
     ...(parsedPatch.workflow
       ? { workflow: { ...workflow, ...parsedPatch.workflow } }
+      : {}),
+    ...(parsedPatch.commands
+      ? { commands: { ...commands, ...parsedPatch.commands } }
       : {}),
     ...(parsedPatch.git ? { git: { ...git, ...parsedPatch.git } } : {}),
   };
@@ -392,6 +406,10 @@ export async function loadRunConfig(
     git: {
       ...frozen.git,
       ignoredArtifactPatterns: projectConfig.git.ignoredArtifactPatterns,
+    },
+    workflow: {
+      ...frozen.workflow,
+      testPathPatterns: projectConfig.workflow.testPathPatterns,
     },
   };
 }

@@ -2,6 +2,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { readdir, realpath } from "node:fs/promises";
 import {
   HarnessConfigSchema,
   loadRunConfig,
@@ -72,7 +73,29 @@ type EnumSettingDefinition = {
   type: "enum";
   options: Array<{ value: string; label: string }>;
 };
-type SettingDefinition = IntegerSettingDefinition | BooleanSettingDefinition | EnumSettingDefinition;
+type StringSettingDefinition = {
+  key: string;
+  category: string;
+  label: string;
+  description: string;
+  type: "string";
+  maximum: number;
+};
+type StringListSettingDefinition = {
+  key: string;
+  category: string;
+  label: string;
+  description: string;
+  type: "string-list";
+  maximumItems: number;
+  maximumItemLength: number;
+};
+type SettingDefinition =
+  | IntegerSettingDefinition
+  | BooleanSettingDefinition
+  | EnumSettingDefinition
+  | StringSettingDefinition
+  | StringListSettingDefinition;
 
 const PREFLIGHT_COMMIT_ORDER_VALUES = ["branch-then-commit", "commit-then-branch"] as const;
 
@@ -108,6 +131,25 @@ const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     type: "integer",
     minimum: 1,
     maximum: 6,
+  },
+  {
+    key: "workflow.testPathPatterns",
+    category: "Testing",
+    label: "Test file path patterns",
+    description:
+      "One repository-relative glob per line. The test writer may only edit files matching these patterns.",
+    type: "string-list",
+    maximumItems: 500,
+    maximumItemLength: 1_000,
+  },
+  {
+    key: "commands.test",
+    category: "Testing",
+    label: "Default test command",
+    description:
+      "Repository-owned command used when a task has no narrower test command. Configure this for your test runner.",
+    type: "string",
+    maximum: 10_000,
   },
   {
     key: "git.autoCommitPreflight",
@@ -246,6 +288,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         return json(response, 200, { settings: projectSettings(projectConfig, options.configPath) });
       }
 
+      if (request.method === "GET" && url.pathname === "/api/repository/folders") {
+        const requestedPath = url.searchParams.get("path") ?? "";
+        const folders = await listRepositoryFolders(projectConfig.repositoryRoot, requestedPath);
+        return json(response, 200, folders);
+      }
+
       if (request.method === "PUT" && url.pathname === "/api/settings") {
         if (!options.configPath) {
           throw new HttpError(409, "This dashboard was started without a writable config path");
@@ -290,6 +338,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           "git.ignoredArtifactPatterns",
           500,
         );
+        const testPathPatterns = optionalStringArray(
+          values["workflow.testPathPatterns"],
+          "workflow.testPathPatterns",
+          500,
+        );
+        const testCommand = optionalString(values["commands.test"], "commands.test", 10_000);
         if (maxGrillQuestionsPerEpisode == null) {
           throw new HttpError(400, "workflow.maxGrillQuestionsPerEpisode is required");
         }
@@ -301,7 +355,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             maxGrillQuestionsPerEpisode,
             staleAnswerMinutes,
             ...(grillQuestionsPerBatch != null ? { grillQuestionsPerBatch } : {}),
+            ...(testPathPatterns != null ? { testPathPatterns } : {}),
           },
+          ...(testCommand != null ? { commands: { test: testCommand } } : {}),
           ...(autoCommitPreflight != null ||
           preflightCommitOrder != null ||
           ignoredArtifactPatterns != null
@@ -480,6 +536,14 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
           const text = requiredString(body.text, "text", 20_000);
           const asUnknown = optionalBoolean(body.asUnknown, "asUnknown") ?? false;
           enqueue(runId, action, () => engine.addNote(runId, text, asUnknown));
+        } else if (action === "propose_fix") {
+          const guidance = requiredString(body.guidance, "guidance", 20_000);
+          enqueue(runId, action, () => engine.proposeFix(runId, guidance));
+        } else if (action === "apply_fix") {
+          enqueue(runId, action, async () => {
+            await engine.applyApprovedFix(runId);
+            await engine.advance(runId);
+          });
         } else if (action === "retry") {
           const force = optionalBoolean(body.force, "force") ?? false;
           const maxRunTokens = optionalNonNegativeNumber(body.maxRunTokens, "maxRunTokens");
@@ -722,6 +786,8 @@ function projectSettings(config: HarnessConfig, configPath?: string): Record<str
       "workflow.maxGrillQuestionsPerEpisode": config.workflow.maxGrillQuestionsPerEpisode,
       "workflow.staleAnswerMinutes": config.workflow.staleAnswerMinutes,
       "workflow.grillQuestionsPerBatch": config.workflow.grillQuestionsPerBatch,
+      "workflow.testPathPatterns": config.workflow.testPathPatterns,
+      "commands.test": config.commands.test,
       "git.autoCommitPreflight": config.git.autoCommitPreflight,
       "git.preflightCommitOrder": config.git.preflightCommitOrder,
       "git.ignoredArtifactPatterns": config.git.ignoredArtifactPatterns,
@@ -1193,6 +1259,42 @@ function assertInside(root: string, target: string): void {
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new HttpError(400, "Path escapes the repository");
   }
+}
+
+/**
+ * Lists direct, non-symlinked repository folders for configuration pickers.
+ * The dashboard must never turn a path picker into a general filesystem browser.
+ */
+async function listRepositoryFolders(
+  repositoryRoot: string,
+  requestedPath: string,
+): Promise<{ path: string; parent?: string; folders: string[] }> {
+  if (requestedPath.length > 2_000) throw new HttpError(400, "Folder path is too long");
+  const target = path.resolve(repositoryRoot, requestedPath);
+  assertInside(repositoryRoot, target);
+
+  let rootReal: string;
+  let targetReal: string;
+  try {
+    [rootReal, targetReal] = await Promise.all([realpath(repositoryRoot), realpath(target)]);
+  } catch {
+    throw new HttpError(404, "Repository folder was not found");
+  }
+  assertInside(rootReal, targetReal);
+
+  let entries;
+  try {
+    entries = await readdir(targetReal, { withFileTypes: true });
+  } catch {
+    throw new HttpError(400, "Path is not a readable folder");
+  }
+  const relative = path.relative(rootReal, targetReal).replaceAll("\\", "/");
+  const folders = entries
+    .filter((entry) => entry.isDirectory() && ![".git", ".agent-harness", "node_modules"].includes(entry.name))
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+  const parent = relative ? path.dirname(relative).replaceAll("\\", "/") : undefined;
+  return { path: relative === "." ? "" : relative, ...(parent != null ? { parent: parent === "." ? "" : parent } : {}), folders };
 }
 
 function setSecurityHeaders(response: ServerResponse): void {

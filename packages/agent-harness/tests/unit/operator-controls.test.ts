@@ -194,4 +194,48 @@ describe("operator controls", () => {
 
     await expect(engine.setTdd(runId, false, "active-task")).rejects.toThrow(/Cannot change TDD/);
   });
+
+  it("requires an approved fixer plan before clearing a blocked run", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, { agent: { promptBuilder: false } as never });
+    const store = new RunStore(config);
+    await store.initialize();
+    const runId = "fixer-run";
+    const hash = configurationHash(config);
+    await store.create({
+      ...createRunState(runId, "idea", new Date().toISOString(), hash, CONFIG_VERSION),
+      phase: "blocked",
+      blockedFrom: "executing",
+      blockedKind: "internal",
+      blockedRetriable: false,
+      failure: "Test writer changed non-test paths: sample-app/tests/recovery.test.ts",
+    });
+    await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
+    let fixerCalls = 0;
+    const backend = createFakeBackend({
+      fixer: () => {
+        fixerCalls += 1;
+        return fixerCalls === 1
+          ? {
+            summary: "Classify the repository's test directory as a test path.",
+            steps: [{ title: "Update test paths", description: "Add the project test folder glob." }],
+            risks: ["The run should be retried after the configuration is corrected."],
+          }
+          : { summary: "Updated the recovery configuration.", changedFiles: ["agent-harness.config.yaml"] };
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+
+    await expect(engine.applyApprovedFix(runId)).rejects.toThrow(/no fixer plan awaiting approval/);
+    const proposed = await engine.proposeFix(runId, "Preserve the test and repair the test path configuration.");
+    expect(proposed.phase).toBe("blocked");
+    expect(proposed.fixerRecovery).toMatchObject({ status: "proposed", changedFiles: [] });
+    const applied = await engine.applyApprovedFix(runId);
+    expect(applied.phase).toBe("executing");
+    expect(applied.failure).toBeUndefined();
+    expect(applied.fixerRecovery).toMatchObject({
+      status: "applied",
+      result: "Updated the recovery configuration.",
+    });
+  });
 });

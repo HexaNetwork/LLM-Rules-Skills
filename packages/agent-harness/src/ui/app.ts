@@ -256,6 +256,10 @@ export function renderDashboard(): string {
     .setting-row { display:grid; grid-template-columns:minmax(0,1fr) 110px; align-items:center; gap:24px; border:1px solid var(--line-soft); border-radius:12px; padding:14px; }
     .setting-row strong { display:block; margin-bottom:3px; }
     .setting-row input { width:100%; }
+    .setting-row textarea { width:100%; resize:vertical; font:12px/1.45 var(--mono); }
+    .folder-picker { margin-top:8px; padding:12px; border:1px solid var(--line-soft); border-radius:10px; background:var(--panel); }
+    .folder-picker-list { display:grid; gap:6px; margin-top:10px; max-height:220px; overflow:auto; }
+    .folder-picker-item { display:flex; justify-content:space-between; align-items:center; gap:12px; }
     .settings-scope { margin-top:18px; padding:12px 14px; border-radius:10px; background:rgba(121,184,255,.07); color:var(--muted); font-size:12px; }
     .field { display:grid; gap:7px; margin-bottom:16px; }
     .field label { color:var(--muted); font-size:12px; font-weight:650; }
@@ -1162,6 +1166,18 @@ export function renderDashboard(): string {
         }
         html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + acceptTreeControls + ignoreArtifactControls + '</div>' + retryControls + '</div></div>';
       }
+      if (s.phase === "blocked") {
+        var fixer = s.fixerRecovery;
+        var fixerControls = '';
+        if (fixer && fixer.status === 'proposed') {
+          var fixerSteps = (fixer.plan.steps || []).map(function (step) { return '<li><strong>' + esc(step.title) + '</strong><div class="muted">' + esc(step.description) + '</div></li>'; }).join('');
+          var fixerRisks = (fixer.plan.risks || []).length ? '<div class="faint" style="margin-top:8px">Risks: ' + esc(fixer.plan.risks.join(' · ')) + '</div>' : '';
+          fixerControls = '<strong>Proposed fixer plan</strong><div class="muted" style="margin-top:5px">' + esc(fixer.plan.summary) + '</div><ol style="margin:8px 0 0;padding-left:20px">' + fixerSteps + '</ol>' + fixerRisks + '<div class="field" style="margin-top:10px"><label for="fixerGuidance">Tweak the plan</label><textarea id="fixerGuidance" rows="3" placeholder="Optional revised instructions for the fixer"></textarea></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-action="propose_fix" data-revise-fix="true">Revise plan</button><button class="btn primary" data-action="apply_fix">Approve, fix, and recover</button></div>';
+        } else {
+          fixerControls = '<strong>Fix with an agent</strong><div class="muted" style="margin-top:5px">Describe how you want this handled. The fixer will propose a plan first; it cannot edit until you approve it.</div><div class="field" style="margin-top:10px"><label for="fixerGuidance">Recovery guidance</label><textarea id="fixerGuidance" rows="3" placeholder="For example: preserve the existing test and update the configured test path patterns"></textarea></div><button class="btn" data-action="propose_fix">Draft recovery plan</button>';
+        }
+        html += '<div class="card"><div class="resolution">' + fixerControls + '</div></div>';
+      }
       if (["grilling","awaiting_input","planning"].includes(s.phase)) {
         html += renderFogCard(s);
       }
@@ -1286,6 +1302,12 @@ export function renderDashboard(): string {
               return '<option value="' + attr(option.value) + '"' + (values[definition.key] === option.value ? ' selected' : '') + '>' + esc(option.label) + '</option>';
             }).join('');
             input = '<select id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="enum"' + (settings.editable ? '' : ' disabled') + '>' + optionHtml + '</select>';
+          } else if (definition.type === "string-list") {
+            var lines = Array.isArray(values[definition.key]) ? values[definition.key].join('\\n') : '';
+            input = '<textarea id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="string-list" rows="6" maxlength="' + attr(definition.maximumItems * (definition.maximumItemLength + 1)) + '"' + (settings.editable ? '' : ' disabled') + '>' + esc(lines) + '</textarea>' +
+              (definition.key === 'workflow.testPathPatterns' ? '<div style="margin-top:8px"><button type="button" class="btn small" data-open-test-folder-picker="true"' + (settings.editable ? '' : ' disabled') + '>Select repository folder…</button></div><div id="testFolderPicker" class="folder-picker" hidden></div>' : '');
+          } else if (definition.type === "string") {
+            input = '<input id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="string" type="text" value="' + attr(values[definition.key] || '') + '" maxlength="' + attr(definition.maximum) + '" required' + (settings.editable ? '' : ' disabled') + '>';
           } else {
             input = '<input id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="integer" type="number" value="' + attr(values[definition.key]) + '" min="' + attr(definition.minimum) + '" max="' + attr(definition.maximum) + '" step="1" required' + (settings.editable ? '' : ' disabled') + '>';
           }
@@ -1354,11 +1376,46 @@ export function renderDashboard(): string {
       } catch (error) { toast(error.message, true); }
     }
 
+    function testPatternInput() {
+      return $("setting-workflow-testPathPatterns");
+    }
+
+    async function openTestFolderPicker(relativePath) {
+      try {
+        var data = await api('/api/repository/folders?path=' + encodeURIComponent(relativePath || ''));
+        var panel = $("testFolderPicker");
+        if (!panel) return;
+        var currentPath = data.path || '';
+        var label = currentPath || 'repository root';
+        var parent = data.parent;
+        var navigation = (parent !== undefined ? '<button type="button" class="btn small" data-test-folder-path="' + attr(parent) + '">← Parent</button>' : '') +
+          (currentPath ? '<button type="button" class="btn small primary" data-use-test-folder="' + attr(currentPath) + '">Use this folder</button>' : '');
+        var folders = Array.isArray(data.folders) ? data.folders : [];
+        var children = folders.length ? folders.map(function (name) {
+          var childPath = currentPath ? currentPath + '/' + name : name;
+          return '<div class="folder-picker-item"><code>' + esc(name) + '/</code><button type="button" class="btn small" data-test-folder-path="' + attr(childPath) + '">Open</button></div>';
+        }).join('') : '<div class="faint">No subfolders.</div>';
+        panel.innerHTML = '<div class="faint">Choose a folder under <code>' + esc(label) + '</code>; it will add <code>' + esc(currentPath ? currentPath + '/**' : '**') + '</code>.</div><div style="display:flex;gap:8px;margin-top:10px">' + navigation + '<button type="button" class="btn small" data-close-test-folder-picker="true">Cancel</button></div><div class="folder-picker-list">' + children + '</div>';
+        panel.hidden = false;
+      } catch (error) { toast(error.message, true); }
+    }
+
+    function useTestFolder(relativePath) {
+      var input = testPatternInput();
+      if (!input || !relativePath) return;
+      var pattern = relativePath.replaceAll('\\\\', '/') + '/**';
+      var patterns = input.value.split(/\\r?\\n/).map(function (line) { return line.trim(); }).filter(Boolean);
+      if (!patterns.includes(pattern)) patterns.push(pattern);
+      input.value = patterns.join('\\n');
+      var panel = $("testFolderPicker");
+      if (panel) panel.hidden = true;
+    }
+
     function collectSettingsValues() {
       var values = {};
       $("settingsForm").querySelectorAll('[data-setting-key]').forEach(function (input) {
         var type = input.dataset.settingType;
-        values[input.dataset.settingKey] = type === 'integer' ? Number(input.value) : (type === 'boolean' ? input.checked : input.value);
+        values[input.dataset.settingKey] = type === 'integer' ? Number(input.value) : (type === 'boolean' ? input.checked : (type === 'string-list' ? input.value.split(/\\r?\\n/).map(function (line) { return line.trim(); }).filter(Boolean) : input.value));
       });
       var patterns = (state.settings && state.settings.values && state.settings.values["git.ignoredArtifactPatterns"]) || [];
       values["git.ignoredArtifactPatterns"] = Array.isArray(patterns) ? patterns.slice() : [];
@@ -1731,6 +1788,12 @@ export function renderDashboard(): string {
           var maxRunTokens = tokenInput && tokenInput.value !== '' ? Number(tokenInput.value) : undefined;
           var maxRunCostUsd = costInput && costInput.value !== '' ? Number(costInput.value) : undefined;
           runAction('retry', { force: true, maxRunTokens: maxRunTokens, maxRunCostUsd: maxRunCostUsd });
+        } else if (target.dataset.action === 'propose_fix') {
+          var fixerInput = document.getElementById('fixerGuidance');
+          var guidance = fixerInput ? fixerInput.value.trim() : '';
+          if (!guidance && target.dataset.reviseFix !== 'true') { toast('Describe the recovery you want before asking the fixer to plan it', true); return; }
+          if (!guidance && state.detail && state.detail.state && state.detail.state.fixerRecovery) guidance = state.detail.state.fixerRecovery.guidance;
+          runAction('propose_fix', { guidance: guidance });
         } else if (target.dataset.action === 'retry' && target.dataset.force === 'true') {
           runAction('retry', { force: true });
         } else {
@@ -1766,6 +1829,13 @@ export function renderDashboard(): string {
       if (target.dataset.removeArtifactIndex != null) {
         event.preventDefault();
         removeIgnoredArtifact(Number(target.dataset.removeArtifactIndex));
+      }
+      if (target.dataset.openTestFolderPicker != null) openTestFolderPicker('');
+      if (target.dataset.testFolderPath != null) openTestFolderPicker(target.dataset.testFolderPath);
+      if (target.dataset.useTestFolder != null) useTestFolder(target.dataset.useTestFolder);
+      if (target.dataset.closeTestFolderPicker != null) {
+        var picker = $("testFolderPicker");
+        if (picker) picker.hidden = true;
       }
       // data-question-choice: legacy single-question click; batch card uses data-batch-choice.
       if (target.dataset.questionChoice) {

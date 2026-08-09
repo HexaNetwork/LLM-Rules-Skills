@@ -18,6 +18,7 @@ import {
 import { commandEvidence, recentEvidenceOutput, runApprovedInstall, runCommand } from "./commands.js";
 import {
   GRILL_EXPECTED_OUTPUT,
+  FixerPlanSchema,
   GrillOutputSchema,
   MessageOutputSchema,
   REFLECT_EXPECTED_OUTPUT,
@@ -32,6 +33,7 @@ import {
   type GrillEpisode,
   type GrillOutput,
   type GrillResolution,
+  type FixerRecovery,
   type HumanQuestionDraft,
   type MessageOutput,
   type OpenUnknown,
@@ -783,6 +785,96 @@ export class HarnessEngine {
       await this.syncArtifacts(state);
       return state;
     });
+  }
+
+  /** Draft a no-edit recovery plan from a blocked run's failure and operator guidance. */
+  async proposeFix(runId: string, guidance: string): Promise<RunState> {
+    return this.store.withRepositoryLock({ runId, action: "proposeFix" }, () => this.store.withLock(runId, async () => {
+      const state = await this.store.load(runId);
+      if (state.phase !== "blocked" || !state.failure || !state.blockedFrom) {
+        throw new Error(`Run ${runId} is not blocked with a recoverable failure`);
+      }
+      const plan = await this.agents.invoke({
+        runId,
+        role: "fixer",
+        objective: "Propose a minimal recovery plan for the blocked harness run; do not edit the working tree",
+        input: {
+          failure: state.failure,
+          blockedFrom: state.blockedFrom,
+          blockedKind: state.blockedKind,
+          operatorGuidance: guidance.trim(),
+        },
+        constraints: ["Do not edit files during planning.", "The operator must approve before any repair is applied."],
+        expectedOutput: "{summary,steps:[{title,description}],risks:string[]}",
+        schema: FixerPlanSchema,
+        knowledgeQuery: `${state.failure}\n${guidance}`,
+        signal: this.signalFor(runId),
+      });
+      const fixerRecovery: FixerRecovery = {
+        guidance: guidance.trim(),
+        failure: state.failure,
+        plan,
+        status: "proposed",
+        proposedAt: new Date().toISOString(),
+        changedFiles: [],
+      };
+      const updated = await this.store.record({ ...state, fixerRecovery }, "fixer.plan_proposed", {
+        blockedFrom: state.blockedFrom,
+        blockedKind: state.blockedKind,
+        guidance: fixerRecovery.guidance,
+        summary: plan.summary,
+      });
+      await this.syncArtifacts(updated);
+      return updated;
+    }));
+  }
+
+  /** Apply an explicitly approved fixer plan, then clear the block for the normal workflow to resume. */
+  async applyApprovedFix(runId: string): Promise<RunState> {
+    return this.store.withRepositoryLock({ runId, action: "applyApprovedFix" }, () => this.store.withLock(runId, async () => {
+      let state = await this.store.load(runId);
+      const recovery = state.fixerRecovery;
+      if (state.phase !== "blocked" || !state.blockedFrom || !recovery || recovery.status !== "proposed") {
+        throw new Error(`Run ${runId} has no fixer plan awaiting approval`);
+      }
+      const resumePhase = state.blockedFrom;
+      state = await this.store.record(state, "fixer.plan_approved", { summary: recovery.plan.summary });
+      const result = await this.agents.invoke({
+        runId,
+        role: "fixer",
+        objective: "Apply the operator-approved recovery plan, validate the repair where practical, and do not commit",
+        input: {
+          failure: recovery.failure,
+          blockedFrom: state.blockedFrom,
+          operatorGuidance: recovery.guidance,
+          approvedPlan: recovery.plan,
+        },
+        constraints: ["This plan is approved by the operator.", "Do not commit, push, or open a pull request."],
+        expectedOutput: "{summary,changedFiles:string[]}",
+        schema: WorkerOutputSchema,
+        knowledgeQuery: `${recovery.failure}\n${recovery.guidance}\n${recovery.plan.summary}`,
+        signal: this.signalFor(runId),
+      });
+      const changedFiles = this.config.git.enabled ? await this.git.changedFiles() : result.changedFiles;
+      const appliedRecovery: FixerRecovery = {
+        ...recovery,
+        status: "applied",
+        appliedAt: new Date().toISOString(),
+        result: result.summary,
+        changedFiles: unique(changedFiles),
+      };
+      const updated = await this.store.record(
+        {
+          ...clearBlock(state, resumePhase),
+          fixerRecovery: appliedRecovery,
+          treeFingerprint: this.config.git.enabled ? await this.git.treeFingerprint() : state.treeFingerprint,
+        },
+        "fixer.applied",
+        { summary: result.summary, changedFiles: appliedRecovery.changedFiles },
+      );
+      await this.syncArtifacts(updated);
+      return updated;
+    }));
   }
 
   async retry(

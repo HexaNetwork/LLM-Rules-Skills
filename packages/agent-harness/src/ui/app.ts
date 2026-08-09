@@ -249,6 +249,11 @@ export function renderDashboard(): string {
     .dialog-head h2 { margin:0; }
     .dialog-body { padding:22px; }
     .dialog-foot { display:flex; justify-content:flex-end; gap:9px; padding:16px 22px; border-top:1px solid var(--line-soft); }
+    #settingsDialog { max-height:min(900px,calc(100vh - 30px)); }
+    #settingsDialog[open] { display:flex; flex-direction:column; }
+    #settingsForm { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+    #settingsDialog .dialog-head, #settingsDialog .dialog-foot, #settingsScope { flex:none; }
+    #settingsBody { flex:1; min-height:0; overflow:auto; }
     .settings-intro { margin:0 0 20px; color:var(--muted); }
     .settings-group { display:grid; gap:10px; }
     .settings-group + .settings-group { margin-top:22px; }
@@ -260,7 +265,7 @@ export function renderDashboard(): string {
     .folder-picker { margin-top:8px; padding:12px; border:1px solid var(--line-soft); border-radius:10px; background:var(--panel); }
     .folder-picker-list { display:grid; gap:6px; margin-top:10px; max-height:220px; overflow:auto; }
     .folder-picker-item { display:flex; justify-content:space-between; align-items:center; gap:12px; }
-    .settings-scope { margin-top:18px; padding:12px 14px; border-radius:10px; background:rgba(121,184,255,.07); color:var(--muted); font-size:12px; }
+    .settings-scope { margin:0; padding:12px 22px; border-top:1px solid var(--line-soft); background:rgba(121,184,255,.07); color:var(--muted); font-size:12px; }
     .field { display:grid; gap:7px; margin-bottom:16px; }
     .field label { color:var(--muted); font-size:12px; font-weight:650; }
     .field small { color:var(--faint); }
@@ -364,6 +369,7 @@ export function renderDashboard(): string {
     <form id="settingsForm">
       <div class="dialog-head"><div><h2>Project settings</h2><div class="faint">Defaults for future harness runs</div></div><button type="button" class="btn ghost icon-btn" data-close="settingsDialog">×</button></div>
       <div class="dialog-body" id="settingsBody"></div>
+      <div class="settings-scope" id="settingsScope"></div>
       <div class="dialog-foot"><button type="button" class="btn" data-close="settingsDialog">Cancel</button><button class="btn primary" id="saveSettingsBtn" type="submit">Save settings</button></div>
     </form>
   </dialog>
@@ -1338,7 +1344,8 @@ export function renderDashboard(): string {
       var artifactGroup = '<section class="settings-group" id="ignoredArtifactsGroup"><h3>Ignored build artifacts</h3>' +
         '<p class="faint" style="margin:0 0 8px">Harness-local globs skipped for dirty-tree and unreported-path checks. Does not edit .gitignore.</p>' +
         '<div id="ignoredArtifactsList" style="display:grid;gap:8px">' + artifactRows + '</div></section>';
-      $("settingsBody").innerHTML = '<p class="settings-intro">Tune token use and workflow behavior from one place. More settings can be added to this menu as the harness grows.</p>' + fields + artifactGroup + displayGroup + '<div class="settings-scope">' + esc(persistence) + '</div>';
+      $("settingsBody").innerHTML = '<p class="settings-intro">Tune token use and workflow behavior from one place. More settings can be added to this menu as the harness grows.</p>' + fields + artifactGroup + displayGroup;
+      $("settingsScope").textContent = persistence;
       $("saveSettingsBtn").disabled = !settings.editable;
       var layoutSelect = $("grill-options-layout");
       if (layoutSelect) {

@@ -57,6 +57,8 @@ describe("dashboard document", () => {
     expect(html).toContain("bootstrap.project.root");
     expect(html).toContain("data-setting-key");
     expect(html).toContain("Ignored build artifacts are live project policy");
+    expect(html).toContain('id="settingsScope"');
+    expect(html).toContain('settingsScope").textContent = persistence');
     expect(html).toContain("Thinking…");
     expect(html).toContain("Cancelling…");
     expect(html).toContain("state.cancelling");

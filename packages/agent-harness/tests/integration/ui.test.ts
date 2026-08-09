@@ -737,7 +737,7 @@ describe("central dashboard", () => {
     expect(await refreshed.text()).toContain("Reflect · Grill · Deliver");
     const page = await fetch(`${ui.origin}/?token=ui-test`);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain("Agent Harness");
+    expect(await page.text()).toContain("HexAgent Harness");
 
     const created = await request(ui, "/api/runs", {
       method: "POST",

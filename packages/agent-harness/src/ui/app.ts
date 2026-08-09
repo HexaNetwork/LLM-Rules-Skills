@@ -5,7 +5,7 @@ export function renderDashboard(): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Agent Harness</title>
+  <title>HexAgent Harness</title>
   <style>
     :root {
       --bg: #0b0d10;
@@ -305,7 +305,7 @@ export function renderDashboard(): string {
         <div class="mark" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2 4 6.5v9L12 22l8-6.5v-9L12 2Z" stroke="currentColor" stroke-width="2"/><path d="m8 13 2.4 2.4L16.5 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
-        <div><strong>Agent Harness</strong><span>Reflect · Grill · Deliver</span></div>
+        <div><strong>HexAgent Harness</strong><span>Reflect · Grill · Deliver</span></div>
       </div>
       <div class="sidebar-actions">
         <button class="btn primary new-btn" id="newRunBtn">＋ New run</button>

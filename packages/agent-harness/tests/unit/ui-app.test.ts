@@ -49,7 +49,7 @@ describe("dashboard document", () => {
     expect(html).toContain("Project settings");
     expect(html).toContain("settingsBtn");
     expect(html).toContain('projectName").title = data.project.root');
-    expect(html).toContain(">Repository</div>");
+    expect(html).toMatch(/Build progress[\s\S]*?>Repository<\/div>/);
     expect(html).toContain("bootstrap.project.root");
     expect(html).toContain("data-setting-key");
     expect(html).toContain("Active runs keep their frozen configuration");
@@ -178,6 +178,24 @@ describe("dashboard document", () => {
     expect(html).toContain("state.selectedOptions[qid] = optionId");
     expect(html).toContain("question-option.selected");
     expect(html).toContain("optionId: optionId || undefined");
+  });
+
+  it("exposes a client-only grill options layout preference (columns/rows)", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("harnessGrillOptionsLayout");
+    expect(html).toContain("layout-rows");
+    expect(html).toContain("function getGrillOptionsLayout()");
+    expect(html).toContain("function setGrillOptionsLayout(value)");
+    expect(html).toContain("function applyGrillOptionsLayout()");
+    expect(html).toContain(">Display</h3>");
+    expect(html).toContain("Grill options layout");
+    expect(html).toContain("Arrange recommended options as columns or stacked rows");
+    expect(html).toContain('id="grill-options-layout"');
+    // Client-only: must not use data-setting-key (Save would PUT it to the API).
+    expect(html).not.toContain('data-setting-key="grill');
+    expect(html).toContain('localStorage.getItem("harnessGrillOptionsLayout")');
+    expect(html).toContain('localStorage.setItem("harnessGrillOptionsLayout", layout)');
   });
 
   it("toggles off a selected grill option when the same option is clicked again", () => {
@@ -398,5 +416,15 @@ describe("dashboard document", () => {
     expect(html).toContain("Live steps");
     expect(html).toContain('data-details-key="session-steps"');
     expect(html).toContain('data-scroll-key="session-steps"');
+  });
+
+  it("pins error alerts at the top until dismissed", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain('id="toastDismiss"');
+    expect(html).toMatch(/\.toast\s*\{[^}]*top:\s*\d+px/);
+    expect(html).toContain("function hideToast()");
+    expect(html).toContain("if (!error)");
+    expect(html).toContain('toastDismiss").hidden = !error');
   });
 });

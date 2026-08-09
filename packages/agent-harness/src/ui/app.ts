@@ -115,6 +115,8 @@ export function renderDashboard(): string {
     .question { font-size:20px; letter-spacing:-.02em; margin:8px 0 6px; max-width:850px; }
     .question-context { color:var(--muted); max-width:850px; margin:0 0 16px; }
     .question-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:9px; margin:0 0 14px; }
+    .question-options.layout-rows { grid-template-columns:1fr; }
+    .question-options.layout-rows .question-option { min-height:72px; }
     .question-option { position:relative; display:block; width:100%; min-height:92px; text-align:left; border:1px solid var(--line); border-radius:12px; background:#0e1115; color:var(--text); padding:13px 14px; cursor:pointer; }
     .question-option:hover { border-color:var(--orange); background:rgba(255,157,92,.06); }
     .question-option.recommended { border-color:rgba(199,243,107,.35); }
@@ -261,9 +263,13 @@ export function renderDashboard(): string {
     .switch-row { display:flex; justify-content:space-between; align-items:center; gap:20px; border:1px solid var(--line-soft); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
     .switch-row input { accent-color:var(--lime); width:18px;height:18px; }
     .columns { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-    .toast { position:fixed; right:22px; bottom:22px; max-width:420px; background:#20262d; border:1px solid #39414b; color:var(--text); padding:12px 15px; border-radius:11px; box-shadow:var(--shadow); opacity:0; transform:translateY(12px); pointer-events:none; transition:.2s; z-index:40; }
-    .toast.show { opacity:1; transform:none; }
-    .toast.error { border-color:rgba(255,115,115,.5); }
+    .toast { position:fixed; top:16px; left:50%; max-width:min(560px, calc(100vw - 32px)); width:max-content; background:#20262d; border:1px solid #39414b; color:var(--text); padding:12px 14px; border-radius:11px; box-shadow:var(--shadow); opacity:0; transform:translate(-50%, -12px); pointer-events:none; transition:.2s; z-index:40; display:flex; align-items:flex-start; gap:12px; }
+    .toast.show { opacity:1; transform:translate(-50%, 0); pointer-events:auto; }
+    .toast.error { border-color:rgba(255,115,115,.5); background:rgba(32,20,22,.96); }
+    .toast-message { flex:1; min-width:0; white-space:pre-wrap; word-break:break-word; }
+    .toast-dismiss { flex:none; width:28px; height:28px; padding:0; border:0; border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; font-size:18px; line-height:1; }
+    .toast-dismiss:hover { color:var(--text); background:rgba(255,255,255,.06); }
+    .toast-dismiss[hidden] { display:none; }
     .markdown-view { min-height:300px; max-height:70vh; overflow:auto; background:#090b0d; }
     @media (max-width: 900px) {
       .shell { grid-template-columns:1fr; }
@@ -352,7 +358,7 @@ export function renderDashboard(): string {
       <div class="dialog-foot"><button type="button" class="btn" data-close="settingsDialog">Cancel</button><button class="btn primary" id="saveSettingsBtn" type="submit">Save settings</button></div>
     </form>
   </dialog>
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"><div class="toast-message" id="toastMessage"></div><button type="button" class="toast-dismiss" id="toastDismiss" aria-label="Dismiss" hidden>×</button></div>
 
   <script>
   (function () {
@@ -381,6 +387,24 @@ export function renderDashboard(): string {
       });
     }
     function attr(value) { return esc(value).split(String.fromCharCode(10)).join("&#10;"); }
+    function getGrillOptionsLayout() {
+      try {
+        var stored = localStorage.getItem("harnessGrillOptionsLayout");
+        return stored === "rows" ? "rows" : "columns";
+      } catch (error) { return "columns"; }
+    }
+    function setGrillOptionsLayout(value) {
+      var layout = value === "rows" ? "rows" : "columns";
+      try { localStorage.setItem("harnessGrillOptionsLayout", layout); } catch (error) { /* ignore quota / private mode */ }
+      return layout;
+    }
+    function applyGrillOptionsLayout() {
+      var rows = getGrillOptionsLayout() === "rows";
+      Array.prototype.forEach.call(document.querySelectorAll(".question-options"), function (node) {
+        if (rows) node.classList.add("layout-rows");
+        else node.classList.remove("layout-rows");
+      });
+    }
     function safeUrl(value) { var url = String(value || ""); return url.startsWith("https://") || url.startsWith("http://") ? url : "#"; }
     function date(value) { if (!value) return "—"; return new Intl.DateTimeFormat(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}).format(new Date(value)); }
     function ago(value) {
@@ -512,9 +536,21 @@ export function renderDashboard(): string {
         state.scrolls = { windowX: 0, windowY: 0, nodes: {}, details: {} };
       }
     }
+    function hideToast() {
+      var node = $("toast");
+      node.className = "toast";
+      $("toastMessage").textContent = "";
+      $("toastDismiss").hidden = true;
+      clearTimeout(toast.timer);
+    }
     function toast(message, error) {
-      var node = $("toast"); node.textContent = message; node.className = "toast show" + (error ? " error" : "");
-      clearTimeout(toast.timer); toast.timer = setTimeout(function () { node.className = "toast"; }, 3500);
+      var node = $("toast");
+      $("toastMessage").textContent = message;
+      $("toastDismiss").hidden = !error;
+      node.className = "toast show" + (error ? " error" : "");
+      clearTimeout(toast.timer);
+      // Errors stay until dismissed; brief success notices still auto-hide.
+      if (!error) toast.timer = setTimeout(hideToast, 3500);
     }
     function setNewRunFeedback(message, error) {
       var node = $("newRunFeedback");
@@ -808,7 +844,8 @@ export function renderDashboard(): string {
       var clarifying = state.clarifications[q.id] != null;
       var clarifyText = clarifying ? state.clarifications[q.id] : "";
       var questionOptions = Array.isArray(q.options) ? q.options : [];
-      var options = (!clarifying && questionOptions.length) ? '<div class="question-options">' + questionOptions.map(function (option, i) {
+      var optionsClass = "question-options" + (getGrillOptionsLayout() === "rows" ? " layout-rows" : "");
+      var options = (!clarifying && questionOptions.length) ? '<div class="' + optionsClass + '">' + questionOptions.map(function (option, i) {
         var recommended = option.id === q.recommendedOptionId;
         var isSelected = selected === option.id;
         return '<button type="button" class="question-option' + (recommended ? ' recommended' : '') + (isSelected ? ' selected' : '') + '" data-batch-choice="' + attr(q.id) + '" data-option-id="' + attr(option.id) + '" data-option-index="' + i + '"><strong>' + esc(option.label) + '</strong>' + (isSelected ? '<span class="selected-badge">Selected</span>' : (recommended ? '<span class="recommendation-badge">Recommended</span>' : '')) + '<small>' + esc(option.description) + '</small></button>';
@@ -1010,7 +1047,8 @@ export function renderDashboard(): string {
       if (["grilling","awaiting_input"].includes(s.phase)) {
         html += renderNoteBox(s);
       }
-      html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div></div>';
+      var repoRoot = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.root) || "";
+      html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div><div class="muted" style="margin-top:12px">Repository</div><div style="margin-top:4px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div></div>';
       html += '<div class="card third"><div class="card-label">Grill resolutions</div><div class="metric">' + grillTotal + '</div><div class="muted">' + (unknowns.length ? (openUnknownCount + ' open unknown(s) · ' + unknowns.length + ' in register') : 'decisions locked in') + '</div></div>';
       var episode = s.grillEpisode;
       var usage = s.usage || {};
@@ -1026,8 +1064,7 @@ export function renderDashboard(): string {
       var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");
       var briefBody = brief ? (brief.confirmed || brief.draft) : "The reflector will restate the idea for your confirmation before grilling begins.";
       html += '<div class="card two-thirds"><div class="card-label">' + esc(briefTitle) + '</div><pre class="brief-body" data-scroll-key="brief">' + esc(briefBody) + '</pre></div>';
-      var repoRoot = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.root) || "";
-      html += '<div class="card third"><div class="card-label">Delivery</div><div class="muted">Repository</div><div style="margin:4px 0 13px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div><div class="muted">Branch</div><div style="margin:4px 0 13px"><code>' + esc(s.branchName || "Not created yet") + '</code></div><div class="muted">TDD</div><div style="margin-top:4px"><strong>' + (s.tasks.length ? (s.tasks.some(function(t){return t.tdd;}) ? "Enabled" : "Disabled") : (state.bootstrap.project.defaults.tdd ? "Default on" : "Default off")) + '</strong></div></div>';
+      html += '<div class="card third"><div class="card-label">Delivery</div><div class="muted">Branch</div><div style="margin:4px 0 13px"><code>' + esc(s.branchName || "Not created yet") + '</code></div><div class="muted">TDD</div><div style="margin-top:4px"><strong>' + (s.tasks.length ? (s.tasks.some(function(t){return t.tdd;}) ? "Enabled" : "Disabled") : (state.bootstrap.project.defaults.tdd ? "Default on" : "Default off")) + '</strong></div></div>';
       html += '<div class="card"><div class="card-label">Recent activity</div><div class="timeline">' + (state.detail.events.slice(-10).reverse().map(renderEvent).join("") || '<div class="muted">No events yet.</div>') + '</div></div>';
       html += '</div>';
       $("tabBody").innerHTML = html;
@@ -1131,8 +1168,22 @@ export function renderDashboard(): string {
         return '<section class="settings-group"><h3>' + esc(category.name) + '</h3>' + rows + '</section>';
       }).join('');
       var persistence = settings.editable ? 'Changes are saved to the project config and apply to new runs. Active runs keep their frozen configuration.' : 'This dashboard was started without a config file path, so settings are read-only.';
-      $("settingsBody").innerHTML = '<p class="settings-intro">Tune token use and workflow behavior from one place. More settings can be added to this menu as the harness grows.</p>' + fields + '<div class="settings-scope">' + esc(persistence) + '</div>';
+      var grillLayout = getGrillOptionsLayout();
+      var displayGroup = '<section class="settings-group"><h3>Display</h3>' +
+        '<label class="setting-row" for="grill-options-layout"><span><strong>Grill options layout</strong><span class="faint">Arrange recommended options as columns or stacked rows</span></span>' +
+        '<select id="grill-options-layout">' +
+          '<option value="columns"' + (grillLayout === "columns" ? ' selected' : '') + '>Columns</option>' +
+          '<option value="rows"' + (grillLayout === "rows" ? ' selected' : '') + '>Rows</option>' +
+        '</select></label></section>';
+      $("settingsBody").innerHTML = '<p class="settings-intro">Tune token use and workflow behavior from one place. More settings can be added to this menu as the harness grows.</p>' + fields + displayGroup + '<div class="settings-scope">' + esc(persistence) + '</div>';
       $("saveSettingsBtn").disabled = !settings.editable;
+      var layoutSelect = $("grill-options-layout");
+      if (layoutSelect) {
+        layoutSelect.addEventListener("change", function () {
+          setGrillOptionsLayout(layoutSelect.value);
+          applyGrillOptionsLayout();
+        });
+      }
     }
 
     async function openSettings() {
@@ -1519,6 +1570,7 @@ export function renderDashboard(): string {
       }
       if (target.dataset.close) $(target.dataset.close).close();
       if (target.hasAttribute('data-open-new')) openNewRun();
+      if (target.id === 'toastDismiss') hideToast();
     });
     $("newRunBtn").addEventListener('click', openNewRun);
     $("menuBtn").addEventListener('click', function () { document.body.classList.toggle('menu-open'); });

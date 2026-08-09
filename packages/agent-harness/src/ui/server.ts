@@ -72,6 +72,8 @@ type SettingDefinition = IntegerSettingDefinition | BooleanSettingDefinition | E
 
 const PREFLIGHT_COMMIT_ORDER_VALUES = ["branch-then-commit", "commit-then-branch"] as const;
 
+const SESSION_COOKIE = "harness_token";
+
 const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
   {
     key: "workflow.maxGrillQuestionsPerEpisode",
@@ -175,9 +177,19 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
       }
       // Serve the HTML shell without a query token so browser refresh still works
       // after the client strips ?token= from the address bar into sessionStorage.
-      // API routes below still require the header/query token.
+      // API routes below still require the header/query/cookie token.
       if (!url.pathname.startsWith("/api/")) {
         if (url.pathname !== "/") throw new HttpError(404, "Not found");
+        // A refresh loses the token: the client strips ?token= from the address
+        // bar, and per-tab sessionStorage is not reliably carried across every
+        // reload path. Bind the token to this origin as an HttpOnly session
+        // cookie so reloads stay authenticated without putting it back in the URL.
+        if (url.searchParams.get("token") === token) {
+          response.setHeader(
+            "Set-Cookie",
+            `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict`,
+          );
+        }
         return html(response, renderDashboard());
       }
       if (!authorized(request, url, token)) {
@@ -185,7 +197,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
       }
 
       if (request.method === "GET" && url.pathname === "/api/bootstrap") {
-        const runs = await store.list();
+        const { states: runs, failures } = await store.listWithFailures();
         return json(response, 200, {
           project: {
             name: path.basename(projectConfig.repositoryRoot),
@@ -202,6 +214,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             settings: projectSettings(projectConfig, options.configPath),
           },
           runs: runs.map((state) => summarizeRun(state, jobs.get(state.runId))),
+          unreadableRuns: failures,
           jobs: [...jobs.values()],
         });
       }
@@ -275,9 +288,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
       }
 
       if (request.method === "GET" && url.pathname === "/api/runs") {
-        const runs = await store.list();
+        const { states: runs, failures } = await store.listWithFailures();
         return json(response, 200, {
           runs: runs.map((state) => summarizeRun(state, jobs.get(state.runId))),
+          unreadableRuns: failures,
         });
       }
 
@@ -847,7 +861,27 @@ function allowedArtifact(value: string): boolean {
 }
 
 function authorized(request: IncomingMessage, url: URL, token: string): boolean {
-  return request.headers["x-harness-token"] === token || url.searchParams.get("token") === token;
+  return (
+    request.headers["x-harness-token"] === token ||
+    url.searchParams.get("token") === token ||
+    readCookie(request, SESSION_COOKIE) === token
+  );
+}
+
+function readCookie(request: IncomingMessage, name: string): string | undefined {
+  const header = request.headers.cookie;
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator === -1) continue;
+    if (part.slice(0, separator).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {

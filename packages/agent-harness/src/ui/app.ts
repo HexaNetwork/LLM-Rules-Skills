@@ -358,7 +358,7 @@ export function renderDashboard(): string {
     if (token) sessionStorage.setItem("harnessToken", token);
     if (params.has("token")) history.replaceState(null, "", location.pathname);
     var state = {
-      bootstrap: null, runs: [], selected: null, detail: null, signature: "", scrolls: null,
+      bootstrap: null, runs: [], unreadableRuns: [], selected: null, detail: null, signature: "", scrolls: null,
       tab: "overview", view: "runs", busy: 0, filter: "", answerDrafts: {}, settings: null,
       selectedOptions: {}, parked: {}, batchFeedback: "",
       reflectDrafts: {},
@@ -500,7 +500,11 @@ export function renderDashboard(): string {
       if (!silent) loading(true);
       try {
         var init = options || {};
-        init.headers = Object.assign({"X-Harness-Token":token}, init.headers || {});
+        // The server also accepts an HttpOnly session cookie set when the
+        // tokenized URL was first opened, so a refresh that lost sessionStorage
+        // still authenticates. Send the header only when we actually have one.
+        init.credentials = "same-origin";
+        init.headers = Object.assign(token ? {"X-Harness-Token":token} : {}, init.headers || {});
         if (init.body && typeof init.body !== "string") {
           init.headers["Content-Type"] = "application/json";
           init.body = JSON.stringify(init.body);
@@ -516,6 +520,7 @@ export function renderDashboard(): string {
       try {
         var data = await api("/api/bootstrap");
         state.bootstrap = data; state.runs = data.runs || [];
+        state.unreadableRuns = data.unreadableRuns || [];
         $("projectName").textContent = data.project.name;
         if (!keepSelection && !state.selected && state.runs.length) state.selected = state.runs[0].runId;
         if (state.selected && !state.runs.some(function (run) { return run.runId === state.selected; })) state.selected = state.runs[0] ? state.runs[0].runId : null;
@@ -523,7 +528,13 @@ export function renderDashboard(): string {
         if (state.view === "knowledge") renderKnowledge();
         else if (state.selected) await loadRun(state.selected, false);
         else renderHome();
-      } catch (error) { toast(error.message, true); renderAuthError(error.message); }
+      } catch (error) {
+        toast(error.message, true);
+        // A blank shell reads as data loss. Name the failure instead, and say
+        // whether the runs on disk are affected (they are not).
+        if (/token|401|denied/i.test(String(error.message))) renderAuthError(error.message);
+        else renderLoadError("The dashboard could not load this workspace.", error.message);
+      }
     }
     async function loadRun(runId, showSpinner, silent, preserveEditor) {
       var sameRun = state.selected === runId;
@@ -543,7 +554,12 @@ export function renderDashboard(): string {
         renderRun();
         state.signature = detail.signature || "";
         if (silent) restoreScrolls();
-      } catch (error) { toast(error.message, true); }
+      } catch (error) {
+        toast(error.message, true);
+        // A background poll must not blow away a good render; only a foreground
+        // load (refresh, run switch) is allowed to replace the content area.
+        if (!silent) renderLoadError("This run could not be loaded.", error.message);
+      }
     }
 
     function renderSidebar() {
@@ -557,6 +573,11 @@ export function renderDashboard(): string {
         var progress = run.taskProgress && run.taskProgress.total ? run.taskProgress.completed + "/" + run.taskProgress.total : phaseLabel(phase);
         return '<button class="run-item ' + (run.runId === state.selected && state.view === "runs" ? "active" : "") + '" data-run="' + attr(run.runId) + '"><div class="run-title"><i class="dot ' + attr(phase) + '"></i><span>' + esc(title) + '</span></div><div class="run-meta"><span>' + esc(progress) + '</span><span>' + esc(ago(run.updatedAt)) + '</span></div></button>';
       }).join("") : '<div class="empty" style="padding:25px 10px">No matching runs</div>';
+      // Unreadable runs are listed, not hidden: a run silently missing from this
+      // list is indistinguishable from a run the harness lost.
+      (state.unreadableRuns || []).forEach(function (failure) {
+        runList.innerHTML += '<div class="run-item" style="cursor:default" title="' + attr(failure.error) + '"><div class="run-title"><i class="dot blocked"></i><span>' + esc(shortTitle(failure.runId, 62)) + '</span></div><div class="run-meta"><span>unreadable state.json</span></div></div>';
+      });
       runList.scrollTop = scrollTop;
     }
 
@@ -1000,6 +1021,13 @@ export function renderDashboard(): string {
       } catch (error) {
         $("knowledgeStatus").innerHTML = '<div class="muted">Retrieval configuration unavailable.</div>';
       }
+    }
+
+    function renderLoadError(headline, message) {
+      $("crumbTitle").textContent = "Error"; $("topActions").innerHTML = "";
+      $("content").innerHTML = '<div class="hero"><div><div class="eyebrow">Load failed</div><h1>' + esc(headline) + '</h1><p class="hero-copy">' + esc(message) + '</p><p class="muted">Runs are stored on disk under <code>.agent-harness/runs/</code> and are not affected by this failure. Retry, or check the terminal running <code>agent-harness ui</code>.</p><p><button class="btn primary" id="retryLoadBtn">Retry</button></p></div></div>';
+      var retry = $("retryLoadBtn");
+      if (retry) retry.addEventListener('click', function () { bootstrap(true); });
     }
 
     function renderAuthError(message) {
@@ -1484,7 +1512,7 @@ export function renderDashboard(): string {
     setInterval(function () {
       if (document.visibilityState !== 'visible' || !state.bootstrap) return;
       api('/api/bootstrap', undefined, true).then(function (data) {
-        state.bootstrap = data; state.runs = data.runs || []; renderSidebar();
+        state.bootstrap = data; state.runs = data.runs || []; state.unreadableRuns = data.unreadableRuns || []; renderSidebar();
         if (state.view === 'runs' && state.selected) loadRun(state.selected,false,true,true);
       }).catch(function () {});
     }, 1800);

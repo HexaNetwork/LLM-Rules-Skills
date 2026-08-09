@@ -12,6 +12,8 @@ import type { HarnessConfig } from "./config.js";
 
 const LOCK_STALE_MS = 30 * 60 * 1000;
 
+export type RunLoadFailure = { runId: string; error: string };
+
 type LockBody = {
   pid: number;
   hostname: string;
@@ -52,22 +54,48 @@ export class RunStore {
   }
 
   async load(runId: string): Promise<RunState> {
-    const raw = await readFile(path.join(this.runDirectory(runId), "state.json"), "utf8");
+    const raw = await readStable(path.join(this.runDirectory(runId), "state.json"));
     return RunStateSchema.parse(JSON.parse(raw));
   }
 
   async list(): Promise<RunState[]> {
+    return (await this.listWithFailures()).states;
+  }
+
+  /**
+   * Runs that cannot be loaded are reported rather than dropped: a run whose
+   * state.json is unreadable or schema-invalid would otherwise vanish from the
+   * dashboard with no diagnostic, which reads as data loss.
+   */
+  async listWithFailures(): Promise<{ states: RunState[]; failures: RunLoadFailure[] }> {
     await this.initialize();
     const directory = path.join(this.root, "runs");
     const entries = await readdir(directory, { withFileTypes: true });
-    const states = await Promise.all(
+    const loaded = await Promise.all(
       entries
         .filter((entry) => entry.isDirectory())
-        .map((entry) => this.load(entry.name).catch(() => undefined)),
+        .map(async (entry) => {
+          try {
+            return { state: await this.load(entry.name) };
+          } catch (error) {
+            return {
+              failure: {
+                runId: entry.name,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            };
+          }
+        }),
     );
-    return states
+    const states = loaded
+      .map((entry) => entry.state)
       .filter((state): state is RunState => state != null)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const failures = loaded
+      .map((entry) => entry.failure)
+      .filter((failure): failure is RunLoadFailure => failure != null)
+      .sort((a, b) => a.runId.localeCompare(b.runId));
+    return { states, failures };
   }
 
   async writeState(state: RunState): Promise<RunState> {
@@ -134,7 +162,7 @@ export class RunStore {
   }
 
   async readText(runId: string, relativePath: string): Promise<string> {
-    return readFile(this.resolveInsideRun(runId, relativePath), "utf8");
+    return readStable(this.resolveInsideRun(runId, relativePath));
   }
 
   async readJson(runId: string, relativePath: string): Promise<unknown> {
@@ -312,19 +340,41 @@ async function atomicJson(target: string, value: unknown): Promise<void> {
   await replaceFile(temporary, target);
 }
 
-async function replaceFile(source: string, target: string): Promise<void> {
+const SHARING_VIOLATION_CODES = ["EACCES", "EBUSY", "EPERM"];
+const FS_RETRY_ATTEMPTS = 12;
+
+/**
+ * Windows has no atomic replace that tolerates an open reader: a rename fails
+ * with EPERM while someone reads the target, and a read fails the same way
+ * while the rename lands. Both sides retry, and the backoff is jittered — a
+ * fixed schedule lets a busy reader and a busy writer stay in lockstep and
+ * starve each other until one exhausts its budget.
+ */
+async function retryOnSharingViolation<T>(operation: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      await rename(source, target);
-      return;
+      return await operation();
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (!(["EACCES", "EBUSY", "EPERM"].includes(code ?? "")) || attempt >= 7) {
+      if (!SHARING_VIOLATION_CODES.includes(code ?? "") || attempt >= FS_RETRY_ATTEMPTS) {
         throw error;
       }
-      await new Promise((resolve) => setTimeout(resolve, 5 * 2 ** attempt));
+      const backoff = Math.min(5 * 2 ** attempt, 200);
+      await new Promise((resolve) => setTimeout(resolve, backoff * (0.5 + Math.random())));
     }
   }
+}
+
+/**
+ * Reader-side mirror of replaceFile's retry. ENOENT is not retried: callers
+ * depend on it to mean the artifact genuinely does not exist.
+ */
+async function readStable(target: string): Promise<string> {
+  return retryOnSharingViolation(() => readFile(target, "utf8"));
+}
+
+async function replaceFile(source: string, target: string): Promise<void> {
+  await retryOnSharingViolation(() => rename(source, target));
 }
 
 async function acquireLockFile(

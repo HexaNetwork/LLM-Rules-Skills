@@ -203,7 +203,19 @@ describe("dashboard document", () => {
 
     expect(html).toContain("function waitForJob(runId)");
     expect(html).toContain("job.status === 'failed'");
-    expect(html).toContain("window.scrollTo(0, 0)");
+    expect(html).toContain("function scrollMainToTop()");
+    expect(html).toContain("if (action === 'answer') scrollMainToTop()");
+    expect(html).toContain("pinScrollTop");
+    // Reflect confirm / grill batch can queue a long job — scroll must not wait for it.
+    const earlyScroll = html.indexOf("if (action === 'answer') scrollMainToTop()");
+    const waitForJobCall = html.indexOf("result = await waitForJob(state.selected)");
+    expect(earlyScroll).toBeGreaterThan(-1);
+    expect(waitForJobCall).toBeGreaterThan(-1);
+    expect(earlyScroll).toBeLessThan(waitForJobCall);
+    // Grill batch footer is at the bottom of a tall card — scroll before the POST.
+    const batchScroll = html.indexOf("scrollMainToTop();\n      runAction('answer'");
+    expect(batchScroll).toBeGreaterThan(-1);
+    expect(html).toContain("state.scrolls.windowY = 0");
     expect(html).toContain("Action completed");
   });
 
@@ -222,6 +234,8 @@ describe("dashboard document", () => {
     expect(html).toContain('min-height:220px');
     expect(html).toContain("reflect-goal");
     expect(html).toContain("<textarea data-reflect-list=");
+    expect(html).toContain('data-reflect-index="\' + index + \'" rows="1"');
+    expect(html).toContain(".reflect-list-row textarea { flex:1; min-height:42px;");
     expect(html).not.toContain('<input type="text" value="\' + attr(value)');
   });
 

@@ -145,7 +145,7 @@ export function renderDashboard(): string {
     .reflect-fields textarea.reflect-goal { min-height:100px; }
     .reflect-list-section h3 { margin:0 0 6px; font-size:12px; color:var(--faint); text-transform:uppercase; letter-spacing:.09em; }
     .reflect-list-row { display:flex; gap:8px; align-items:flex-start; margin-bottom:7px; }
-    .reflect-list-row textarea { flex:1; min-height:56px; resize:vertical; overflow:hidden; }
+    .reflect-list-row textarea { flex:1; min-height:42px; resize:vertical; overflow:hidden; }
     .reflect-list-row button { flex:none; margin-top:4px; }
     .batch-question.clarifying { opacity:1; }
     .batch-clarify-box { margin-top:8px; }
@@ -368,7 +368,10 @@ export function renderDashboard(): string {
       reflectDrafts: {},
       noteText: "", noteAsUnknown: false,
       elapsedTimer: null,
-      cancelling: false
+      cancelling: false,
+      // After reflect confirm / grill batch submit, keep the viewport at the top
+      // even if a silent poll captures scroll mid-flight.
+      pinScrollTop: false
     };
     var $ = function (id) { return document.getElementById(id); };
 
@@ -470,7 +473,13 @@ export function renderDashboard(): string {
       });
       var runList = $("runList");
       if (runList) nodes.runList = { top: runList.scrollTop, left: runList.scrollLeft };
-      state.scrolls = { windowX: window.scrollX, windowY: window.scrollY, nodes: nodes, details: details };
+      if (state.pinScrollTop) window.scrollTo(0, 0);
+      state.scrolls = {
+        windowX: state.pinScrollTop ? 0 : window.scrollX,
+        windowY: state.pinScrollTop ? 0 : window.scrollY,
+        nodes: nodes,
+        details: details
+      };
     }
     function restoreScrolls() {
       var scrolls = state.scrolls;
@@ -485,7 +494,23 @@ export function renderDashboard(): string {
         var node = document.querySelector('[data-details-key="' + key.replace(/"/g, "") + '"]');
         if (node) node.open = scrolls.details[key];
       });
-      if (scrolls.windowY != null) window.scrollTo(scrolls.windowX || 0, scrolls.windowY);
+      if (state.pinScrollTop) window.scrollTo(0, 0);
+      else if (scrolls.windowY != null) window.scrollTo(scrolls.windowX || 0, scrolls.windowY);
+    }
+    // Answers (reflect confirm + grill batch) leave the user deep in a tall form.
+    // Scroll immediately — do not wait for the follow-on job — and pin restored
+    // window coords so a silent poll cannot jump them back down mid-work.
+    function scrollMainToTop() {
+      state.pinScrollTop = true;
+      window.scrollTo(0, 0);
+      var content = $("content");
+      if (content) content.scrollTop = 0;
+      if (state.scrolls) {
+        state.scrolls.windowX = 0;
+        state.scrolls.windowY = 0;
+      } else {
+        state.scrolls = { windowX: 0, windowY: 0, nodes: {}, details: {} };
+      }
     }
     function toast(message, error) {
       var node = $("toast"); node.textContent = message; node.className = "toast show" + (error ? " error" : "");
@@ -825,7 +850,7 @@ export function renderDashboard(): string {
 
     function reflectListSection(key, label, items) {
       var rows = items.map(function (value, index) {
-        return '<div class="reflect-list-row"><textarea data-reflect-list="' + attr(key) + '" data-reflect-index="' + index + '" rows="2">' + esc(value) + '</textarea><button type="button" class="btn small ghost" data-reflect-remove="' + attr(key) + ':' + index + '">Remove</button></div>';
+        return '<div class="reflect-list-row"><textarea data-reflect-list="' + attr(key) + '" data-reflect-index="' + index + '" rows="1">' + esc(value) + '</textarea><button type="button" class="btn small ghost" data-reflect-remove="' + attr(key) + ':' + index + '">Remove</button></div>';
       }).join("");
       return '<div class="reflect-list-section"><h3>' + esc(label) + '</h3>' + rows + '<button type="button" class="btn small" data-reflect-add="' + attr(key) + '">+ Add ' + esc(label.toLowerCase()) + '</button></div>';
     }
@@ -1147,22 +1172,25 @@ export function renderDashboard(): string {
           await bootstrap(true);
           return;
         }
+        // Reflect confirm / grill batch can queue a long agent job; scroll before
+        // waiting so the thinking strip at the top is visible while it works.
+        if (action === 'answer') scrollMainToTop();
         loading(true);
         var result;
         try { result = await waitForJob(state.selected); }
         finally { loading(false); }
         await bootstrap(true);
+        if (action === 'answer') scrollMainToTop();
+        state.pinScrollTop = false;
         if (!result.ok) {
           toast(result.error, true);
           return;
         }
         toast(action === 'answer' ? 'Answer recorded' : 'Action completed');
-        if (action === 'answer') {
-          window.scrollTo(0, 0);
-          var content = $("content");
-          if (content) content.scrollTop = 0;
-        }
-      } catch (error) { toast(error.message,true); }
+      } catch (error) {
+        state.pinScrollTop = false;
+        toast(error.message,true);
+      }
     }
 
     async function openArtifact(file) {
@@ -1419,6 +1447,8 @@ export function renderDashboard(): string {
       }
       if (!answers.length && !parked.length && !clarifications.length) { setBatchFeedback('Answer, skip, or clarify at least one question.'); return; }
       ids.forEach(function (qid) { delete state.selectedOptions[qid]; delete state.parked[qid]; delete state.answerDrafts[qid]; delete state.clarifications[qid]; });
+      // Immediate — the footer sits at the bottom of a tall batch card.
+      scrollMainToTop();
       runAction('answer', { answers: answers, parked: parked, clarifications: clarifications });
     }
     function acceptAllRecommendations() {

@@ -2,6 +2,14 @@
 
 Install Node, build this checkout, then deploy the harness into a target project folder.
 
+**Interactive wizard (recommended):** from Git Bash or WSL, run:
+
+```bash
+bash scripts/install-agent-harness.sh
+```
+
+It walks through Node, build, Cursor API key (stored as a Windows User environment variable — not `.env`), deploy options, and the dashboard. Manual steps below match the same flow.
+
 ## Requirements
 
 - **Node.js 20.3+** (required; there is no non-Node CLI)

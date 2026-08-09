@@ -212,9 +212,9 @@ export function renderDashboard(): string {
     .event-name { font-weight:650; }
     .event-time { color:var(--faint); font-size:11px; margin-top:2px; }
     .session-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }
-    .session { border:1px solid var(--line-soft); background:var(--surface); border-radius:13px; padding:15px; }
+    .session { border:1px solid var(--line-soft); background:var(--surface); border-radius:13px; padding:15px; min-width:0; overflow-wrap:anywhere; }
     .session-role { color:var(--purple); font-weight:750; }
-    .session-model { color:var(--faint); font-size:11px; margin-top:3px; }
+    .session-model { color:var(--faint); font-size:11px; margin-top:3px; overflow-wrap:anywhere; }
     dialog.session-dialog { width:min(1280px,calc(100vw - 30px)); max-width:none; height:min(900px,calc(100vh - 30px)); max-height:none; }
     dialog.session-dialog[open] { display:flex; flex-direction:column; }
     .session-dialog .dialog-head { flex:none; }

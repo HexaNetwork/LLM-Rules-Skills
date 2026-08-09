@@ -451,4 +451,14 @@ describe("dashboard document", () => {
     expect(html).toContain("if (!error)");
     expect(html).toContain('toastDismiss").hidden = !error');
   });
+
+  it("keeps long unbroken tokens inside session cards (no horizontal spill)", () => {
+    const html = renderDashboard();
+    const sessionRule = html.match(/\.session\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    // Grid items default to min-width:auto, so unbroken package/path tokens can
+    // force the card wider than its track and paint outside the border.
+    expect(sessionRule).toMatch(/min-width:\s*0/);
+    expect(sessionRule).toMatch(/overflow-wrap:\s*(anywhere|break-word)/);
+  });
 });

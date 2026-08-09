@@ -18,6 +18,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "Human answers and operator notes are authoritative and used verbatim — never second-guess or soften them.",
   ],
   planner: [
+    "Do not edit the working tree. Produce the task list only.",
     "Produce narrow, complete tracer-bullet slices, not horizontal layers.",
     "Each task must be verifiable in one fresh agent context.",
     "Declare only genuine blocking edges and use the agreed domain vocabulary.",

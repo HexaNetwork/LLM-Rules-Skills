@@ -522,6 +522,7 @@ export function renderDashboard(): string {
         state.bootstrap = data; state.runs = data.runs || [];
         state.unreadableRuns = data.unreadableRuns || [];
         $("projectName").textContent = data.project.name;
+        $("projectName").title = data.project.root || "";
         if (!keepSelection && !state.selected && state.runs.length) state.selected = state.runs[0].runId;
         if (state.selected && !state.runs.some(function (run) { return run.runId === state.selected; })) state.selected = state.runs[0] ? state.runs[0].runId : null;
         renderSidebar();
@@ -961,7 +962,8 @@ export function renderDashboard(): string {
       var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");
       var briefBody = brief ? (brief.confirmed || brief.draft) : "The reflector will restate the idea for your confirmation before grilling begins.";
       html += '<div class="card two-thirds"><div class="card-label">' + esc(briefTitle) + '</div><pre class="brief-body" data-scroll-key="brief">' + esc(briefBody) + '</pre></div>';
-      html += '<div class="card third"><div class="card-label">Delivery</div><div class="muted">Branch</div><div style="margin:4px 0 13px"><code>' + esc(s.branchName || "Not created yet") + '</code></div><div class="muted">TDD</div><div style="margin-top:4px"><strong>' + (s.tasks.length ? (s.tasks.some(function(t){return t.tdd;}) ? "Enabled" : "Disabled") : (state.bootstrap.project.defaults.tdd ? "Default on" : "Default off")) + '</strong></div></div>';
+      var repoRoot = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.root) || "";
+      html += '<div class="card third"><div class="card-label">Delivery</div><div class="muted">Repository</div><div style="margin:4px 0 13px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div><div class="muted">Branch</div><div style="margin:4px 0 13px"><code>' + esc(s.branchName || "Not created yet") + '</code></div><div class="muted">TDD</div><div style="margin-top:4px"><strong>' + (s.tasks.length ? (s.tasks.some(function(t){return t.tdd;}) ? "Enabled" : "Disabled") : (state.bootstrap.project.defaults.tdd ? "Default on" : "Default off")) + '</strong></div></div>';
       html += '<div class="card"><div class="card-label">Recent activity</div><div class="timeline">' + (state.detail.events.slice(-10).reverse().map(renderEvent).join("") || '<div class="muted">No events yet.</div>') + '</div></div>';
       html += '</div>';
       $("tabBody").innerHTML = html;

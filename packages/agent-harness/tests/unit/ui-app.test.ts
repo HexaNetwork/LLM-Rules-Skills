@@ -48,6 +48,9 @@ describe("dashboard document", () => {
     expect(html).toContain("Context mode");
     expect(html).toContain("Project settings");
     expect(html).toContain("settingsBtn");
+    expect(html).toContain('projectName").title = data.project.root');
+    expect(html).toContain(">Repository</div>");
+    expect(html).toContain("bootstrap.project.root");
     expect(html).toContain("data-setting-key");
     expect(html).toContain("Active runs keep their frozen configuration");
     expect(html).toContain("Thinking…");

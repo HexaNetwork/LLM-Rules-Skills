@@ -82,4 +82,9 @@ describe("prompt rendering", () => {
       "The diff is the primary evidence. Read the listed omitted files from disk before commenting on them.",
     );
   });
+
+  it("tells the planner not to edit the working tree", () => {
+    const plannerPacket: WorkPacket = { ...packet, role: "planner" };
+    expect(renderPrompt(plannerPacket)).toContain("Do not edit the working tree. Produce the task list only.");
+  });
 });

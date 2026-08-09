@@ -258,7 +258,7 @@ True parallel runs need isolated worktrees; that remains deferred under [Paralle
 
 Agents never run git. The harness:
 
-- refuses to create a run branch from a dirty working tree;
+- refuses to create a run branch from a dirty working tree (checked before the planner runs; a plan already persisted is reused on retry instead of re-invoking);
 - creates or reuses `git.branchPrefix/<runId>` from the configured local base branch;
 - requires every committed path to have been reported by the task worker;
 - asks the small model for commit and pull-request text, with a deterministic fallback;

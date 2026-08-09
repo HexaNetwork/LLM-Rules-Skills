@@ -1285,6 +1285,20 @@ export class HarnessEngine {
   }
 
   private async plan(state: RunState): Promise<RunState> {
+    // Dirty-tree + run-branch guard BEFORE the planner. Previously this ran after
+    // invoke, so a dirty package-lock (or similar) burned a full plan on every retry.
+    const branchName = await this.git.ensureRunBranch(state.runId);
+
+    // Idempotent resume: a prior plan.created may have persisted tasks before a
+    // post-planner workspace block. Do not re-invoke the planner.
+    if (state.tasks.length > 0) {
+      return this.store.record(
+        { ...state, branchName: branchName ?? state.branchName, phase: "executing" },
+        "plan.resumed",
+        { tasks: state.tasks.length },
+      );
+    }
+
     const output = await this.agents.invoke({
       runId: state.runId,
       role: "planner",
@@ -1315,7 +1329,25 @@ export class HarnessEngine {
     });
     const tasks = materializeTasks(output, this.config);
     assertAcyclic(tasks);
-    const branchName = await this.git.ensureRunBranch(state.runId);
+
+    // Planner sessions can still dirty the tree; persist the plan first so a
+    // workspace block does not discard it, then refuse to enter executing.
+    if (this.config.git.enabled) {
+      const dirty = await this.git.changedFiles();
+      if (dirty.length > 0) {
+        await this.store.record(
+          { ...state, tasks, branchName, phase: "planning" },
+          "plan.created",
+          { tasks: tasks.length, tdd: tasks.filter((task) => task.tdd).length },
+        );
+        throw new HarnessFailure(
+          `Refusing to start on a dirty working tree. Commit or stash first: ${dirty.join(", ")}`,
+          "workspace",
+          true,
+        );
+      }
+    }
+
     return this.store.record(
       { ...state, tasks, branchName, phase: "executing" },
       "plan.created",

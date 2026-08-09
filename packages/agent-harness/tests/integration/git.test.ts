@@ -309,6 +309,19 @@ describe("harness-owned git", () => {
     const disabled = new GitService(fixtureConfig(root, { git: { enabled: false } as never }));
     expect(await disabled.currentBranch()).toBeUndefined();
   });
+
+  it("listLocalBranches returns sorted local names, and empty when git is disabled", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await git(root, "branch", "develop");
+    await git(root, "branch", "feature/x");
+
+    const enabled = new GitService(fixtureConfig(root, { git: { enabled: true } as never }));
+    expect(await enabled.listLocalBranches()).toEqual(["develop", "feature/x", "main"]);
+
+    const disabled = new GitService(fixtureConfig(root, { git: { enabled: false } as never }));
+    expect(await disabled.listLocalBranches()).toEqual([]);
+  });
 });
 
 describe("working-tree divergence guard", () => {

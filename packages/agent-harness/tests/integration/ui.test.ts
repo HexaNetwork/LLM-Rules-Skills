@@ -1056,6 +1056,50 @@ describe("central dashboard", () => {
       "**/Source/App/obj/Debug/**",
     );
   });
+
+  it("exposes local branches on bootstrap and freezes baseBranch overrides into new runs", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await git(root, "branch", "develop");
+
+    const config = fixtureConfig(root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
+      },
+    });
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+
+    const bootstrap = await request(ui, "/api/bootstrap");
+    const bootstrapBody = (await bootstrap.json()) as {
+      project: { git: { enabled: boolean; baseBranch: string; branches: string[] } };
+    };
+    expect(bootstrapBody.project.git).toEqual({
+      enabled: true,
+      baseBranch: "main",
+      branches: ["develop", "main"],
+    });
+
+    const rejected = await request(ui, "/api/runs", {
+      method: "POST",
+      body: { idea: "Bad branch", baseBranch: "does-not-exist", tdd: false },
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.text()).toMatch(/Unknown local branch/i);
+
+    const created = await request(ui, "/api/runs", {
+      method: "POST",
+      body: { idea: "Start from develop", baseBranch: "develop", tdd: false },
+    });
+    expect(created.status).toBe(202);
+    const runId = ((await created.json()) as { run: { runId: string } }).run.runId;
+    const frozen = JSON.parse(
+      await readFile(path.join(root, ".agent-harness", "runs", runId, "config.json"), "utf8"),
+    ) as { git: { baseBranch: string } };
+    expect(frozen.git.baseBranch).toBe("develop");
+  });
 });
 
 async function initGitRepo(root: string): Promise<void> {

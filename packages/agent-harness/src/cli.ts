@@ -15,6 +15,7 @@ import {
   type HarnessConfig,
 } from "./config.js";
 import { HarnessEngine } from "./engine.js";
+import { GitService } from "./git.js";
 import {
   seedGlobalGuidance,
   withGlobalGuidanceSource,
@@ -208,6 +209,7 @@ program
   .option("--run-id <id>", "stable run id")
   .option("--config <path>", "config path")
   .option("--tdd <mode>", "override TDD for this run: on or off")
+  .option("--base-branch <name>", "override local base branch for this run")
   .option("--no-advance", "create artifacts without launching agents")
   .action(
     async (options: {
@@ -215,9 +217,10 @@ program
       runId?: string;
       config?: string;
       tdd?: string;
+      baseBranch?: string;
       advance: boolean;
     }) => {
-      const config = await resolvedConfig(options.config, options.tdd);
+      const config = await resolvedConfig(options.config, options.tdd, options.baseBranch);
       const engine = new HarnessEngine(config, { backend: createCursorBackend() });
       const idea = options.idea.startsWith("@")
         ? await readFile(path.resolve(options.idea.slice(1)), "utf8")
@@ -495,11 +498,28 @@ async function discoverDeploymentSources(project: string): Promise<string[]> {
   return found.length > 0 ? found : ["README.md", "docs"];
 }
 
-async function resolvedConfig(configPath: string | undefined, tdd: string | undefined): Promise<HarnessConfig> {
+async function resolvedConfig(
+  configPath: string | undefined,
+  tdd: string | undefined,
+  baseBranch?: string,
+): Promise<HarnessConfig> {
   const { config } = await loadConfig(configPath);
-  if (tdd == null) return config;
-  if (tdd !== "on" && tdd !== "off") throw new Error("--tdd must be 'on' or 'off'");
-  return { ...config, workflow: { ...config.workflow, tdd: tdd === "on" } };
+  let next = config;
+  if (tdd != null) {
+    if (tdd !== "on" && tdd !== "off") throw new Error("--tdd must be 'on' or 'off'");
+    next = { ...next, workflow: { ...next.workflow, tdd: tdd === "on" } };
+  }
+  if (baseBranch != null) {
+    if (!next.git.enabled) {
+      throw new Error("--base-branch cannot be set when git is disabled");
+    }
+    const branches = await new GitService(next).listLocalBranches();
+    if (!branches.includes(baseBranch)) {
+      throw new Error(`Unknown local branch: ${baseBranch}`);
+    }
+    next = { ...next, git: { ...next.git, baseBranch } };
+  }
+  return next;
 }
 
 async function runConfig(configPath: string | undefined, runId: string): Promise<HarnessConfig> {

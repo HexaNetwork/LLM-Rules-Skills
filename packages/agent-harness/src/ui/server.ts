@@ -224,6 +224,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
             models: projectConfig.models,
             agent: { provider: projectConfig.agent.provider, ...agentReadiness },
             graphify: { enabled: projectConfig.knowledge.graphify.enabled },
+            git: {
+              enabled: projectConfig.git.enabled,
+              baseBranch: projectConfig.git.baseBranch,
+              branches: await new GitService(projectConfig).listLocalBranches(),
+            },
             defaults: {
               tdd: projectConfig.workflow.tdd,
               push: projectConfig.git.push,
@@ -339,11 +344,14 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         const smallModel = optionalString(body.smallModel, "smallModel", 200);
         const capableModel = optionalString(body.capableModel, "capableModel", 200);
         const graphify = optionalBoolean(body.graphify, "graphify");
+        const baseBranchOverride = optionalString(body.baseBranch, "baseBranch", 200);
+        const baseBranch = await resolveBaseBranchOverride(projectConfig, baseBranchOverride);
         const runConfig = HarnessConfigSchema.parse({
           ...projectConfig,
           workflow: { ...projectConfig.workflow, tdd },
           git: {
             ...projectConfig.git,
+            baseBranch,
             push: push || openPullRequest,
             openPullRequest,
           },
@@ -1163,6 +1171,21 @@ function optionalStringArray(
     throw new HttpError(400, `${field} must be an array of strings`);
   }
   return value.map((item, index) => requiredString(item, `${field}[${index}]`, maxItemLength));
+}
+
+async function resolveBaseBranchOverride(
+  projectConfig: HarnessConfig,
+  baseBranch: string | undefined,
+): Promise<string> {
+  if (baseBranch == null) return projectConfig.git.baseBranch;
+  if (!projectConfig.git.enabled) {
+    throw new HttpError(400, "baseBranch cannot be set when git is disabled");
+  }
+  const branches = await new GitService(projectConfig).listLocalBranches();
+  if (!branches.includes(baseBranch)) {
+    throw new HttpError(400, `Unknown local branch: ${baseBranch}`);
+  }
+  return baseBranch;
 }
 
 function assertInside(root: string, target: string): void {

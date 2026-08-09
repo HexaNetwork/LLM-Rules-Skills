@@ -134,7 +134,7 @@ export function renderDashboard(): string {
     .thinking-dots i:nth-child(2) { animation-delay:.15s; }
     .thinking-dots i:nth-child(3) { animation-delay:.3s; }
     @keyframes thinking { 0%,60%,100% { opacity:.22; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
-    textarea, input[type=text], input[type=number] { width:100%; border:1px solid var(--line); border-radius:11px; color:var(--text); background:#0c0f12; padding:11px 13px; outline:none; resize:vertical; }
+    textarea, input[type=text], input[type=number], select { width:100%; border:1px solid var(--line); border-radius:11px; color:var(--text); background:#0c0f12; padding:11px 13px; outline:none; resize:vertical; }
     textarea:focus, input:focus { border-color:var(--lime-2); box-shadow:0 0 0 3px rgba(199,243,107,.07); }
     .answer-row { display:flex; gap:10px; align-items:flex-end; }
     .answer-row textarea { min-height:86px; }
@@ -336,6 +336,7 @@ export function renderDashboard(): string {
         <div class="form-feedback" id="newRunFeedback" hidden></div>
         <div class="field"><label for="ideaFile">Or load an idea file</label><input id="ideaFile" type="file" accept=".md,.txt,.json"></div>
         <div class="switch-row"><div><strong>Test-driven development</strong><div class="faint">Write and verify RED before implementation.</div></div><input id="tdd" type="checkbox"></div>
+        <div class="field" id="baseBranchField" hidden><label for="baseBranch">Start from branch</label><select id="baseBranch"></select><small class="faint">Cuts the harness branch from this local branch; PRs target it. Defaults to the project base branch.</small></div>
         <details><summary>Advanced run settings</summary><div style="padding-top:14px">
           <div class="columns"><div class="field"><label for="smallModel">Small model</label><input id="smallModel" type="text"></div><div class="field"><label for="capableModel">Capable model</label><input id="capableModel" type="text"></div></div>
           <div class="switch-row"><div><strong>Use Graphify</strong><div class="faint">Prepare and query structural code context for this run.</div></div><input id="graphify" type="checkbox"></div>
@@ -1878,6 +1879,8 @@ export function renderDashboard(): string {
       setNewRunFeedback('Creating the durable run and queuing the reflector…', false);
       try {
         var body = { idea:$("idea").value, tdd:$("tdd").checked, graphify:$("graphify").checked, push:$("push").checked, openPullRequest:$("openPr").checked, smallModel:$("smallModel").value || undefined, capableModel:$("capableModel").value || undefined };
+        var baseBranchSelect = $("baseBranch");
+        if (baseBranchSelect && !baseBranchSelect.disabled && baseBranchSelect.value) body.baseBranch = baseBranchSelect.value;
         var data = await api('/api/runs',{method:'POST',body:body});
         $("newRunDialog").close(); event.target.reset(); state.selected = data.run.runId; state.tab = 'overview'; toast('Run created and queued'); await bootstrap(true);
       } catch (error) { setNewRunFeedback(error.message, true); toast(error.message,true); }
@@ -1941,8 +1944,35 @@ export function renderDashboard(): string {
       $("graphify").checked = state.bootstrap.project.graphify && state.bootstrap.project.graphify.enabled === true;
       $("smallModel").value = state.bootstrap.project.models.small;
       $("capableModel").value = state.bootstrap.project.models.capable;
+      fillBaseBranchSelect();
     }
-    function openNewRun() {
+    function fillBaseBranchSelect() {
+      var field = $("baseBranchField");
+      var select = $("baseBranch");
+      var git = state.bootstrap && state.bootstrap.project ? state.bootstrap.project.git : null;
+      var branches = git && Array.isArray(git.branches) ? git.branches : [];
+      var enabled = !!(git && git.enabled && branches.length);
+      if (!enabled) {
+        field.hidden = true;
+        select.disabled = true;
+        select.innerHTML = "";
+        return;
+      }
+      var preferred = git.baseBranch;
+      select.innerHTML = branches.map(function (branch) {
+        return '<option value="' + attr(branch) + '"' + (branch === preferred ? ' selected' : '') + '>' + esc(branch) + '</option>';
+      }).join('');
+      select.disabled = false;
+      field.hidden = false;
+    }
+    async function openNewRun() {
+      try {
+        var data = await api("/api/bootstrap", undefined, true);
+        if (data && data.project) {
+          if (!state.bootstrap) state.bootstrap = data;
+          else state.bootstrap.project = data.project;
+        }
+      } catch (_error) {}
       applyDefaults();
       var agent = state.bootstrap && state.bootstrap.project ? state.bootstrap.project.agent : undefined;
       if (agent && agent.ready === false) {

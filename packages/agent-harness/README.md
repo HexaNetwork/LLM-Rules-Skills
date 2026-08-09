@@ -265,6 +265,8 @@ Agents never run git. The harness:
 - optionally pushes and opens a pull request with `gh`;
 - never auto-merges.
 
+New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI `--base-branch`) can override the starting/`--base` branch for that run only; the project default remains `git.baseBranch`.
+
 ### Preflight commit
 
 A dirty tree at `start()` blocks by default (`blockedFrom: "new"`), with the offending paths in the failure message. Resolving it by committing is available two ways:

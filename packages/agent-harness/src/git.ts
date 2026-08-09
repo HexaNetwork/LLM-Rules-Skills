@@ -58,6 +58,21 @@ export class GitService {
     return branch === "" ? undefined : branch;
   }
 
+  /** Local branch names (`refs/heads/`), sorted. Empty when git is disabled. */
+  async listLocalBranches(): Promise<string[]> {
+    if (!this.config.git.enabled) return [];
+    const result = await this.git(
+      ["for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+      true,
+    );
+    if (result.exitCode !== 0) return [];
+    return result.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  }
+
   async changedFiles(): Promise<string[]> {
     if (!this.config.git.enabled) return [];
     const { paths } = await this.porcelainStatus();

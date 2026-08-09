@@ -29,6 +29,8 @@ npx agent-harness status --run-id <id>
 
 Set `CURSOR_API_KEY` for agent execution. Generated run state is local under `.agent-harness/` and should remain gitignored.
 
-For a step-by-step install (Node, build, API key, deploy into another folder, UI), see [INSTALL.md](INSTALL.md) or run the interactive wizard: `bash scripts/install-agent-harness.sh`.
+For a step-by-step install (Node, build, API key, deploy into another folder, UI), see [INSTALL.md](INSTALL.md). On Windows, double-click or run `scripts\Install-AgentHarness.cmd` (or `.\scripts\install-agent-harness.ps1`). Bash alternative: `bash scripts/install-agent-harness.sh`.
+
+Day-to-day: `scripts\Launch-AgentHarness.cmd` (or `.\scripts\launch-agent-harness.ps1 -Project <path>`; bash: `bash scripts/launch-agent-harness.sh <path>`) pulls this checkout, rebuilds, and starts the dashboard.
 
 See [the package guide](packages/agent-harness/README.md) and [`/harness-run`](General/skills/harness-run/SKILL.md).

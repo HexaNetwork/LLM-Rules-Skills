@@ -2,13 +2,25 @@
 
 Install Node, build this checkout, then deploy the harness into a target project folder.
 
-**Interactive wizard (recommended):** from Git Bash or WSL, run:
+**Interactive wizard (recommended on Windows):** double-click or run from this checkout:
+
+```text
+scripts\Install-AgentHarness.cmd
+```
+
+That opens PowerShell with `-ExecutionPolicy Bypass` and runs `scripts\install-agent-harness.ps1`. It walks through Node, build, Cursor API key (stored as a Windows User environment variable — not `.env`), deploy options, and the dashboard.
+
+Alternatives:
+
+```powershell
+.\scripts\install-agent-harness.ps1
+```
 
 ```bash
 bash scripts/install-agent-harness.sh
 ```
 
-It walks through Node, build, Cursor API key (stored as a Windows User environment variable — not `.env`), deploy options, and the dashboard. Manual steps below match the same flow.
+Manual steps below match the same flow.
 
 ## Requirements
 
@@ -59,7 +71,7 @@ npm.cmd install
 npm.cmd run build
 ```
 
-Or use **Command Prompt** (`cmd.exe`) instead of PowerShell.
+Or use **Command Prompt** (`cmd.exe`) instead of PowerShell. The `.cmd` install/launch wrappers already bypass script policy for the wizard scripts.
 
 ## 2. Get this repo and build
 
@@ -87,7 +99,7 @@ Persist for your Windows user (new terminals pick it up):
 [System.Environment]::SetEnvironmentVariable("CURSOR_API_KEY", "your-key-here", "User")
 ```
 
-Restart any running harness/`ui` process after changing the key.
+Restart any running harness/`ui` process after changing the key. The install wizard can set the User env variable for you — it never writes the key to `.env`.
 
 ## 4. Deploy into a project folder
 
@@ -122,7 +134,25 @@ Useful flags:
 
 ## 5. Start the dashboard
 
-From the **target project** (the folder with `agent-harness.config.yaml`):
+**Launcher (pull + rebuild + ui):** double-click or run:
+
+```text
+scripts\Launch-AgentHarness.cmd
+```
+
+If you omit the project path, the launcher prompts for it. Scripted use:
+
+```powershell
+.\scripts\launch-agent-harness.ps1 -Project "C:\path\to\your-project"
+```
+
+```bash
+bash scripts/launch-agent-harness.sh "/path/to/your-project"
+```
+
+Or set `AGENT_HARNESS_PROJECT` and omit the path. Use `--no-pull` / `-NoPull` or `--no-build` / `-NoBuild` to skip steps.
+
+**Manual:** from the **target project** (the folder with `agent-harness.config.yaml`):
 
 ```powershell
 cd "C:\path\to\your-project"
@@ -154,7 +184,7 @@ Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`se
 | --- | --- |
 | `Cannot find module ...\dist\cli.js` | Run `npm install` and `npm run build` in the **LLM-Rules-Skills** checkout |
 | `node` / `npm` not recognized | Install Node 20.3+, then open a new terminal |
-| `npm.ps1 cannot be loaded` / ExecutionPolicy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or use `npm.cmd`, or run from `cmd.exe` |
+| `npm.ps1 cannot be loaded` / ExecutionPolicy | Use `scripts\Install-AgentHarness.cmd`, or `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or `npm.cmd` |
 | Dashboard access denied / `Invalid or missing dashboard token` | Close the tab, copy the **full** URL printed by the current `ui` process (including `?token=...`), and open that. Restarting `ui` invalidates the old token; an old tab or a bookmark without `?token=` will fail on Start reflect. |
 | Agent backend / missing API key | Set `CURSOR_API_KEY` in the same environment that runs the harness, then restart `ui` |
 | Config already exists | Redeploy with `--force`, or edit the existing `agent-harness.config.yaml` |

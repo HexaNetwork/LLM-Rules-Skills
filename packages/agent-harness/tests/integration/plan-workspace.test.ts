@@ -1,13 +1,7 @@
-import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { writeFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend, type AgentRequest } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
-import { fixtureConfig, fixtureRoot } from "../helpers.js";
-
-const exec = promisify(execFile);
+import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 
 const REFLECT_OUTPUT = {
   summary: "Restated greeting feature",
@@ -36,9 +30,24 @@ const PLAN_OUTPUT = {
 };
 
 describe("plan() workspace guard", () => {
+  let fixture: ProjectFixture | undefined;
+
+  afterEach(async () => {
+    if (fixture) {
+      await fixture.cleanup();
+      fixture = undefined;
+    }
+  });
+
   it("blocks on a dirty tree before invoking the planner", async () => {
-    const root = await fixtureRoot();
-    await initGitRepo(root);
+    fixture = await createProjectFixture({
+      config: {
+        git: { enabled: true } as never,
+        workflow: { tdd: false, maxStepsPerRun: 10 } as never,
+        agent: { promptBuilder: false } as never,
+      },
+    });
+    await fixture.initGit();
 
     const requests: AgentRequest[] = [];
     const backend = createFakeBackend({
@@ -54,15 +63,10 @@ describe("plan() workspace guard", () => {
       },
     });
 
-    const config = fixtureConfig(root, {
-      git: { enabled: true } as never,
-      workflow: { tdd: false, maxStepsPerRun: 10 } as never,
-      agent: { promptBuilder: false } as never,
-    });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new HarnessEngine(fixture.config, { backend });
     const planning = await reachPlanning(engine);
 
-    await writeFile(path.join(root, "package-lock.json"), "{}\n", "utf8");
+    await fixture.write("package-lock.json", "{}\n");
 
     const blocked = await engine.advance(planning.runId);
     expect(blocked.phase).toBe("blocked");
@@ -75,8 +79,14 @@ describe("plan() workspace guard", () => {
   });
 
   it("persists the plan when the planner dirties the tree, and retry skips re-planning", async () => {
-    const root = await fixtureRoot();
-    await initGitRepo(root);
+    fixture = await createProjectFixture({
+      config: {
+        git: { enabled: true } as never,
+        workflow: { tdd: false, maxStepsPerRun: 15 } as never,
+        agent: { promptBuilder: false } as never,
+      },
+    });
+    await fixture.initGit();
 
     let plannerCalls = 0;
     const backend = createFakeBackend({
@@ -88,17 +98,15 @@ describe("plan() workspace guard", () => {
       }),
       planner: async () => {
         plannerCalls += 1;
-        await writeFile(path.join(root, "package-lock.json"), `{"lockfileVersion":${plannerCalls}}\n`, "utf8");
+        await fixture!.write(
+          "package-lock.json",
+          `{"lockfileVersion":${plannerCalls}}\n`,
+        );
         return PLAN_OUTPUT;
       },
     });
 
-    const config = fixtureConfig(root, {
-      git: { enabled: true } as never,
-      workflow: { tdd: false, maxStepsPerRun: 15 } as never,
-      agent: { promptBuilder: false } as never,
-    });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new HarnessEngine(fixture.config, { backend });
     const planning = await reachPlanning(engine);
     const runId = planning.runId;
 
@@ -118,8 +126,8 @@ describe("plan() workspace guard", () => {
     expect(events.some((event) => event.type === "plan.created")).toBe(true);
 
     // Operator clears the dirty tree the planner left behind.
-    await git(root, "add", "--all");
-    await git(root, "commit", "-m", "chore: accept planner side effect");
+    await fixture.git("add", "--all");
+    await fixture.git("commit", "-m", "chore: accept planner side effect");
 
     await engine.retry(runId);
     // One step: plan.resumed → executing. Do not enter implementer work.
@@ -145,23 +153,11 @@ async function reachPlanning(engine: HarnessEngine) {
   const reflectId = state.activeQuestionId!;
   state = await engine.answer(state.runId, reflectId, "Confirmed brief: casual greeting.");
   expect(state.phase).toBe("grilling");
-  // One step only: grill → planning. A larger budget would continue into plan().
+  // Grill → grillReady gate (awaiting_input). Confirm without advancing into plan().
   state = await engine.advance(state.runId, 1);
+  expect(state.phase).toBe("awaiting_input");
+  expect(state.grillReady?.summary).toBeTruthy();
+  state = await engine.confirmGrill(state.runId);
   expect(state.phase).toBe("planning");
   return state;
-}
-
-async function initGitRepo(root: string): Promise<void> {
-  await git(root, "init");
-  await git(root, "config", "user.email", "harness@example.com");
-  await git(root, "config", "user.name", "Harness Test");
-  await writeFile(path.join(root, ".gitignore"), ".agent-harness/\n", "utf8");
-  await git(root, "add", "--all");
-  await git(root, "commit", "-m", "initial");
-  await git(root, "branch", "-M", "main");
-}
-
-async function git(cwd: string, ...args: string[]): Promise<string> {
-  const result = await exec("git", args, { cwd, windowsHide: true });
-  return result.stdout;
 }

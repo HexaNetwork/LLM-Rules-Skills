@@ -565,6 +565,13 @@ describe("central dashboard", () => {
       body: { action: "answer", questionId: question.id, answer: "Confirmed legacy shape." },
     });
     expect(answered.status).toBe(202);
+    detail = await waitForPhase(ui, runId, "awaiting_input");
+    expect(detail.state.grillReady?.summary).toBeTruthy();
+    const confirmed = await request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: { action: "confirm_grill" },
+    });
+    expect(confirmed.status).toBe(202);
     detail = await waitForPhase(ui, runId, "completed");
     expect(detail.state.tasks[0]?.status).toBe("done");
   });
@@ -810,6 +817,13 @@ describe("central dashboard", () => {
       },
     });
     expect(answered.status).toBe(202);
+    detail = await waitForPhase(ui, runId, "awaiting_input");
+    expect(detail.state.grillReady?.summary).toBeTruthy();
+    const confirmed = await request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: { action: "confirm_grill" },
+    });
+    expect(confirmed.status).toBe(202);
     detail = await waitForPhase(ui, runId, "completed");
 
     expect(detail.state.tasks[0]?.status).toBe("done");
@@ -1171,6 +1185,7 @@ async function waitForPhase(
     phase: string;
     activeQuestionId?: string;
     reflectBrief?: { draft?: string; confirmed?: string };
+    grillReady?: { summary?: string; readyAt?: string };
     questions: Array<{
       id: string;
       purpose?: string;

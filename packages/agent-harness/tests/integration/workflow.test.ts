@@ -9,7 +9,7 @@ import {
 } from "../../src/agent.js";
 import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { HarnessEngine } from "../../src/engine.js";
-import { fixtureConfig, fixtureRoot } from "../helpers.js";
+import { confirmGrillAndAdvance, fixtureConfig, fixtureRoot } from "../helpers.js";
 
 const REFLECT_OUTPUT = {
   summary: "Restated greeting feature",
@@ -114,6 +114,9 @@ describe("durable idea-to-feature workflow", () => {
 
     state = await engine.answer(state.runId, grillQuestion!.id, "Casual");
     state = await engine.advance(state.runId);
+    expect(state.phase).toBe("awaiting_input");
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await confirmGrillAndAdvance(engine, state.runId);
     expect(state.phase).toBe("completed");
     expect(state.grillResolutions.length).toBeGreaterThan(0);
     expect(state.tasks[0]?.status).toBe("done");
@@ -123,6 +126,84 @@ describe("durable idea-to-feature workflow", () => {
       "utf8",
     );
     expect(brief).toContain("Confirmed brief");
+  });
+
+  it("reopens grilling from the grillReady gate when feedback is provided", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, maxGrillQuestionsPerEpisode: 5 } as never,
+    });
+    let grillCalls = 0;
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => {
+        grillCalls += 1;
+        if (grillCalls === 1) {
+          return {
+            status: "ready_to_plan",
+            summary: "Seemed ready",
+            resolutions: [],
+            openUnknowns: [],
+          };
+        }
+        return {
+          status: "needs_input",
+          summary: "Need more after feedback",
+          questions: [FIRST_GRILL_QUESTION],
+          openUnknowns: [],
+        };
+      },
+      planner: () => ({
+        summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render greeting.",
+            acceptanceCriteria: ["Works"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+      }),
+      implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
+      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
+      "message-writer": () => ({ subject: "feat: greet", body: "ok" }),
+    });
+
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Greeting with reopen");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    state = await engine.advance(state.runId);
+    expect(state.phase).toBe("awaiting_input");
+    expect(state.grillReady?.summary).toBe("Seemed ready");
+
+    state = await engine.confirmGrill(state.runId, {
+      feedback: "Please also decide the greeting length",
+    });
+    expect(state.phase).toBe("grilling");
+    expect(state.grillReady).toBeUndefined();
+    expect(state.operatorNotes.some((note) => note.text.includes("greeting length"))).toBe(true);
+    expect(
+      state.openUnknowns.some(
+        (unknown) => unknown.status === "fog" && unknown.title.includes("greeting length"),
+      ),
+    ).toBe(true);
+
+    const events = await readFile(
+      path.join(root, ".agent-harness", "runs", state.runId, "events.jsonl"),
+      "utf8",
+    );
+    expect(events).toContain("grill.ready");
+    expect(events).toContain("grill.reopened");
+    expect(events).not.toContain("grill.completed");
+
+    state = await engine.advance(state.runId);
+    expect(state.phase).toBe("awaiting_input");
+    expect(state.activeQuestionId).toBeTruthy();
+    expect(grillCalls).toBe(2);
   });
 
   it("rolls the grill episode after the configured question block", async () => {
@@ -275,6 +356,8 @@ describe("durable idea-to-feature workflow", () => {
     );
     expect(events).toContain("grill.episode_stale_reset");
     state = await engine.advance(state.runId);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await confirmGrillAndAdvance(engine, state.runId);
     expect(["planning", "executing", "publishing", "completed"]).toContain(state.phase);
   });
 
@@ -513,6 +596,8 @@ describe("durable idea-to-feature workflow", () => {
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
     state = await engine.advance(state.runId);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await confirmGrillAndAdvance(engine, state.runId);
     expect(state.phase).toBe("completed");
 
     const packetFiles = await readdir(
@@ -624,6 +709,8 @@ describe("durable idea-to-feature workflow", () => {
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
     state = await engine.advance(state.runId);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await confirmGrillAndAdvance(engine, state.runId);
     expect(state.phase).toBe("blocked");
     expect(state.tasks[0]?.failure).toMatch(/test files/i);
     const events = await readFile(
@@ -685,8 +772,11 @@ describe("durable idea-to-feature workflow", () => {
     let state = await engine.start("Add greeting");
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
-    // grill + plan + writeTests + first implement; stop before repair retries exhaust.
-    state = await engine.advance(state.runId, 4);
+    // grill → grillReady gate, then plan + writeTests + first implement.
+    state = await engine.advance(state.runId, 1);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await engine.confirmGrill(state.runId);
+    state = await engine.advance(state.runId, 3);
     const task = state.tasks[0];
     expect(task?.step).toBe("implementing");
     expect(task?.evidence.some((entry) => entry.purpose === "guard:test-tamper")).toBe(true);
@@ -771,6 +861,8 @@ describe("durable idea-to-feature workflow", () => {
       { questionId: batchIds[2]!, answer: "Plain" },
     ]);
     state = await engine.advance(state.runId);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await confirmGrillAndAdvance(engine, state.runId);
 
     expect(state.phase).toBe("completed");
     expect(grillCalls).toBe(2);
@@ -844,6 +936,8 @@ describe("durable idea-to-feature workflow", () => {
     ]);
     expect(state.questions.find((q) => q.id === skipId)?.status).toBe("parked");
     state = await engine.advance(state.runId);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await confirmGrillAndAdvance(engine, state.runId);
 
     expect(state.phase).toBe("completed");
     expect(state.grillResolutions).toHaveLength(1);
@@ -929,6 +1023,8 @@ describe("durable idea-to-feature workflow", () => {
     ).toBe(true);
 
     state = await engine.advance(state.runId);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await confirmGrillAndAdvance(engine, state.runId);
     expect(state.phase).toBe("completed");
     expect(state.grillResolutions).toHaveLength(1);
     expect(state.grillResolutions[0]?.id).toBe(keepId);
@@ -1003,6 +1099,8 @@ describe("durable idea-to-feature workflow", () => {
     // One stale-reset event for the whole batch, not one per question.
     expect(events.match(/grill\.episode_stale_reset/g)?.length).toBe(1);
     state = await engine.advance(state.runId);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await confirmGrillAndAdvance(engine, state.runId);
     expect(["planning", "executing", "publishing", "completed"]).toContain(state.phase);
   });
 
@@ -1241,6 +1339,8 @@ describe("durable idea-to-feature workflow", () => {
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
     state = await engine.advance(state.runId);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await confirmGrillAndAdvance(engine, state.runId);
 
     expect(state.phase).toBe("completed");
     expect(implementerRequests).toHaveLength(2);
@@ -1374,8 +1474,12 @@ describe("durable idea-to-feature workflow", () => {
     let state = await engine.start("Add greeting");
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
-    // Stop after first review failure leaves the task needing repair with a session.
-    state = await engine.advance(state.runId, 5);
+    // grill → grillReady, then plan + implement + review failure → implementing repair.
+    state = await engine.advance(state.runId, 1);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await engine.confirmGrill(state.runId);
+    // plan + first implement + failed review leaves the task awaiting repair.
+    state = await engine.advance(state.runId, 4);
     expect(state.tasks[0]?.step).toBe("implementing");
     expect(state.tasks[0]?.implementerSession?.providerSessionId).toBe("impl-1");
     expect(implementerCalls).toBe(1);
@@ -1446,6 +1550,9 @@ describe("durable idea-to-feature workflow", () => {
     let state = await engine.start("Add greeting");
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, "Confirmed brief");
+    state = await engine.advance(state.runId, 1);
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await engine.confirmGrill(state.runId);
     state = await engine.advance(state.runId, 5);
     expect(state.tasks[0]?.implementerSession?.providerSessionId).toBeTruthy();
     const sessionId = state.tasks[0]!.implementerSession!.providerSessionId!;

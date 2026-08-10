@@ -2,22 +2,38 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { writeFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
+import {
+  createProjectFixture,
+  type ProjectFixture,
+} from "../testkit/project-fixture.js";
 
 const exec = promisify(execFile);
 
 describe("commitPreflight", () => {
-  it("branch-then-commit cuts the run branch from HEAD, commits onto it, and leaves the base branch untouched", async () => {
-    const root = await fixtureRoot();
-    await initGitRepo(root);
-    const baseHeadBefore = (await git(root, "rev-parse", "main")).trim();
-    await writeFile(path.join(root, "surprise.txt"), "untracked\n", "utf8");
+  let migratedFixture: ProjectFixture | undefined;
 
-    const config = fixtureConfig(root, { git: { enabled: true } as never });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+  afterEach(async () => {
+    if (migratedFixture) {
+      await migratedFixture.cleanup();
+      migratedFixture = undefined;
+    }
+  });
+
+  it("branch-then-commit cuts the run branch from HEAD, commits onto it, and leaves the base branch untouched", async () => {
+    migratedFixture = await createProjectFixture({
+      config: { git: { enabled: true } as never },
+    });
+    await migratedFixture.initGit();
+    const baseHeadBefore = (await migratedFixture.git("rev-parse", "main")).trim();
+    await migratedFixture.write("surprise.txt", "untracked\n");
+
+    const engine = new HarnessEngine(migratedFixture.config, {
+      backend: createFakeBackend({}),
+    });
     const blocked = await engine.start("Add a feature", "run-branch-first");
     expect(blocked.phase).toBe("blocked");
     expect(blocked.blockedFrom).toBe("new");
@@ -28,13 +44,15 @@ describe("commitPreflight", () => {
     expect(resumed.failure).toBeUndefined();
     expect(resumed.branchName).toBe("harness/run-branch-first");
 
-    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-branch-first");
-    expect((await git(root, "status", "--porcelain")).trim()).toBe("");
+    expect((await migratedFixture.git("branch", "--show-current")).trim()).toBe(
+      "harness/run-branch-first",
+    );
+    expect((await migratedFixture.git("status", "--porcelain")).trim()).toBe("");
 
-    const baseHeadAfter = (await git(root, "rev-parse", "main")).trim();
+    const baseHeadAfter = (await migratedFixture.git("rev-parse", "main")).trim();
     expect(baseHeadAfter).toBe(baseHeadBefore);
 
-    const subject = (await git(root, "log", "-1", "--format=%s")).trim();
+    const subject = (await migratedFixture.git("log", "-1", "--format=%s")).trim();
     expect(subject).toContain("run-branch-first");
   });
 

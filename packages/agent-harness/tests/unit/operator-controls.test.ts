@@ -73,6 +73,10 @@ describe("operator controls", () => {
     ]);
     state = await engine.advance(state.runId, 10);
     expect(state.phase).toBe("awaiting_input");
+    expect(state.grillReady?.summary).toBeTruthy();
+    state = await engine.confirmGrill(state.runId);
+    state = await engine.advance(state.runId, 10);
+    expect(state.phase).toBe("awaiting_input");
     expect(state.proposedInstalls).toHaveLength(1);
     expect(state.tasks).toHaveLength(2);
 

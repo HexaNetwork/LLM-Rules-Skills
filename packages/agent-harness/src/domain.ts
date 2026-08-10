@@ -137,6 +137,13 @@ export const GrillEpisodeSchema = z.object({
 });
 export type GrillEpisode = z.infer<typeof GrillEpisodeSchema>;
 
+/** Operator gate after the griller returns ready_to_plan; absent when not pending. */
+export const GrillReadyGateSchema = z.object({
+  summary: z.string().min(1),
+  readyAt: z.string(),
+});
+export type GrillReadyGate = z.infer<typeof GrillReadyGateSchema>;
+
 export const CommandEvidenceSchema = z.object({
   purpose: z.string(),
   command: z.string(),
@@ -293,6 +300,8 @@ export const RunStateSchema = z.object({
   // Last known working-tree fingerprint (HEAD + porcelain); divergence blocks advance.
   treeFingerprint: z.string().optional(),
   grillEpisode: GrillEpisodeSchema.optional(),
+  // Set when grilling finished; cleared by confirmGrill (continue or reopen).
+  grillReady: GrillReadyGateSchema.optional(),
   // Distinguishes a yielded run from one paused on human input.
   yieldedAt: z.string().optional(),
   // Finish the active task, then halt before starting the next frontier task.
@@ -523,3 +532,6 @@ export function createRunState(
     updatedAt: now,
   });
 }
+
+export * from "./domain/policies.js";
+export * from "./domain/transitions.js";

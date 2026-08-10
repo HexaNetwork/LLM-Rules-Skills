@@ -1,16 +1,24 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createRunState } from "../../src/domain.js";
 import { RunStore } from "../../src/store.js";
 import { LocalTracker } from "../../src/tracker.js";
-import { fixtureConfig, fixtureRoot } from "../helpers.js";
+import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 
 describe("local tracker", () => {
+  let fixture: ProjectFixture | undefined;
+
+  afterEach(async () => {
+    if (fixture) {
+      await fixture.cleanup();
+      fixture = undefined;
+    }
+  });
+
   it("writes the confirmed brief and grill resolutions", async () => {
-    const root = await fixtureRoot();
-    const config = fixtureConfig(root);
-    const store = new RunStore(config);
+    fixture = await createProjectFixture();
+    const store = new RunStore(fixture.config);
     await store.initialize();
     const now = new Date().toISOString();
     let state = createRunState("brief-test", "Ship billing", now);

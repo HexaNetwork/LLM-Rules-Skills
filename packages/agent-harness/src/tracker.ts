@@ -1,5 +1,4 @@
 import type { BuildTask, GrillResolution, OpenUnknown, RunState } from "./domain.js";
-import { HarnessFailure } from "./errors.js";
 import { RunStore } from "./store.js";
 
 export interface TrackerPort {
@@ -44,46 +43,7 @@ export class LocalTracker implements TrackerPort {
   }
 }
 
-export function taskFrontier(tasks: BuildTask[]): BuildTask[] {
-  const done = new Set(tasks.filter((task) => task.status === "done").map((task) => task.id));
-  return tasks
-    .filter(
-      (task) => task.status === "pending" && task.blockedBy.every((blocker) => done.has(blocker)),
-    )
-    .sort((a, b) => a.id.localeCompare(b.id));
-}
-
-export function assertAcyclic(items: Array<{ id: string; blockedBy: string[] }>): void {
-  const ids = new Set(items.map((item) => item.id));
-  for (const item of items) {
-    for (const blocker of item.blockedBy) {
-      if (!ids.has(blocker)) {
-        throw new HarnessFailure(
-          `${item.id} references unknown blocker ${blocker}`,
-          "internal",
-          false,
-        );
-      }
-      if (blocker === item.id) {
-        throw new HarnessFailure(`${item.id} cannot block itself`, "internal", false);
-      }
-    }
-  }
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const byId = new Map(items.map((item) => [item.id, item] as const));
-  const visit = (id: string): void => {
-    if (visited.has(id)) return;
-    if (visiting.has(id)) {
-      throw new HarnessFailure(`Dependency cycle includes ${id}`, "internal", false);
-    }
-    visiting.add(id);
-    for (const blocker of byId.get(id)?.blockedBy ?? []) visit(blocker);
-    visiting.delete(id);
-    visited.add(id);
-  };
-  for (const item of items) visit(item.id);
-}
+export { assertAcyclic, taskFrontier } from "./domain/policies.js";
 
 function renderBrief(state: RunState): string {
   const brief = state.reflectBrief!;

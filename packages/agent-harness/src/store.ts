@@ -7,6 +7,7 @@ import {
   RunStateSchema,
   type RunEvent,
   type RunState,
+  type TransitionResult,
 } from "./domain.js";
 import type { HarnessConfig } from "./config.js";
 
@@ -146,6 +147,69 @@ export class RunStore {
     await atomicJson(path.join(this.runDirectory(state.runId), "state.json"), next);
     await this.appendEventOnce(state.runId, event);
     await unlink(this.transitionJournalPath(state.runId));
+    return next;
+  }
+
+  /**
+   * Persistence boundary for pure domain transitions.
+   * Order: artifacts → atomic state checkpoint → append JSONL events.
+   * A valid state checkpoint remains authoritative after interruption.
+   */
+  async persistTransition(
+    runId: string,
+    result: TransitionResult,
+    artifacts: Array<{ relativePath: string; contents: string }> = [],
+  ): Promise<RunState> {
+    if (result.state.runId !== runId) {
+      throw new Error(
+        `Transition runId mismatch: expected ${runId}, got ${result.state.runId}`,
+      );
+    }
+    await this.recoverPendingTransition(runId, { force: true });
+
+    for (const artifact of artifacts) {
+      await this.writeText(runId, artifact.relativePath, artifact.contents);
+    }
+
+    let sequence = result.state.lastEventSequence;
+    const events: RunEvent[] = result.events.map((pending) => {
+      sequence += 1;
+      return RunEventSchema.parse({
+        sequence,
+        type: pending.type,
+        detail:
+          pending.detail && typeof pending.detail === "object"
+            ? (pending.detail as Record<string, unknown>)
+            : {},
+        at: pending.at,
+      });
+    });
+
+    const next = RunStateSchema.parse({
+      ...result.state,
+      lastEventSequence: sequence,
+      revision: result.state.revision + 1,
+      updatedAt: result.events.at(-1)?.at ?? new Date().toISOString(),
+    });
+
+    if (events.length === 0) {
+      await atomicJson(path.join(this.runDirectory(runId), "state.json"), next);
+      return next;
+    }
+
+    // Journal the final event so a crash between state and history can recover.
+    const journal: TransitionJournal = {
+      expectedRevision: result.state.revision,
+      state: next,
+      event: events[events.length - 1]!,
+      owner: { pid: process.pid, hostname: localHostname() },
+    };
+    await atomicJson(this.transitionJournalPath(runId), journal);
+    await atomicJson(path.join(this.runDirectory(runId), "state.json"), next);
+    for (const event of events) {
+      await this.appendEventOnce(runId, event);
+    }
+    await unlink(this.transitionJournalPath(runId));
     return next;
   }
 

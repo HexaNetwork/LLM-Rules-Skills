@@ -1,0 +1,337 @@
+import { createHash } from "node:crypto";
+import { z } from "zod";
+import { AgentRoleSchema, type AgentRole } from "../domain.js";
+
+/** Structural Graphify lookup is valuable for workers that edit or review code. */
+const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
+  "planner",
+  "test-writer",
+  "implementer",
+  "reviewer",
+];
+
+/**
+ * Bumped when the frozen run-config shape or configuration-hash algorithm changes
+ * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
+ */
+export const CONFIG_VERSION = 5;
+
+/** Environment paths / live project policy — omitted from configurationHash. */
+const CONFIG_HASH_OMIT_PATHS = new Set([
+  "repositoryRoot",
+  "stateDirectory",
+  "knowledge.sharedIndexDirectory",
+  // Test classification is an operator recovery policy. Read it fresh so a
+  // legitimate test-path correction can unblock an in-progress run.
+  "workflow.testPathPatterns",
+  // Read fresh at commit-time so operators can add folders without config-drift blocks.
+  "git.ignoredArtifactPatterns",
+]);
+
+/** Default build/generated globs ignored when deciding dirty / unreported paths. */
+export const DEFAULT_IGNORED_ARTIFACT_PATTERNS = [
+  "**/obj/",
+  "**/bin/",
+  "*.pdb",
+  "*.user",
+  "**/*.cache",
+  "**/GeneratedMSBuildEditorConfig.editorconfig",
+  "**/AssemblyAttributes.cs",
+] as const;
+
+export const PreflightCommitOrderSchema = z.enum(["branch-then-commit", "commit-then-branch"]);
+export type PreflightCommitOrder = z.infer<typeof PreflightCommitOrderSchema>;
+
+export const KnowledgeScopeSchema = z.enum(["global", "project"]);
+export type KnowledgeScope = z.infer<typeof KnowledgeScopeSchema>;
+
+export const KnowledgeVisibilitySchema = z.enum(["private", "shared", "restricted"]);
+export type KnowledgeVisibility = z.infer<typeof KnowledgeVisibilitySchema>;
+
+export const KnowledgeSourceSchema = z
+  .union([
+    z.string().min(1),
+    z.object({
+      path: z.string().min(1),
+      scope: KnowledgeScopeSchema.default("project"),
+      projectId: z.string().min(1).optional(),
+      visibility: KnowledgeVisibilitySchema.default("private"),
+    }),
+  ])
+  .transform((source) =>
+    typeof source === "string"
+      ? { path: source, scope: "project" as const, visibility: "private" as const }
+      : source,
+  );
+export type KnowledgeSource = z.infer<typeof KnowledgeSourceSchema>;
+
+export const HarnessConfigSchema = z.object({
+  version: z.literal(2).default(2),
+  repositoryRoot: z.string().default("."),
+  stateDirectory: z.string().default(".agent-harness"),
+  models: z
+    .object({
+      small: z.string().min(1),
+      capable: z.string().min(1),
+      roles: z.record(z.string()).default({}),
+      // Opt-in $/MTok rates; unpriced models contribute tokens but 0 cost.
+      pricing: z
+        .record(
+          z.object({
+            inputPerMillion: z.number().nonnegative(),
+            outputPerMillion: z.number().nonnegative(),
+            cacheReadPerMillion: z.number().nonnegative().default(0),
+            cacheWritePerMillion: z.number().nonnegative().default(0),
+          }),
+        )
+        .default({}),
+    })
+    .default({ small: "composer-2.5", capable: "composer-2.5", roles: {}, pricing: {} }),
+  agent: z
+    .object({
+      provider: z.enum(["cursor"]).default("cursor"),
+      timeoutMs: z.number().int().positive().default(20 * 60 * 1000),
+      promptBuilder: z.boolean().default(false),
+      schemaRepairAttempts: z.number().int().min(0).max(3).default(1),
+    })
+    .default({}),
+  workflow: z
+    .object({
+      tdd: z.boolean().default(true),
+      // Counts expensive steps (agent invocations / shell commands), not free transitions.
+      maxStepsPerRun: z.number().int().positive().max(100).default(40),
+      // Hard spend ceilings enforced between steps; 0 = unlimited.
+      maxRunTokens: z.number().int().nonnegative().default(0),
+      maxRunCostUsd: z.number().nonnegative().default(0),
+      // Automatic in-place retries for transient provider failures inside advance().
+      maxProviderRetries: z.number().int().min(0).max(5).default(2),
+      maxTestAttempts: z.number().int().positive().max(10).default(2),
+      maxImplementationAttempts: z.number().int().positive().max(10).default(3),
+      maxReviewAttempts: z.number().int().positive().max(10).default(2),
+      // Grill-me reuses one provider session for this many Q→A turns, then
+      // rolls to a fresh agent with a compact brief of resolutions so far.
+      maxGrillQuestionsPerEpisode: z.number().int().positive().max(50).default(5),
+      // Answers older than this force a cold agent with only question+answer.
+      staleAnswerMinutes: z.number().int().positive().max(24 * 60).default(30),
+      // Ceiling on questions per griller turn, not a target: only mutually independent questions may be batched.
+      grillQuestionsPerBatch: z.number().int().min(1).max(6).default(3),
+      contextResults: z.number().int().min(0).max(20).default(6),
+      // Guidance + retrieved context ceiling for each work packet.
+      contextCharacters: z.number().int().positive().default(12_000),
+      // Serialized packet.input ceiling (longest string leaf truncated first).
+      inputCharacters: z.number().int().positive().default(24_000),
+      // Reviewer diff budget; defaults to Math.min(20_000, inputCharacters/2) so
+      // a full-size diff survives buildWorkPacket without input-budget truncation.
+      reviewDiffCharacters: z.number().int().positive().optional(),
+      // Graphify excerpt sub-budget within the context ceiling.
+      graphifyCharacters: z.number().int().positive().default(3_000),
+      // Per-task commit subjects use the deterministic fallback unless enabled.
+      generateCommitMessages: z.boolean().default(false),
+      // Globs that mark paths as test-only for the test-writer legality check.
+      testPathPatterns: z.array(z.string().min(1)).default([
+        "tests/**",
+        "test/**",
+        "**/__tests__/**",
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/*_test.*",
+        "src/test/**",
+      ]),
+    })
+    .default({})
+    .transform((workflow) => ({
+      ...workflow,
+      reviewDiffCharacters:
+        workflow.reviewDiffCharacters ??
+        Math.min(20_000, Math.floor(workflow.inputCharacters / 2)),
+    })),
+  commands: z
+    .object({
+      test: z.string().min(1).default("npm test -- --run"),
+      // Child processes intentionally start with a minimal environment. Projects
+      // can opt individual non-secret variables back in when their test/build
+      // command needs them.
+      passEnv: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).default([]),
+      gates: z
+        .array(
+          z.object({
+            id: z.string().min(1),
+            command: z.string().min(1),
+            timeoutMs: z.number().int().positive().default(10 * 60 * 1000),
+          }),
+        )
+        .default([]),
+    })
+    .default({}),
+  git: z
+    .object({
+      enabled: z.boolean().default(true),
+      baseBranch: z.string().min(1).default("main"),
+      branchPrefix: z.string().min(1).default("harness"),
+      remote: z.string().min(1).default("origin"),
+      push: z.boolean().default(false),
+      openPullRequest: z.boolean().default(false),
+      // Explicit action (dashboard/CLI) is the default path; this makes start() sweep a dirty tree itself.
+      autoCommitPreflight: z.boolean().default(false),
+      // branch-then-commit deviates from baseBranch branching: the run branch is cut from
+      // current HEAD so the dirty tree rides onto it, not from config.git.baseBranch.
+      preflightCommitOrder: PreflightCommitOrderSchema.default("branch-then-commit"),
+      // Globs ignored when deciding whether the tree is dirty / a path is unreported.
+      // Live project policy (omitted from configurationHash); read fresh, not frozen per-run.
+      ignoredArtifactPatterns: z
+        .array(z.string().min(1))
+        .default([...DEFAULT_IGNORED_ARTIFACT_PATTERNS]),
+    })
+    .default({}),
+  knowledge: z
+    .object({
+      // A stable id makes this collection safe to share with other project roots.
+      projectId: z.string().min(1).default("default"),
+      // When configured, multiple projects can index into one directory. Access is
+      // still filtered by projectId before any retrieval scoring occurs.
+      sharedIndexDirectory: z.string().min(1).optional(),
+      sources: z.array(KnowledgeSourceSchema).default(["README.md", "docs"]),
+      chunkCharacters: z.number().int().positive().default(2_000),
+      // Refuse weak lexical hits before hybrid fusion so embeddings cannot
+      // resurrect near-zero accidental term matches into the packet.
+      relevanceFloor: z.number().min(0).max(1).default(0.55),
+      minLexicalScore: z.number().min(0).default(0.05),
+      maxChunksPerSource: z.number().int().min(1).max(20).default(1),
+      // Highest-ranked source may contribute this many chunks; others use maxChunksPerSource.
+      maxForTopSource: z.number().int().min(1).max(20).default(2),
+      guidance: z
+        .object({
+          enabled: z.boolean().default(true),
+          maxResults: z.number().int().min(0).max(20).default(6),
+          maxCharacters: z.number().int().positive().default(6_000),
+        })
+        .default({}),
+      embeddings: z
+        .object({
+          // Kept opt-in: the lexical index remains the offline baseline.
+          enabled: z.boolean().default(false),
+          provider: z.enum(["openai-compatible", "ollama"]).default("openai-compatible"),
+          endpoint: z.string().url().default("https://api.openai.com/v1/embeddings"),
+          model: z.string().min(1).default("text-embedding-3-small"),
+          apiKeyEnv: z.string().min(1).default("OPENAI_API_KEY"),
+          batchSize: z.number().int().min(1).max(256).default(32),
+          timeoutMs: z.number().int().positive().default(30_000),
+          minSimilarity: z.number().min(-1).max(1).default(0.2),
+          lexicalWeight: z.number().positive().default(1),
+          semanticWeight: z.number().positive().default(1),
+        })
+        .default({}),
+      graphify: z
+        .object({
+          enabled: z.boolean().default(false),
+          command: z.string().min(1).default("graphify"),
+          updateOnRefresh: z.boolean().default(false),
+          updateTimeoutMs: z.number().int().positive().default(120_000),
+          queryTimeoutMs: z.number().int().positive().default(15_000),
+          queryBudgetTokens: z.number().int().positive().max(10_000).default(1_200),
+          roles: z.array(AgentRoleSchema).default(REPOSITORY_LOOKUP_ROLES),
+          // Project-specific noise merged over the built-in English + harness lists.
+          stopwords: z.array(z.string().min(1)).default([]),
+          // Extensions that count as source for post-commit graphify rebuild.
+          sourceExtensions: z.array(z.string().min(1)).default([
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".mjs",
+            ".cjs",
+            ".py",
+            ".go",
+            ".rs",
+            ".java",
+            ".kt",
+            ".kts",
+            ".cs",
+            ".cpp",
+            ".c",
+            ".h",
+            ".hpp",
+            ".rb",
+            ".php",
+            ".swift",
+          ]),
+        })
+        .default({}),
+    })
+    .default({}),
+  tracker: z.object({ kind: z.literal("local").default("local") }).default({}),
+});
+
+export type HarnessConfig = z.infer<typeof HarnessConfigSchema>;
+
+export const ProjectSettingsPatchSchema = z
+  .object({
+    workflow: z
+      .object({
+        maxGrillQuestionsPerEpisode: z.number().int().positive().max(50).optional(),
+        staleAnswerMinutes: z.number().int().positive().max(24 * 60).optional(),
+        grillQuestionsPerBatch: z.number().int().min(1).max(6).optional(),
+        testPathPatterns: z.array(z.string().min(1)).max(500).optional(),
+      })
+      .strict()
+      .optional(),
+    commands: z
+      .object({
+        test: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    git: z
+      .object({
+        autoCommitPreflight: z.boolean().optional(),
+        preflightCommitOrder: PreflightCommitOrderSchema.optional(),
+        ignoredArtifactPatterns: z.array(z.string().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+export type ProjectSettingsPatch = z.infer<typeof ProjectSettingsPatchSchema>;
+
+export const CONFIG_NAMES = [
+  "agent-harness.config.yaml",
+  "agent-harness.config.yml",
+  "agent-harness.config.json",
+] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Canonical policy view for hashing: keys sorted recursively; environment paths omitted.
+ */
+function canonicalConfigForHash(config: unknown): unknown {
+  return canonicalizeForHash(config, "");
+}
+
+/** Stable sha256 over the canonical policy view of a harness config. */
+export function configurationHash(config: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalConfigForHash(config)))
+    .digest("hex");
+}
+
+function canonicalizeForHash(value: unknown, keyPath: string): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeForHash(item, keyPath));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    const childPath = keyPath ? `${keyPath}.${key}` : key;
+    if (CONFIG_HASH_OMIT_PATHS.has(childPath)) {
+      continue;
+    }
+    out[key] = canonicalizeForHash(value[key], childPath);
+  }
+  return out;
+}

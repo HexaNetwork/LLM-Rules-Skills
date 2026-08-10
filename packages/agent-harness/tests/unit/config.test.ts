@@ -4,11 +4,13 @@ import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 
 import {
+  CONFIG_VERSION,
   HarnessConfigSchema,
   configurationHash,
   defaultConfigYaml,
   deploymentConfigYaml,
   loadRunConfig,
+  normalizeFrozenRunConfig,
   writeProjectSettings,
 } from "../../src/config.js";
 import { isTestPath } from "../../src/engine.js";
@@ -166,6 +168,40 @@ describe("token-conscious defaults", () => {
     const loaded = await loadRunConfig(project, runId);
 
     expect(loaded.knowledge.guidance.enabled).toBe(false);
+  });
+
+  it("normalizes historical minimal YAML through schema defaults without bumping CONFIG_VERSION", () => {
+    const minimal = yaml.load(`
+version: 2
+repositoryRoot: .
+`) as unknown;
+    const parsed = HarnessConfigSchema.parse(minimal);
+    expect(CONFIG_VERSION).toBe(5);
+    expect(parsed.agent.promptBuilder).toBe(false);
+    expect(parsed.knowledge.guidance.enabled).toBe(true);
+    expect(parsed.workflow.maxStepsPerRun).toBe(40);
+    expect(parsed.git.ignoredArtifactPatterns.length).toBeGreaterThan(0);
+  });
+
+  it("migrates frozen-run snapshots missing knowledge.guidance via normalizeFrozenRunConfig", () => {
+    const root = "C:/tmp/project";
+    const project = HarnessConfigSchema.parse({ repositoryRoot: root });
+    const { guidance: _guidance, ...legacyKnowledge } = project.knowledge;
+    const frozen = normalizeFrozenRunConfig({
+      ...project,
+      configVersion: 3,
+      knowledge: legacyKnowledge,
+    });
+    expect(frozen.knowledge.guidance.enabled).toBe(false);
+    const modern = normalizeFrozenRunConfig({
+      ...project,
+      knowledge: { ...project.knowledge, guidance: { enabled: true, maxResults: 2, maxCharacters: 1_000 } },
+    });
+    expect(modern.knowledge.guidance).toMatchObject({
+      enabled: true,
+      maxResults: 2,
+      maxCharacters: 1_000,
+    });
   });
 
   it("defaults ignoredArtifactPatterns and omits them from configurationHash", () => {

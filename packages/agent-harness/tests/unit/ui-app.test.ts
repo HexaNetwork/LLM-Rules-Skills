@@ -87,6 +87,10 @@ describe("dashboard document", () => {
     expect(html).toContain("provider contexts · invocations");
     expect(html).toContain("Agent activity");
     expect(html).toContain("activity-timeline");
+    expect(html).toContain("function renderRunVitals(s)");
+    expect(html).toContain("run-vitals");
+    expect(html).toContain("Build progress");
+    expect(html).toContain("Grill resolutions");
     expect(html).not.toMatch(/model sessions/);
     expect(html).toContain("NEW CONTEXT");
     expect(html).toContain("REUSED CONTEXT");
@@ -94,9 +98,10 @@ describe("dashboard document", () => {
     expect(html).toContain("Project settings");
     expect(html).toContain("settingsBtn");
     expect(html).toContain('projectName").title = data.project.root');
-    expect(html).toMatch(/Build progress[\s\S]*?Repository/);
+    expect(html).toMatch(/Delivery[\s\S]*?Repository[\s\S]*?Branch/);
     expect(html).toContain("data-copy-path");
     expect(html).toContain("copy-path-btn");
+    expect(html).toContain("Copy repository path");
     expect(html).toContain("Copy branch name");
     expect(html).toContain("Copy base branch");
     expect(html).toContain("Copy base SHA");
@@ -373,8 +378,10 @@ describe("dashboard document", () => {
   it("shows grill resolutions as a count with open-unknowns as a separate muted line", () => {
     const html = renderDashboard();
 
-    expect(html).toContain("open unknown(s) · ");
+    expect(html).toContain("function renderRunVitals(s)");
+    expect(html).toContain(" open · ");
     expect(html).toContain(" in register");
+    expect(html).toContain("decisions locked in");
     expect(html).not.toContain("grillTotal + (unknowns.length ? '<span class=\"faint\"> / ' + unknowns.length");
   });
 

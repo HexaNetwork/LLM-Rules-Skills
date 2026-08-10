@@ -50,6 +50,7 @@ export const renderRunScript = `    function renderSidebar() {
       var subtitle = title !== fullIdea ? '<div class="subtitle">' + esc(fullIdea) + '</div>' : '';
       var html = '<div class="title-row"><div><div class="eyebrow">Run ' + esc(s.runId.slice(0,8)) + '</div><h1>' + esc(title) + '</h1>' + subtitle + '</div><span class="badge ' + attr(phase) + '" data-testid="run-status"><i class="dot ' + attr(phase) + '"></i>' + esc(phaseLabel(phase)) + '</span></div>';
       html += renderUsageRow(s);
+      html += renderRunVitals(s);
       html += '<nav class="tabs">' + tabs.map(function (tab) { return '<button class="tab ' + (state.tab === tab.id ? "active" : "") + '" data-tab="' + tab.id + '">' + esc(tab.label) + '</button>'; }).join("") + '</nav><div id="tabBody"></div>';
       $("content").innerHTML = html;
       if (state.tab === "overview") renderOverview(s, summary, phase);
@@ -208,6 +209,49 @@ export const renderRunScript = `    function renderSidebar() {
       if (cached) parts.push(number(cached) + " cached");
       parts.push(formatCostUsd(usage) + (usage.costIsLowerBound ? " (lower bound)" : ""));
       return '<div class="usage-row muted">' + esc(parts.join(" · ")) + '</div>';
+    }
+
+    function renderRunVitals(s) {
+      var tasks = s.tasks || [];
+      var taskTotal = tasks.length;
+      var taskDone = tasks.filter(function (t) { return t.status === "done"; }).length;
+      var grillTotal = (s.grillResolutions || []).length;
+      var unknowns = s.openUnknowns || [];
+      var openUnknownCount = unknowns.filter(function (u) { return u.status === "fog" || u.status === "asked"; }).length;
+      var grillMeta = unknowns.length
+        ? (openUnknownCount + " open · " + unknowns.length + " in register")
+        : (grillTotal ? "decisions locked in" : "none yet");
+      var activityTotals = (state.detail && state.detail.agentActivity && state.detail.agentActivity.totals) || {};
+      var contextCount = activityTotals.providerContexts != null ? activityTotals.providerContexts : ((state.detail && state.detail.sessions) || []).length;
+      var invocationCount = activityTotals.invocations != null ? activityTotals.invocations : ((state.detail && state.detail.sessions) || []).length;
+      var items = [
+        {
+          tab: "tasks",
+          label: "Build progress",
+          value: taskDone + " / " + taskTotal,
+          meta: taskTotal ? "implementation tasks done" : "no tasks yet",
+        },
+        {
+          tab: "decisions",
+          label: "Grill resolutions",
+          value: String(grillTotal),
+          meta: grillMeta,
+        },
+        {
+          tab: "activity",
+          label: "Agent activity",
+          value: contextCount + " / " + invocationCount,
+          meta: "provider contexts · invocations",
+        },
+      ];
+      return '<div class="run-vitals" role="navigation" aria-label="Run vitals">' + items.map(function (item) {
+        var active = state.tab === item.tab ? " active" : "";
+        return '<button type="button" class="vital' + active + '" data-tab="' + attr(item.tab) + '" title="Open ' + attr(item.label) + '">' +
+          '<span class="vital-label">' + esc(item.label) + '</span>' +
+          '<span class="vital-value">' + esc(item.value) + '</span>' +
+          '<span class="vital-meta">' + esc(item.meta) + '</span>' +
+          '</button>';
+      }).join("") + '</div>';
     }
 
     function renderBudgetMeter(label, usedLabel, limitLabel, pct) {
@@ -420,11 +464,8 @@ export const renderRunScript = `    function renderSidebar() {
 /*__SPLIT_OVERVIEW__*/
     function renderOverview(s, summary, phase) {
       stopElapsedTimer();
-      var taskTotal = s.tasks.length, taskDone = s.tasks.filter(function (t) { return t.status === "done"; }).length;
-      var grillTotal = (s.grillResolutions || []).length;
       var unknowns = s.openUnknowns || [];
       var openUnknownCount = unknowns.filter(function (u) { return u.status === "fog" || u.status === "asked"; }).length;
-      var percent = taskTotal ? Math.round(taskDone / taskTotal * 100) : (s.phase === "completed" ? 100 : 0);
       var html = '<div class="grid">';
       var activity = state.detail.activity;
       var activityText = activityLine(activity);
@@ -612,12 +653,6 @@ export const renderRunScript = `    function renderSidebar() {
         if (!value) return "";
         return '<button type="button" class="copy-path-btn" data-copy-path="' + attr(value) + '" title="Copy" aria-label="' + attr(ariaLabel) + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg></button>';
       }
-      html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div><div class="muted repo-label">Repository' + copyPathBtn(repoRoot, "Copy repository path") + '</div><div style="margin-top:4px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div></div>';
-      html += '<div class="card third"><div class="card-label">Grill resolutions</div><div class="metric">' + grillTotal + '</div><div class="muted">' + (unknowns.length ? (openUnknownCount + ' open unknown(s) · ' + unknowns.length + ' in register') : 'decisions locked in') + '</div></div>';
-      var activityTotals = (state.detail.agentActivity && state.detail.agentActivity.totals) || {};
-      var contextCount = activityTotals.providerContexts != null ? activityTotals.providerContexts : ((state.detail.sessions || []).length);
-      var invocationCount = activityTotals.invocations != null ? activityTotals.invocations : ((state.detail.sessions || []).length);
-      html += '<div class="card third"><div class="card-label">Agent activity</div><div class="metric">' + contextCount + '<span class="faint"> / ' + invocationCount + '</span></div><div class="muted">provider contexts · invocations</div><div class="faint" style="margin-top:12px">Updated ' + esc(ago(s.updatedAt)) + '</div></div>';
       html += renderUsageBudgetCard(s);
       var brief = s.reflectBrief;
       var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");
@@ -631,6 +666,7 @@ export const renderRunScript = `    function renderSidebar() {
       var baseSha = fullBaseSha ? fullBaseSha.slice(0, 12) : "";
       var worktreePath = delivery.worktreePath || "";
       html += '<div class="card third"><div class="card-label">Delivery</div>';
+      html += '<div class="muted repo-label">Repository' + copyPathBtn(repoRoot, "Copy repository path") + '</div><div style="margin:4px 0 10px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div>';
       html += '<div class="muted repo-label">Branch' + copyPathBtn(deliveryBranch, "Copy branch name") + '</div><div style="margin:4px 0 10px"><code>' + esc(deliveryBranchLabel) + '</code></div>';
       if (baseBranch) {
         html += '<div class="muted repo-label">Base branch' + copyPathBtn(baseBranch, "Copy base branch") + '</div><div style="margin:4px 0 10px"><code>' + esc(baseBranch) + '</code></div>';

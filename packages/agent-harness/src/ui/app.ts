@@ -99,6 +99,13 @@ export function renderDashboard(): string {
     .badge.blocked { color:var(--red); border-color:rgba(255,115,115,.3); background:rgba(255,115,115,.07); }
     .badge.awaiting_input { color:var(--orange); border-color:rgba(255,157,92,.3); background:rgba(255,157,92,.07); }
     .badge.running, .badge.queued { color:var(--blue); border-color:rgba(121,184,255,.3); background:rgba(121,184,255,.07); }
+    .run-vitals { display:flex; gap:8px; margin:0 0 16px; flex-wrap:wrap; }
+    .vital { display:flex; flex-direction:column; align-items:flex-start; gap:2px; flex:1 1 140px; min-width:0; border:1px solid var(--line); background:var(--surface-2); border-radius:10px; padding:8px 12px; color:var(--text); cursor:pointer; text-align:left; }
+    .vital:hover { border-color:rgba(199,243,107,.35); color:var(--text); }
+    .vital.active { border-color:rgba(199,243,107,.4); background:rgba(199,243,107,.07); }
+    .vital-label { color:var(--faint); font-size:10px; text-transform:uppercase; letter-spacing:.1em; font-weight:800; }
+    .vital-value { font-size:15px; font-weight:680; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+    .vital-meta { color:var(--muted); font-size:11px; line-height:1.35; }
     .tabs { display:flex; gap:3px; border-bottom:1px solid var(--line-soft); margin-bottom:26px; overflow:auto; }
     .tab { border:0; border-bottom:2px solid transparent; background:transparent; padding:12px 14px; color:var(--muted); cursor:pointer; white-space:nowrap; }
     .tab:hover { color:var(--text); }

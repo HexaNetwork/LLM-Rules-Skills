@@ -1,0 +1,16 @@
+import type { AgentBackend } from "../../agent.js";
+import type { HarnessConfig } from "../../config.js";
+import type { LocalKnowledgeBase } from "../../knowledge.js";
+import type { RunStore } from "../../store.js";
+import type { RunJobService } from "../run-job-service.js";
+
+export type UiAppContext = {
+  getProjectConfig(): HarnessConfig;
+  setProjectConfig(config: HarnessConfig): void;
+  store: RunStore;
+  knowledge: LocalKnowledgeBase;
+  backend: AgentBackend;
+  configPath?: string;
+  agentReadiness: { ready: boolean; message?: string };
+  jobs: RunJobService;
+};

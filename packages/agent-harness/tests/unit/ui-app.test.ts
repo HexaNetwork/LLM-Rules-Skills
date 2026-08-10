@@ -11,6 +11,38 @@ describe("dashboard document", () => {
     expect(() => new Function(script!)).not.toThrow();
   });
 
+  it("exposes stable data-testid locators for workflow-critical controls", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain('data-testid="start-run"');
+    expect(html).toContain('data-testid="reflect-form"');
+    expect(html).toContain('data-testid="question-batch"');
+    expect(html).toContain('data-testid="submit-answers"');
+    expect(html).toContain('data-testid="run-status"');
+    expect(html).toContain('data-testid="cancel-run"');
+    expect(html).toMatch(/Start reflect/);
+    expect(html).toMatch(/Submit answers/);
+    expect(html).toMatch(/data-action="cancel"[^>]*data-testid="cancel-run"|data-testid="cancel-run"[^>]*data-action="cancel"/);
+  });
+
+  it("keeps Cancel available while a mutation job is queued or running", () => {
+    const html = renderDashboard();
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    expect(script).toMatch(/phase === "queued" \|\| phase === "running"/);
+    expect(script).toMatch(
+      /phase === "queued" \|\| phase === "running"[\s\S]{0,400}data-testid="cancel-run"/,
+    );
+  });
+
+  it("splits and joins string-list settings on real newlines", () => {
+    const html = renderDashboard();
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    expect(script).toContain(".join('\\n')");
+    expect(script).toContain(".split(/\\r?\\n/)");
+    expect(script).not.toContain(".join('\\\\n')");
+    expect(script).not.toContain(".split(/\\\\r?\\\\n/)");
+  });
+
   it("keeps the access token across address-bar cleanup for refresh", () => {
     const html = renderDashboard();
 
@@ -71,6 +103,12 @@ describe("dashboard document", () => {
     expect(html).toContain("harnessSoundsMuted");
     expect(html).toContain("set_tdd");
     expect(html).toContain("resolve_installs");
+    expect(html).toContain("Grilling complete");
+    expect(html).toContain("Send feedback to griller");
+    expect(html).toContain("Continue to planning");
+    expect(html).toContain("confirm_grill");
+    expect(html).toContain("Grilling complete — review before planning");
+    expect(html).toContain("!s.grillReady");
   });
 
   it("preserves HITL editing state across background polling", () => {

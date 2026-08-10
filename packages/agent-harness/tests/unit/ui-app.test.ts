@@ -459,6 +459,18 @@ describe("dashboard document", () => {
     expect(html).toContain("costIsLowerBound");
   });
 
+  it("wires usage breakdown mini-tabs so By agent type switches aggregation", () => {
+    const html = renderDashboard();
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+
+    // Buttons alone are not enough — clicks must set state.usageTab and re-render.
+    expect(script).toMatch(/target\.dataset\.usageTab/);
+    expect(script).toMatch(/state\.usageTab\s*=\s*target\.dataset\.usageTab/);
+    expect(script).toMatch(
+      /state\.usageTab\s*=\s*target\.dataset\.usageTab[\s\S]{0,80}renderRun\(\)/,
+    );
+  });
+
   it("labels preflight commit orders as Branch then commit / Commit then branch", () => {
     const html = renderDashboard();
 

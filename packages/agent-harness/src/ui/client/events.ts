@@ -194,6 +194,7 @@ export const eventsScript = `    async function waitForJob(runId) {
       }
       if (target.dataset.run) { document.body.classList.remove('menu-open'); loadRun(target.dataset.run); }
       if (target.dataset.tab) { state.tab = target.dataset.tab; renderRun(); }
+      if (target.dataset.usageTab) { state.usageTab = target.dataset.usageTab; renderRun(); }
       if (target.dataset.action) {
         if (target.dataset.action === 'cancel' && !confirm('Cancel this run?')) return;
         if (target.dataset.action === 'stop' && !confirm('Finish the current task, then stop before starting the next one?')) return;

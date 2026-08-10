@@ -211,12 +211,13 @@ describe("out-of-band cancellation", () => {
     expect(phase).toBe("cancelled");
   });
 
-  it("cancel during yield exit drains cancel.request and ends cancelled", async () => {
-    // Race: cancel after the last post-step check / during run.yielded must not leave
+  it("cancel during a post-step boundary drains cancel.request and ends cancelled", async () => {
+    // Race: cancel after a normal task event / post-step check must not leave
     // cancel.request pending forever with the UI stuck on "Cancelling…".
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { ...fixtureConfig(root).workflow, maxStepsPerRun: 1, tdd: false },
+      workflow: { ...fixtureConfig(root).workflow, tdd: false },
+      commands: { test: 'node -e "process.exit(0)"', gates: [] },
     });
     let calls = 0;
     const backend = createFakeBackend({
@@ -245,7 +246,7 @@ describe("out-of-band cancellation", () => {
       changedFiles: [],
     }));
     let seed: RunState = {
-      ...createRunState("cancel-yield", "idea", new Date().toISOString(), "hash", CONFIG_VERSION),
+      ...createRunState("cancel-boundary", "idea", new Date().toISOString(), "hash", CONFIG_VERSION),
       phase: "executing",
       tasks,
       reflectBrief: { draft: "d", confirmed: "confirmed", confirmedAt: new Date().toISOString() },
@@ -263,17 +264,17 @@ describe("out-of-band cancellation", () => {
     });
 
     const originalRecord = engine.store.record.bind(engine.store);
-    let cancelDuringYield: Awaited<ReturnType<HarnessEngine["cancel"]>> | undefined;
+    let cancelDuringStep: Awaited<ReturnType<HarnessEngine["cancel"]>> | undefined;
     engine.store.record = async (state, type, detail) => {
-      if (type === "run.yielded") {
-        cancelDuringYield = await engine.cancel(state.runId);
+      if (type === "task.started" && !cancelDuringStep) {
+        cancelDuringStep = await engine.cancel(state.runId);
       }
       return originalRecord(state, type, detail);
     };
 
-    const state = await engine.advance(seed.runId, 1);
+    const state = await engine.advance(seed.runId);
 
-    expect(cancelDuringYield?.pending).toBe(true);
+    expect(cancelDuringStep?.pending).toBe(true);
     expect(state.phase).toBe("cancelled");
     const cancelPath = path.join(engine.store.runDirectory(seed.runId), "cancel.request");
     await expect(access(cancelPath)).rejects.toMatchObject({ code: "ENOENT" });

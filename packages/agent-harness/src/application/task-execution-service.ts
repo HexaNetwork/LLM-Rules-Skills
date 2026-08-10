@@ -22,12 +22,12 @@ import { commandEvidence, recentEvidenceOutput } from "../commands.js";
 import { compactDomainSeed } from "../knowledge.js";
 import { taskFrontier } from "../tracker.js";
 import type { ApplicationContext } from "./application-context.js";
-import { normalizePathKey, taskForPacket, unique, type StepResult } from "./helpers.js";
+import { normalizePathKey, taskForPacket, unique } from "./helpers.js";
 
 export class TaskExecutionService {
   constructor(private readonly ctx: ApplicationContext) {}
 
-  async execute(state: RunState): Promise<StepResult> {
+  async execute(state: RunState): Promise<RunState> {
     const failed = state.tasks.find((task) => task.status === "failed");
     if (failed) {
       throw new HarnessFailure(
@@ -39,10 +39,7 @@ export class TaskExecutionService {
     const active = state.tasks.find((task) => task.status === "active");
     if (!active) {
       if (state.tasks.every((item) => item.status === "done")) {
-        return {
-          state: await this.ctx.store.record({ ...state, phase: "publishing" }, "implementation.completed"),
-          consumedBudget: false,
-        };
+        return this.ctx.store.record({ ...state, phase: "publishing" }, "implementation.completed");
       }
       if (await this.ctx.isStopRequested(state.runId, state)) {
         const stopped = await this.ctx.store.record(
@@ -54,10 +51,10 @@ export class TaskExecutionService {
           "run.stopped_after_task",
         );
         await this.ctx.clearStopRequest(state.runId);
-        return { state: stopped, consumedBudget: false };
+        return stopped;
       }
       if (state.stoppedAfterTaskAt) {
-        return { state, consumedBudget: false };
+        return state;
       }
     }
     const task = active ?? taskFrontier(state.tasks)[0];
@@ -71,7 +68,7 @@ export class TaskExecutionService {
     return this.executeTaskStep(state, task);
   }
 
-  async executeTaskStep(state: RunState, task: BuildTask): Promise<StepResult> {
+  async executeTaskStep(state: RunState, task: BuildTask): Promise<RunState> {
     switch (task.step) {
       case "pending": {
         const next = {
@@ -79,33 +76,27 @@ export class TaskExecutionService {
           status: "active" as const,
           step: task.tdd ? ("writing_tests" as const) : ("implementing" as const),
         };
-        return {
-          state: await this.updateTask(state, next, "task.started"),
-          consumedBudget: false,
-        };
+        return this.updateTask(state, next, "task.started");
       }
       case "writing_tests":
-        return { state: await this.writeTests(state, task), consumedBudget: true };
+        return this.writeTests(state, task);
       case "red":
-        return {
-          state: await this.updateTask(
-            state,
-            { ...task, step: "implementing" },
-            "task.red_confirmed",
-          ),
-          consumedBudget: false,
-        };
+        return this.updateTask(
+          state,
+          { ...task, step: "implementing" },
+          "task.red_confirmed",
+        );
       case "implementing":
-        return { state: await this.implementTask(state, task), consumedBudget: true };
+        return this.implementTask(state, task);
       case "verifying":
-        return { state: await this.verifyTask(state, task), consumedBudget: true };
+        return this.verifyTask(state, task);
       case "reviewing":
-        return { state: await this.reviewTask(state, task), consumedBudget: true };
+        return this.reviewTask(state, task);
       case "committing":
-        return { state: await this.commitTask(state, task), consumedBudget: true };
+        return this.commitTask(state, task);
       case "done":
       case "failed":
-        return { state, consumedBudget: false };
+        return state;
     }
   }
 

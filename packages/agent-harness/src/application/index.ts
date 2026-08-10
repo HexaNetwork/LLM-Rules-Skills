@@ -17,7 +17,6 @@ export {
   pendingGrillReady,
   taskForPacket,
   type CancelResult,
-  type StepResult,
 } from "./helpers.js";
 export { InterviewService } from "./interview-service.js";
 export { PlanningService } from "./planning-service.js";

@@ -48,7 +48,7 @@ describe("CLI acceptance lifecycle", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
-        workflow: { tdd: false, maxStepsPerRun: 40, generateCommitMessages: false },
+        workflow: { tdd: false, generateCommitMessages: false },
         knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
       },
     });
@@ -162,7 +162,7 @@ describe("CLI acceptance lifecycle", () => {
       expect(confirmed.code).toBe(0);
 
       const continued = await runCli(
-        ["continue", "--run-id", runId, "--config", configPath, "--steps", "20"],
+        ["continue", "--run-id", runId, "--config", configPath],
         deps,
       );
       expect(continued.code).toBe(0);
@@ -185,7 +185,7 @@ describe("CLI acceptance lifecycle", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 },
-        workflow: { tdd: false, maxStepsPerRun: 10 },
+        workflow: { tdd: false },
         git: { enabled: true, autoCommitPreflight: false },
         knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
       },

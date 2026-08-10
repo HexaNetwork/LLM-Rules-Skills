@@ -20,7 +20,7 @@ describe("Phase 5 HTTP security", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 2_000, provider: "cursor" },
-        workflow: { tdd: false, maxStepsPerRun: 10 },
+        workflow: { tdd: false },
         knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
       },
     });

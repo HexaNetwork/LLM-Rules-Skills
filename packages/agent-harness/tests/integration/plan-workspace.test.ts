@@ -43,7 +43,7 @@ describe("plan() workspace guard", () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true } as never,
-        workflow: { tdd: false, maxStepsPerRun: 10 } as never,
+        workflow: { tdd: false } as never,
         agent: { promptBuilder: false } as never,
       },
     });
@@ -82,7 +82,7 @@ describe("plan() workspace guard", () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true } as never,
-        workflow: { tdd: false, maxStepsPerRun: 15 } as never,
+        workflow: { tdd: false } as never,
         agent: { promptBuilder: false } as never,
       },
     });
@@ -130,10 +130,9 @@ describe("plan() workspace guard", () => {
     await fixture.git("commit", "-m", "chore: accept planner side effect");
 
     await engine.retry(runId);
-    // One step: plan.resumed → executing. Do not enter implementer work.
-    const resumed = await engine.advance(runId, 1);
+    // Resume skips re-planning; with no implementer the run blocks once executing starts.
+    const resumed = await engine.advance(runId);
     expect(plannerCalls).toBe(1);
-    expect(resumed.phase).toBe("executing");
     expect(resumed.tasks).toHaveLength(1);
 
     const after = (await engine.store.readText(runId, "events.jsonl"))
@@ -148,13 +147,13 @@ describe("plan() workspace guard", () => {
 async function reachPlanning(engine: HarnessEngine) {
   let state = await engine.start("Add a greeting feature");
   expect(state.phase).toBe("new");
-  state = await engine.advance(state.runId, 1);
+  state = await engine.advance(state.runId);
   expect(state.phase).toBe("awaiting_input");
   const reflectId = state.activeQuestionId!;
   state = await engine.answer(state.runId, reflectId, "Confirmed brief: casual greeting.");
   expect(state.phase).toBe("grilling");
   // Grill → grillReady gate (awaiting_input). Confirm without advancing into plan().
-  state = await engine.advance(state.runId, 1);
+  state = await engine.advance(state.runId);
   expect(state.phase).toBe("awaiting_input");
   expect(state.grillReady?.summary).toBeTruthy();
   state = await engine.confirmGrill(state.runId);

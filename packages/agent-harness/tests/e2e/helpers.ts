@@ -132,7 +132,6 @@ export async function withE2EHarness(
       },
       workflow: {
         tdd: false,
-        maxStepsPerRun: 40,
         generateCommitMessages: false,
         ...(options.config?.workflow ?? {}),
       },
@@ -316,7 +315,6 @@ async function writeFixtureConfigYaml(configPath: string, config: HarnessConfig)
     },
     workflow: {
       tdd: config.workflow.tdd,
-      maxStepsPerRun: config.workflow.maxStepsPerRun,
       testPathPatterns: config.workflow.testPathPatterns,
       maxGrillQuestionsPerEpisode: config.workflow.maxGrillQuestionsPerEpisode,
       staleAnswerMinutes: config.workflow.staleAnswerMinutes,

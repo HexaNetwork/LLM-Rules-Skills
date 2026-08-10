@@ -103,7 +103,6 @@ export function buildFixtureConfig(
     },
     workflow: {
       tdd: true,
-      maxStepsPerRun: 25,
       maxTestAttempts: 2,
       maxImplementationAttempts: 3,
       maxReviewAttempts: 2,

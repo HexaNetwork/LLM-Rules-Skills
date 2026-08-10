@@ -60,22 +60,22 @@ describe("operator controls", () => {
       planner: () => PLAN_WITH_INSTALLS,
     });
     const config = fixtureConfig(root, {
-      workflow: { tdd: false, maxStepsPerRun: 20 } as never,
+      workflow: { tdd: false } as never,
       agent: { promptBuilder: false } as never,
     });
     const engine = new HarnessEngine(config, { backend });
     let state = await engine.start("Ship greeting");
-    state = await engine.advance(state.runId, 5);
+    state = await engine.advance(state.runId);
     const reflectQ = state.questions.find((item) => item.status === "open");
     expect(reflectQ).toBeDefined();
     state = await engine.answerMany(state.runId, [
       { questionId: reflectQ!.id, answer: REFLECT_OUTPUT.restatement },
     ]);
-    state = await engine.advance(state.runId, 10);
+    state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
     expect(state.grillReady?.summary).toBeTruthy();
     state = await engine.confirmGrill(state.runId);
-    state = await engine.advance(state.runId, 10);
+    state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
     expect(state.proposedInstalls).toHaveLength(1);
     expect(state.tasks).toHaveLength(2);

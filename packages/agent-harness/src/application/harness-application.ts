@@ -5,6 +5,5 @@ export {
   pendingGrillReady,
   taskForPacket,
   type CancelResult,
-  type StepResult,
 } from "./helpers.js";
 export { isTestPath, reconcileUnknowns } from "../domain.js";

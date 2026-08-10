@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createFakeBackend, reportedTotal, type AgentBackend } from "../../src/agent.js";
+import { ApplicationContext } from "../../src/application/application-context.js";
+import { accrueRunUsage } from "../../src/application/usage-ledger.js";
 import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
@@ -96,7 +98,6 @@ describe("run usage accrual and cost ceiling", () => {
     const config = fixtureConfig(root, {
       workflow: {
         ...fixtureConfig(root).workflow,
-        maxStepsPerRun: 5,
         maxRunTokens: 100,
         tdd: false,
       },
@@ -151,7 +152,7 @@ describe("run usage accrual and cost ceiling", () => {
       usage: { inputTokens: 80, outputTokens: 40, totalTokens: 120 },
     });
 
-    state = await engine.advance(state.runId, 5);
+    state = await engine.advance(state.runId);
 
     expect(state.phase).toBe("blocked");
     expect(state.blockedKind).toBe("budget");
@@ -212,9 +213,12 @@ describe("run usage accrual and cost ceiling", () => {
       usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
     });
 
-    // maxSteps=0: accrue on the yield path, twice, without consuming a step.
-    const first = await engine.advance(state.runId, 0);
-    const second = await engine.advance(first.runId, 0);
+    const ctx = new ApplicationContext(config, {
+      backend: createFakeBackend({}),
+      store: engine.store,
+    });
+    const first = await accrueRunUsage(ctx, await engine.store.load(state.runId));
+    const second = await accrueRunUsage(ctx, first);
 
     expect(second.usage).toEqual(first.usage);
     expect(first.usage.totalTokens).toBe(1_500_150);
@@ -308,7 +312,10 @@ describe("run usage accrual and cost ceiling", () => {
       usage: { inputTokens: 2_000, outputTokens: 500, totalTokens: 2_500 },
     });
 
-    state = await engine.advance(state.runId, 0);
+    state = await accrueRunUsage(
+      new ApplicationContext(config, { backend: createFakeBackend({}), store: engine.store }),
+      await engine.store.load(state.runId),
+    );
 
     expect(state.usage.totalTokens).toBe(2_500);
     expect(state.usage.inputTokens).toBe(2_000);

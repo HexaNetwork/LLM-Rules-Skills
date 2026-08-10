@@ -126,8 +126,6 @@ export const HarnessConfigSchema = z.object({
   workflow: z
     .object({
       tdd: z.boolean().default(true),
-      // Counts expensive steps (agent invocations / shell commands), not free transitions.
-      maxStepsPerRun: z.number().int().positive().max(100).default(40),
       // Hard spend ceilings enforced between steps; 0 = unlimited.
       maxRunTokens: z.number().int().nonnegative().default(0),
       maxRunCostUsd: z.number().nonnegative().default(0),

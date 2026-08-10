@@ -9,8 +9,6 @@ export type PreflightCommitResult = {
   files: string[];
 };
 
-export type StepResult = { state: RunState; consumedBudget: boolean };
-
 export type CancelResult = {
   state: RunState;
   pending: boolean;

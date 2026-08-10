@@ -34,7 +34,6 @@ describe("Phase 5 scripted full lifecycle", () => {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000, provider: "cursor" },
         workflow: {
           tdd: true,
-          maxStepsPerRun: 40,
           generateCommitMessages: false,
           maxGrillQuestionsPerEpisode: 5,
         },

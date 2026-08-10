@@ -77,8 +77,8 @@ export class HarnessEngine {
     return this.lifecycle.status(runId);
   }
 
-  advance(runId: string, maxSteps?: number): Promise<RunState> {
-    return this.advancer.advance(runId, maxSteps);
+  advance(runId: string): Promise<RunState> {
+    return this.advancer.advance(runId);
   }
 
   answer(

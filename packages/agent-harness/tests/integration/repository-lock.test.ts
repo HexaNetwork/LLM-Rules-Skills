@@ -41,7 +41,7 @@ describe("repository lock", () => {
   it("fails a concurrent advance fast, names the holding run, and leaves both states loadable", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { tdd: false, maxStepsPerRun: 5 } as never,
+      workflow: { tdd: false } as never,
     });
 
     let releaseReflect!: () => void;
@@ -95,7 +95,7 @@ describe("repository lock", () => {
   it("releases the repository lock when advance returns at awaiting_input", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { tdd: false, maxStepsPerRun: 5 } as never,
+      workflow: { tdd: false } as never,
     });
     const backend = createFakeBackend({
       reflector: () => REFLECT_OUTPUT,
@@ -111,7 +111,7 @@ describe("repository lock", () => {
   it("allows answerMany while another holder keeps the repository lock", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { tdd: false, maxStepsPerRun: 5 } as never,
+      workflow: { tdd: false } as never,
     });
     const backend = createFakeBackend({
       reflector: () => REFLECT_OUTPUT,

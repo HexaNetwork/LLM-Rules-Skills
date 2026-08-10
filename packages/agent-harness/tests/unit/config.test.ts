@@ -37,7 +37,6 @@ describe("token-conscious defaults", () => {
     expect(config.workflow.graphifyCharacters).toBe(3_000);
     expect(config.knowledge.graphify.queryBudgetTokens).toBe(4_000);
     expect(config.workflow.generateCommitMessages).toBe(false);
-    expect(config.workflow.maxStepsPerRun).toBe(40);
     expect(config.workflow.maxRunTokens).toBe(0);
     expect(config.workflow.maxRunCostUsd).toBe(0);
     expect(config.models.pricing).toEqual({});
@@ -211,8 +210,16 @@ repositoryRoot: .
     expect(CONFIG_VERSION).toBe(8);
     expect(parsed.agent.promptBuilder).toBe(false);
     expect(parsed.knowledge.guidance.enabled).toBe(true);
-    expect(parsed.workflow.maxStepsPerRun).toBe(40);
     expect(parsed.git.ignoredArtifactPatterns.length).toBeGreaterThan(0);
+  });
+
+  it("strips legacy maxStepsPerRun from workflow config without treating it as policy", () => {
+    const parsed = HarnessConfigSchema.parse({
+      repositoryRoot: ".",
+      workflow: { maxStepsPerRun: 25, tdd: true },
+    });
+    expect("maxStepsPerRun" in parsed.workflow).toBe(false);
+    expect(parsed.workflow.tdd).toBe(true);
   });
 
   it("migrates frozen-run snapshots missing knowledge.guidance via normalizeFrozenRunConfig", () => {

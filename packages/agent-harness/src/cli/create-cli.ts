@@ -259,14 +259,10 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .description("Advance a run from its persisted artifacts")
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
-    .option("--steps <count>", "maximum transitions before yielding")
-    .action(async (options: { runId: string; config?: string; steps?: string }) => {
+    .action(async (options: { runId: string; config?: string }) => {
       const config = await runConfig(options.config, options.runId);
       const engine = new HarnessEngine(config, { backend: dependencies.createBackend() });
-      const state = await engine.advance(
-        options.runId,
-        options.steps ? positiveInteger(options.steps, "steps") : undefined,
-      );
+      const state = await engine.advance(options.runId);
       printState(state);
     });
 

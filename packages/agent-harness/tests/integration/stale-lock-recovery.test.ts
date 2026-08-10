@@ -29,7 +29,7 @@ describe("Phase 5 stale-lock recovery", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 2_000, provider: "cursor" },
-        workflow: { tdd: false, maxStepsPerRun: 10 },
+        workflow: { tdd: false },
         knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
       },
     });
@@ -75,7 +75,7 @@ describe("Phase 5 stale-lock recovery", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000, provider: "cursor" },
-        workflow: { tdd: false, maxStepsPerRun: 10 },
+        workflow: { tdd: false },
         knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
       },
     });

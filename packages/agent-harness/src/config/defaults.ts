@@ -38,12 +38,10 @@ agent:
 
 workflow:
   tdd: true
-  # Expensive steps only (agent invocations and shell commands).
-  maxStepsPerRun: 40
   # Hard spend ceilings (0 = unlimited); enforced between steps, never mid-step.
   maxRunTokens: 0
   maxRunCostUsd: 0
-  # Transient provider failures retry in-place (backoff 1s/4s/16s); does not consume step budget.
+  # Transient provider failures retry in-place (backoff 1s/4s/16s).
   maxProviderRetries: 2
   maxTestAttempts: 2
   maxImplementationAttempts: 3

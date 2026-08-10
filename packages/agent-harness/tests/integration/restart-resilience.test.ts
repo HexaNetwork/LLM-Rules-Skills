@@ -28,7 +28,7 @@ describe("Phase 5 restart resilience", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000, provider: "cursor" },
-        workflow: { tdd: false, maxStepsPerRun: 30, generateCommitMessages: false },
+        workflow: { tdd: false, generateCommitMessages: false },
         commands: { test: 'node -e "process.exit(0)"', gates: [] },
         git: { enabled: false },
         knowledge: {

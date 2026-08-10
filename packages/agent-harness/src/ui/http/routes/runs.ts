@@ -197,7 +197,6 @@ export async function handleRunsRoutes(
       ? {
           maxRunTokens: runConfig.workflow.maxRunTokens,
           maxRunCostUsd: runConfig.workflow.maxRunCostUsd,
-          maxStepsPerRun: runConfig.workflow.maxStepsPerRun,
         }
       : undefined;
     json(response, 200, {

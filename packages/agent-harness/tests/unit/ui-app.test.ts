@@ -408,13 +408,14 @@ describe("dashboard document", () => {
     expect(html).toContain("force: true");
   });
 
-  it("shows budget-exhaustion copy for a yielded run instead of the generic paused copy", () => {
+  it("shows paused-run resume copy without step-budget yield messaging", () => {
     const html = renderDashboard();
 
-    expect(html).toContain("s.yieldedAt");
-    expect(html).toContain("Run yielded to its step budget");
-    expect(html).toContain("maxStepsPerRun");
-    expect(html).not.toMatch(/s\.yieldedAt[\s\S]{0,400}Dashboard work does not continue automatically/);
+    expect(html).toContain("This run is paused");
+    expect(html).toContain("Dashboard work does not continue automatically");
+    expect(html).not.toContain("Run yielded to its step budget");
+    expect(html).not.toContain("maxStepsPerRun");
+    expect(html).not.toContain("s.yieldedAt");
   });
 
   it("shows a usage row, ceiling progress bar, and raise-and-retry controls for budget blocks", () => {

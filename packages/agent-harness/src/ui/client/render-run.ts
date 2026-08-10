@@ -414,8 +414,6 @@ export const renderRunScript = `    function renderSidebar() {
       }
       if (s.stoppedAfterTaskAt) {
         html += '<div class="card"><div class="alert warning"><div><strong>Stopped after task</strong><div class="muted" style="margin-top:5px">The current task finished and the next frontier task was not started. Resume continues from here. Cancel remains available to abort immediately.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
-      } else if (s.yieldedAt) {
-        html += '<div class="card"><div class="alert warning"><div><strong>Run yielded to its step budget</strong><div class="muted" style="margin-top:5px">This run hit its maxStepsPerRun limit mid-transition and stopped to avoid runaway work, not because it is waiting on you. Resume continues it from exactly where it left off.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       } else if (!state.detail.job && !["completed","cancelled","awaiting_input","blocked"].includes(s.phase) && !s.stopAfterTask) {
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">Dashboard work does not continue automatically after a restart. Resume queues the next transition and refreshes the document index first.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }

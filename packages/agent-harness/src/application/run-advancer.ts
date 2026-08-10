@@ -11,14 +11,13 @@ import type { InterviewService } from "./interview-service.js";
 import type { PlanningService } from "./planning-service.js";
 import type { RecoveryService } from "./recovery-service.js";
 import type { TaskExecutionService } from "./task-execution-service.js";
-import {
-  CANCEL_LOCK_WAIT_MS,
-  PROVIDER_RETRY_BACKOFF_MS,
-  type StepResult,
-} from "./helpers.js";
+import { CANCEL_LOCK_WAIT_MS, PROVIDER_RETRY_BACKOFF_MS } from "./helpers.js";
 import { accrueRunUsage } from "./usage-ledger.js";
 
 const terminal = isTerminalPhase;
+
+/** Fixed ceiling so a stuck phase cannot spin forever; throws internal, does not yield. */
+const ADVANCE_SAFETY_ITERATION_CAP = 10_000;
 
 export class RunAdvancer {
   constructor(
@@ -31,10 +30,8 @@ export class RunAdvancer {
 
   async advance(
     runId: string,
-    maxSteps?: number,
-    phaseStepper?: (state: RunState) => Promise<StepResult>,
+    phaseStepper?: (state: RunState) => Promise<RunState>,
   ): Promise<RunState> {
-    const stepBudget = maxSteps ?? this.ctx.config.workflow.maxStepsPerRun;
     if (phaseStepper) this.ctx.setPhaseStepper(phaseStepper);
     this.ctx.cancellation.register(runId);
     let state: RunState;
@@ -43,7 +40,7 @@ export class RunAdvancer {
       state = await this.ctx.store.withRepositoryLock({ runId, action: "advance" }, async () => {
         return this.ctx.store.withLock(runId, async () => {
           const loaded = await this.ctx.store.load(runId);
-          return this.runAdvanceLoop(runId, loaded, stepBudget);
+          return this.runAdvanceLoop(runId, loaded);
         });
       });
     } finally {
@@ -68,17 +65,14 @@ export class RunAdvancer {
    * and cancel drain before the run lock is released.
    */
 
-  async runAdvanceLoop(
-    runId: string,
-    state: RunState,
-    maxSteps: number,
-  ): Promise<RunState> {
+  async runAdvanceLoop(runId: string, state: RunState): Promise<RunState> {
     try {
       state = await this.ensureCompatibleConfiguration(state);
       if (!(terminal(state.phase) || state.phase === "awaiting_input")) {
         if (await this.ctx.isCancelRequested(runId)) {
           state = await this.recovery.completeCancellation(state);
         } else {
+          // Clear legacy yieldedAt (old state.json) and operator stop markers on resume.
           if (state.yieldedAt || state.stoppedAfterTaskAt) {
             state = await this.ctx.store.record(
               {
@@ -91,10 +85,8 @@ export class RunAdvancer {
             await this.ctx.clearStopRequest(runId);
           }
           await this.ctx.assertTreeFingerprint(state);
-          let remaining = maxSteps;
           let iterations = 0;
-          const maxIterations = Math.max(maxSteps * 8, 40);
-          while (remaining > 0 && iterations < maxIterations) {
+          while (iterations < ADVANCE_SAFETY_ITERATION_CAP) {
             iterations += 1;
             if (await this.ctx.isCancelRequested(runId)) {
               state = await this.recovery.completeCancellation(state);
@@ -103,13 +95,9 @@ export class RunAdvancer {
             // Enforce spend ceilings between steps only — never abort mid-step.
             state = await this.accrueUsage(state);
             this.assertWithinBudget(state);
-            const step = await this.advanceOneWithProviderRetry(state);
-            state = step.state;
+            state = await this.advanceOneWithProviderRetry(state);
             await this.ctx.syncArtifacts(state);
-            if (step.consumedBudget) {
-              remaining -= 1;
-              state = await this.accrueUsage(state);
-            }
+            state = await this.accrueUsage(state);
             if (await this.ctx.isCancelRequested(runId)) {
               state = await this.recovery.completeCancellation(state);
               break;
@@ -119,22 +107,20 @@ export class RunAdvancer {
               state.phase === "awaiting_input" ||
               state.stoppedAfterTaskAt
             ) {
-              state = await this.accrueUsage(state);
               break;
             }
           }
-          // Step budget exhausted — yield only when cancel has not already won.
           if (
+            iterations >= ADVANCE_SAFETY_ITERATION_CAP &&
             !terminal(state.phase) &&
             state.phase !== "awaiting_input" &&
             !state.stoppedAfterTaskAt &&
             !(await this.ctx.isCancelRequested(runId))
           ) {
-            state = await this.accrueUsage(state);
-            state = await this.ctx.store.record(
-              { ...state, yieldedAt: new Date().toISOString() },
-              "run.yielded",
-              { maxSteps },
+            throw new HarnessFailure(
+              `Advance exceeded safety iteration cap (${ADVANCE_SAFETY_ITERATION_CAP})`,
+              "internal",
+              false,
             );
           }
         }
@@ -172,7 +158,7 @@ export class RunAdvancer {
       }
     }
     // Drain cancel before releasing the run lock. Covers cancel after the last
-    // post-step check (yield / awaiting_input / terminal) so cancel.request cannot
+    // post-step check (awaiting_input / terminal / stop) so cancel.request cannot
     // outlive the advancing process while the UI stays on "Cancelling…".
     if (await this.ctx.isCancelRequested(runId)) {
       state = await this.recovery.completeCancellation(state);
@@ -261,7 +247,7 @@ export class RunAdvancer {
 
   /** Single-question path; delegates to the batch-aware answerMany. */
 
-  async advanceOneWithProviderRetry(state: RunState): Promise<StepResult> {
+  async advanceOneWithProviderRetry(state: RunState): Promise<RunState> {
     const maxRetries = this.ctx.config.workflow.maxProviderRetries;
     let attempt = 0;
     for (;;) {
@@ -322,24 +308,24 @@ export class RunAdvancer {
    */
 
   /** Phase dispatch only — no phase-specific implementation. */
-  async advanceOne(state: RunState): Promise<StepResult> {
+  async advanceOne(state: RunState): Promise<RunState> {
     switch (state.phase) {
       case "new":
       case "reflecting":
-        return { state: await this.interview.reflect(state), consumedBudget: true };
+        return this.interview.reflect(state);
       case "grilling":
-        return { state: await this.interview.grill(state), consumedBudget: true };
+        return this.interview.grill(state);
       case "planning":
-        return { state: await this.planning.plan(state), consumedBudget: true };
+        return this.planning.plan(state);
       case "executing":
         return this.execution.execute(state);
       case "publishing":
-        return { state: await this.execution.publish(state), consumedBudget: true };
+        return this.execution.publish(state);
       case "awaiting_input":
       case "completed":
       case "blocked":
       case "cancelled":
-        return { state, consumedBudget: false };
+        return state;
     }
   }
 }

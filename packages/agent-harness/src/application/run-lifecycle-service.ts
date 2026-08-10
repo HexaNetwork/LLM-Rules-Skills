@@ -104,9 +104,4 @@ export class RunLifecycleService {
   status(runId: string): Promise<RunState> {
     return this.ctx.store.load(runId);
   }
-
-  /**
-   * Retries provider failures in-place with exponential backoff. Retries do not
-   * consume maxStepsPerRun — the outer advance loop only counts a successful step.
-   */
 }

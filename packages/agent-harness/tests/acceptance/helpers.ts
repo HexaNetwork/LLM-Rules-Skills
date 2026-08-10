@@ -82,7 +82,6 @@ export async function writeAcceptanceConfig(
     },
     workflow: {
       tdd: false,
-      maxStepsPerRun: 40,
       generateCommitMessages: false,
       testPathPatterns: fixture.config.workflow.testPathPatterns,
       ...(overrides.workflow ?? {}),

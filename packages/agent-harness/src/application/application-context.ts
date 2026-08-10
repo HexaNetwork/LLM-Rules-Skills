@@ -19,8 +19,6 @@ import {
   runCancellationRegistry,
   type RunCancellationRegistry,
 } from "./cancellation-registry.js";
-import type { StepResult } from "./helpers.js";
-
 export type { HarnessDependencies, ApplicationDependencies };
 
 /** Shared ports, clock/command seams, and cross-cutting run helpers. */
@@ -35,7 +33,7 @@ export class ApplicationContext {
   readonly graphifySetupRunner?: GraphifySetupRunner;
   readonly sleep: (ms: number) => Promise<void>;
   readonly cancellation: RunCancellationRegistry;
-  phaseStepper: ((state: RunState) => Promise<StepResult>) | undefined;
+  phaseStepper: ((state: RunState) => Promise<RunState>) | undefined;
 
   constructor(
     readonly config: HarnessConfig,
@@ -54,7 +52,7 @@ export class ApplicationContext {
     this.cancellation = cancellation;
   }
 
-  setPhaseStepper(stepper: (state: RunState) => Promise<StepResult>): void {
+  setPhaseStepper(stepper: (state: RunState) => Promise<RunState>): void {
     this.phaseStepper = stepper;
   }
 

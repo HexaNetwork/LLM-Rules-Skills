@@ -194,6 +194,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_HARNESS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLI_REL="packages/agent-harness/dist/cli.js"
 
+# shellcheck source=lib/user-settings.sh
+. "$SCRIPT_DIR/lib/user-settings.sh"
+
 _is_windows() {
   [[ "${OS:-}" == "Windows_NT" ]] || [[ "$(uname -s 2>/dev/null || true)" == MINGW* ]] \
     || [[ "$(uname -s 2>/dev/null || true)" == MSYS* ]] \
@@ -438,6 +441,13 @@ fi
 if (( ${#DEPLOY_ARGS[@]} )); then
   node "$CLI" "${DEPLOY_ARGS[@]}"
   printf '  %s✓ deploy finished%s\n' "$GREEN" "$RESET"
+  # Seed user settings (AppData / XDG) so the launcher remembers this project.
+  if remembered="$(ah_remember_project "$PROJECT_PATH" 2>/dev/null)"; then
+    note "remembered project in $(ah_settings_path)"
+  else
+    warn "could not write user settings at $(ah_settings_path)"
+  fi
+  unset remembered
   if [[ "$INITIALIZED_GIT_REPO" -eq 1 ]]; then
     # Local identity only if unset — avoids failing commit on machines without global git config.
     if ! git -C "$PROJECT_PATH" config --get user.email >/dev/null 2>&1; then

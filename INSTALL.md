@@ -140,7 +140,7 @@ Useful flags:
 scripts\Launch-AgentHarness.cmd
 ```
 
-If you omit the project path, the launcher prompts for it. Scripted use:
+If you omit the project path, the launcher offers remembered projects (from user settings) or prompts for a path. Scripted use:
 
 ```powershell
 .\scripts\launch-agent-harness.ps1 -Project "C:\path\to\your-project"
@@ -150,7 +150,52 @@ If you omit the project path, the launcher prompts for it. Scripted use:
 bash scripts/launch-agent-harness.sh "/path/to/your-project"
 ```
 
-Or set `AGENT_HARNESS_PROJECT` and omit the path. Use `--no-pull` / `-NoPull` or `--no-build` / `-NoBuild` to skip steps.
+Or set `AGENT_HARNESS_PROJECT` and omit the path. Use `--no-pull` / `-NoPull` or `--no-build` / `-NoBuild` to skip steps (explicit flags always win over settings).
+
+### User settings (machine defaults)
+
+Launchers and the install wizard keep a small **user-local** preferences file outside the repo (so prefs never create a git diff in `LLM-Rules-Skills`):
+
+| OS | Path |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\agent-harness\settings.json` |
+| macOS / Linux | `${XDG_CONFIG_HOME:-$HOME/.config}/agent-harness/settings.json` |
+
+Schema (defaults apply when keys are missing; first write creates the file with these values):
+
+```json
+{
+  "version": 1,
+  "lastProject": "C:\\path\\to\\project",
+  "projects": [
+    { "path": "C:\\path\\to\\project", "lastUsedAt": "2026-08-09T12:00:00.000Z" }
+  ],
+  "launch": {
+    "pullOnStart": true,
+    "buildOnStart": true
+  },
+  "ui": {
+    "port": 8787,
+    "openBrowser": true
+  }
+}
+```
+
+| Concern | Where |
+| --- | --- |
+| Remembered projects, last project, launch/UI machine defaults | User `settings.json` |
+| Per-project harness policy | Project’s `agent-harness.config.yaml` |
+| Secrets (`CURSOR_API_KEY`) | Windows User env / shell profile only — **never** in `settings.json` |
+
+**Project path resolution** when starting the dashboard:
+
+1. Explicit `-Project` / positional path
+2. `AGENT_HARNESS_PROJECT` (scripting override only)
+3. Current directory if it already has `agent-harness.config.yaml`
+4. Interactive picker from remembered projects that still have that config (default highlight = `lastProject`); option to type a new path
+5. If the list is empty, prompt for a path
+
+**Launch / UI knobs:** explicit launcher flags → values from `settings.json` → built-in defaults (`pull`/`build` on, port `8787`, open browser on). The launcher passes `--port` and `--no-open` to `agent-harness ui` from `ui.*` settings. A successful install wizard deploy seeds the remembered project list.
 
 **Manual:** from the **target project** (the folder with `agent-harness.config.yaml`):
 

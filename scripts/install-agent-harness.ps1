@@ -18,6 +18,8 @@ param()
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "lib\user-settings.ps1")
+
 # ---------------------------------------------------------------------------
 # Wizard helpers
 # ---------------------------------------------------------------------------
@@ -416,6 +418,13 @@ if ($RunDeploy) {
     exit 1
   }
   Write-Ok "deploy finished"
+  # Seed user settings (AppData) so the launcher remembers this project.
+  try {
+    [void](Remember-AgentHarnessProject -Path $ProjectPath)
+    Write-Note ("remembered project in " + (Get-AgentHarnessSettingsPath))
+  } catch {
+    Write-WarnLine ("could not write user settings: " + $_.Exception.Message)
+  }
   if ($script:InitializedGitRepo) {
     Push-Location -LiteralPath $ProjectPath
     try {

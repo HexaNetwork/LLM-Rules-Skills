@@ -186,24 +186,33 @@ export const renderRunScript = `    function renderSidebar() {
       return '<div class="usage-row muted">' + esc(parts.join(" · ")) + '</div>';
     }
 
+    function renderBudgetMeter(label, usedLabel, limitLabel, pct) {
+      var clamped = Math.max(0, Math.min(100, Number(pct) || 0));
+      return '<div class="budget-meter">' +
+        '<div class="budget-meter-head"><span>' + esc(label) + '</span><strong>' + clamped + '%</strong></div>' +
+        '<div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + clamped + '" aria-label="' + attr(label) + '"><i style="width:' + clamped + '%"></i></div>' +
+        '<div class="budget-meter-foot">' + esc(usedLabel) + ' / ' + esc(limitLabel) + '</div>' +
+        '</div>';
+    }
+
     function renderUsageBudgetCard(s) {
       var usage = s.usage || {};
       var ceilings = (state.detail && state.detail.ceilings) || {};
       var maxTokens = Number(ceilings.maxRunTokens || 0);
       var maxCost = Number(ceilings.maxRunCostUsd || 0);
       if (!maxTokens && !maxCost && !usage.totalTokens) return "";
-      var tokenPct = maxTokens > 0 ? Math.min(100, Math.round((Number(usage.totalTokens || 0) / maxTokens) * 100)) : 0;
-      var costPct = maxCost > 0 ? Math.min(100, Math.round((Number(usage.costUsd || 0) / maxCost) * 100)) : 0;
+      var usedTokens = Number(usage.totalTokens || 0);
+      var usedCost = Number(usage.costUsd || 0);
+      var tokenPct = maxTokens > 0 ? Math.min(100, Math.round((usedTokens / maxTokens) * 100)) : 0;
+      var costPct = maxCost > 0 ? Math.min(100, Math.round((usedCost / maxCost) * 100)) : 0;
       var html = '<div class="card"><div class="card-label">Usage</div>';
-      html += '<div class="metric">' + number(usage.totalTokens || 0) + '<span class="faint"> tokens</span></div>';
+      html += '<div class="metric">' + number(usedTokens) + '<span class="faint"> tokens</span></div>';
       html += '<div class="muted">' + esc(formatCostUsd(usage)) + (usage.costIsLowerBound ? ' · unpriced models omitted from cost' : '') + '</div>';
       if (maxTokens > 0) {
-        html += '<div class="muted" style="margin-top:10px">Tokens vs maxRunTokens (' + number(maxTokens) + ')</div>';
-        html += '<div class="progress"><i style="width:' + tokenPct + '%"></i></div>';
+        html += renderBudgetMeter("Token budget", number(usedTokens), number(maxTokens), tokenPct);
       }
       if (maxCost > 0) {
-        html += '<div class="muted" style="margin-top:10px">Cost vs maxRunCostUsd ($' + esc(String(maxCost)) + ')</div>';
-        html += '<div class="progress"><i style="width:' + costPct + '%"></i></div>';
+        html += renderBudgetMeter("Cost budget", formatCostUsd(usage), "$" + String(maxCost), costPct);
       }
       html += '</div>';
       return html;

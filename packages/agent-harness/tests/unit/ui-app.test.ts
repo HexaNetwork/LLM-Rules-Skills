@@ -419,7 +419,11 @@ describe("dashboard document", () => {
 
     expect(html).toContain("function renderUsageRow(s)");
     expect(html).toContain("function renderUsageBudgetCard(s)");
+    expect(html).toContain("function renderBudgetMeter(label, usedLabel, limitLabel, pct)");
     expect(html).toContain("total tokens");
+    expect(html).toContain("Token budget");
+    expect(html).toContain("Cost budget");
+    expect(html).toContain("budget-meter");
     expect(html).toContain("maxRunTokens");
     expect(html).toContain("Raise ceiling and retry");
     expect(html).toContain("raise_budget_retry");

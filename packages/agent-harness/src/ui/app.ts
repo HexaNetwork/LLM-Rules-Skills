@@ -116,8 +116,14 @@ export function renderDashboard(): string {
     .copy-path-btn { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; border:0; border-radius:6px; background:transparent; color:var(--faint); cursor:pointer; }
     .copy-path-btn:hover { color:var(--text); background:var(--surface-3); }
     .copy-path-btn svg { display:block; }
-    .progress { height:7px; background:#090b0d; border-radius:99px; overflow:hidden; margin-top:13px; }
-    .progress > i { display:block; height:100%; background:linear-gradient(90deg,var(--lime-2),var(--lime)); border-radius:99px; }
+    .progress { height:6px; background:var(--surface-3); border-radius:99px; overflow:hidden; margin-top:13px; }
+    .progress > i { display:block; height:100%; width:0; max-width:100%; background:linear-gradient(90deg,var(--lime-2),var(--lime)); border-radius:99px; }
+    .budget-meter { margin-top:16px; }
+    .budget-meter + .budget-meter { margin-top:14px; }
+    .budget-meter-head { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:8px; color:var(--muted); font-size:12px; }
+    .budget-meter-head strong { color:var(--text); font-weight:650; }
+    .budget-meter .progress { margin-top:0; }
+    .budget-meter-foot { margin-top:7px; color:var(--faint); font-size:12px; }
     .question-card { border-color:rgba(255,157,92,.28); background:linear-gradient(145deg,rgba(255,157,92,.09),var(--surface)); }
     .question { font-size:20px; letter-spacing:-.02em; margin:8px 0 6px; max-width:850px; }
     .question-context { color:var(--muted); max-width:850px; margin:0 0 16px; }

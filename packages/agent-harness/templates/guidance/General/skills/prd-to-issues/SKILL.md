@@ -11,19 +11,7 @@ description: >-
 
 Break a PRD (or equivalent spec with goals, scope, user stories, and acceptance ideas) into independently-grabbable issues using vertical slices (tracer bullets).
 
-The issue tracker and triage label vocabulary should have been provided to you.
-
-## Tracker labels
-
-On every published slice issue (`issue_write` `create`), set `labels` to include **`needs-triage`** plus the correct scope label(s) (repo: **TheHexaForge/TaleTailorBackend**).
-
-| Label | Apply when |
-|-------|------------|
-| `frontend` | This slice’s acceptance criteria are delivered mainly in **Storytailor-Frontend** (UI, routing, i18n, client services/hooks, FE tests). Default for slices cut from a frontend-only PRD or `/implement`. |
-| `backend` | This slice’s acceptance criteria are delivered mainly in **TaleTailorBackend** (API, schema/migrations, server logic, OpenAPI). |
-| `frontend` + `backend` | The **same issue** has substantial, verifiable deliverables in **both** repos (e.g. new endpoint and UI ship together in one slice). If one side is only a blocker, use a single label for what **this** issue implements and put the other work under **Blocked by**. |
-
-Classify each slice from its **What to build** and **Acceptance criteria**, not from the parent PRD label alone. A parent labeled `frontend` can still spawn a `backend` slice if the breakdown adds server work; conversely, split full-stack PRDs into FE-only and BE-only slices when dependencies allow.
+Use the issue tracker, repository ownership model, and labels supplied by the user or project configuration. Never assume a particular organization, repository, frontend/backend split, or triage label. Classify each slice from its acceptance criteria and use only established project labels.
 
 ## Process
 
@@ -59,7 +47,7 @@ Present the proposed breakdown as a numbered list. For each slice, show:
 
 - **Title**: short descriptive name
 - **Type**: HITL / AFK
-- **Layer**: `frontend` | `backend` | `full-stack` (both labels on publish)
+- **Ownership**: repository, package, or bounded context responsible for the slice
 - **Blocked by**: which other slices (if any) must complete first
 - **User stories covered**: which user stories this addresses (if the source material has them)
 
@@ -69,18 +57,13 @@ Ask the user:
 - Are the dependency relationships correct?
 - Should any slices be merged or split further?
 - Are the correct slices marked as HITL and AFK?
-- Is **Layer** correct for each slice (and for filtering the tracker)?
+- Is **Ownership** correct for each slice?
 
 Iterate until the user approves the breakdown.
 
 ### 5. Publish the issues to the issue tracker
 
-For each approved slice, publish a new issue via GitHub MCP `issue_write` (`method`: `create`) per `github-mcp`. Use the issue body template below.
-
-Set `labels` on create:
-
-- Always: `needs-triage`
-- Plus: `frontend`, `backend`, or both — map from the approved **Layer** (`full-stack` → `frontend` and `backend`)
+For each approved slice, publish a new issue through the configured tracker integration. Use the issue body template below and apply only labels from the project's established vocabulary. If no tracker integration is available, stop before mutation and return the approved issue bodies ready to publish.
 
 Publish issues in dependency order (blockers first) so you can reference real issue identifiers in the "Blocked by" field.
 
@@ -99,9 +82,9 @@ When the slice set came from an existing tracker PRD/parent issue, include that 
 
 A reference to the parent PRD or parent issue on the issue tracker (if one exists — e.g. the PRD epic or planning issue — otherwise omit this section).
 
-## Layer
+## Ownership
 
-`frontend` | `backend` | `full-stack` — which repo(s) own this slice’s deliverables (must match the issue’s `frontend` / `backend` labels).
+The repository, package, team, or bounded context that owns this slice's deliverables.
 
 ## What to build
 

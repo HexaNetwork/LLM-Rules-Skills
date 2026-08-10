@@ -1,7 +1,6 @@
 ---
 name: code-review
 description: Review changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/PRD asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
-roles: [reviewer]
 ---
 
 Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
@@ -39,7 +38,7 @@ Look for the originating spec, in this order:
 
 Discover anything in the repo that documents how code should be written:
 
-- `.cursor/rules/*.mdc` (primary for Cursor projects)
+- Selected `.mdc` rules, `AGENTS.md`, or the active agent environment's equivalent repository guidance
 - `docs/DESIGN.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md` if present
 - `CLAUDE.md` or `AGENTS.md` if present
 

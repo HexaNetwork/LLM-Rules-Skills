@@ -77,7 +77,7 @@ Run targeted searches from [PATTERNS.md](PATTERNS.md). Prioritise:
 - Repeated `URLSearchParams`, pagination, envelope unwrap, `Map<string, Promise`
 - Parallel component names (`*Modal`, `*Picker`, `*Panel`, `*Form`)
 
-Also read `.cursor/rules/api-service-deduplication.mdc` — duplicated findings there are **high priority**.
+Also read any project-selected deduplication rules; patterns the repository explicitly identifies are **high priority**.
 
 ---
 

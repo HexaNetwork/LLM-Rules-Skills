@@ -1,7 +1,7 @@
 ---
 name: yagni-packages
 description: >-
-  Run a YAGNI inventory review on one frontend package from docs/yagni-packages.json
+  Run a YAGNI inventory review on one package from docs/yagni-packages.json
   (full package scope, not branch diff). Use when the user says /yagni-package,
   yagni package review, or asks to review a package boundary for over-engineering.
 disable-model-invocation: true
@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Inventory review for a **single package** defined in `docs/yagni-packages.json`. This is **package mode** — review every file in the package scope, not the branch delta.
 
-For branch-diff review against the default base branch (`master`, or per [`yagni`](../yagni/SKILL.md) preflight), use the [`yagni`](../yagni/SKILL.md) skill instead.
+For branch-diff review against the repository's resolved default base branch, use the [`yagni`](../yagni/SKILL.md) skill instead.
 
 This skill is **read-only**. Do not fix findings unless the user asks.
 
@@ -31,7 +31,7 @@ In package mode, apply each rubric to **the whole package inventory** (existing 
 
 1. **Repository path** — active workspace root (absolute path).
 2. **Load manifest** — read `docs/yagni-packages.json`.
-3. **Select package** — use the `id` the user named (e.g. `stories-detail`). If omitted, list all 12 package ids/titles from the manifest and ask which to review.
+3. **Select package** — use the `id` the user named. If omitted, list the package ids and titles present in the manifest and ask which to review.
 4. **Resolve package entry** — find the object in `packages` where `id` matches. Record `title`, `description`, `paths`, `testPaths`, and `excludePaths`.
 5. **Expand file list** — for each entry in `paths`, resolve globs from the repo root (`**` supported). Union results, then subtract any file matching `excludePaths`. Include matching unit tests from `testPaths` when present (tests inform depth/explosion; still read implementation files first).
 6. **Respect out of scope** — do not review paths listed in manifest `outOfScope` unless the user explicitly expands scope.
@@ -43,7 +43,7 @@ Record in the report header: package `id`, `title`, file count, and that scope i
 
 | | Branch `yagni` skill | Package `yagni-packages` skill |
 |--|----------------------|--------------------------------|
-| Scope | `git diff <base>...HEAD` (default base `master`) | All files under package `paths` |
+| Scope | `git diff <base>...HEAD` (base resolved by `yagni`) | All files under package `paths` |
 | Goal | Catch over-engineering in the change | Catch accumulated YAGNI debt in a slice |
 | Legacy code | Review only when the diff touches it | Review entire package |
 | Output | Chat summary | Chat summary |
@@ -71,8 +71,8 @@ Package Files:
 - ...
 
 Instructions:
-1. Read .cursor/skills/yagni/<RUBRIC-FILE>.md for the review rubric.
-2. Read .cursor/rules/principles.mdc for project KISS/SOLID rules.
+1. Read `../yagni/<RUBRIC-FILE>.md`, resolved from this skill directory, for the review rubric.
+2. Read any project KISS/SOLID rules selected by the harness; do not assume a tool-specific rules directory.
 3. For each package file, read the full file and inspect direct callers/imports when needed for context.
 4. Review the entire package inventory — flag unnecessary abstractions, shallow modules, and file/type proliferation even in legacy code.
 5. Return findings sorted by severity (highest first).
@@ -134,7 +134,7 @@ Do not rerun review or implement fixes unless the user explicitly asks.
 
 | Skill | Role |
 |-------|------|
-| `yagni` | Branch diff review against `ob-3` |
+| `yagni` | Branch diff review against the resolved base branch |
 | `yagni-packages` | Full-package inventory review (this skill) |
 | `find-code-duplication` | Mechanical clone scan; use when user wants DRY/consolidation |
 | `improve-codebase-architecture` | Exploratory deepening analysis, not rubric-scored inventory |

@@ -3,21 +3,9 @@ name: to-prd
 description: Turn the current conversation context into a PRD and publish it to the project issue tracker. Use when user wants to create a PRD from the current context.
 ---
 
-This skill takes the current conversation context and codebase understanding and produces a PRD. Do NOT interview the user — just synthesize what you already know.
+This skill turns the available conversation and repository context into a PRD. Synthesize directly when the context is sufficient. Ask only for a genuinely blocking product decision; do not run a generic discovery interview.
 
-The issue tracker and triage label vocabulary should have been provided to you — run `/setup-matt-pocock-skills` if not.
-
-## Tracker labels
-
-On every published PRD issue (`issue_write` `create`), set `labels` to include **`needs-triage`** plus the correct scope label(s) from this table (repo: **TheHexaForge/TaleTailorBackend**).
-
-| Label | Apply when |
-|-------|------------|
-| `frontend` | Primary work is in **Storytailor-Frontend** (UI, routing, i18n, client HTTP integration, FE tests). Typical for PRDs produced by `/implement` in the frontend repo. |
-| `backend` | Primary work is in **TaleTailorBackend** (API, DB/migrations, server logic, published OpenAPI on the server). No meaningful FE deliverable in this issue. |
-| `frontend` + `backend` | The PRD describes a coordinated initiative with **substantial** planned work in **both** repos in one planning artifact. Prefer a single scope label when the PRD is clearly owned by one side; child slices from `prd-to-issues` can split labels per slice. |
-
-Classify from **Implementation decisions** and **User stories** (which layers they touch), not from the tracker repo name alone.
+Use the issue tracker, repository, and label vocabulary supplied by the user or project configuration. Never assume a particular organization, repository, label set, or tracker integration. If publishing was requested but no tracker capability is available, produce the complete PRD locally in the response and clearly report that publishing remains outstanding.
 
 ## Process
 
@@ -27,7 +15,7 @@ Classify from **Implementation decisions** and **User stories** (which layers th
 
 A deep module (as opposed to a shallow module) is one which encapsulates a lot of functionality in a simple, testable interface which rarely changes.
 
-Check with the user that these modules match their expectations. Check with the user which modules they want tests written for.
+If module ownership or testing scope cannot be inferred safely, ask one focused blocking question. Otherwise record the inferred decisions in the PRD.
 
 3. Make replacement decisions explicit. The PRD should plan for one current path, not legacy compatibility. Do **not** specify long-lived legacy branches, fallback shapes, compatibility shims, deprecated aliases, or migration code unless the user has explicitly requested a time-bound compatibility window with a tracker issue for removal.
 
@@ -38,7 +26,7 @@ When the feature supersedes an existing contract or flow:
 - Treat active feature flags as temporary rollout mechanics only, with cleanup included once rollout is final.
 - Put any genuinely required, product-approved compatibility window under **Out of Scope** or **Further Notes** with the required removal ticket.
 
-4. Write the PRD using the template below, then publish it to the project issue tracker via GitHub MCP `issue_write` (`method`: `create`) per `github-mcp` skill. Set `labels` to **`needs-triage`** plus **`frontend`**, **`backend`**, or **both**, per **Tracker labels** above.
+4. Write the PRD using the template below. When the request includes publishing, use the configured tracker integration and only labels already established by the project. Report the created issue identifier or the exact publishing blocker.
 
 <prd-template>
 

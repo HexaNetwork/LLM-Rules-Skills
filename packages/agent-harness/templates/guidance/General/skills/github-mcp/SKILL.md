@@ -1,19 +1,17 @@
 ---
 name: github-mcp
 description: >-
-  GitHub issues and pull requests via the GitHub MCP server (not the gh CLI).
-  Use for reading/creating issues, opening PRs, PR review threads, and CI status.
+  GitHub issues and pull requests through an available GitHub integration.
+  Use for reading or creating issues, opening PRs, PR review threads, and CI status.
 ---
 
-# GitHub MCP (not `gh`)
+# GitHub integration
 
-Use **GitHub MCP tools** from the `github` server configured in `.cursor/mcp.json`. Do **not** run `gh` shell commands for GitHub API work.
-
-**Setup:** [Install GitHub MCP in Cursor](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-cursor.md) — replace `YOUR_GITHUB_PAT` in `.cursor/mcp.json` (or global `~/.cursor/mcp.json`), then restart Cursor. PAT needs `repo` (and `read:org` if using org issue types).
+Use the GitHub connector or MCP tools exposed by the active agent environment. Read the available tool schema before calling it; tool names can differ between environments. Do not assume a Cursor configuration path or embed credentials in repository files.
 
 **Repo context:** Parse `owner` and `repo` from the GitHub issue/PR URL or `git remote` when the host is `github.com`. If the code remote is not GitHub, take `owner`/`repo` from the tracker link in the issue or contract.
 
-## Tool map (replaces `gh`)
+## Common MCP tool map
 
 | Task | MCP tool | Notes |
 |------|----------|--------|
@@ -36,7 +34,7 @@ Use **GitHub MCP tools** from the `github` server configured in `.cursor/mcp.jso
 | Merge PR | `merge_pull_request` | `pullNumber`, optional `merge_method` |
 | Reply on PR review | `add_reply_to_pull_request_comment` | `commentId`, `body` |
 
-## PR body (replaces `gh pr create --body`)
+## PR body
 
 Use markdown in `body` for Summary / Test plan. Reference child issues with `Fixes #N` or `Closes #N` in the description.
 
@@ -48,4 +46,4 @@ Use markdown in `body` for Summary / Test plan. Reference child issues with `Fix
 
 ## When MCP is unavailable
 
-If the `github` server has no green dot in **Settings → Tools & Integrations → MCP**, stop and ask the user to configure the PAT and restart Cursor. Do not fall back to `gh` without explicit user approval.
+If no GitHub integration is available, stop before any remote mutation and tell the user which capability is missing. A read-only local `git` inspection may continue when it still answers the request. Do not install tooling, request credentials, or switch to another remote client without the user's approval.

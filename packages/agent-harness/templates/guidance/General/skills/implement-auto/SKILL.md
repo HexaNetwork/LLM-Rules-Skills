@@ -23,7 +23,7 @@ For AFK implementation queues, **do not re-implement the orchestration loop in c
 5. `npx agent-harness execute --manifest <manifest.json>` (or `resume --run-id`).
 6. Report the harness final status, branch, PR URL, and blocked reasons.
 
-See `General/skills/agent-harness/SKILL.md` and `packages/agent-harness/README.md`.
+See `General/skills/harness-run/SKILL.md` and `packages/agent-harness/README.md`.
 
 Use the legacy prose loop below only when:
 
@@ -146,7 +146,7 @@ The subagent must read and follow `code-review/SKILL.md`, then:
 
 1. **Fixed point:** `HEAD~1` (review only the issue commit).
 2. **Spec source:** the current issue body and acceptance criteria (tracker issue fetched via `github-mcp`, or local issue file path).
-3. **Standards:** discover from the repo per the skill (`.cursor/rules/*.mdc`, `docs/DESIGN.md`, etc.) plus the Fowler smell baseline.
+3. **Standards:** discover from the repository's selected rules and documented conventions (for example `AGENTS.md`, rule files, or `docs/DESIGN.md`) plus the Fowler smell baseline.
 4. **Return:** aggregated `## Standards` and `## Spec` reports with the one-line summary.
 
 ```text

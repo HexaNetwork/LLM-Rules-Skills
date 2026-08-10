@@ -38,7 +38,7 @@ Look for the originating spec, in this order:
 
 Discover anything in the repo that documents how code should be written:
 
-- `.cursor/rules/*.mdc` (primary for Cursor projects)
+- Selected `.mdc` rules, `AGENTS.md`, or the active agent environment's equivalent repository guidance
 - `docs/DESIGN.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md` if present
 - `CLAUDE.md` or `AGENTS.md` if present
 

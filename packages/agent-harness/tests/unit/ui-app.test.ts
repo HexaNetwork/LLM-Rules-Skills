@@ -502,6 +502,15 @@ describe("dashboard document", () => {
     expect(html).toMatch(/var cautionNote = onBaseBranch\s*\n\s*\?[\s\S]*?:\s*"";/);
   });
 
+  it("shows the base branch on a line above the preflight commit buttons", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain('Base branch: <code>\' + esc(baseBranch) + \'</code>');
+    expect(html).toContain("var baseBranchLine = baseBranch");
+    expect(html).toContain("baseBranchLine +");
+    expect(html).toContain('class="preflight-commit-actions"');
+  });
+
   it("drives the thinking strip's elapsed timer from job.startedAt/queuedAt without a full re-render", () => {
     const html = renderDashboard();
 

@@ -465,7 +465,11 @@ export const renderRunScript = `    function renderSidebar() {
           var cautionNote = onBaseBranch
             ? '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Heads up</strong><div class="muted" style="margin-top:3px">' + esc(currentBranch) + ' is your base branch. Committing onto the current branch lands these changes directly on it.</div></div></div>'
             : "";
-          commitControls = '<div class="preflight-commit-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
+          var baseBranchLine = baseBranch
+            ? '<div class="muted" style="margin-top:10px">Base branch: <code>' + esc(baseBranch) + '</code></div>'
+            : "";
+          commitControls = baseBranchLine +
+            '<div class="preflight-commit-actions" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
             '<button class="' + defaultBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(defaultOrder) + '">' + esc(orderLabel(defaultOrder)) + ' and retry</button>' +
             '<button class="' + otherBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(otherOrder) + '">' + esc(orderLabel(otherOrder)) + ' and retry</button>' +
             '</div>' + cautionNote;

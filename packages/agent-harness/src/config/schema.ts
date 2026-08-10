@@ -14,7 +14,7 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  * Bumped when the frozen run-config shape or configuration-hash algorithm changes
  * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
  */
-export const CONFIG_VERSION = 7;
+export const CONFIG_VERSION = 8;
 
 /** Environment paths / live project policy — omitted from configurationHash. */
 const CONFIG_HASH_OMIT_PATHS = new Set([
@@ -103,9 +103,6 @@ export const HarnessConfigSchema = z.object({
     .object({
       provider: z.enum(["cursor"]).default("cursor"),
       timeoutMs: z.number().int().positive().default(20 * 60 * 1000),
-      // A single agent turn can otherwise make an unbounded number of tool calls,
-      // each of which grows and re-sends its conversation context. 0 opts out.
-      maxToolCalls: z.number().int().min(0).max(200).default(30),
       promptBuilder: z.boolean().default(false),
       schemaRepairAttempts: z.number().int().min(0).max(3).default(1),
     })

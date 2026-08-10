@@ -22,7 +22,6 @@ describe("token-conscious defaults", () => {
     const config = HarnessConfigSchema.parse({});
 
     expect(config.agent.promptBuilder).toBe(false);
-    expect(config.agent.maxToolCalls).toBe(30);
     expect(config.workflow.maxGrillQuestionsPerEpisode).toBe(5);
     expect(config.workflow.staleAnswerMinutes).toBe(30);
     expect(config.knowledge.graphify.enabled).toBe(false);
@@ -85,7 +84,6 @@ describe("token-conscious defaults", () => {
       ".swift",
     ]);
     expect(defaultConfigYaml()).toContain("promptBuilder: false");
-    expect(defaultConfigYaml()).toContain("maxToolCalls: 30");
     expect(defaultConfigYaml()).toContain("relevanceFloor: 0.55");
     expect(defaultConfigYaml()).toContain("maxGrillQuestionsPerEpisode: 5");
     expect(defaultConfigYaml()).toContain("staleAnswerMinutes: 30");
@@ -204,7 +202,7 @@ version: 2
 repositoryRoot: .
 `) as unknown;
     const parsed = HarnessConfigSchema.parse(minimal);
-    expect(CONFIG_VERSION).toBe(7);
+    expect(CONFIG_VERSION).toBe(8);
     expect(parsed.agent.promptBuilder).toBe(false);
     expect(parsed.knowledge.guidance.enabled).toBe(true);
     expect(parsed.workflow.maxStepsPerRun).toBe(40);

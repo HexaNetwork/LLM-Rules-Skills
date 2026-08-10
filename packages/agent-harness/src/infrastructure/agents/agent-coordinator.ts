@@ -136,12 +136,7 @@ export class AgentCoordinator {
       runId: input.runId,
       role: input.role,
       objective: input.objective,
-      constraints: [
-        ...(input.constraints ?? []),
-        ...(this.config.agent.maxToolCalls > 0
-          ? [`This invocation has a hard limit of ${this.config.agent.maxToolCalls} tool calls. Stay within it; if more investigation is required, stop and report the blocker.`]
-          : []),
-      ],
+      constraints: input.constraints ?? [],
       input: input.input,
       guidance: guidanceAudit.selected,
       retrievalResults: retrieval.results,
@@ -264,12 +259,6 @@ export class AgentCoordinator {
         await activity.writeNow();
 
         let result: AgentBackendResult;
-        let toolCallCount = 0;
-        let toolLimitFailure: HarnessFailure | undefined;
-        const toolLimitController = new AbortController();
-        const invocationSignal = options.signal
-          ? AbortSignal.any([options.signal, toolLimitController.signal])
-          : toolLimitController.signal;
         try {
           const taskId = taskIdFromPacketInput(packet.input);
           result = await withTimeout(
@@ -287,19 +276,6 @@ export class AgentCoordinator {
                 taskId,
                 onStep: (step) => {
                   void activity.recordStep(step);
-                  if (
-                    step.type === "toolCall" &&
-                    this.config.agent.maxToolCalls > 0 &&
-                    ++toolCallCount > this.config.agent.maxToolCalls &&
-                    !toolLimitFailure
-                  ) {
-                    toolLimitFailure = new HarnessFailure(
-                      `${role} agent exceeded the ${this.config.agent.maxToolCalls}-tool-call limit`,
-                      "budget",
-                      false,
-                    );
-                    toolLimitController.abort();
-                  }
                 },
                 onInstallObserved: (entry) => {
                   void this.store
@@ -317,23 +293,21 @@ export class AgentCoordinator {
               }),
             this.config.agent.timeoutMs,
             `${role} agent`,
-            invocationSignal,
+            options.signal,
           );
           await activity.flush();
         } catch (error) {
           await activity.flush();
           await activity.clear();
-          const invocationError = toolLimitFailure ?? error;
-          lastError = invocationError;
+          lastError = error;
           const failure = error instanceof AgentBackendRunError ? error.result : {};
           providerSessionId = failure.providerSessionId ?? providerSessionId;
           const failureOutput = tryResolveAgentOutput(
             failure.output,
             failure.createPlanBodies,
           );
-          const cancelled = !toolLimitFailure && (
-            error instanceof RunCancelledError || options.signal?.aborted === true
-          );
+          const cancelled =
+            error instanceof RunCancelledError || options.signal?.aborted === true;
           await this.store.writeJson(runId, `sessions/${sessionId}.json`, {
             sessionId,
             invocationId: packet.invocationId,
@@ -350,9 +324,8 @@ export class AgentCoordinator {
             endedAt: new Date().toISOString(),
             usage: usageRecord(failure),
             output: failureOutput,
-            error: invocationError instanceof Error ? invocationError.message : String(invocationError),
+            error: error instanceof Error ? error.message : String(error),
           });
-          if (toolLimitFailure) throw toolLimitFailure;
           // Cancel, timeout, and provider errors are not schema-repairable.
           if (cancelled && !(error instanceof RunCancelledError)) {
             throw new RunCancelledError(

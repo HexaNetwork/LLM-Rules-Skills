@@ -1,7 +1,12 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { HarnessConfigSchema, loadRunConfig, writeProjectSettings } from "../../../config.js";
+import {
+  HarnessConfigSchema,
+  ProjectSettingsPatchSchema,
+  loadRunConfig,
+  writeProjectSettings,
+} from "../../../config.js";
 import { HarnessEngine } from "../../../engine.js";
 import { GitService, pathToIgnoredArtifactGlob } from "../../../git.js";
 import { prepareGraphifyForRun } from "../../../graphify.js";
@@ -16,6 +21,7 @@ import {
   optionalStringArray,
   parseAnswerBody,
   readJsonBody,
+  requiredRecord,
   requiredString,
 } from "../request.js";
 import {
@@ -216,7 +222,13 @@ export async function handleRunsRoutes(
     const runId = decodeURIComponent(actionMatch[1]!);
     const body = await readJsonBody(request);
     const action = requiredString(body.action, "action", 40);
-    if (action !== "cancel" && action !== "note" && action !== "stop" && !ctx.agentReadiness.ready) {
+    if (
+      action !== "cancel" &&
+      action !== "note" &&
+      action !== "stop" &&
+      action !== "amend_config" &&
+      !ctx.agentReadiness.ready
+    ) {
       throw new HttpError(503, ctx.agentReadiness.message ?? "The configured agent backend is unavailable");
     }
     const runConfig = await loadRunConfig(projectConfig, runId);
@@ -260,6 +272,27 @@ export async function handleRunsRoutes(
       ctx.jobs.enqueue(runId, action, async () => {
         await engine.retry(runId, { force, maxRunTokens, maxRunCostUsd });
         await engine.advance(runId);
+      });
+    } else if (action === "amend_config") {
+      const patch = ProjectSettingsPatchSchema.parse(requiredRecord(body.patch, "patch"));
+      const persistProjectDefaults = optionalBoolean(body.persistProjectDefaults, "persistProjectDefaults") ?? false;
+      if (persistProjectDefaults && !ctx.configPath) {
+        throw new HttpError(400, "Cannot persist project defaults without a config file path");
+      }
+      ctx.jobs.enqueue(runId, action, async () => {
+        let reportPaths: string[] = [];
+        if (persistProjectDefaults && ctx.configPath) {
+          const updated = await writeProjectSettings(ctx.configPath, patch);
+          ctx.setProjectConfig(updated.config);
+          const relative = path
+            .relative(updated.config.repositoryRoot, ctx.configPath)
+            .replaceAll("\\", "/");
+          if (relative && !relative.startsWith("..")) reportPaths = [relative];
+        }
+        await engine.amendConfig(runId, patch, {
+          persistedProjectDefaults: persistProjectDefaults,
+          reportPaths,
+        });
       });
     } else if (action === "commit_preflight") {
       const order = optionalEnum(body.order, "order", PREFLIGHT_COMMIT_ORDER_VALUES);

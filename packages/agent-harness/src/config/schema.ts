@@ -14,18 +14,13 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  * Bumped when the frozen run-config shape or configuration-hash algorithm changes
  * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
  */
-export const CONFIG_VERSION = 6;
+export const CONFIG_VERSION = 7;
 
 /** Environment paths / live project policy — omitted from configurationHash. */
 const CONFIG_HASH_OMIT_PATHS = new Set([
   "repositoryRoot",
   "stateDirectory",
   "knowledge.sharedIndexDirectory",
-  // Test classification is an operator recovery policy. Read it fresh so a
-  // legitimate test-path correction can unblock an in-progress run.
-  "workflow.testPathPatterns",
-  // Read fresh at commit-time so operators can add folders without config-drift blocks.
-  "git.ignoredArtifactPatterns",
 ]);
 
 /** Default build/generated globs ignored when deciding dirty / unreported paths. */
@@ -197,7 +192,6 @@ export const HarnessConfigSchema = z.object({
       // current HEAD so the dirty tree rides onto it, not from config.git.baseBranch.
       preflightCommitOrder: PreflightCommitOrderSchema.default("branch-then-commit"),
       // Globs ignored when deciding whether the tree is dirty / a path is unreported.
-      // Live project policy (omitted from configurationHash); read fresh, not frozen per-run.
       ignoredArtifactPatterns: z
         .array(z.string().min(1))
         .default([...DEFAULT_IGNORED_ARTIFACT_PATTERNS]),
@@ -343,7 +337,7 @@ export function configurationHash(config: unknown): string {
 
 /**
  * Short list of hashed-policy paths that differ between two configs.
- * Omits live project-policy paths (test paths, ignored artifacts, env roots).
+ * Omits machine-local paths only.
  */
 export function configurationPolicyDiff(
   left: unknown,

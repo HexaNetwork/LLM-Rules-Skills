@@ -201,7 +201,7 @@ version: 2
 repositoryRoot: .
 `) as unknown;
     const parsed = HarnessConfigSchema.parse(minimal);
-    expect(CONFIG_VERSION).toBe(6);
+    expect(CONFIG_VERSION).toBe(7);
     expect(parsed.agent.promptBuilder).toBe(false);
     expect(parsed.knowledge.guidance.enabled).toBe(true);
     expect(parsed.workflow.maxStepsPerRun).toBe(40);
@@ -229,14 +229,16 @@ repositoryRoot: .
     });
   });
 
-  it("summarizes hashed-policy path diffs and ignores live overlays", () => {
+  it("summarizes all policy changes that require an explicit run amendment", () => {
     const base = HarnessConfigSchema.parse({});
     const liveOverlay = {
       ...base,
       workflow: { ...base.workflow, testPathPatterns: ["other/**"] },
       git: { ...base.git, ignoredArtifactPatterns: ["**/Generated/**"] },
     };
-    expect(configurationPolicyDiff(base, liveOverlay)).toEqual([]);
+    expect(configurationPolicyDiff(base, liveOverlay)).toEqual(
+      expect.arrayContaining(["workflow.testPathPatterns", "git.ignoredArtifactPatterns"]),
+    );
 
     const hashedDrift = {
       ...base,
@@ -248,7 +250,7 @@ repositoryRoot: .
     );
   });
 
-  it("defaults ignoredArtifactPatterns and omits them from configurationHash", () => {
+  it("defaults ignoredArtifactPatterns and includes them in configurationHash", () => {
     const empty = HarnessConfigSchema.parse({});
     expect(empty.git.ignoredArtifactPatterns).toEqual([
       "**/obj/",
@@ -272,7 +274,7 @@ repositoryRoot: .
         ignoredArtifactPatterns: [...empty.git.ignoredArtifactPatterns, "**/Generated/**"],
       },
     });
-    expect(after).toBe(before);
+    expect(after).not.toBe(before);
 
     const drift = configurationHash({
       ...empty,
@@ -281,7 +283,7 @@ repositoryRoot: .
     expect(drift).not.toBe(before);
   });
 
-  it("persists ignoredArtifactPatterns via project settings and overlays them on frozen runs", async () => {
+  it("persists ignoredArtifactPatterns via project settings without mutating frozen runs", async () => {
     const root = await fixtureRoot();
     const configPath = path.join(root, "agent-harness.config.yaml");
     await writeFile(
@@ -306,11 +308,10 @@ repositoryRoot: .
     await writeFile(path.join(runDirectory, "config.json"), `${JSON.stringify(frozen)}\n`, "utf8");
 
     const loaded = await loadRunConfig(updated.config, runId);
-    expect(loaded.git.ignoredArtifactPatterns).toEqual(["**/obj/", "*.pdb"]);
-    expect(loaded.git.ignoredArtifactPatterns).not.toEqual(frozen.git.ignoredArtifactPatterns);
+    expect(loaded.git.ignoredArtifactPatterns).toEqual(frozen.git.ignoredArtifactPatterns);
   });
 
-  it("treats testPathPatterns as a live recovery policy for frozen runs", async () => {
+  it("keeps testPathPatterns frozen until a blocked run is explicitly amended", async () => {
     const root = await fixtureRoot();
     const configPath = path.join(root, "agent-harness.config.yaml");
     await writeFile(
@@ -332,11 +333,11 @@ repositoryRoot: .
     });
     const loaded = await loadRunConfig(updated.config, runId);
 
-    expect(loaded.workflow.testPathPatterns).toEqual(["**/src/main/test/**"]);
-    expect(configurationHash(updated.config)).toBe(configurationHash(initial));
+    expect(loaded.workflow.testPathPatterns).toEqual(["tests/**"]);
+    expect(configurationHash(updated.config)).not.toBe(configurationHash(initial));
   });
 
-  it("keeps loadRunConfig hash stable across mid-run testPathPatterns-only settings edits", async () => {
+  it("keeps a frozen run stable across project-settings edits", async () => {
     const root = await fixtureRoot();
     const configPath = path.join(root, "agent-harness.config.yaml");
     await writeFile(
@@ -369,7 +370,7 @@ repositoryRoot: .
     });
     const loadedAfterPaths = await loadRunConfig(afterPaths.config, runId);
     expect(configurationHash(loadedAfterPaths)).toBe(stamped);
-    expect(loadedAfterPaths.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
+    expect(loadedAfterPaths.workflow.testPathPatterns).toEqual(["tests/**"]);
     expect(loadedAfterPaths.commands.test).toBe('node -e "process.exit(0)"');
 
     const afterCommand = await writeProjectSettings(configPath, {
@@ -378,6 +379,6 @@ repositoryRoot: .
     const loadedAfterCommand = await loadRunConfig(afterCommand.config, runId);
     expect(configurationHash(loadedAfterCommand)).toBe(stamped);
     expect(loadedAfterCommand.commands.test).toBe('node -e "process.exit(0)"');
-    expect(loadedAfterCommand.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
+    expect(loadedAfterCommand.workflow.testPathPatterns).toEqual(["tests/**"]);
   });
 });

@@ -32,17 +32,7 @@ export function normalizeFrozenRunConfig(raw: unknown): HarnessConfig {
  */
 export function applyLiveProjectPolicy(
   frozen: HarnessConfig,
-  projectConfig: HarnessConfig,
+  _projectConfig: HarnessConfig,
 ): HarnessConfig {
-  return {
-    ...frozen,
-    git: {
-      ...frozen.git,
-      ignoredArtifactPatterns: projectConfig.git.ignoredArtifactPatterns,
-    },
-    workflow: {
-      ...frozen.workflow,
-      testPathPatterns: projectConfig.workflow.testPathPatterns,
-    },
-  };
+  return frozen;
 }

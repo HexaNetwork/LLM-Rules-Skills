@@ -31,13 +31,13 @@ export const renderSettingsScript = `    function renderSettings(settings) {
           } else {
             input = '<input id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="integer" type="number" value="' + attr(values[definition.key]) + '" min="' + attr(definition.minimum) + '" max="' + attr(definition.maximum) + '" step="1" required' + (settings.editable ? '' : ' disabled') + '>';
           }
-          var applies = definition.appliesTo === 'live' ? 'Applies immediately to in-progress runs' : 'Applies to new runs';
+          var applies = 'Applies to new runs; blocked runs require an explicit reviewed amendment';
           return '<label class="setting-row" for="' + attr(id) + '"><span><strong>' + esc(definition.label) + '</strong><span class="faint">' + esc(definition.description) + '</span><span class="faint" style="display:block;margin-top:4px">' + esc(applies) + '</span></span>' + input + '</label>';
         }).join('');
         return '<section class="settings-group"><h3>' + esc(category.name) + '</h3>' + rows + '</section>';
       }).join('');
       var persistence = settings.editable
-        ? 'Most settings freeze for in-progress runs. Test path patterns and ignored artifact patterns apply immediately.'
+        ? 'Settings apply to new runs. Blocked runs require an explicit reviewed amendment.'
         : 'This dashboard was started without a config file path, so settings are read-only.';
       var grillLayout = getGrillOptionsLayout();
       var displayGroup = '<section class="settings-group"><h3>Display</h3>' +
@@ -57,9 +57,9 @@ export const renderSettingsScript = `    function renderSettings(settings) {
           }).join('')
         : '<div class="muted">No ignored artifact patterns yet.</div>';
       var artifactGroup = '<section class="settings-group" id="ignoredArtifactsGroup"><h3>Ignored build artifacts</h3>' +
-        '<p class="faint" style="margin:0 0 8px">Harness-local globs skipped for dirty-tree and unreported-path checks. Live for in-progress runs. Does not edit .gitignore.</p>' +
+        '<p class="faint" style="margin:0 0 8px">Harness-local globs skipped for dirty-tree and unreported-path checks. Does not edit .gitignore; amend blocked runs explicitly when needed.</p>' +
         '<div id="ignoredArtifactsList" style="display:grid;gap:8px">' + artifactRows + '</div></section>';
-      $("settingsBody").innerHTML = '<p class="settings-intro">Tune workflow behavior from one place. Most settings apply to new runs; test paths and ignored artifacts are live recovery policies.</p>' + fields + artifactGroup + displayGroup;
+      $("settingsBody").innerHTML = '<p class="settings-intro">Tune workflow behavior from one place. Settings freeze into new runs; blocked runs can be amended through an explicit reviewed recovery action.</p>' + fields + artifactGroup + displayGroup;
       $("settingsScope").textContent = persistence;
       $("saveSettingsBtn").disabled = !settings.editable;
       var layoutSelect = $("grill-options-layout");

@@ -1,4 +1,4 @@
-import type { HarnessConfig, PreflightCommitOrder } from "./config.js";
+import type { HarnessConfig, PreflightCommitOrder, ProjectSettingsPatch } from "./config.js";
 import type { ReflectOutput, RunState } from "./domain.js";
 import { isTestPath, reconcileUnknowns } from "./domain.js";
 import { ApplicationContext } from "./application/application-context.js";
@@ -155,5 +155,13 @@ export class HarnessEngine {
 
   setTdd(runId: string, tdd: boolean, taskId?: string): Promise<RunState> {
     return this.execution.setTdd(runId, tdd, taskId);
+  }
+
+  amendConfig(
+    runId: string,
+    patch: ProjectSettingsPatch,
+    options?: { persistedProjectDefaults?: boolean; reportPaths?: string[] },
+  ): Promise<RunState> {
+    return this.recovery.amendConfig(runId, patch, options);
   }
 }

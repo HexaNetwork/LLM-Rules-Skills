@@ -383,7 +383,7 @@ describe("durable idea-to-feature workflow", () => {
     expect(state.blockedKind).toBe("provider");
   });
 
-  it("continues after mid-run testPathPatterns-only settings change without a config block", async () => {
+  it("continues with frozen testPathPatterns after a project settings change", async () => {
     const root = await fixtureRoot();
     const configPath = path.join(root, "agent-harness.config.yaml");
     await writeFile(
@@ -418,13 +418,13 @@ describe("durable idea-to-feature workflow", () => {
     });
     const runConfig = await loadRunConfig(project, state.runId);
     expect(configurationHash(runConfig)).toBe(stamped);
-    expect(runConfig.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
+    expect(runConfig.workflow.testPathPatterns).toEqual(["tests/**"]);
 
     const resumed = new HarnessEngine(runConfig, { backend });
     state = await resumed.advance(state.runId);
     expect(state.blockedKind).not.toBe("config");
     expect(state.phase).toBe("awaiting_input");
-    expect(resumed.config.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
+    expect(resumed.config.workflow.testPathPatterns).toEqual(["tests/**"]);
   });
 
   it("continues after mid-run hashed commands.test change via frozen snapshot isolation", async () => {
@@ -507,6 +507,7 @@ describe("durable idea-to-feature workflow", () => {
     );
     expect(events).toContain("run.config_migrated");
 
+    engine.config.commands.test = "./gradlew test";
     state = { ...state, configurationHash: "not-the-current-hash", configVersion: CONFIG_VERSION };
     await engine.store.writeJson(state.runId, "state.json", state);
     state = await engine.advance(state.runId);

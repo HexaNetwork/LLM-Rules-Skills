@@ -79,8 +79,8 @@ describe("central dashboard", () => {
         d.appliesTo,
       ]),
     );
-    expect(byKey["workflow.testPathPatterns"]).toBe("live");
-    expect(byKey["git.ignoredArtifactPatterns"]).toBe("live");
+    expect(byKey["workflow.testPathPatterns"]).toBe("new_runs");
+    expect(byKey["git.ignoredArtifactPatterns"]).toBe("new_runs");
     expect(byKey["commands.test"]).toBe("new_runs");
     expect(byKey["workflow.maxGrillQuestionsPerEpisode"]).toBe("new_runs");
     expect(initialBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(5);
@@ -144,7 +144,7 @@ describe("central dashboard", () => {
     expect(updatedBody).not.toHaveProperty("appliesTo");
     expect(
       updatedBody.settings.definitions.find((d) => d.key === "workflow.testPathPatterns")?.appliesTo,
-    ).toBe("live");
+    ).toBe("new_runs");
     expect(updatedBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(10);
     expect(updatedBody.settings.values["workflow.staleAnswerMinutes"]).toBe(45);
     expect(updatedBody.settings.values["workflow.testPathPatterns"]).toEqual([
@@ -195,7 +195,7 @@ describe("central dashboard", () => {
     expect(invalidOrder.status).toBe(400);
   });
 
-  it("continues a run after mid-run testPathPatterns-only settings PUT without a config block", async () => {
+  it("keeps a run frozen after a mid-run testPathPatterns settings PUT", async () => {
     const root = await fixtureRoot();
     const configPath = path.join(root, "agent-harness.config.yaml");
     await writeFile(
@@ -256,7 +256,51 @@ describe("central dashboard", () => {
     });
     const runConfig = await loadRunConfig(project, started.runId);
     expect(configurationHash(runConfig)).toBe(stamped);
-    expect(runConfig.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
+    expect(runConfig.workflow.testPathPatterns).toEqual(["tests/**"]);
+  });
+
+  it("amends a blocked run through the reviewed config action and can persist future defaults", async () => {
+    const root = await fixtureRoot();
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    await writeFile(configPath, "version: 2\nrepositoryRoot: .\n", "utf8");
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, testPathPatterns: ["tests/**"] } as never,
+    });
+    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const started = await engine.start("amend blocked config", "amend-config-run");
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...started,
+      phase: "blocked",
+      blockedFrom: "reflecting",
+      blockedKind: "contract",
+      blockedRetriable: false,
+      failure: "Test writer changed a non-test path",
+    });
+    ui = await startUiServer({
+      config,
+      backend: createFakeBackend({}),
+      configPath,
+      port: 0,
+      token: "ui-test",
+    });
+
+    const amended = await request(ui, `/api/runs/${started.runId}/actions`, {
+      method: "POST",
+      body: {
+        action: "amend_config",
+        patch: { workflow: { testPathPatterns: ["modules/**/src/test/**"] } },
+        persistProjectDefaults: true,
+      },
+    });
+    expect(amended.status).toBe(202);
+    await waitForPhase(ui, started.runId, "blocked");
+
+    const frozen = await loadRunConfig(config, started.runId);
+    expect(frozen.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
+    expect(await readFile(configPath, "utf8")).toContain("modules/**/src/test/**");
+    const events = await engine.store.readText(started.runId, "events.jsonl");
+    expect(events).toContain("run.config_amended");
+    expect(events).toContain("persistedProjectDefaults\":true");
   });
 
   it("reports unchanged for a matching ?since= signature and a fresh payload after a transition", async () => {

@@ -383,6 +383,15 @@ export const renderRunScript = `    function renderSidebar() {
         } else if (!isTreeDivergence) {
           retryControls = '<button class="btn danger" data-action="retry">Retry transition</button>';
         }
+        var configAmendControls = '';
+        if (canEditSettings) {
+          configAmendControls =
+            '<div class="resolution" style="margin-top:12px"><strong>Amend this run\\'s configuration</strong>' +
+            '<div class="muted" style="margin-top:5px">Review and confirm a settings patch before the harness rewrites this blocked run\\'s frozen snapshot and hash. It will not resume automatically.</div>' +
+            '<div class="field" style="margin-top:10px"><label for="configAmendPatch">Settings patch (JSON)</label><textarea id="configAmendPatch" rows="5" placeholder="{&quot;workflow&quot;:{&quot;testPathPatterns&quot;:[&quot;tests/**&quot;,&quot;src/**/test/**&quot;]}}"></textarea></div>' +
+            '<label class="faint" style="display:flex;gap:7px;align-items:center"><input id="persistConfigAmendment" type="checkbox"> Also use this patch as the project default for future runs</label>' +
+            '<button class="btn" style="margin-top:10px" data-action="amend_config">Review and amend configuration</button></div>';
+        }
         var fixer = s.fixerRecovery;
         var fixerControls = '';
         if (fixer && fixer.status === 'proposed') {
@@ -393,6 +402,7 @@ export const renderRunScript = `    function renderSidebar() {
           fixerControls = '<strong>Fix with an agent</strong><div class="muted" style="margin-top:5px">Describe how you want this handled. The fixer will propose a plan first; it cannot edit until you approve it.</div><div class="field" style="margin-top:10px"><label for="fixerGuidance">Recovery guidance</label><textarea id="fixerGuidance" rows="3" placeholder="For example: preserve the existing test and update the configured test path patterns"></textarea></div><button class="btn" data-action="propose_fix">Draft recovery plan</button>';
         }
         html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + acceptTreeControls + ignoreArtifactControls + '</div>' + retryControls + '</div><div class="resolution">' + fixerControls + '</div></div>';
+        html += configAmendControls;
       }
       if (["grilling","awaiting_input","planning"].includes(s.phase)) {
         html += renderFogCard(s);

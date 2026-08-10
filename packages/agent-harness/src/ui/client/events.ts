@@ -208,6 +208,20 @@ export const eventsScript = `    async function waitForJob(runId) {
           var maxRunTokens = tokenInput && tokenInput.value !== '' ? Number(tokenInput.value) : undefined;
           var maxRunCostUsd = costInput && costInput.value !== '' ? Number(costInput.value) : undefined;
           runAction('retry', { force: true, maxRunTokens: maxRunTokens, maxRunCostUsd: maxRunCostUsd });
+        } else if (target.dataset.action === 'amend_config') {
+          var configPatchInput = document.getElementById('configAmendPatch');
+          var configPatchText = configPatchInput ? configPatchInput.value.trim() : '';
+          if (!configPatchText) { toast('Enter the settings patch you want to apply', true); return; }
+          var configPatch;
+          try { configPatch = JSON.parse(configPatchText); }
+          catch (error) { toast('Settings patch must be valid JSON', true); return; }
+          if (!configPatch || typeof configPatch !== 'object' || Array.isArray(configPatch)) { toast('Settings patch must be a JSON object', true); return; }
+          var persistInput = document.getElementById('persistConfigAmendment');
+          var persistProjectDefaults = !!(persistInput && persistInput.checked);
+          var reviewText = 'Apply this reviewed settings patch to the frozen configuration for this blocked run?\\n\\n' + JSON.stringify(configPatch, null, 2);
+          if (persistProjectDefaults) reviewText += '\\n\\nIt will also become the project default for future runs.';
+          if (!confirm(reviewText)) return;
+          runAction('amend_config', { patch: configPatch, persistProjectDefaults: persistProjectDefaults });
         } else if (target.dataset.action === 'propose_fix') {
           var fixerInput = document.getElementById('fixerGuidance');
           var guidance = fixerInput ? fixerInput.value.trim() : '';

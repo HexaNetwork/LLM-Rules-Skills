@@ -15,8 +15,8 @@ import {
   requiredRecord,
 } from "../request.js";
 
-/** Whether a setting overlays in-progress runs (`live`) or only freezes into new runs. */
-export type SettingAppliesTo = "live" | "new_runs";
+/** Project settings become part of a new run's frozen configuration. */
+export type SettingAppliesTo = "new_runs";
 
 type SettingDefinitionBase = {
   key: string;
@@ -98,7 +98,7 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     type: "string-list",
     maximumItems: 500,
     maximumItemLength: 1_000,
-    appliesTo: "live",
+    appliesTo: "new_runs",
   },
   {
     key: "commands.test",
@@ -141,14 +141,30 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     type: "string-list",
     maximumItems: 500,
     maximumItemLength: 1_000,
-    appliesTo: "live",
+    appliesTo: "new_runs",
   },
 ];
 
 export function projectSettings(config: HarnessConfig, configPath?: string): Record<string, unknown> {
   return {
     editable: configPath != null,
-    definitions: PROJECT_SETTING_DEFINITIONS,
+    definitions: PROJECT_SETTING_DEFINITIONS.map((definition) => {
+      if (definition.key === "workflow.testPathPatterns") {
+        return {
+          ...definition,
+          description:
+            "One repository-relative glob per line. To change a blocked run, use its reviewed configuration-amendment control.",
+        };
+      }
+      if (definition.key === "git.ignoredArtifactPatterns") {
+        return {
+          ...definition,
+          description:
+            "Harness-local globs skipped for dirty-tree and unreported-path checks. Does not edit .gitignore; amend a blocked run explicitly when needed.",
+        };
+      }
+      return definition;
+    }),
     values: {
       "workflow.maxGrillQuestionsPerEpisode": config.workflow.maxGrillQuestionsPerEpisode,
       "workflow.staleAnswerMinutes": config.workflow.staleAnswerMinutes,

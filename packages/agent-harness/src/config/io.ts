@@ -8,7 +8,7 @@ import {
   type HarnessConfig,
   type ProjectSettingsPatch,
 } from "./schema.js";
-import { applyLiveProjectPolicy, normalizeFrozenRunConfig } from "./migrations.js";
+import { normalizeFrozenRunConfig } from "./migrations.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -81,17 +81,16 @@ export async function writeProjectSettings(
 }
 
 export async function loadRunConfig(
-  projectConfig: HarnessConfig,
+  _projectConfig: HarnessConfig,
   runId: string,
 ): Promise<HarnessConfig> {
   const snapshot = path.resolve(
-    projectConfig.repositoryRoot,
-    projectConfig.stateDirectory,
+    _projectConfig.repositoryRoot,
+    _projectConfig.stateDirectory,
     "runs",
     runId,
     "config.json",
   );
   const raw: unknown = JSON.parse(await readFile(snapshot, "utf8"));
-  const frozen = normalizeFrozenRunConfig(raw);
-  return applyLiveProjectPolicy(frozen, projectConfig);
+  return normalizeFrozenRunConfig(raw);
 }

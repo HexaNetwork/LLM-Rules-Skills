@@ -48,6 +48,42 @@ const PLAN_WITH_INSTALLS = {
 };
 
 describe("operator controls", () => {
+  it("amends only a blocked run's frozen config and records the reviewed policy change", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const started = await engine.start("recover test paths");
+    const blocked = {
+      ...started,
+      phase: "blocked" as const,
+      blockedFrom: "reflecting" as const,
+      blockedKind: "contract" as const,
+      blockedRetriable: false,
+      failure: "Test writer changed a non-test path",
+    };
+    await engine.store.writeJson(started.runId, "state.json", blocked);
+
+    const updated = await engine.amendConfig(started.runId, {
+      workflow: { testPathPatterns: ["src/**/test/**"] },
+    });
+
+    expect(updated.phase).toBe("blocked");
+    expect(updated.configurationHash).not.toBe(configurationHash(config));
+    const frozen = (await engine.store.readJson(started.runId, "config.json")) as {
+      workflow: { testPathPatterns: string[] };
+    };
+    expect(frozen.workflow.testPathPatterns).toEqual(["src/**/test/**"]);
+    const events = await engine.store.readText(started.runId, "events.jsonl");
+    expect(events).toContain("run.config_amended");
+    expect(events).toContain("workflow.testPathPatterns");
+
+    const active = { ...started, phase: "reflecting" as const };
+    await engine.store.writeJson(started.runId, "state.json", active);
+    await expect(
+      engine.amendConfig(started.runId, { workflow: { testPathPatterns: ["tests/**"] } }),
+    ).rejects.toThrow(/must be blocked/i);
+  });
+
   it("gates on proposed installs then enters executing after deny-all", async () => {
     const root = await fixtureRoot();
     const backend = createFakeBackend({
@@ -237,8 +273,10 @@ describe("operator controls", () => {
         return fixerCalls === 1
           ? {
             summary: "Classify the repository's test directory as a test path.",
-            steps: [{ title: "Update test paths", description: "Add the project test folder glob." }],
+            steps: [{ title: "Update test paths", description: "Add the project test folder glob in agent-harness.config.yaml." }],
             risks: ["The run should be retried after the configuration is corrected."],
+            allowedPaths: ["agent-harness.config.yaml"],
+            validationCommands: [],
           }
           : { summary: "Updated the recovery configuration.", changedFiles: ["agent-harness.config.yaml"] };
       },

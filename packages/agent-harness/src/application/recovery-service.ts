@@ -1,6 +1,10 @@
 import {
   HarnessConfigSchema,
   configurationHash,
+  configurationPolicyDiff,
+  normalizeFrozenRunConfig,
+  ProjectSettingsPatchSchema,
+  type ProjectSettingsPatch,
   type PreflightCommitOrder,
 } from "../config.js";
 import {
@@ -227,6 +231,78 @@ export class RecoveryService {
       ...state,
       configurationHash: configurationHash(this.ctx.config),
     };
+  }
+
+  /**
+   * Apply an operator-reviewed settings patch to a blocked run's frozen
+   * configuration. This is intentionally separate from retry: confirmation
+   * must happen in the caller before the harness writes a new policy snapshot.
+   */
+  async amendConfig(
+    runId: string,
+    patch: ProjectSettingsPatch,
+    options?: { persistedProjectDefaults?: boolean; reportPaths?: string[] },
+  ): Promise<RunState> {
+    return this.ctx.store.withRepositoryLock({ runId, action: "amendConfig" }, () =>
+      this.ctx.store.withLock(runId, async () => {
+        let state = await this.ctx.store.load(runId);
+        if (state.phase !== "blocked" || !state.blockedFrom) {
+          throw new Error(`Run ${runId} must be blocked before its frozen config can be amended`);
+        }
+        const parsedPatch = ProjectSettingsPatchSchema.parse(patch);
+        const raw = (await this.ctx.store.readJson(runId, "config.json")) as Record<string, unknown>;
+        const frozen = normalizeFrozenRunConfig(raw);
+        const amended = HarnessConfigSchema.parse({
+          ...frozen,
+          ...(parsedPatch.workflow
+            ? { workflow: { ...frozen.workflow, ...parsedPatch.workflow } }
+            : {}),
+          ...(parsedPatch.commands
+            ? { commands: { ...frozen.commands, ...parsedPatch.commands } }
+            : {}),
+          ...(parsedPatch.git ? { git: { ...frozen.git, ...parsedPatch.git } } : {}),
+        });
+        const changedPaths = configurationPolicyDiff(frozen, amended);
+        if (changedPaths.length === 0) {
+          throw new Error("The proposed config amendment does not change this run's policy");
+        }
+        const previousHash = state.configurationHash;
+        await this.ctx.store.writeJson(runId, "config.json", {
+          ...amended,
+          configVersion: state.configVersion,
+        });
+        const reportPaths = unique(
+          (options?.reportPaths ?? []).map((file) => file.replaceAll("\\", "/")),
+        );
+        if (reportPaths.length > 0) {
+          const targetIndex = indexOfTaskForReportedPaths(state);
+          if (targetIndex >= 0) {
+            state = {
+              ...state,
+              tasks: state.tasks.map((task, index) =>
+                index === targetIndex
+                  ? { ...task, changedFiles: unique([...task.changedFiles, ...reportPaths]) }
+                  : task,
+              ),
+            };
+          }
+        }
+        const nextHash = configurationHash(amended);
+        const updated = await this.ctx.store.record(
+          { ...state, configurationHash: nextHash },
+          "run.config_amended",
+          {
+            previousHash,
+            nextHash,
+            changedPaths,
+            persistedProjectDefaults: Boolean(options?.persistedProjectDefaults),
+            reportPaths,
+          },
+        );
+        await this.ctx.syncArtifacts(updated);
+        return updated;
+      }),
+    );
   }
 
   /**

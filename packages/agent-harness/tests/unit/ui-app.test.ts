@@ -90,11 +90,10 @@ describe("dashboard document", () => {
     expect(html).toContain("copy-path-btn");
     expect(html).toContain("bootstrap.project.root");
     expect(html).toContain("data-setting-key");
-    expect(html).toContain("Most settings freeze for in-progress runs");
-    expect(html).toContain("Test path patterns and ignored artifact patterns apply immediately");
-    expect(html).toContain("test paths and ignored artifacts are live recovery policies");
-    expect(html).toContain("Applies immediately to in-progress runs");
-    expect(html).toContain("Applies to new runs");
+    expect(html).toContain("Settings apply to new runs. Blocked runs require an explicit reviewed amendment");
+    expect(html).toContain("Settings freeze into new runs; blocked runs can be amended");
+    expect(html).toContain("Amend this run");
+    expect(html).toContain("Applies to new runs; blocked runs require an explicit reviewed amendment");
     expect(html).toContain("Settings saved");
     expect(html).not.toContain("Settings saved for new runs");
     expect(html).toContain('id="settingsScope"');

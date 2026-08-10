@@ -2,6 +2,10 @@ import { mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import {
+  assertWorktreeRootOutsideControlRoot,
+  isPathUnderControlRoot,
+} from "../application/harness-home.js";
+import {
   assertWorktreePathContained,
   canonicalizeWorkspacePath,
   sanitizeWorktreeRunId,
@@ -24,6 +28,12 @@ export type WorktreeInspection = {
 export type WorktreeManagerOptions = {
   controlRoot: string;
   stateRoot: string;
+  /**
+   * Parent directory for per-run worktrees. Defaults to `<stateRoot>/worktrees`
+   * for legacy repository-local installs; external projects pass the sibling
+   * or configured override root.
+   */
+  worktreeRoot?: string;
   store: RunStore;
 };
 
@@ -48,7 +58,16 @@ export class WorktreeManager {
   constructor(private readonly options: WorktreeManagerOptions) {
     this.controlRoot = path.resolve(options.controlRoot);
     this.stateRoot = path.resolve(options.stateRoot);
-    this.worktreeParent = path.join(this.stateRoot, "worktrees");
+    this.worktreeParent = path.resolve(
+      options.worktreeRoot?.trim()
+        ? options.worktreeRoot
+        : path.join(this.stateRoot, "worktrees"),
+    );
+    // External / sibling roots must stay outside the target repository.
+    // Legacy `<stateRoot>/worktrees` under controlRoot remains allowed.
+    if (!isPathUnderControlRoot(this.worktreeParent, this.controlRoot)) {
+      assertWorktreeRootOutsideControlRoot(this.worktreeParent, this.controlRoot);
+    }
   }
 
   worktreePathFor(runId: string): string {

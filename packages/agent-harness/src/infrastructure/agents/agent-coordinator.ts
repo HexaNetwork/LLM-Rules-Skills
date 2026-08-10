@@ -4,7 +4,12 @@ import type {
   InvocationKind,
   InvocationTrigger,
 } from "../../application/agent-activity.js";
+import { resolveHarnessHome } from "../../application/harness-home.js";
 import { resolveHarnessPaths, type HarnessPaths } from "../../application/paths.js";
+import {
+  assertWorkspaceIsolation,
+  capabilitiesForBackend,
+} from "../../application/workspace-isolation.js";
 import type { HarnessConfig } from "../../config.js";
 import { modelForRole } from "../../config.js";
 import {
@@ -53,6 +58,23 @@ export class AgentCoordinator {
 
   private get workspaceRoot(): string {
     return this.paths.workspaceRoot;
+  }
+
+  /**
+   * Enforce writable-workspace isolation before agent invocations.
+   * Strict mode refuses providers that cannot restrict the workspace root.
+   */
+  assertIsolationBoundary(homeRoot = resolveHarnessHome().homeRoot): void {
+    assertWorkspaceIsolation({
+      paths: this.paths,
+      homeRoot,
+      strictIsolation: this.config.agent.strictIsolation,
+      capabilities: capabilitiesForBackend(
+        this.backend,
+        this.config.agent.provider,
+      ),
+      agentCwd: this.workspaceRoot,
+    });
   }
 
   async invoke<T>(input: InvokeInput<T>): Promise<T> {
@@ -297,6 +319,7 @@ export class AgentCoordinator {
 
         let result: AgentBackendResult;
         try {
+          this.assertIsolationBoundary();
           const taskId = taskIdFromPacketInput(packet.input);
           result = await withTimeout(
             (signal) =>

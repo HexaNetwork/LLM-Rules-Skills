@@ -78,6 +78,9 @@ export function createCursorBackend(
         ? { ready: true }
         : { ready: false, message: "CURSOR_API_KEY is required for the Cursor backend." };
     },
+    workspaceCapabilities() {
+      return { canRestrictWritableWorkspace: true, providerId: "cursor" };
+    },
     async run(request) {
       if (!apiKey) throw new Error("CURSOR_API_KEY is required for the Cursor backend");
       const sdk = (await import("@cursor/sdk")) as unknown as {

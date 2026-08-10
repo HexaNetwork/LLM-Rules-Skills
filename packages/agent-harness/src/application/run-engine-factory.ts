@@ -38,6 +38,7 @@ export async function openRunHarness(
     const manager = new WorktreeManager({
       controlRoot: paths.controlRoot,
       stateRoot: paths.stateRoot,
+      worktreeRoot: paths.worktreeRoot,
       store,
     });
     await manager.open(workspace);

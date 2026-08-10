@@ -6,6 +6,7 @@ import { classifyFailure } from "../errors.js";
 import { prepareGraphifyForRun } from "../graphify.js";
 import { WorktreeManager } from "../git/worktree-manager.js";
 import type { ApplicationContext } from "./application-context.js";
+import { freezeRunComponents } from "./component-freeze.js";
 import type { RecoveryService } from "./recovery-service.js";
 
 export class RunLifecycleService {
@@ -34,6 +35,8 @@ export class RunLifecycleService {
       ...this.ctx.config,
       configVersion: CONFIG_VERSION,
     });
+    await this.freezeEffectiveComponents(runId);
+    this.ctx.agents.assertIsolationBoundary(this.ctx.projectContext?.home.homeRoot);
     state = await this.ctx.store.record(state, "run.created", { idea: idea.trim() });
     // Worktree add takes the short workspace-admin lock inside WorktreeManager.
     // Shared knowledge refresh takes the shared-index lock. No repository lock on start.
@@ -109,6 +112,7 @@ export class RunLifecycleService {
     const manager = new WorktreeManager({
       controlRoot: this.ctx.paths.controlRoot,
       stateRoot: this.ctx.paths.stateRoot,
+      worktreeRoot: this.ctx.paths.worktreeRoot,
       store: this.ctx.store,
     });
 
@@ -154,6 +158,19 @@ export class RunLifecycleService {
     }
     return state;
   }
+
+  private async freezeEffectiveComponents(runId: string): Promise<void> {
+    const project = this.ctx.projectContext;
+    if (!project) return;
+    await freezeRunComponents({
+      runId,
+      runsRoot: project.paths.runsRoot,
+      project: project.paths,
+      home: project.home,
+      config: this.ctx.config,
+    });
+  }
+
 }
 
 /** Porcelain paths in the operator control checkout (not the run worktree). */

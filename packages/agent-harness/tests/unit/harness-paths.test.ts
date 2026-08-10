@@ -17,6 +17,7 @@ describe("resolveHarnessPaths", () => {
     expect(paths.controlRoot).toBe(path.resolve(root));
     expect(paths.workspaceRoot).toBe(paths.controlRoot);
     expect(paths.stateRoot).toBe(path.resolve(root, ".agent-harness"));
+    expect(paths.worktreeRoot).toBe(path.join(paths.stateRoot, "worktrees"));
   });
 
   it("resolves an absolute stateDirectory without nesting under controlRoot", () => {
@@ -28,6 +29,9 @@ describe("resolveHarnessPaths", () => {
     expect(paths.controlRoot).toBe(controlRoot);
     expect(paths.workspaceRoot).toBe(controlRoot);
     expect(paths.stateRoot).toBe(stateRoot);
+    expect(paths.worktreeRoot).toBe(
+      path.join(path.dirname(controlRoot), `${path.basename(controlRoot)}-worktrees`),
+    );
   });
 
   it("points workspaceRoot at a git-worktree path when workspace metadata is provided", () => {
@@ -44,6 +48,18 @@ describe("resolveHarnessPaths", () => {
 
     expect(paths.controlRoot).toBe(controlRoot);
     expect(paths.workspaceRoot).toBe(worktreePath);
+  });
+
+  it("honors an explicit worktreeRoot override", () => {
+    const controlRoot = path.resolve("/tmp/harness-control");
+    const stateRoot = path.resolve("/tmp/harness-state");
+    const worktreeRoot = path.resolve("/tmp/ah-wt");
+    const config = buildFixtureConfig(controlRoot, {
+      stateDirectory: stateRoot,
+      worktreeRoot,
+    });
+    const paths = resolveHarnessPaths(config);
+    expect(paths.worktreeRoot).toBe(worktreeRoot);
   });
 });
 
@@ -72,10 +88,11 @@ describe("HarnessPaths composition", () => {
 });
 
 describe("configurationHash runtime path stability", () => {
-  it("omits repositoryRoot, stateDirectory, and sharedIndexDirectory from the hash", () => {
+  it("omits repositoryRoot, stateDirectory, worktreeRoot, and sharedIndexDirectory from the hash", () => {
     const base = HarnessConfigSchema.parse({
       repositoryRoot: "/project-a",
       stateDirectory: ".agent-harness",
+      worktreeRoot: "/tmp/wt-a",
       knowledge: { sharedIndexDirectory: "shared-a" },
       workflow: { tdd: true },
     });
@@ -83,6 +100,7 @@ describe("configurationHash runtime path stability", () => {
       ...base,
       repositoryRoot: "/project-b",
       stateDirectory: "/absolute/state",
+      worktreeRoot: "/tmp/wt-b",
       knowledge: { ...base.knowledge, sharedIndexDirectory: "shared-b" },
     };
 

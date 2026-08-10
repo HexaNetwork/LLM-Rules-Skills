@@ -207,6 +207,7 @@ export class RunAdvancer {
     const manager = new WorktreeManager({
       controlRoot: this.ctx.paths.controlRoot,
       stateRoot: this.ctx.paths.stateRoot,
+      worktreeRoot: this.ctx.paths.worktreeRoot,
       store: this.ctx.store,
     });
     await manager.open(workspace);

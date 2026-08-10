@@ -13,6 +13,14 @@ import {
   loadRunConfig,
   type HarnessConfig,
 } from "../config.js";
+import {
+  loadExternalProjectConfig,
+  seedExternalGuidance,
+} from "../application/external-config.js";
+import { resolveHarnessHome, HARNESS_HOME_ENV } from "../application/harness-home.js";
+import { migrateHome } from "../application/migrate-home.js";
+import { ProjectRegistry } from "../application/project-registry.js";
+import { formatBytes, reportProjectStorage } from "../application/storage-report.js";
 import { openRunHarness } from "../application/run-engine-factory.js";
 import { HarnessEngine } from "../engine.js";
 import { GitService } from "../git.js";
@@ -225,13 +233,196 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       await dependencies.runGraphifySetup(project, options.installPrerequisite);
     });
 
+  const projectCmd = program
+    .command("project")
+    .description("Manage external harness project registrations (zero-footprint targets)");
+
+  projectCmd
+    .command("add")
+    .description("Register a repository in the external harness home (no repo-local files)")
+    .requiredOption("--repository <path>", "target repository path")
+    .option("--name <name>", "display name")
+    .option("--worktree-root <path>", "override sibling worktree root")
+    .option("--home <path>", "harness home override")
+    .action(async (options: {
+      repository: string;
+      name?: string;
+      worktreeRoot?: string;
+      home?: string;
+    }) => {
+      const home = resolveHarnessHome({ homeRoot: options.home });
+      const registry = new ProjectRegistry(home);
+      const guidance = await seedExternalGuidance(home);
+      const lookup = await registry.add({
+        repository: options.repository,
+        name: options.name,
+        worktreeRoot: options.worktreeRoot,
+        home,
+      });
+      // Write initial external project config without touching the repository.
+      await loadExternalProjectConfig({
+        projectKey: lookup.registration.projectKey,
+        home,
+        allowLegacy: false,
+      });
+      console.log(`Registered project ${lookup.registration.projectKey}`);
+      console.log(`  displayName: ${lookup.registration.displayName}`);
+      console.log(`  controlRoot: ${lookup.paths.controlRoot}`);
+      console.log(`  stateRoot: ${lookup.paths.projectStateRoot}`);
+      console.log(`  worktreeRoot: ${lookup.paths.worktreeRoot}`);
+      console.log(`  config: ${lookup.paths.projectConfigPath}`);
+      console.log(
+        `  guidance: ${guidance.sourcePath}${guidance.copied ? " (seeded)" : " (reused)"}`,
+      );
+      console.log(`  home: ${home.homeRoot} (override with ${HARNESS_HOME_ENV} or --home)`);
+    });
+
+  projectCmd
+    .command("list")
+    .description("List registered projects")
+    .option("--home <path>", "harness home override")
+    .action(async (options: { home?: string }) => {
+      const home = resolveHarnessHome({ homeRoot: options.home });
+      const registrations = await new ProjectRegistry(home).list();
+      if (registrations.length === 0) {
+        console.log("No registered projects.");
+        return;
+      }
+      for (const registration of registrations) {
+        console.log(
+          `${registration.projectKey}\t${registration.displayName}\t${registration.controlRoot}`,
+        );
+      }
+    });
+
+  projectCmd
+    .command("validate")
+    .description("Validate a project registration and Git identity")
+    .requiredOption("--project <project-key>", "project key")
+    .option("--home <path>", "harness home override")
+    .action(async (options: { project: string; home?: string }) => {
+      const home = resolveHarnessHome({ homeRoot: options.home });
+      const result = await new ProjectRegistry(home).validate(options.project);
+      if (result.ok) {
+        console.log(`Project ${options.project} is valid.`);
+        return;
+      }
+      console.log(`Project ${options.project} has issues:`);
+      for (const issue of result.issues) console.log(`  - ${issue}`);
+      throw new Error("Project validation failed");
+    });
+
+  projectCmd
+    .command("relink")
+    .description("Update a registration after the repository moved")
+    .requiredOption("--project <project-key>", "project key")
+    .requiredOption("--repository <path>", "new repository path")
+    .option("--home <path>", "harness home override")
+    .action(async (options: { project: string; repository: string; home?: string }) => {
+      const home = resolveHarnessHome({ homeRoot: options.home });
+      const lookup = await new ProjectRegistry(home).relink({
+        projectKey: options.project,
+        repository: options.repository,
+        home,
+      });
+      console.log(
+        `Relinked ${lookup.registration.projectKey} → ${lookup.registration.controlRoot}`,
+      );
+    });
+
+  projectCmd
+    .command("remove")
+    .description("Remove a project registration (never deletes the target repository)")
+    .requiredOption("--project <project-key>", "project key")
+    .option("--force", "remove even when unsettled runs remain", false)
+    .option("--home <path>", "harness home override")
+    .action(async (options: { project: string; force: boolean; home?: string }) => {
+      const home = resolveHarnessHome({ homeRoot: options.home });
+      const registry = new ProjectRegistry(home);
+      const before = await registry.get(options.project);
+      const report = await reportProjectStorage(before.paths);
+      console.log(`Storage before removal (${formatBytes(report.totalBytes)}):`);
+      for (const category of report.categories) {
+        console.log(
+          `  ${category.category}: ${formatBytes(category.bytes)} (${category.entries} entries) @ ${category.path}`,
+        );
+      }
+      const removed = await registry.remove(options.project, { force: options.force });
+      console.log(`Removed registration ${removed.projectKey} (${removed.displayName}).`);
+      console.log(`Target repository left untouched: ${removed.controlRoot}`);
+    });
+
+  program
+    .command("migrate-home")
+    .description(
+      "Copy-validate a repository-local harness install into the external harness home",
+    )
+    .requiredOption("--repository <path>", "repository with legacy agent-harness files")
+    .option("--name <name>", "display name for a new registration")
+    .option("--cleanup", "after successful validation, remove legacy repo-local harness files", false)
+    .option("--home <path>", "harness home override")
+    .action(async (options: {
+      repository: string;
+      name?: string;
+      cleanup: boolean;
+      home?: string;
+    }) => {
+      const home = resolveHarnessHome({ homeRoot: options.home });
+      const result = await migrateHome({
+        repository: options.repository,
+        name: options.name,
+        cleanup: options.cleanup,
+        home,
+      });
+      console.log(`Migrated to project ${result.lookup.registration.projectKey}`);
+      console.log(`  stateRoot: ${result.lookup.paths.projectStateRoot}`);
+      console.log(`  worktreeRoot: ${result.lookup.paths.worktreeRoot}`);
+      console.log(`  copiedFiles: ${result.copiedFiles}`);
+      for (const note of result.notes) console.log(`  note: ${note}`);
+      console.log("Repository-local paths that can be removed after validation:");
+      for (const removable of result.removablePaths) console.log(`  ${removable}`);
+      if (!result.cleaned) {
+        console.log(
+          "Rollback before cleanup: leave these paths in place and keep using --config / legacy discovery.",
+        );
+      }
+    });
+
+  program
+    .command("storage")
+    .description("Report external storage usage for a registered project")
+    .option("--project <project-key>", "project key")
+    .option("--repository <path>", "repository path")
+    .option("--home <path>", "harness home override")
+    .action(async (options: { project?: string; repository?: string; home?: string }) => {
+      const home = resolveHarnessHome({ homeRoot: options.home });
+      const lookup = await new ProjectRegistry(home).discover({
+        projectKey: options.project,
+        repository: options.repository,
+      });
+      const report = await reportProjectStorage(lookup.paths);
+      console.log(`Project ${report.projectKey}`);
+      console.log(`  controlRoot: ${report.controlRoot}`);
+      console.log(`  worktreeRoot: ${report.worktreeRoot}`);
+      console.log(`  stateRoot: ${report.projectStateRoot}`);
+      console.log(`  total: ${formatBytes(report.totalBytes)}`);
+      for (const category of report.categories) {
+        console.log(
+          `  ${category.category}: ${formatBytes(category.bytes)} (${category.entries} entries)`,
+        );
+      }
+    });
+
   program
     .command("start")
     .alias("run")
     .description("Start a durable run from one idea")
     .requiredOption("--idea <textOrAtFile>", "idea text, or @path")
     .option("--run-id <id>", "stable run id")
-    .option("--config <path>", "config path")
+    .option("--config <path>", "legacy/explicit config path")
+    .option("--project <project-key>", "external project key")
+    .option("--repository <path>", "registered repository path")
+    .option("--home <path>", "harness home override")
     .option("--tdd <mode>", "override TDD for this run: on or off")
     .option("--base-branch <name>", "override local base branch for this run")
     .option("--no-advance", "create artifacts without launching agents")
@@ -240,12 +431,32 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         idea: string;
         runId?: string;
         config?: string;
+        project?: string;
+        repository?: string;
+        home?: string;
         tdd?: string;
         baseBranch?: string;
         advance: boolean;
       }) => {
-        const config = await resolvedConfig(options.config, options.tdd, options.baseBranch);
-        const engine = new HarnessEngine(config, { backend: dependencies.createBackend() });
+        const resolved = await resolvedProjectConfig(options);
+        const config = await applyRunOverrides(resolved.config, options.tdd, options.baseBranch);
+        const engine = new HarnessEngine(config, {
+          backend: dependencies.createBackend(),
+          ...(resolved.lookup && !resolved.legacy
+            ? {
+                projectContext: {
+                  home: resolved.lookup.home,
+                  paths: resolved.lookup.paths,
+                },
+                paths: {
+                  controlRoot: resolved.lookup.paths.controlRoot,
+                  stateRoot: resolved.lookup.paths.projectStateRoot,
+                  workspaceRoot: resolved.lookup.paths.controlRoot,
+                  worktreeRoot: resolved.lookup.paths.worktreeRoot,
+                },
+              }
+            : {}),
+        });
         const idea = options.idea.startsWith("@")
           ? await readFile(path.resolve(options.idea.slice(1)), "utf8")
           : options.idea;
@@ -740,7 +951,45 @@ async function resolvedConfig(
   tdd: string | undefined,
   baseBranch?: string,
 ): Promise<HarnessConfig> {
-  const { config } = await loadConfig(configPath);
+  const { config } = await resolvedProjectConfig({ config: configPath });
+  return applyRunOverrides(config, tdd, baseBranch);
+}
+
+async function resolvedProjectConfig(options: {
+  config?: string;
+  project?: string;
+  repository?: string;
+  home?: string;
+}): Promise<{
+  config: HarnessConfig;
+  path: string;
+  lookup?: Awaited<ReturnType<typeof loadExternalProjectConfig>>["lookup"];
+  legacy: boolean;
+}> {
+  if (options.config) {
+    const loaded = await loadConfig(options.config);
+    return { config: loaded.config, path: loaded.path, legacy: true };
+  }
+  const home = resolveHarnessHome({ homeRoot: options.home });
+  const loaded = await loadExternalProjectConfig({
+    projectKey: options.project,
+    repository: options.repository,
+    home,
+    allowLegacy: true,
+  });
+  return {
+    config: loaded.config,
+    path: loaded.path,
+    lookup: loaded.lookup,
+    legacy: loaded.legacy,
+  };
+}
+
+async function applyRunOverrides(
+  config: HarnessConfig,
+  tdd: string | undefined,
+  baseBranch?: string,
+): Promise<HarnessConfig> {
   let next = config;
   if (tdd != null) {
     if (tdd !== "on" && tdd !== "off") throw new Error("--tdd must be 'on' or 'off'");

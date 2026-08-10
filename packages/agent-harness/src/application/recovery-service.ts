@@ -637,6 +637,7 @@ export class RecoveryService {
       const manager = new WorktreeManager({
         controlRoot: this.ctx.paths.controlRoot,
         stateRoot: this.ctx.paths.stateRoot,
+        worktreeRoot: this.ctx.paths.worktreeRoot,
         store: this.ctx.store,
       });
       const migrated = await manager.create({
@@ -693,6 +694,7 @@ export class RecoveryService {
       const manager = new WorktreeManager({
         controlRoot: this.ctx.paths.controlRoot,
         stateRoot: this.ctx.paths.stateRoot,
+        worktreeRoot: this.ctx.paths.worktreeRoot,
         store: this.ctx.store,
       });
       const inspection = await manager.inspectCleanupTarget(workspace);

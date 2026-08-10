@@ -16,6 +16,9 @@ export function createFakeBackend(
     ...handlers,
   };
   return {
+    workspaceCapabilities() {
+      return { canRestrictWritableWorkspace: true, providerId: "fake" };
+    },
     async run(request) {
       const handler = withDefaults[request.role];
       if (!handler) throw new Error(`No fake handler for ${request.role}`);

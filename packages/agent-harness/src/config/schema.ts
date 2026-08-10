@@ -20,6 +20,7 @@ export const CONFIG_VERSION = 8;
 const CONFIG_HASH_OMIT_PATHS = new Set([
   "repositoryRoot",
   "stateDirectory",
+  "worktreeRoot",
   "knowledge.sharedIndexDirectory",
   // Runtime workspace metadata (lives in workspace.json; omitted if present on a snapshot).
   "worktreePath",
@@ -106,6 +107,12 @@ export const HarnessConfigSchema = z.object({
   version: z.literal(2).default(2),
   repositoryRoot: z.string().default("."),
   stateDirectory: z.string().default(".agent-harness"),
+  /**
+   * Optional external worktree parent. When omitted, external state uses the
+   * sibling `<repository-name>-worktrees` convention; legacy state nests under
+   * `<stateRoot>/worktrees`.
+   */
+  worktreeRoot: z.string().min(1).optional(),
   models: z
     .object({
       small: z.string().min(1),
@@ -130,6 +137,11 @@ export const HarnessConfigSchema = z.object({
       timeoutMs: z.number().int().positive().default(20 * 60 * 1000),
       promptBuilder: z.boolean().default(false),
       schemaRepairAttempts: z.number().int().min(0).max(3).default(1),
+      /**
+       * When true, refuse providers that cannot restrict the writable workspace
+       * to the run worktree (see workspaceCapabilities).
+       */
+      strictIsolation: z.boolean().default(false),
     })
     .default({}),
   workflow: z

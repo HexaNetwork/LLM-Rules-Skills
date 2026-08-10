@@ -18,9 +18,16 @@ import type { LocalKnowledgeBase } from "../knowledge.js";
 import { LocalKnowledgeBase as LocalKnowledgeBaseImpl } from "../knowledge.js";
 import { RunStore } from "../store.js";
 import { LocalTracker, type TrackerPort } from "../tracker.js";
+import type { HarnessHomePaths, ProjectPaths } from "./harness-home.js";
 import { resolveHarnessPaths, type HarnessPaths } from "./paths.js";
 
 export type Clock = { now(): Date };
+
+/** Optional external registration context threaded into run composition. */
+export type ProjectContext = {
+  home: HarnessHomePaths;
+  paths: ProjectPaths;
+};
 
 export type RunCommandOptions = {
   cwd: string;
@@ -45,6 +52,7 @@ export type ApplicationDependencies = {
   sleep(ms: number): Promise<void>;
   graphifyRunner: GraphifyRunner;
   graphifySetupRunner?: GraphifySetupRunner;
+  projectContext?: ProjectContext;
 };
 
 /** Public construction seam retained by HarnessEngine. */
@@ -61,6 +69,7 @@ export type HarnessDependencies = {
   clock?: Clock;
   commands?: CommandRunner;
   paths?: HarnessPaths;
+  projectContext?: ProjectContext;
 };
 
 export const systemClock: Clock = {
@@ -97,5 +106,6 @@ export function createApplicationDependencies(
     sleep: dependencies.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     graphifyRunner,
     graphifySetupRunner: dependencies.graphifySetupRunner,
+    projectContext: dependencies.projectContext,
   };
 }

@@ -53,13 +53,31 @@ describe("architecture: HarnessPaths wiring", () => {
     expect(pathsSource).toMatch(/controlRoot:\s*string/);
     expect(pathsSource).toMatch(/stateRoot:\s*string/);
     expect(pathsSource).toMatch(/workspaceRoot:\s*string/);
+    expect(pathsSource).toMatch(/worktreeRoot:\s*string/);
     expect(pathsSource).toMatch(/workspaceRoot/);
     expect(pathsSource).toMatch(/git-worktree/);
     expect(pathsSource).toMatch(/controlRoot/);
+    expect(pathsSource).toMatch(/deriveSiblingWorktreeRoot|isPathUnderControlRoot/);
 
     expect(contextSource).toMatch(/readonly paths:\s*HarnessPaths/);
     expect(depsSource).toMatch(/paths:\s*HarnessPaths/);
     expect(depsSource).toMatch(/new RunStore\(\s*config\s*,\s*paths\.stateRoot\s*\)/);
+  });
+
+  it("keeps external home path contracts and rejects controlRoot-nested new-run state helpers", async () => {
+    const homeSource = await readSrc("application/harness-home.ts");
+    expect(homeSource).toMatch(/export type HarnessHomePaths\s*=\s*\{/);
+    expect(homeSource).toMatch(/homeRoot:\s*string/);
+    expect(homeSource).toMatch(/projectsRoot:\s*string/);
+    expect(homeSource).toMatch(/export type ProjectPaths\s*=\s*\{/);
+    expect(homeSource).toMatch(/worktreeRoot:\s*string/);
+    expect(homeSource).toMatch(/projectStateRoot:\s*string/);
+    expect(homeSource).toMatch(/AGENT_HARNESS_HOME/);
+    expect(homeSource).toMatch(/assertWorktreeRootOutsideControlRoot/);
+
+    const pathsSource = await readSrc("application/paths.ts");
+    // Absolute external state stays outside controlRoot; relative legacy nests.
+    expect(pathsSource).toMatch(/path\.isAbsolute\(config\.stateDirectory\)/);
   });
 
   it("keeps run-scoped execution on paths.workspaceRoot (or an equivalent workspaceRoot field)", async () => {

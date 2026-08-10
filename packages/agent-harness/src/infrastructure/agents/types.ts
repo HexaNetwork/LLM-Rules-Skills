@@ -53,10 +53,18 @@ export type AgentBackendResult = {
   reasoningTokens?: number;
 };
 
+export type BackendWorkspaceCapabilities = {
+  /** Provider can bind agent tools to a single writable cwd/workspace. */
+  canRestrictWritableWorkspace: boolean;
+  providerId: string;
+};
+
 export interface AgentBackend {
   run(request: AgentRequest): Promise<AgentBackendResult>;
   release?(providerSessionId: string): Promise<void>;
   readiness?(): { ready: boolean; message?: string };
+  /** Optional isolation capability advertisement for strictIsolation checks. */
+  workspaceCapabilities?(): BackendWorkspaceCapabilities;
 }
 
 export class AgentBackendRunError extends HarnessFailure {

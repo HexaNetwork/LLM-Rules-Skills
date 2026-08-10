@@ -24,13 +24,14 @@ import {
   createApplicationDependencies,
   type ApplicationDependencies,
   type HarnessDependencies,
+  type ProjectContext,
 } from "./dependencies.js";
 import {
   runCancellationRegistry,
   type RunCancellationRegistry,
 } from "./cancellation-registry.js";
 import { applyWorkspaceToPaths, type HarnessPaths } from "./paths.js";
-export type { HarnessDependencies, ApplicationDependencies };
+export type { HarnessDependencies, ApplicationDependencies, ProjectContext };
 export type { HarnessPaths } from "./paths.js";
 
 /** Shared ports, clock/command seams, and cross-cutting run helpers. */
@@ -46,6 +47,7 @@ export class ApplicationContext {
   readonly graphifySetupRunner?: GraphifySetupRunner;
   readonly sleep: (ms: number) => Promise<void>;
   readonly cancellation: RunCancellationRegistry;
+  readonly projectContext?: ProjectContext;
   workspace: RunWorkspace;
   phaseStepper: ((state: RunState) => Promise<RunState>) | undefined;
 
@@ -64,6 +66,7 @@ export class ApplicationContext {
     this.graphifyRunner = this.deps.graphifyRunner;
     this.graphifySetupRunner = this.deps.graphifySetupRunner;
     this.sleep = this.deps.sleep;
+    this.projectContext = this.deps.projectContext;
     this.cancellation = cancellation;
     this.workspace = config.git.enabled
       ? migrateRunWorkspace(null, { controlRoot: this.paths.controlRoot })

@@ -10,8 +10,62 @@ export {
 } from "./dependencies.js";
 export {
   resolveHarnessPaths,
+  harnessPathsFromProject,
+  applyWorkspaceToPaths,
   type HarnessPaths,
 } from "./paths.js";
+export {
+  HARNESS_HOME_ENV,
+  WORKTREE_ROOT_OWNERSHIP_FILE,
+  defaultHarnessHomeRoot,
+  deriveSiblingWorktreeRoot,
+  generateProjectKey,
+  isPathUnderControlRoot,
+  pathsEqual,
+  resolveHarnessHome,
+  resolveProjectPaths,
+  validateWorktreeRootPlacement,
+  type HarnessHomePaths,
+  type ProjectPaths,
+  type WorktreeRootOwnership,
+} from "./harness-home.js";
+export {
+  PROJECT_REGISTRATION_VERSION,
+  ProjectRegistrationSchema,
+  ProjectRegistry,
+  type AddProjectOptions,
+  type DiscoverProjectOptions,
+  type ProjectLookupResult,
+  type ProjectRegistration,
+  type RelinkProjectOptions,
+} from "./project-registry.js";
+export {
+  loadExternalProjectConfig,
+  seedExternalGuidance,
+  type LoadExternalConfigOptions,
+  type LoadedProjectConfig,
+} from "./external-config.js";
+export {
+  freezeRunComponents,
+  loadFrozenComponentManifest,
+  type FrozenComponentManifest,
+} from "./component-freeze.js";
+export { migrateHome, type MigrateHomeOptions, type MigrateHomeResult } from "./migrate-home.js";
+export {
+  formatBytes,
+  reportProjectStorage,
+  type ProjectStorageReport,
+  type StorageUsage,
+} from "./storage-report.js";
+export {
+  assertWorkspaceIsolation,
+  capabilitiesForBackend,
+  checkWorkspaceIsolation,
+  forbiddenAgentWritableRoots,
+  type IsolationCheckInput,
+  type IsolationCheckResult,
+  type WorkspaceCapabilities,
+} from "./workspace-isolation.js";
 export {
   RunCancellationRegistry,
   runCancellationRegistry,

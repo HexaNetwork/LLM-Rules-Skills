@@ -91,12 +91,13 @@ describe("dashboard document", () => {
     expect(html).toContain("copy-path-btn");
     expect(html).toContain("bootstrap.project.root");
     expect(html).toContain("data-setting-key");
-    expect(html).toContain("Settings apply to new runs. Blocked runs require an explicit reviewed amendment");
-    expect(html).toContain("Settings freeze into new runs; blocked runs can be amended");
-    expect(html).toContain("Amend this run");
+    expect(html).toContain("Settings apply to new runs. Blocked runs use a reviewed recommended repair");
+    expect(html).toContain("Settings freeze into new runs; blocked runs can use an explicit reviewed repair");
+    expect(html).not.toContain("Amend this run");
+    expect(html).not.toContain("Settings patch (JSON)");
+    expect(html).toContain("Recommended configuration repair");
     // Overview grid children without .card span 1/12 columns — amend must be a full-width card.
-    expect(html).toMatch(/class="card"[^>]*>[\s\S]*?Amend this run/);
-    expect(html).toContain("Applies to new runs; blocked runs require an explicit reviewed amendment");
+    expect(html).toContain("Applies to new runs; blocked runs use a reviewed recommended repair");
     expect(html).toContain("Settings saved");
     expect(html).not.toContain("Settings saved for new runs");
     expect(html).toContain('id="settingsScope"');

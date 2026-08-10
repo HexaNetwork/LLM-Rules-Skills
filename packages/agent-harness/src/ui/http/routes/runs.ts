@@ -21,7 +21,6 @@ import {
   optionalStringArray,
   parseAnswerBody,
   readJsonBody,
-  requiredRecord,
   requiredString,
 } from "../request.js";
 import {
@@ -225,14 +224,12 @@ export async function handleRunsRoutes(
     const stateForGate = action === "apply_fix" ? await ctx.store.load(runId).catch(() => null) : null;
     const applyFixIsConfigOnly =
       action === "apply_fix" &&
-      (Boolean(body.configPatch) ||
-        (stateForGate?.fixerRecovery?.role === "config-fixer" &&
-          stateForGate.fixerRecovery.status === "proposed"));
+      stateForGate?.fixerRecovery?.role === "config-fixer" &&
+      stateForGate.fixerRecovery.status === "proposed";
     if (
       action !== "cancel" &&
       action !== "note" &&
       action !== "stop" &&
-      action !== "amend_config" &&
       !applyFixIsConfigOnly &&
       !ctx.agentReadiness.ready
     ) {
@@ -270,19 +267,15 @@ export async function handleRunsRoutes(
     } else if (action === "apply_fix") {
       const persistProjectDefaults =
         optionalBoolean(body.persistProjectDefaults, "persistProjectDefaults") ?? false;
-      const configPatch = body.configPatch
-        ? ProjectSettingsPatchSchema.parse(requiredRecord(body.configPatch, "configPatch"))
-        : undefined;
       if (persistProjectDefaults && !ctx.configPath) {
         throw new HttpError(400, "Cannot persist project defaults without a config file path");
       }
       ctx.jobs.enqueue(runId, action, async () => {
         let reportPaths: string[] = [];
         const patchForPersist =
-          configPatch ??
-          (stateForGate?.fixerRecovery?.role === "config-fixer"
+          stateForGate?.fixerRecovery?.role === "config-fixer"
             ? ProjectSettingsPatchSchema.parse(stateForGate.fixerRecovery.plan.configPatch)
-            : undefined);
+            : undefined;
         if (persistProjectDefaults && ctx.configPath && patchForPersist) {
           const updated = await writeProjectSettings(ctx.configPath, patchForPersist);
           ctx.setProjectConfig(updated.config);
@@ -292,11 +285,10 @@ export async function handleRunsRoutes(
           if (relative && !relative.startsWith("..")) reportPaths = [relative];
         }
         await engine.applyApprovedFix(runId, {
-          configPatch,
           persistedProjectDefaults: persistProjectDefaults,
           reportPaths,
         });
-        // Reload frozen config so the resumed transition sees any amendment.
+        // Reload frozen config so the resumed transition sees the applied repair.
         const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId);
         await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
       });
@@ -307,27 +299,6 @@ export async function handleRunsRoutes(
       ctx.jobs.enqueue(runId, action, async () => {
         await engine.retry(runId, { force, maxRunTokens, maxRunCostUsd });
         await engine.advance(runId);
-      });
-    } else if (action === "amend_config") {
-      const patch = ProjectSettingsPatchSchema.parse(requiredRecord(body.patch, "patch"));
-      const persistProjectDefaults = optionalBoolean(body.persistProjectDefaults, "persistProjectDefaults") ?? false;
-      if (persistProjectDefaults && !ctx.configPath) {
-        throw new HttpError(400, "Cannot persist project defaults without a config file path");
-      }
-      ctx.jobs.enqueue(runId, action, async () => {
-        let reportPaths: string[] = [];
-        if (persistProjectDefaults && ctx.configPath) {
-          const updated = await writeProjectSettings(ctx.configPath, patch);
-          ctx.setProjectConfig(updated.config);
-          const relative = path
-            .relative(updated.config.repositoryRoot, ctx.configPath)
-            .replaceAll("\\", "/");
-          if (relative && !relative.startsWith("..")) reportPaths = [relative];
-        }
-        await engine.amendConfig(runId, patch, {
-          persistedProjectDefaults: persistProjectDefaults,
-          reportPaths,
-        });
       });
     } else if (action === "commit_preflight") {
       const order = optionalEnum(body.order, "order", PREFLIGHT_COMMIT_ORDER_VALUES);

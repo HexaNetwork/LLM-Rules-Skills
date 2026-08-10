@@ -231,7 +231,7 @@ repositoryRoot: .
     });
   });
 
-  it("summarizes all policy changes that require an explicit run amendment", () => {
+  it("summarizes all policy changes that require an explicit run repair", () => {
     const base = HarnessConfigSchema.parse({});
     const liveOverlay = {
       ...base,
@@ -313,7 +313,7 @@ repositoryRoot: .
     expect(loaded.git.ignoredArtifactPatterns).toEqual(frozen.git.ignoredArtifactPatterns);
   });
 
-  it("keeps testPathPatterns frozen until a blocked run is explicitly amended", async () => {
+  it("keeps testPathPatterns frozen until a blocked run receives a reviewed repair", async () => {
     const root = await fixtureRoot();
     const configPath = path.join(root, "agent-harness.config.yaml");
     await writeFile(

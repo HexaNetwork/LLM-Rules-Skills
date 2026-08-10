@@ -259,7 +259,7 @@ describe("central dashboard", () => {
     expect(runConfig.workflow.testPathPatterns).toEqual(["tests/**"]);
   });
 
-  it("amends a blocked run through the reviewed config action and can persist future defaults", async () => {
+  it("rejects the removed raw configuration amendment action", async () => {
     const root = await fixtureRoot();
     const configPath = path.join(root, "agent-harness.config.yaml");
     await writeFile(configPath, "version: 2\nrepositoryRoot: .\n", "utf8");
@@ -267,7 +267,7 @@ describe("central dashboard", () => {
       workflow: { tdd: false, testPathPatterns: ["tests/**"] } as never,
     });
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
-    const started = await engine.start("amend blocked config", "amend-config-run");
+    const started = await engine.start("repair blocked config", "config-repair-run");
     await engine.store.writeJson(started.runId, "state.json", {
       ...started,
       phase: "blocked",
@@ -292,15 +292,10 @@ describe("central dashboard", () => {
         persistProjectDefaults: true,
       },
     });
-    expect(amended.status).toBe(202);
-    await waitForPhase(ui, started.runId, "blocked");
-
+    expect(amended.status).toBe(400);
+    expect(await readFile(configPath, "utf8")).not.toContain("modules/**/src/test/**");
     const frozen = await loadRunConfig(config, started.runId);
-    expect(frozen.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
-    expect(await readFile(configPath, "utf8")).toContain("modules/**/src/test/**");
-    const events = await engine.store.readText(started.runId, "events.jsonl");
-    expect(events).toContain("run.config_amended");
-    expect(events).toContain("persistedProjectDefaults\":true");
+    expect(frozen.workflow.testPathPatterns).toEqual(["tests/**"]);
   });
 
   it("reports unchanged for a matching ?since= signature and a fresh payload after a transition", async () => {

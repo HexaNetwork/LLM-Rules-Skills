@@ -74,7 +74,7 @@ export class RecoveryService {
 
   private async proposeConfigFix(state: RunState, guidance: string): Promise<RunState> {
     const frozen = normalizeFrozenRunConfig(await this.ctx.store.readJson(state.runId, "config.json"));
-    const currentAmendableSettings = {
+    const currentRepairableSettings = {
       workflow: {
         maxGrillQuestionsPerEpisode: frozen.workflow.maxGrillQuestionsPerEpisode,
         staleAnswerMinutes: frozen.workflow.staleAnswerMinutes,
@@ -97,7 +97,7 @@ export class RecoveryService {
         blockedFrom: state.blockedFrom,
         blockedKind: state.blockedKind,
         operatorGuidance: guidance,
-        currentAmendableSettings,
+        currentRepairableSettings,
       },
       constraints: [
         "Do not edit files.",
@@ -174,12 +174,12 @@ export class RecoveryService {
 
   /**
    * Apply an explicitly approved fixer plan, then clear the block for the normal workflow to resume.
-   * Config-fixer plans apply through amendConfig (no second agent). File fixer plans invoke the fixer apply pass.
+   * Config-fixer plans apply their validated recommendation directly (no second agent).
+   * File fixer plans invoke the fixer apply pass.
    */
   async applyApprovedFix(
     runId: string,
     options?: {
-      configPatch?: ProjectSettingsPatch;
       persistedProjectDefaults?: boolean;
       reportPaths?: string[];
     },
@@ -197,10 +197,8 @@ export class RecoveryService {
       });
 
       if (recovery.role === "config-fixer") {
-        const configPatch = ProjectSettingsPatchSchema.parse(
-          options?.configPatch ?? recovery.plan.configPatch,
-        );
-        state = await this.applyFrozenConfigAmendment(state, configPatch, {
+        const configPatch = ProjectSettingsPatchSchema.parse(recovery.plan.configPatch);
+        state = await this.applyFrozenConfigRepair(state, configPatch, {
           persistedProjectDefaults: options?.persistedProjectDefaults,
           reportPaths: options?.reportPaths,
         });
@@ -209,13 +207,16 @@ export class RecoveryService {
           plan: { summary: recovery.plan.summary, configPatch: configPatch as Record<string, unknown> },
           status: "applied",
           appliedAt: new Date().toISOString(),
-          result: `Applied harness settings patch: ${JSON.stringify(configPatch)}`,
+          result: `Applied recommended configuration repair: ${JSON.stringify(configPatch)}`,
           changedFiles: unique(options?.reportPaths ?? []),
         };
         const updated = await this.ctx.store.record(
           {
             ...clearBlock(state, resumePhase),
             fixerRecovery: appliedRecovery,
+            treeFingerprint: this.ctx.config.git.enabled
+              ? await this.ctx.git.treeFingerprint()
+              : state.treeFingerprint,
           },
           "fixer.applied",
           {
@@ -369,31 +370,8 @@ export class RecoveryService {
     };
   }
 
-  /**
-   * Apply an operator-reviewed settings patch to a blocked run's frozen
-   * configuration. This is intentionally separate from retry: confirmation
-   * must happen in the caller before the harness writes a new policy snapshot.
-   */
-  async amendConfig(
-    runId: string,
-    patch: ProjectSettingsPatch,
-    options?: { persistedProjectDefaults?: boolean; reportPaths?: string[] },
-  ): Promise<RunState> {
-    return this.ctx.store.withRepositoryLock({ runId, action: "amendConfig" }, () =>
-      this.ctx.store.withLock(runId, async () => {
-        const state = await this.ctx.store.load(runId);
-        if (state.phase !== "blocked" || !state.blockedFrom) {
-          throw new Error(`Run ${runId} must be blocked before its frozen config can be amended`);
-        }
-        const updated = await this.applyFrozenConfigAmendment(state, patch, options);
-        await this.ctx.syncArtifacts(updated);
-        return updated;
-      }),
-    );
-  }
-
-  /** Caller must hold the run lock. Leaves the run blocked; does not sync artifacts. */
-  private async applyFrozenConfigAmendment(
+  /** Caller must hold the run lock. Applies a validated config-fixer recommendation. */
+  private async applyFrozenConfigRepair(
     state: RunState,
     patch: ProjectSettingsPatch,
     options?: { persistedProjectDefaults?: boolean; reportPaths?: string[] },
@@ -401,7 +379,7 @@ export class RecoveryService {
     const parsedPatch = ProjectSettingsPatchSchema.parse(patch);
     const raw = (await this.ctx.store.readJson(state.runId, "config.json")) as Record<string, unknown>;
     const frozen = normalizeFrozenRunConfig(raw);
-    const amended = HarnessConfigSchema.parse({
+    const repaired = HarnessConfigSchema.parse({
       ...frozen,
       ...(parsedPatch.workflow
         ? { workflow: { ...frozen.workflow, ...parsedPatch.workflow } }
@@ -411,13 +389,13 @@ export class RecoveryService {
         : {}),
       ...(parsedPatch.git ? { git: { ...frozen.git, ...parsedPatch.git } } : {}),
     });
-    const changedPaths = configurationPolicyDiff(frozen, amended);
+    const changedPaths = configurationPolicyDiff(frozen, repaired);
     if (changedPaths.length === 0) {
-      throw new Error("The proposed config amendment does not change this run's policy");
+      throw new Error("The recommended configuration repair does not change this run's policy");
     }
     const previousHash = state.configurationHash;
     await this.ctx.store.writeJson(state.runId, "config.json", {
-      ...amended,
+      ...repaired,
       configVersion: state.configVersion,
     });
     let nextState = state;
@@ -437,10 +415,10 @@ export class RecoveryService {
         };
       }
     }
-    const nextHash = configurationHash(amended);
+    const nextHash = configurationHash(repaired);
     return this.ctx.store.record(
       { ...nextState, configurationHash: nextHash },
-      "run.config_amended",
+      "run.config_repaired",
       {
         previousHash,
         nextHash,

@@ -11,8 +11,6 @@ import {
   deploymentConfigYaml,
   loadConfig,
   loadRunConfig,
-  ProjectSettingsPatchSchema,
-  writeProjectSettings,
   type HarnessConfig,
 } from "../config.js";
 import { HarnessEngine } from "../engine.js";
@@ -374,37 +372,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         });
       }
       printState(await engine.advance(options.runId));
-    });
-
-  program
-    .command("amend-config")
-    .description("Apply a reviewed settings patch to a blocked run's frozen configuration")
-    .requiredOption("--run-id <id>", "run id")
-    .requiredOption("--patch <json>", "JSON settings patch, e.g. '{\"workflow\":{\"testPathPatterns\":[\"tests/**\"]}}'")
-    .option("--config <path>", "config path")
-    .option("--persist", "also write the patch as the project default for future runs", false)
-    .action(async (options: { runId: string; patch: string; config?: string; persist: boolean }) => {
-      let patch: unknown;
-      try {
-        patch = JSON.parse(options.patch);
-      } catch {
-        throw new Error("--patch must be a JSON object");
-      }
-      const parsedPatch = ProjectSettingsPatchSchema.parse(patch);
-      const loaded = await loadConfig(options.config);
-      const config = await loadRunConfig(loaded.config, options.runId);
-      const engine = new HarnessEngine(config, { backend: dependencies.createBackend("unused") });
-      let reportPaths: string[] = [];
-      if (options.persist) {
-        const updated = await writeProjectSettings(loaded.path, parsedPatch);
-        const relative = path.relative(updated.config.repositoryRoot, loaded.path).replaceAll("\\", "/");
-        if (relative && !relative.startsWith("..")) reportPaths = [relative];
-      }
-      const state = await engine.amendConfig(options.runId, parsedPatch, {
-        persistedProjectDefaults: options.persist,
-        reportPaths,
-      });
-      printState(state);
     });
 
   program

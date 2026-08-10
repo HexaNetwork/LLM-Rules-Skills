@@ -153,14 +153,14 @@ export function projectSettings(config: HarnessConfig, configPath?: string): Rec
         return {
           ...definition,
           description:
-            "One repository-relative glob per line. To change a blocked run, use its reviewed configuration-amendment control.",
+            "One repository-relative glob per line. To change a blocked run, use its reviewed configuration-repair flow.",
         };
       }
       if (definition.key === "git.ignoredArtifactPatterns") {
         return {
           ...definition,
           description:
-            "Harness-local globs skipped for dirty-tree and unreported-path checks. Does not edit .gitignore; amend a blocked run explicitly when needed.",
+            "Harness-local globs skipped for dirty-tree and unreported-path checks. Does not edit .gitignore; use a recommended repair for a blocked run when needed.",
         };
       }
       return definition;

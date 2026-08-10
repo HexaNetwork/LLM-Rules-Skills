@@ -262,7 +262,7 @@ export const FixerPlanSchema = z.object({
 });
 export type FixerPlan = z.infer<typeof FixerPlanSchema>;
 
-/** Small settings-only recovery plan; approval applies through amendConfig. */
+/** Small settings-only recovery plan; approval applies its validated recommendation. */
 export const ConfigFixerPlanSchema = z.object({
   summary: z.string().min(1),
   // Validated against ProjectSettingsPatchSchema at the recovery boundary.

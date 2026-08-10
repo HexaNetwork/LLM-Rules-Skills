@@ -208,46 +208,23 @@ export const eventsScript = `    async function waitForJob(runId) {
           var maxRunTokens = tokenInput && tokenInput.value !== '' ? Number(tokenInput.value) : undefined;
           var maxRunCostUsd = costInput && costInput.value !== '' ? Number(costInput.value) : undefined;
           runAction('retry', { force: true, maxRunTokens: maxRunTokens, maxRunCostUsd: maxRunCostUsd });
-        } else if (target.dataset.action === 'amend_config') {
-          var configPatchInput = document.getElementById('configAmendPatch');
-          var configPatchText = configPatchInput ? configPatchInput.value.trim() : '';
-          if (!configPatchText) { toast('Enter the settings patch you want to apply', true); return; }
-          var configPatch;
-          try { configPatch = JSON.parse(configPatchText); }
-          catch (error) { toast('Settings patch must be valid JSON', true); return; }
-          if (!configPatch || typeof configPatch !== 'object' || Array.isArray(configPatch)) { toast('Settings patch must be a JSON object', true); return; }
-          var persistInput = document.getElementById('persistConfigAmendment');
-          var persistProjectDefaults = !!(persistInput && persistInput.checked);
-          var reviewText = 'Apply this reviewed settings patch to the frozen configuration for this blocked run?\\n\\n' + JSON.stringify(configPatch, null, 2);
-          if (persistProjectDefaults) reviewText += '\\n\\nIt will also become the project default for future runs.';
-          if (!confirm(reviewText)) return;
-          runAction('amend_config', { patch: configPatch, persistProjectDefaults: persistProjectDefaults });
         } else if (target.dataset.action === 'propose_fix') {
           var fixerInput = document.getElementById('fixerGuidance');
           var guidance = fixerInput ? fixerInput.value.trim() : '';
           if (!guidance && target.dataset.reviseFix !== 'true') {
             var blockedKind = state.detail && state.detail.state ? state.detail.state.blockedKind : undefined;
-            if (blockedKind === 'config') guidance = 'Propose the smallest settings patch that unblocks this harness configuration failure.';
+            if (blockedKind === 'config') guidance = 'Propose the smallest recommended repair that unblocks this harness configuration failure.';
             else { toast('Describe the recovery you want before asking the fixer to plan it', true); return; }
           }
           if (!guidance && state.detail && state.detail.state && state.detail.state.fixerRecovery) guidance = state.detail.state.fixerRecovery.guidance;
           runAction('propose_fix', { guidance: guidance });
         } else if (target.dataset.action === 'apply_fix') {
-          var body = {};
-          var fixerPatchInput = document.getElementById('fixerConfigPatch');
-          if (fixerPatchInput) {
-            var fixerPatchText = fixerPatchInput.value.trim();
-            if (!fixerPatchText) { toast('Settings patch cannot be empty', true); return; }
-            var fixerPatch;
-            try { fixerPatch = JSON.parse(fixerPatchText); }
-            catch (error) { toast('Settings patch must be valid JSON', true); return; }
-            if (!fixerPatch || typeof fixerPatch !== 'object' || Array.isArray(fixerPatch)) { toast('Settings patch must be a JSON object', true); return; }
-            var persistFixerDefaults = !!(document.getElementById('persistConfigAmendment') && document.getElementById('persistConfigAmendment').checked);
-            var reviewFixer = 'Apply this settings patch to the frozen configuration and recover?\\n\\n' + JSON.stringify(fixerPatch, null, 2);
-            if (persistFixerDefaults) reviewFixer += '\\n\\nIt will also become the project default for future runs.';
-            if (!confirm(reviewFixer)) return;
-            body = { configPatch: fixerPatch, persistProjectDefaults: persistFixerDefaults };
-          }
+          var persistProjectDefaults = target.dataset.persistProjectDefaults === 'true';
+          var reviewFixer = persistProjectDefaults
+            ? 'Apply this recommended repair to this run and make it the default for future runs?'
+            : 'Apply this recommended repair and resume the run?';
+          if (!confirm(reviewFixer)) return;
+          var body = { persistProjectDefaults: persistProjectDefaults };
           runAction('apply_fix', body);
         } else if (target.dataset.action === 'retry' && target.dataset.force === 'true') {
           runAction('retry', { force: true });

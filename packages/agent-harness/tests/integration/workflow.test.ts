@@ -14,7 +14,8 @@ import {
   writeProjectSettings,
 } from "../../src/config.js";
 import { HarnessEngine } from "../../src/engine.js";
-import { confirmGrillAndAdvance, fixtureConfig, fixtureRoot } from "../helpers.js";
+import { GitService } from "../../src/git.js";
+import { confirmGrillAndAdvance, createProjectFixture, fixtureConfig, fixtureRoot } from "../helpers.js";
 
 const REFLECT_OUTPUT = {
   summary: "Restated greeting feature",
@@ -39,6 +40,53 @@ const FIRST_GRILL_QUESTION = {
 };
 
 describe("durable idea-to-feature workflow", () => {
+  it("attributes only paths introduced by a test writer, not an approved dirty config baseline", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      commands: { test: 'node -e "process.exit(1)"', gates: [] } as never,
+    });
+    const backend = createFakeBackend({
+      "test-writer": async () => {
+        await fixture.write("tests/new-behavior.test.ts", "export {};\n");
+        return { summary: "Added a failing test.", changedFiles: ["tests/new-behavior.test.ts"] };
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Preserve an approved setup change");
+
+    // This models a persisted project-default repair. It is intentionally dirty,
+    // but known before the next test-writer invocation begins.
+    await fixture.write("agent-harness.config.yaml", "workflow:\n  testPathPatterns:\n    - tests/**\n");
+    const state = await engine.store.load(started.runId);
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...state,
+      phase: "executing",
+      treeFingerprint: await new GitService(config).treeFingerprint(),
+      tasks: [{
+        id: "test-path-baseline",
+        title: "Write a failing test",
+        description: "Add coverage.",
+        acceptanceCriteria: ["A failing test exists."],
+        affectedPaths: [],
+        blockedBy: [],
+        tdd: true,
+        status: "active",
+        step: "writing_tests",
+        attempts: { tests: 0, implementation: 0, review: 0 },
+        evidence: [],
+        testPaths: [],
+        changedFiles: ["agent-harness.config.yaml"],
+      }],
+    });
+
+    const advanced = await engine.advance(started.runId, 1);
+    expect(advanced.phase).toBe("executing");
+    expect(advanced.tasks[0]).toMatchObject({ step: "red", status: "active" });
+    expect(advanced.tasks[0]?.testPaths).toEqual(["tests/new-behavior.test.ts"]);
+  });
+
   it("reflects, pauses for editable confirm, grills, then plans and finishes", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {

@@ -110,6 +110,12 @@ export class TaskExecutionService {
   }
 
   async writeTests(state: RunState, task: BuildTask): Promise<RunState> {
+    // A config repair can intentionally leave its project-settings file dirty.
+    // Capture that known baseline before the writer runs so the test-only guard
+    // attributes only paths introduced by this invocation to the test writer.
+    const knownPaths = this.ctx.config.git.enabled
+      ? new Set(await this.ctx.git.changedFiles())
+      : undefined;
     const result = await this.ctx.agents.invoke({
       runId: state.runId,
       role: "test-writer",
@@ -130,7 +136,9 @@ export class TaskExecutionService {
       ),
       signal: this.ctx.signalFor(state.runId),
     });
-    const observedPaths = this.ctx.config.git.enabled ? await this.ctx.git.changedFiles() : result.changedFiles;
+    const observedPaths = this.ctx.config.git.enabled
+      ? (await this.ctx.git.changedFiles()).filter((file) => !knownPaths!.has(file))
+      : result.changedFiles;
     const testPatterns = this.ctx.config.workflow.testPathPatterns;
     const illegal = observedPaths.filter((file) => !isTestPath(file, testPatterns));
     if (illegal.length > 0) {

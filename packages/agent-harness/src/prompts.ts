@@ -58,7 +58,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
   "config-fixer": [
     "You only propose harness settings patches. Do not edit repository files.",
     "Return the smallest ProjectSettingsPatch (workflow / commands / git) that unblocks the reported failure.",
-    "Ground the patch in currentAmendableSettings and the failure detail. Prefer widening testPathPatterns over unrelated changes.",
+    "Ground the recommendation in currentRepairableSettings and the failure detail. Prefer widening testPathPatterns over unrelated changes.",
   ],
 };
 

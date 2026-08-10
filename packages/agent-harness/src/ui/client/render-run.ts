@@ -96,7 +96,7 @@ export const renderRunScript = `    function renderSidebar() {
         provider: { title: "The agent backend failed transiently",
           hint: "Check credentials and provider health, then retry. Automatic provider retries were already exhausted for this step." },
         config: { title: "The run configuration cannot be resumed as-is",
-          hint: "Draft a settings patch with the config fixer, restore the original configuration, or start a new run. Use Retry anyway only if you accept the drift." },
+          hint: "Draft a recommended repair, restore the original configuration, or start a new run. Use Retry anyway only if you accept the drift." },
         budget: { title: "A run budget ceiling was reached",
           hint: "Raise the frozen run ceiling below, then retry. Retrying without raising the limit will hit the same block." },
         contract: { title: "The model could not satisfy the required contract",
@@ -138,6 +138,24 @@ export const renderRunScript = `    function renderSidebar() {
         if (patterns[i].test.test(text)) return patterns[i];
       }
       return { title: "The current transition could not complete", hint: "Review the failure detail below, resolve the underlying issue, then retry." };
+    }
+
+    function formatConfigRepair(patch) {
+      var rows = [];
+      var workflow = patch && patch.workflow || {};
+      var commands = patch && patch.commands || {};
+      var git = patch && patch.git || {};
+      if (workflow.testPathPatterns) rows.push('<li>Recognize <code>' + esc(workflow.testPathPatterns.length) + ' test path pattern' + (workflow.testPathPatterns.length === 1 ? '' : 's') + '</code></li>');
+      if (commands.test) rows.push('<li>Use <code>' + esc(commands.test) + '</code> as the test command</li>');
+      if (workflow.maxGrillQuestionsPerEpisode != null) rows.push('<li>Set the grill-question limit to <code>' + esc(workflow.maxGrillQuestionsPerEpisode) + '</code></li>');
+      if (workflow.staleAnswerMinutes != null) rows.push('<li>Set stale-answer timeout to <code>' + esc(workflow.staleAnswerMinutes) + ' minutes</code></li>');
+      if (workflow.grillQuestionsPerBatch != null) rows.push('<li>Set grill questions per batch to <code>' + esc(workflow.grillQuestionsPerBatch) + '</code></li>');
+      if (git.autoCommitPreflight != null) rows.push('<li>' + (git.autoCommitPreflight ? 'Enable' : 'Disable') + ' automatic preflight commits</li>');
+      if (git.preflightCommitOrder) rows.push('<li>Use <code>' + esc(git.preflightCommitOrder) + '</code> for preflight commits</li>');
+      if (git.ignoredArtifactPatterns) rows.push('<li>Update ignored generated-artifact paths</li>');
+      return rows.length
+        ? '<ul class="faint" style="margin:10px 0 0;padding-left:20px">' + rows.join('') + '</ul>'
+        : '<div class="faint" style="margin-top:10px">The repair contains no user-visible setting changes.</div>';
     }
 
     function fogSummaryLine(unknowns) {
@@ -383,37 +401,28 @@ export const renderRunScript = `    function renderSidebar() {
         } else if (!isTreeDivergence) {
           retryControls = '<button class="btn danger" data-action="retry">Retry transition</button>';
         }
-        var configAmendControls = '';
-        if (canEditSettings) {
-          // Must be a .card so it spans the full 12-column overview grid (bare .resolution defaults to 1 col).
-          configAmendControls =
-            '<div class="card"><div class="resolution" style="margin-top:0"><strong>Amend this run\\'s configuration</strong>' +
-            '<div class="muted" style="margin-top:5px">Review and confirm a settings patch before the harness rewrites this blocked run\\'s frozen snapshot and hash. It will not resume automatically.</div>' +
-            '<div class="field" style="margin-top:10px"><label for="configAmendPatch">Settings patch (JSON)</label><textarea id="configAmendPatch" rows="5" placeholder="{&quot;workflow&quot;:{&quot;testPathPatterns&quot;:[&quot;tests/**&quot;,&quot;src/**/test/**&quot;]}}"></textarea></div>' +
-            '<label class="faint" style="display:flex;gap:7px;align-items:center"><input id="persistConfigAmendment" type="checkbox"> Also use this patch as the project default for future runs</label>' +
-            '<button class="btn" style="margin-top:10px" data-action="amend_config">Review and amend configuration</button></div></div>';
-        }
         var fixer = s.fixerRecovery;
         var fixerControls = '';
         var isConfigBlock = s.blockedKind === 'config';
         if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
-          var patchJson = JSON.stringify(fixer.plan.configPatch || {}, null, 2);
-          fixerControls = '<strong>Proposed settings patch</strong><div class="muted" style="margin-top:5px">' + esc(fixer.plan.summary) + '</div>' +
-            '<div class="field" style="margin-top:10px"><label for="fixerConfigPatch">Settings patch (JSON)</label><textarea id="fixerConfigPatch" rows="8">' + esc(patchJson) + '</textarea></div>' +
-            '<label class="faint" style="display:flex;gap:7px;align-items:center"><input id="persistConfigAmendment" type="checkbox"> Also use this patch as the project default for future runs</label>' +
+          var repairDetails = formatConfigRepair(fixer.plan.configPatch || {});
+          var persistButton = canEditSettings
+            ? '<button class="btn" data-action="apply_fix" data-persist-project-defaults="true">Apply for this and future runs</button>'
+            : '';
+          fixerControls = '<strong>Recommended configuration repair</strong><div class="muted" style="margin-top:5px">' + esc(fixer.plan.summary) + '</div>' +
+            repairDetails +
             '<div class="field" style="margin-top:10px"><label for="fixerGuidance">Tweak the plan</label><textarea id="fixerGuidance" rows="2" placeholder="Optional revised instructions for the config fixer"></textarea></div>' +
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn" data-action="propose_fix" data-revise-fix="true">Revise patch</button><button class="btn primary" data-action="apply_fix">Approve patch and recover</button></div>';
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn" data-action="propose_fix" data-revise-fix="true">Revise recommendation</button><button class="btn primary" data-action="apply_fix">Apply and resume</button>' + persistButton + '</div>';
         } else if (fixer && fixer.status === 'proposed') {
           var fixerSteps = (fixer.plan.steps || []).map(function (step) { return '<li><strong>' + esc(step.title) + '</strong><div class="muted">' + esc(step.description) + '</div></li>'; }).join('');
           var fixerRisks = (fixer.plan.risks || []).length ? '<div class="faint" style="margin-top:8px">Risks: ' + esc(fixer.plan.risks.join(' · ')) + '</div>' : '';
           fixerControls = '<strong>Proposed fixer plan</strong><div class="muted" style="margin-top:5px">' + esc(fixer.plan.summary) + '</div><ol style="margin:8px 0 0;padding-left:20px">' + fixerSteps + '</ol>' + fixerRisks + '<div class="field" style="margin-top:10px"><label for="fixerGuidance">Tweak the plan</label><textarea id="fixerGuidance" rows="3" placeholder="Optional revised instructions for the fixer"></textarea></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-action="propose_fix" data-revise-fix="true">Revise plan</button><button class="btn primary" data-action="apply_fix">Approve, fix, and recover</button></div>';
         } else if (isConfigBlock) {
-          fixerControls = '<strong>Fix harness configuration</strong><div class="muted" style="margin-top:5px">A focused config fixer will propose a settings patch for this blocked run. You can edit it before approval; it applies through amend configuration (no repo file edits).</div><div class="field" style="margin-top:10px"><label for="fixerGuidance">Recovery guidance</label><textarea id="fixerGuidance" rows="3" placeholder="For example: preserve the existing test and widen test path patterns to cover it"></textarea></div><button class="btn" data-action="propose_fix">Draft settings patch</button>';
+          fixerControls = '<strong>Fix harness configuration</strong><div class="muted" style="margin-top:5px">A focused config fixer will recommend the smallest safe repair. You will review the affected settings before applying it.</div><div class="field" style="margin-top:10px"><label for="fixerGuidance">Recovery guidance</label><textarea id="fixerGuidance" rows="3" placeholder="For example: preserve the existing test and recognize its test folder"></textarea></div><button class="btn" data-action="propose_fix">Draft recommended repair</button>';
         } else {
           fixerControls = '<strong>Fix with an agent</strong><div class="muted" style="margin-top:5px">Describe how you want this handled. The fixer will propose a plan first; it cannot edit until you approve it.</div><div class="field" style="margin-top:10px"><label for="fixerGuidance">Recovery guidance</label><textarea id="fixerGuidance" rows="3" placeholder="For example: preserve the existing test and update the configured test path patterns"></textarea></div><button class="btn" data-action="propose_fix">Draft recovery plan</button>';
         }
         html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + acceptTreeControls + ignoreArtifactControls + '</div>' + retryControls + '</div><div class="resolution">' + fixerControls + '</div></div>';
-        html += configAmendControls;
       }
       if (["grilling","awaiting_input","planning"].includes(s.phase)) {
         html += renderFogCard(s);

@@ -626,11 +626,15 @@ export const renderRunScript = `    function renderSidebar() {
       var delivery = state.detail.workspace || {};
       var deliveryBranch = s.branchName || delivery.branchName;
       var deliveryBranchLabel = deliveryBranch || "branch pending";
+      var baseBranch = delivery.baseBranch || "";
       var fullBaseSha = delivery.baseSha ? String(delivery.baseSha) : "";
       var baseSha = fullBaseSha ? fullBaseSha.slice(0, 12) : "";
       var worktreePath = delivery.worktreePath || "";
       html += '<div class="card third"><div class="card-label">Delivery</div>';
       html += '<div class="muted repo-label">Branch' + copyPathBtn(deliveryBranch, "Copy branch name") + '</div><div style="margin:4px 0 10px"><code>' + esc(deliveryBranchLabel) + '</code></div>';
+      if (baseBranch) {
+        html += '<div class="muted repo-label">Base branch' + copyPathBtn(baseBranch, "Copy base branch") + '</div><div style="margin:4px 0 10px"><code>' + esc(baseBranch) + '</code></div>';
+      }
       if (baseSha) {
         html += '<div class="muted repo-label">Base SHA' + copyPathBtn(fullBaseSha, "Copy base SHA") + '</div><div style="margin:4px 0 10px"><code title="' + attr(fullBaseSha) + '">' + esc(baseSha) + '</code></div>';
       }

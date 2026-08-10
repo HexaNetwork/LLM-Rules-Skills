@@ -98,6 +98,7 @@ describe("dashboard document", () => {
     expect(html).toContain("data-copy-path");
     expect(html).toContain("copy-path-btn");
     expect(html).toContain("Copy branch name");
+    expect(html).toContain("Copy base branch");
     expect(html).toContain("Copy base SHA");
     expect(html).toContain("Copy worktree path");
     expect(html).toContain("bootstrap.project.root");

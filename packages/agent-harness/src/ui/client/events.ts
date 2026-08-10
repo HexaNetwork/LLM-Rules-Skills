@@ -22,7 +22,7 @@ export const eventsScript = `    async function waitForJob(runId) {
         var response = await api('/api/runs/' + encodeURIComponent(state.selected) + '/actions', {method:'POST',body:Object.assign({action:action},extra||{})});
         if (action === 'answer' && extra && extra.questionId) delete state.answerDrafts[extra.questionId];
         if (action === 'cancel') {
-          state.cancelling = !(response && response.state && response.state.phase === 'cancelled');
+          state.cancelling = !!(response && response.pending);
           toast(state.cancelling ? 'Cancelling…' : 'Run cancelled');
           await bootstrap(true);
           return;

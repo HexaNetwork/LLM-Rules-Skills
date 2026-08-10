@@ -145,22 +145,44 @@ export async function handleRunsRoutes(
     // UI already prepares Graphify and refreshes knowledge inside the job
     // queue so the browser request can return immediately.
     const state = await engine.start(idea, runId, false, false);
-    ctx.jobs.enqueue(runId, "index knowledge and reflect", async () => {
-      ctx.jobs.setDetail(runId, "Checking Graphify for this project");
-      const graphifyReady = await prepareGraphifyForRun(runConfig);
-      if (graphifyReady.enabled) {
-        ctx.jobs.setDetail(
-          runId,
-          graphifyReady.setupRan
-            ? "Graphify installed and the repository graph is ready"
-            : "Graphify repository graph is ready",
-        );
-      }
-      await ctx.knowledge.refresh((progress) => {
-        ctx.jobs.setDetail(runId, progress.message);
+    if (state.phase !== "blocked" && state.phase !== "cancelled" && state.phase !== "completed") {
+      ctx.jobs.enqueue(runId, "index knowledge and reflect", async () => {
+        const latest = await ctx.store.load(runId);
+        if (latest.phase === "blocked" || latest.phase === "cancelled" || latest.phase === "completed") {
+          return;
+        }
+        ctx.jobs.setDetail(runId, "Checking Graphify for this project");
+        const graphifyReady = await prepareGraphifyForRun(runConfig);
+        if (graphifyReady.enabled) {
+          ctx.jobs.setDetail(
+            runId,
+            graphifyReady.setupRan
+              ? "Graphify installed and the repository graph is ready"
+              : "Graphify repository graph is ready",
+          );
+        }
+        const beforeIndex = await ctx.store.load(runId);
+        if (
+          beforeIndex.phase === "blocked" ||
+          beforeIndex.phase === "cancelled" ||
+          beforeIndex.phase === "completed"
+        ) {
+          return;
+        }
+        await ctx.knowledge.refresh((progress) => {
+          ctx.jobs.setDetail(runId, progress.message);
+        });
+        const beforeAdvance = await ctx.store.load(runId);
+        if (
+          beforeAdvance.phase === "blocked" ||
+          beforeAdvance.phase === "cancelled" ||
+          beforeAdvance.phase === "completed"
+        ) {
+          return;
+        }
+        await engine.advance(runId);
       });
-      await engine.advance(runId);
-    });
+    }
     json(response, 202, { run: summarizeRun(state, ctx.jobs.get(runId)) });
     return true;
   }

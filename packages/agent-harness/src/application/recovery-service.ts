@@ -12,6 +12,7 @@ import {
   FixerPlanSchema,
   WorkerOutputSchema,
   clearBlock,
+  isCancelSettled,
   isTerminalPhase,
   type FixerRecovery,
   type OpenUnknown,
@@ -62,7 +63,7 @@ export class RecoveryService {
   }
 
   async completeCancellation(state: RunState): Promise<RunState> {
-    if (terminal(state.phase)) {
+    if (isCancelSettled(state.phase)) {
       await this.ctx.clearCancelRequest(state.runId);
       return state;
     }
@@ -519,7 +520,7 @@ export class RecoveryService {
 
   async cancel(runId: string): Promise<CancelResult> {
     const current = await this.ctx.store.load(runId);
-    if (terminal(current.phase)) {
+    if (isCancelSettled(current.phase)) {
       await this.ctx.clearCancelRequest(runId);
       return { state: current, pending: false };
     }
@@ -535,7 +536,7 @@ export class RecoveryService {
 
     const locked = await this.ctx.store.tryWithLock(runId, CANCEL_LOCK_WAIT_MS, async () => {
       const state = await this.ctx.store.load(runId);
-      if (terminal(state.phase)) {
+      if (isCancelSettled(state.phase)) {
         await this.ctx.clearCancelRequest(runId);
         return state;
       }

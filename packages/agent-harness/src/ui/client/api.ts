@@ -46,7 +46,9 @@ export const apiScript = `    async function api(path, options) {
         var detail = await api("/api/runs/" + encodeURIComponent(runId) + since, undefined, silent);
         if (detail.unchanged) return;
         state.detail = detail;
-        if (detail.state && detail.state.phase === "cancelled") state.cancelling = false;
+        if (detail.state && (detail.state.phase === "cancelled" || detail.state.phase === "completed")) {
+          state.cancelling = false;
+        }
         renderSidebar();
         // The signature tracks the last *rendered* payload; do not advance it
         // when a poll skips render, or a later poll treats stale DOM as current.

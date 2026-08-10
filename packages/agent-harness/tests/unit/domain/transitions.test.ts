@@ -11,6 +11,7 @@ import {
   canMarkTaskDone,
   createRunState,
   hasOpenQuestionBatch,
+  isCancelSettled,
   isTerminalPhase,
   taskFrontier,
   type BuildTask,
@@ -76,6 +77,9 @@ describe("domain transitions", () => {
     }
     expect(isTerminalPhase("executing")).toBe(false);
     expect(() => assertCanAdvance(withPhase("grilling"))).not.toThrow();
+    expect(isCancelSettled("blocked")).toBe(false);
+    expect(isCancelSettled("completed")).toBe(true);
+    expect(isCancelSettled("cancelled")).toBe(true);
   });
 
   it("answered questions never revert to unanswered", () => {

@@ -8,6 +8,10 @@ export function isTerminalPhase(phase: RunPhase): boolean {
   return phase === "completed" || phase === "blocked" || phase === "cancelled";
 }
 
+export function isCancelSettled(phase: RunPhase): boolean {
+  return phase === "completed" || phase === "cancelled";
+}
+
 /** Throws when the run cannot accept a normal advancement transition. */
 export function assertCanAdvance(state: RunState): void {
   if (isTerminalPhase(state.phase)) {

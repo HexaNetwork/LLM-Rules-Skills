@@ -8,7 +8,7 @@ import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
-import { fixtureConfig, fixtureRoot } from "../helpers.js";
+import { createProjectFixture, fixtureConfig, fixtureRoot } from "../helpers.js";
 
 describe("out-of-band cancellation", () => {
   let ui: UiServer | undefined;
@@ -16,6 +16,32 @@ describe("out-of-band cancellation", () => {
   afterEach(async () => {
     await ui?.close();
     ui = undefined;
+  });
+
+  it("cancels a blocked run instead of no-opping back to blocked", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    await fixture.write("dirty.txt", "uncommitted\n");
+    const config = fixtureConfig(fixture.root, {
+      git: { ...fixtureConfig(fixture.root).git, enabled: true, autoCommitPreflight: false },
+    });
+    const engine = new HarnessEngine(config, { backend: createFakeBackend() });
+    try {
+      const started = await engine.start("blocked then cancel");
+      expect(started.phase).toBe("blocked");
+      expect(started.blockedKind).toBe("workspace");
+
+      const cancelled = await engine.cancel(started.runId);
+      expect(cancelled.pending).toBe(false);
+      expect(cancelled.state.phase).toBe("cancelled");
+
+      const reloaded = await engine.store.load(started.runId);
+      expect(reloaded.phase).toBe("cancelled");
+      const events = await engine.store.readText(started.runId, "events.jsonl");
+      expect(events).toContain("run.cancelled");
+    } finally {
+      await fixture.cleanup();
+    }
   });
 
   it("kills a long-running runCommand when its signal aborts", async () => {

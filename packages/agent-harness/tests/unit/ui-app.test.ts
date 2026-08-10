@@ -107,7 +107,7 @@ describe("dashboard document", () => {
     expect(html).toContain('settingsScope").textContent = persistence');
     expect(html).toContain("Thinking…");
     expect(html).toContain("Cancelling…");
-    expect(html).toContain("state.cancelling");
+    expect(html).toContain("state.cancelling = !!(response && response.pending)");
     expect(html).toContain("draftAnswer");
     expect(html).toContain("Stop after task");
     expect(html).toContain("Approve dependency installs");

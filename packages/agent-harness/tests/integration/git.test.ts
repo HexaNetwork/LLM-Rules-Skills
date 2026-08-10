@@ -204,6 +204,56 @@ describe("harness-owned git", () => {
     ).rejects.toThrow("unreported paths");
   });
 
+  it("commitWorkingTree stages tracked files under a gitignored directory", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await mkdir(path.join(root, ".cursor", "skills"), { recursive: true });
+    await writeFile(path.join(root, ".cursor", "skills", "note.md"), "v1\n", "utf8");
+    // Force-add once so the file is tracked, then ignore the parent directory.
+    await git(root, "add", "-f", "--", ".cursor/skills/note.md");
+    await git(root, "commit", "-m", "track cursor skill");
+    await writeFile(path.join(root, ".gitignore"), ".agent-harness/\n/.cursor/\n", "utf8");
+    await git(root, "add", "--", ".gitignore");
+    await git(root, "commit", "-m", "ignore .cursor");
+
+    await writeFile(path.join(root, ".cursor", "skills", "note.md"), "v2\n", "utf8");
+    const service = new GitService(fixtureConfig(root, { git: { enabled: true } as never }));
+    expect(await service.changedFiles()).toEqual([".cursor/skills/note.md"]);
+
+    const { sha, files } = await service.commitWorkingTree("chore: update cursor skill");
+    expect(sha).toMatch(/^[a-f0-9]{40}$/);
+    expect(files).toEqual([".cursor/skills/note.md"]);
+    expect((await git(root, "status", "--porcelain")).trim()).toBe("");
+    expect(await git(root, "show", "--pretty=", "--name-only", "HEAD")).toContain(
+      ".cursor/skills/note.md",
+    );
+  });
+
+  it("commitTask stages tracked files under a gitignored directory", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await mkdir(path.join(root, ".cursor", "skills"), { recursive: true });
+    await writeFile(path.join(root, ".cursor", "skills", "note.md"), "v1\n", "utf8");
+    await git(root, "add", "-f", "--", ".cursor/skills/note.md");
+    await git(root, "commit", "-m", "track cursor skill");
+    await writeFile(path.join(root, ".gitignore"), ".agent-harness/\n/.cursor/\n", "utf8");
+    await git(root, "add", "--", ".gitignore");
+    await git(root, "commit", "-m", "ignore .cursor");
+
+    const service = new GitService(fixtureConfig(root, { git: { enabled: true } as never }));
+    await service.ensureRunBranch("ignored-tracked");
+    await writeFile(path.join(root, ".cursor", "skills", "note.md"), "v2\n", "utf8");
+    const sha = await service.commitTask(
+      "cursor-skill",
+      { subject: "chore: update cursor skill", body: "" },
+      [".cursor/skills/note.md"],
+    );
+    expect(sha).toMatch(/^[a-f0-9]{40}$/);
+    expect(await git(root, "show", "--pretty=", "--name-only", "HEAD")).toContain(
+      ".cursor/skills/note.md",
+    );
+  });
+
   it("commitTask ignores dirty artifact paths covered by ignoredArtifactPatterns", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);

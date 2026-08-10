@@ -1,7 +1,7 @@
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
@@ -109,6 +109,35 @@ describe("commitPreflight", () => {
     expect(resumed.blockedFrom).toBeUndefined();
     expect(resumed.branchName).toBe("harness/run-planning-block");
     expect((await git(root, "status", "--porcelain")).trim()).toBe("");
+  });
+
+  it("commits tracked files under a gitignored directory during preflight", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await mkdir(path.join(root, ".cursor", "skills"), { recursive: true });
+    await writeFile(path.join(root, ".cursor", "skills", "note.md"), "v1\n", "utf8");
+    await git(root, "add", "-f", "--", ".cursor/skills/note.md");
+    await git(root, "commit", "-m", "track cursor skill");
+    await writeFile(path.join(root, ".gitignore"), ".agent-harness/\n/.cursor/\n", "utf8");
+    await git(root, "add", "--", ".gitignore");
+    await git(root, "commit", "-m", "ignore .cursor");
+    await writeFile(path.join(root, ".cursor", "skills", "note.md"), "v2\n", "utf8");
+
+    const config = fixtureConfig(root, { git: { enabled: true } as never });
+    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const blocked = await engine.start("Add a feature", "run-ignored-tracked");
+    expect(blocked.phase).toBe("blocked");
+    expect(blocked.failure).toMatch(/dirty working tree|uncommitted changes/i);
+
+    const resumed = await engine.commitPreflight("run-ignored-tracked", {
+      order: "commit-then-branch",
+    });
+    expect(resumed.phase).toBe("new");
+    expect(resumed.failure).toBeUndefined();
+    expect((await git(root, "status", "--porcelain")).trim()).toBe("");
+    expect(await git(root, "show", "--pretty=", "--name-only", "HEAD")).toContain(
+      ".cursor/skills/note.md",
+    );
   });
 
   it("never commits the harness state directory, even when it is not gitignored", async () => {

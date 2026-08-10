@@ -207,7 +207,7 @@ export class GitService {
     if (!this.config.git.enabled) throw new Error("git is not enabled");
     const files = await this.changedFiles();
     if (files.length === 0) throw new Error("No changes to commit");
-    await this.git(["add", "--all", "--", ...files]);
+    await this.stagePaths(files);
     await this.git(["commit", "-m", sanitizeSubject(message)]);
     const sha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
     return { sha, files };
@@ -243,11 +243,23 @@ export class GitService {
         true,
       );
     }
-    await this.git(["add", "--all", "--", ...changed]);
+    await this.stagePaths(changed);
     const subject = sanitizeSubject(message.subject);
     const body = [message.body.trim(), `Harness-Task: ${taskId}`].filter(Boolean).join("\n\n");
     await this.git(["commit", "-m", subject, "-m", body]);
     return (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+  }
+
+  /**
+   * Stage an explicit path list from porcelain.
+   * `-f` is required for tracked files that live under a gitignored directory
+   * (e.g. `/.cursor/`): plain `git add -- path` fails with "paths are ignored".
+   * Safe here because callers only pass paths already visible in porcelain
+   * (tracked edits / non-ignored untracked), never silent ignored untracked files.
+   */
+  private async stagePaths(paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    await this.git(["add", "-f", "--", ...paths]);
   }
 
   async publish(branch: string, message: MessageOutput): Promise<string | undefined> {

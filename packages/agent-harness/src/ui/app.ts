@@ -256,6 +256,7 @@ export function renderDashboard(): string {
     .activity-invocation:first-child { border-top:0; }
     .activity-invocation.warn { background:rgba(255,180,80,.06); }
     .activity-invocation-main { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    .activity-warn-icon { color:var(--orange); }
     .context-badge { display:inline-flex; align-items:center; font-size:10px; font-weight:800; letter-spacing:.06em; border-radius:999px; padding:3px 8px; border:1px solid var(--line); }
     .context-badge.new { color:var(--lime); border-color:rgba(170,220,120,.35); }
     .context-badge.reused { color:#9ecbff; border-color:rgba(120,170,255,.35); }

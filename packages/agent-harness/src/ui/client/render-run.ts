@@ -696,7 +696,7 @@ export const renderRunScript = `    function renderSidebar() {
             html += '<strong>Turn ' + esc(String(turn)) + '</strong>';
             html += '<span class="context-badge ' + (badge === 'NEW CONTEXT' ? 'new' : 'reused') + '">' + badge + '</span>';
             html += '<span>' + esc(kind) + '</span>';
-            html += '<span class="faint">' + esc(tokens) + (warn ? ' ⚠' : '') + '</span></div>';
+            html += '<span class="faint">' + esc(tokens) + (warn ? ' <span class="activity-warn-icon">⚠</span>' : '') + '</span></div>';
             html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
             if (invocation.error) html += '<div class="fail" style="margin-top:4px">' + esc(invocation.error) + '</div>';
             html += '<button class="btn small" data-session="' + attr(invocation.path) + '" data-context-turn="' + attr(String(turn)) + '" data-context-total="' + attr(String(context.invocationCount || 0)) + '" data-context-badge="' + attr(badge) + '">Inspect invocation</button>';

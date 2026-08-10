@@ -124,7 +124,7 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     category: "Git",
     label: "Preflight commit order",
     description:
-      "Whether a preflight commit lands on the run branch (cut from current HEAD, not baseBranch) or on the current branch before the run branch is created normally.",
+      "Whether a preflight commit lands on the run branch (cut from current HEAD, not baseBranch) or on the current branch before the run branch is created from baseBranch at start.",
     type: "enum",
     options: [
       { value: "branch-then-commit", label: "Commit onto the run branch" },

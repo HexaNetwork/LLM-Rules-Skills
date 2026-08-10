@@ -28,8 +28,8 @@ export class PlanningService {
   constructor(private readonly ctx: ApplicationContext) {}
 
   async plan(state: RunState): Promise<RunState> {
-    // Dirty-tree + run-branch guard BEFORE the planner. Previously this ran after
-    // invoke, so a dirty package-lock (or similar) burned a full plan on every retry.
+    // Idempotent: start() (and commit-then-branch preflight) already cut the run
+    // branch. Keep the guard here so resume/retry cannot plan on a drifted checkout.
     const branchName = await this.ctx.git.ensureRunBranch(state.runId);
 
     // Idempotent resume: a prior plan.created may have persisted tasks before a

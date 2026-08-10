@@ -1,7 +1,7 @@
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFile } from "node:fs/promises";
+import { writeFile, access } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
 import { GitService } from "../../src/git.js";
@@ -26,16 +26,43 @@ describe("run-start git preflight", () => {
     expect(state.failure).toContain("surprise.txt");
   });
 
-  it("proceeds past start on a clean tree", async () => {
+  it("proceeds past start on a clean tree and cuts the run branch before reflect", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
 
     const config = fixtureConfig(root, { git: { enabled: true } as never });
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
 
-    const state = await engine.start("Add a feature");
+    const state = await engine.start("Add a feature", "run-early-branch");
     expect(state.phase).toBe("new");
     expect(state.blockedFrom).toBeUndefined();
+    expect(state.branchName).toBe("harness/run-early-branch");
+    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-early-branch");
+
+    const raw = await engine.store.readText("run-early-branch", "events.jsonl");
+    expect(raw).toContain("run.branch_ready");
+  });
+
+  it("cuts the run branch from git.baseBranch, not the operator checkout", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await writeFile(path.join(root, "only-on-feature.txt"), "feature\n", "utf8");
+    await git(root, "checkout", "-b", "feature");
+    await git(root, "add", "--all");
+    await git(root, "commit", "-m", "feature-only file");
+
+    const config = fixtureConfig(root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+    });
+    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const state = await engine.start("Add a feature", "run-from-base");
+
+    expect(state.branchName).toBe("harness/run-from-base");
+    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-from-base");
+    // File that exists only on feature must not be present after cutting from main.
+    await expect(access(path.join(root, "only-on-feature.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("skips the preflight entirely when git.enabled is false", async () => {

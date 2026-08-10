@@ -289,14 +289,14 @@ True parallel runs need isolated worktrees; that remains deferred under [Paralle
 
 Agents never run git. The harness:
 
-- refuses to create a run branch from a dirty working tree (checked before the planner runs; a plan already persisted is reused on retry instead of re-invoking);
-- creates or reuses `git.branchPrefix/<runId>` from the configured local base branch;
+- refuses to create a run branch from a dirty working tree (checked at `start()`, and again before the planner as a resume guard);
+- creates or reuses `git.branchPrefix/<runId>` from the configured local base branch **at run start** (before Graphify, knowledge refresh, reflect, and grill), so interview and indexing see the same tree as implementation;
 - requires every committed path to have been reported by the task worker;
 - asks the small model for commit and pull-request text, with a deterministic fallback;
 - optionally pushes and opens a pull request with `gh`;
 - never auto-merges.
 
-New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI `--base-branch`) can override the starting/`--base` branch for that run only; the project default remains `git.baseBranch`.
+New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI `--base-branch`) can override the starting/`--base` branch for that run only; the project default remains `git.baseBranch`. The checkout happens immediately when the run starts — not later at planning.
 
 ### Preflight commit
 
@@ -308,7 +308,7 @@ A dirty tree at `start()` blocks by default (`blockedFrom: "new"`), with the off
 Both paths honor `git.preflightCommitOrder`, which is user-selectable, not fixed:
 
 - `branch-then-commit` (default): creates `git.branchPrefix/<runId>` from **current HEAD** — not `config.git.baseBranch` — then commits onto it. This is a deliberate deviation from the branching rule above: it exists so the dirty tree rides onto the run branch instead of the operator's checked-out branch, and it is recorded on the `run.preflight_committed` audit event (`detail.deviation`).
-- `commit-then-branch`: commits on whatever branch is currently checked out; the run branch is then created normally by `plan()` once the tree is clean. The dashboard names that branch on the button so you're not guessing, and shows a caution when it's the same as `config.git.baseBranch`, since that means the commit lands directly on it.
+- `commit-then-branch`: commits on whatever branch is currently checked out; `start()` / the preflight action then creates the run branch from `config.git.baseBranch` before indexing and interview. The dashboard names that branch on the button so you're not guessing, and shows a caution when it's the same as `config.git.baseBranch`, since that means the commit lands directly on it.
 
 Either way the commit message defaults to `chore: commit working tree before harness run <runId>`, and the audit event records the order, resulting sha, branch, and the exact list of committed files — the harness state directory (`.agent-harness/`) is never included.
 

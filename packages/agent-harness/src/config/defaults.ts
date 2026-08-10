@@ -96,7 +96,8 @@ git:
   # A dirty tree blocks by default; the dashboard/CLI offer an explicit commit-and-retry.
   autoCommitPreflight: false
   # branch-then-commit cuts the run branch from current HEAD (not baseBranch) so a dirty
-  # tree rides onto it. commit-then-branch commits on the current branch first instead.
+  # tree rides onto it. commit-then-branch commits on the current branch, then start()
+  # cuts the run branch from baseBranch before indexing and interview.
   preflightCommitOrder: branch-then-commit
   # Build/generated paths ignored for dirty-tree and unreported-path checks (not .gitignore).
   # Live project policy — changes apply to in-progress runs without config-drift blocks.

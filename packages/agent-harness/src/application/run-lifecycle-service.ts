@@ -43,7 +43,8 @@ export class RunLifecycleService {
     // Lock ordering: repository → run, always (avoid deadlock with paths that take both).
     await this.ctx.store.withRepositoryLock({ runId, action: "start" }, async () => {
       try {
-        // Same changedFiles() source ensureRunBranch guards later; fail before burning a run.
+        // Dirty-tree guard, then cut the run branch BEFORE Graphify / knowledge /
+        // reflect / grill so interview and indexing see the same tree as planning.
         if (this.ctx.config.git.enabled) {
           const dirty = await this.ctx.git.changedFiles();
           if (dirty.length > 0) {
@@ -62,6 +63,7 @@ export class RunLifecycleService {
               preflightCommitDetail(order, commit, true),
             );
           }
+          state = await this.ensureRunBranchReady(state);
         }
         if (prepareGraphify && this.ctx.config.knowledge.graphify.enabled) {
           if (this.ctx.graphifySetupRunner) {
@@ -103,5 +105,19 @@ export class RunLifecycleService {
 
   status(runId: string): Promise<RunState> {
     return this.ctx.store.load(runId);
+  }
+
+  /**
+   * Switch onto `git.branchPrefix/<runId>` (from `git.baseBranch` when creating).
+   * Idempotent when already on the run branch (e.g. after branch-then-commit preflight).
+   */
+  private async ensureRunBranchReady(state: RunState): Promise<RunState> {
+    const branchName = await this.ctx.git.ensureRunBranch(state.runId);
+    if (!branchName || state.branchName === branchName) return state;
+    return this.ctx.store.record(
+      { ...state, branchName },
+      "run.branch_ready",
+      { branch: branchName, baseBranch: this.ctx.config.git.baseBranch },
+    );
   }
 }

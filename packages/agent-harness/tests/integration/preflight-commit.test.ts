@@ -56,7 +56,7 @@ describe("commitPreflight", () => {
     expect(subject).toContain("run-branch-first");
   });
 
-  it("commit-then-branch commits on the current branch and leaves branch creation to plan()", async () => {
+  it("commit-then-branch commits on the current branch, then cuts the run branch for interview", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
     await writeFile(path.join(root, "surprise.txt"), "untracked\n", "utf8");
@@ -68,23 +68,20 @@ describe("commitPreflight", () => {
 
     const resumed = await engine.commitPreflight("run-commit-first", { order: "commit-then-branch" });
     expect(resumed.phase).toBe("new");
-    // The commit lands on main, but main is not the run's branch: leaving
-    // branchName unset keeps plan() authoritative and stops the dashboard
-    // reporting "main" as the run branch for the whole grill interview.
-    expect(resumed.branchName).toBeUndefined();
-
-    expect((await git(root, "branch", "--show-current")).trim()).toBe("main");
+    // Preflight commit landed on main; the run branch is cut afterward so
+    // reflect/grill do not keep using the operator checkout.
+    expect(resumed.branchName).toBe("harness/run-commit-first");
+    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-commit-first");
     expect((await git(root, "status", "--porcelain")).trim()).toBe("");
-    const subject = (await git(root, "log", "-1", "--format=%s")).trim();
-    expect(subject).toContain("run-commit-first");
 
     const raw = await engine.store.readText("run-commit-first", "events.jsonl");
-    const committed = raw
+    const events = raw
       .trim()
       .split(/\r?\n/)
-      .map((line) => JSON.parse(line) as { type: string; detail: Record<string, unknown> })
-      .find((event) => event.type === "run.preflight_committed");
+      .map((line) => JSON.parse(line) as { type: string; detail: Record<string, unknown> });
+    const committed = events.find((event) => event.type === "run.preflight_committed");
     expect(committed!.detail.branch).toBe("main");
+    expect(events.some((event) => event.type === "run.branch_ready")).toBe(true);
   });
 
   it("is safe to call on a run blocked from 'planning'", async () => {
@@ -227,9 +224,12 @@ describe("start() with git.autoCommitPreflight", () => {
     expect(state.phase).toBe("new");
     expect(state.blockedFrom).toBeUndefined();
     expect((await git(root, "status", "--porcelain")).trim()).toBe("");
+    expect(state.branchName).toBe("harness/auto-commit-run");
+    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/auto-commit-run");
 
     const raw = await engine.store.readText("auto-commit-run", "events.jsonl");
     expect(raw).toContain("run.preflight_committed");
+    expect(raw).toContain("run.branch_ready");
   });
 
   it("still blocks on a dirty tree when autoCommitPreflight is false (unchanged default behavior)", async () => {

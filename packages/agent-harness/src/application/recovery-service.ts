@@ -482,6 +482,18 @@ export class RecoveryService {
           "run.preflight_committed",
           preflightCommitDetail(order, commit, false),
         );
+        // commit-then-branch only cleaned the tree; cut the run branch now so
+        // reflect/grill/index do not keep running on the operator's checkout.
+        if (order === "commit-then-branch" && this.ctx.config.git.enabled) {
+          const branchName = await this.ctx.git.ensureRunBranch(runId);
+          if (branchName && state.branchName !== branchName) {
+            state = await this.ctx.store.record(
+              { ...state, branchName },
+              "run.branch_ready",
+              { branch: branchName, baseBranch: this.ctx.config.git.baseBranch },
+            );
+          }
+        }
         return state;
       }),
     );

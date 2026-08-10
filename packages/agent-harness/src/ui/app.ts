@@ -369,7 +369,7 @@ export function renderDashboard(): string {
         <div class="form-feedback" id="newRunFeedback" hidden></div>
         <div class="field"><label for="ideaFile">Or load an idea file</label><input id="ideaFile" type="file" accept=".md,.txt,.json"></div>
         <div class="switch-row"><div><strong>Test-driven development</strong><div class="faint">Write and verify RED before implementation.</div></div><input id="tdd" type="checkbox"></div>
-        <div class="field" id="baseBranchField" hidden><label for="baseBranch">Start from branch</label><select id="baseBranch"></select><small class="faint">Cuts the harness branch from this local branch; PRs target it. Defaults to the project base branch.</small></div>
+        <div class="field" id="baseBranchField" hidden><label for="baseBranch">Start from branch</label><select id="baseBranch"></select><small class="faint">Checks out this local branch and cuts the harness branch from it before indexing and interview. PRs target it. Defaults to the project base branch.</small></div>
         <details><summary>Advanced run settings</summary><div style="padding-top:14px">
           <div class="columns"><div class="field"><label for="smallModel">Small model</label><input id="smallModel" type="text"></div><div class="field"><label for="capableModel">Capable model</label><input id="capableModel" type="text"></div></div>
           <div class="switch-row"><div><strong>Use Graphify</strong><div class="faint">Prepare and query structural code context for this run.</div></div><input id="graphify" type="checkbox"></div>

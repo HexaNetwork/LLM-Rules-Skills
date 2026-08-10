@@ -203,6 +203,8 @@ export const HarnessConfigSchema = z.object({
       autoCommitPreflight: z.boolean().default(false),
       // branch-then-commit deviates from baseBranch branching: the run branch is cut from
       // current HEAD so the dirty tree rides onto it, not from config.git.baseBranch.
+      // commit-then-branch commits on the current checkout; start()/preflight then cuts
+      // the run branch from baseBranch before indexing and interview.
       preflightCommitOrder: PreflightCommitOrderSchema.default("branch-then-commit"),
       // Globs ignored when deciding whether the tree is dirty / a path is unreported.
       ignoredArtifactPatterns: z

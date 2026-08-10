@@ -5,6 +5,7 @@ import { HarnessEngine } from "../../src/engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 const REFLECT_OUTPUT = {
+  proposedTitle: "Add greeting tone",
   summary: "Restated greeting feature",
   restatement: "Add a greeting feature with a chosen tone.",
   goal: "Ship a greeting users understand",

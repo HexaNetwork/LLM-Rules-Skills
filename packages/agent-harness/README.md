@@ -138,7 +138,7 @@ The map is an index, not a duplicate source of truth. Full decisions live in the
 
 ## Reflect, grill, and human questions
 
-New runs start with a **reflector** that restates the idea. The dashboard renders that draft as a section-wise editor (goal, users, in/out of scope, assumptions, unknowns); confirming stores the edited brief and starts grilling. Runs created before structured reflect output fall back to the raw markdown editor.
+New runs start with a **reflector** that restates the idea and proposes a short feature title. The dashboard renders that draft as a section-wise editor (feature title, goal, users, in/out of scope, assumptions, unknowns); confirming stores the edited brief and starts grilling. The confirmed title is the run label in the sidebar and page header; git branches stay `harness/<runId>` (or `git.branchPrefix/<runId>`). Runs created before structured reflect output fall back to the raw markdown editor.
 
 After confirm, **griller** and **planner** (including project-profiler) treat `reflectBrief.confirmed` as authoritative. The raw idea is reflect-only input and remains on disk as `idea.md` for audit; it is not re-injected into grill/plan work packets or `brief.md`.
 

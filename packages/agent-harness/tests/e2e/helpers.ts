@@ -17,6 +17,7 @@ import {
 } from "../testkit/scripted-backend.js";
 
 export const REFLECT_OUTPUT = {
+  proposedTitle: "Add greeting tone",
   summary: "Restated greeting feature",
   restatement: "Add a greeting feature with a chosen tone.",
   goal: "Ship a greeting users understand",

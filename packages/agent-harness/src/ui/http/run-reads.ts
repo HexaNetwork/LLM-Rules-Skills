@@ -7,9 +7,13 @@ import { isRecord, isString } from "./request.js";
 export function summarizeRun(state: RunState, job?: UiJob): Record<string, unknown> {
   const activeQuestion = state.questions.find((question) => question.id === state.activeQuestionId);
   const completedTasks = state.tasks.filter((task) => task.status === "done").length;
+  const title =
+    state.reflectBrief?.confirmedStructured?.proposedTitle ??
+    state.reflectBrief?.structured?.proposedTitle;
   return {
     runId: state.runId,
     idea: state.idea,
+    title,
     destination: state.reflectBrief?.confirmed?.slice(0, 120) ?? state.reflectBrief?.draft?.slice(0, 120),
     phase: state.phase,
     updatedAt: state.updatedAt,

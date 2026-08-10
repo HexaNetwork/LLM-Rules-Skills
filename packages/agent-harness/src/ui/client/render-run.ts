@@ -3,10 +3,10 @@ export const renderRunScript = `    function renderSidebar() {
       var runList = $("runList");
       var scrollTop = runList ? runList.scrollTop : 0;
       var needle = state.filter.toLowerCase();
-      var runs = state.runs.filter(function (run) { return !needle || (run.idea + " " + (run.destination || "") + " " + run.runId).toLowerCase().includes(needle); });
+      var runs = state.runs.filter(function (run) { return !needle || ((run.title || "") + " " + run.idea + " " + (run.destination || "") + " " + run.runId).toLowerCase().includes(needle); });
       runList.innerHTML = runs.length ? runs.map(function (run) {
         var phase = effectivePhase(run);
-        var title = shortTitle(run.idea || run.destination || run.runId, 62);
+        var title = shortTitle(run.title || run.idea || run.destination || run.runId, 62);
         var progress = run.taskProgress && run.taskProgress.total ? run.taskProgress.completed + "/" + run.taskProgress.total : phaseLabel(phase);
         return '<button class="run-item ' + (run.runId === state.selected && state.view === "runs" ? "active" : "") + '" data-run="' + attr(run.runId) + '"><div class="run-title"><i class="dot ' + attr(phase) + '"></i><span>' + esc(title) + '</span></div><div class="run-meta"><span>' + esc(progress) + '</span><span>' + esc(ago(run.updatedAt)) + '</span></div></button>';
       }).join("") : '<div class="empty" style="padding:25px 10px">No matching runs</div>';
@@ -28,7 +28,9 @@ export const renderRunScript = `    function renderSidebar() {
       var s = state.detail.state;
       var summary = state.runs.find(function (run) { return run.runId === s.runId; }) || {};
       var phase = state.detail.job ? state.detail.job.status : s.phase;
-      var title = shortTitle(s.idea, 96);
+      var brief = s.reflectBrief;
+      var proposedTitle = brief && ((brief.confirmedStructured && brief.confirmedStructured.proposedTitle) || (brief.structured && brief.structured.proposedTitle)) || "";
+      var title = shortTitle(proposedTitle || s.idea, 96);
       $("crumbTitle").textContent = title;
       $("topActions").innerHTML = actionButtons(s, phase);
       var tabs = ["overview","decisions","tasks","sessions","artifacts"];

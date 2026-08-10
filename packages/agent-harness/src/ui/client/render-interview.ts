@@ -81,6 +81,7 @@ export const renderInterviewScript = `    function renderBatchQuestion(q, index,
       }
       if (!state.reflectDrafts[q.id]) {
         state.reflectDrafts[q.id] = {
+          proposedTitle: structured.proposedTitle || "",
           summary: structured.summary || "",
           restatement: structured.restatement || "",
           goal: structured.goal || "",
@@ -94,6 +95,7 @@ export const renderInterviewScript = `    function renderBatchQuestion(q, index,
       var d = state.reflectDrafts[q.id];
       var html = '<div class="card question-card reflect-card">' + head;
       html += '<form id="reflectForm" data-testid="reflect-form" data-question="' + attr(q.id) + '"><div class="reflect-fields" id="reflectFields">';
+      html += '<div class="field"><label for="reflectProposedTitle">Feature title</label><input id="reflectProposedTitle" type="text" data-reflect-field="proposedTitle" value="' + attr(d.proposedTitle) + '" placeholder="Short imperative run label…" /></div>';
       html += '<div class="field"><label for="reflectRestatement">Restatement</label><textarea id="reflectRestatement" data-reflect-field="restatement">' + esc(d.restatement) + '</textarea></div>';
       html += '<div class="field"><label for="reflectGoal">Goal</label><textarea id="reflectGoal" class="reflect-goal" data-reflect-field="goal">' + esc(d.goal) + '</textarea></div>';
       html += reflectListSection("users", "Users", d.users);

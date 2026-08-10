@@ -7,6 +7,7 @@ import { createProjectFixture, type ProjectFixture } from "../testkit/project-fi
 import { createScriptedBackend } from "../testkit/scripted-backend.js";
 
 const REFLECT_OUTPUT = {
+  proposedTitle: "Add greeting tone",
   summary: "Restated greeting feature",
   restatement: "Add a greeting feature.",
   goal: "Ship a greeting",

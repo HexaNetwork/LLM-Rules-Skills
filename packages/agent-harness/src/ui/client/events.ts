@@ -466,6 +466,7 @@ export const eventsScript = `    async function waitForJob(runId) {
         if (!d) return;
         var trim = function (value) { return String(value || '').trim(); };
         var cleaned = {
+          proposedTitle: trim(d.proposedTitle),
           summary: trim(d.summary) || trim(d.restatement).slice(0, 200) || 'Confirmed brief',
           restatement: trim(d.restatement),
           goal: trim(d.goal),
@@ -475,7 +476,7 @@ export const eventsScript = `    async function waitForJob(runId) {
           assumptions: d.assumptions.map(trim).filter(Boolean),
           unknowns: d.unknowns.map(trim).filter(Boolean)
         };
-        if (!cleaned.restatement || !cleaned.goal) { toast('Restatement and goal cannot be empty', true); return; }
+        if (!cleaned.proposedTitle || !cleaned.restatement || !cleaned.goal) { toast('Feature title, restatement, and goal cannot be empty', true); return; }
         delete state.reflectDrafts[reflectQid];
         await runAction('answer', { answers: [{ questionId: reflectQid, answer: cleaned.restatement, structured: cleaned }] });
       }

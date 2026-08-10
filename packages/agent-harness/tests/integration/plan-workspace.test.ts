@@ -4,6 +4,7 @@ import { HarnessEngine } from "../../src/engine.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 
 const REFLECT_OUTPUT = {
+  proposedTitle: "Add greeting tone",
   summary: "Restated greeting feature",
   restatement: "Add a greeting feature with a chosen tone.",
   goal: "Ship a greeting users understand",

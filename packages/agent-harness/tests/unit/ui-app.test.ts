@@ -367,6 +367,9 @@ describe("dashboard document", () => {
     expect(html).toContain('data-reflect-field="restatement"');
     expect(html).toContain('data-reflect-field="goal"');
     expect(html).toContain("reflectListSection(\"users\"");
+    expect(html).toContain("Feature title");
+    expect(html).toContain('id="reflectProposedTitle"');
+    expect(html).toContain("proposedTitle: structured.proposedTitle");
     expect(html).toContain("reflectListSection(\"inScope\"");
     expect(html).toContain("reflectListSection(\"outOfScope\"");
     expect(html).toContain("reflectListSection(\"assumptions\"");
@@ -379,8 +382,18 @@ describe("dashboard document", () => {
     const html = renderDashboard();
 
     expect(html).toContain("event.target.id === 'reflectForm'");
+    expect(html).toContain("proposedTitle: trim(d.proposedTitle)");
+    expect(html).toContain("Feature title, restatement, and goal cannot be empty");
     expect(html).toContain("structured: cleaned");
     expect(html).toContain("answers: [{ questionId: reflectQid, answer: cleaned.restatement, structured: cleaned }]");
+  });
+
+  it("prefers proposedTitle for sidebar and run heading labels", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("shortTitle(run.title || run.idea || run.destination || run.runId, 62)");
+    expect(html).toContain("shortTitle(proposedTitle || s.idea, 96)");
+    expect(html).toContain("(run.title || \"\") + \" \" + run.idea");
   });
 
   it("shows an operator note box during grilling/awaiting_input with an ask-me-about-this toggle", () => {

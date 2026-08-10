@@ -8,6 +8,7 @@ import { VerificationSettingsPatchSchema } from "../../src/domain.js";
 import { confirmGrillAndAdvance, fixtureConfig, fixtureRoot } from "../helpers.js";
 
 const REFLECT_OUTPUT = {
+  proposedTitle: "Add greeting tone",
   summary: "Restated",
   restatement: "Ship greeting.",
   goal: "Greet users",

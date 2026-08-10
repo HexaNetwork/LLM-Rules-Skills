@@ -92,9 +92,10 @@ export const OperatorNoteSchema = z.object({
 export type OperatorNote = z.infer<typeof OperatorNoteSchema>;
 
 export const REFLECT_EXPECTED_OUTPUT =
-  "{summary:string,restatement:string,goal:string,users:[string],inScope:[string],outOfScope:[string],assumptions:[string],unknowns:[string]}";
+  "{proposedTitle:string,summary:string,restatement:string,goal:string,users:[string],inScope:[string],outOfScope:[string],assumptions:[string],unknowns:[string]}";
 
 export const ReflectOutputSchema = z.object({
+  proposedTitle: z.string().min(1).optional(),
   summary: z.string().min(1),
   restatement: z.string().min(1),
   goal: z.string().min(1),

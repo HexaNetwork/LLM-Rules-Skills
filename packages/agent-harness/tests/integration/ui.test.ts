@@ -14,6 +14,7 @@ import { fixtureConfig, fixtureRoot } from "../helpers.js";
 const exec = promisify(execFile);
 
 const REFLECT_OUTPUT = {
+  proposedTitle: "Add dashboard feature",
   summary: "Restated",
   restatement: "Build a dashboard-driven feature.",
   goal: "Ship from the dashboard",
@@ -721,6 +722,7 @@ describe("central dashboard", () => {
     expect(question.purpose).toBe("reflect");
 
     const editedStructured = {
+      proposedTitle: "Ship edited goal",
       summary: "Edited restated summary",
       restatement: "The operator rewrote this restatement by hand.",
       goal: "Ship the edited goal",
@@ -748,12 +750,12 @@ describe("central dashboard", () => {
     // The structured confirmation happens synchronously inside answerMany,
     // before advance runs, so poll state instead of pinning a transient phase.
     const deadline = Date.now() + 10_000;
-    let confirmedStructured: { goal?: string } | undefined;
+    let confirmedStructured: { goal?: string; proposedTitle?: string } | undefined;
     let confirmedText: string | undefined;
     for (;;) {
       const response = await request(ui, `/api/runs/${started.runId}`);
       const body = (await response.json()) as {
-        state?: { reflectBrief?: { confirmed?: string; confirmedStructured?: { goal?: string } } };
+        state?: { reflectBrief?: { confirmed?: string; confirmedStructured?: { goal?: string; proposedTitle?: string } } };
       };
       confirmedText = body.state?.reflectBrief?.confirmed;
       confirmedStructured = body.state?.reflectBrief?.confirmedStructured;
@@ -762,6 +764,12 @@ describe("central dashboard", () => {
     }
     expect(confirmedText).toContain("operator rewrote this restatement");
     expect(confirmedStructured?.goal).toBe("Ship the edited goal");
+    expect(confirmedStructured?.proposedTitle).toBe("Ship edited goal");
+
+    const list = await request(ui, "/api/runs");
+    const listed = (await list.json()) as { runs?: Array<{ runId: string; title?: string }> };
+    const summarized = listed.runs?.find((run) => run.runId === started.runId);
+    expect(summarized?.title).toBe("Ship edited goal");
   });
 
   it("rejects an invalid structured reflect payload with a 400 instead of silently dropping it", async () => {

@@ -108,6 +108,7 @@ export async function writeAcceptanceConfig(
 }
 
 export const ACCEPTANCE_REFLECT = {
+  proposedTitle: "Add greeting tone",
   summary: "Restated greeting feature",
   restatement: "Add a greeting feature with a chosen tone.",
   goal: "Ship a greeting users understand",

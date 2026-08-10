@@ -124,6 +124,7 @@ describe("human question contracts", () => {
 
   it("accepts a reflector restatement payload", () => {
     const parsed = ReflectOutputSchema.parse({
+      proposedTitle: "Add editable reflect",
       summary: "Restated",
       restatement: "Add editable reflect before grill.",
       goal: "Confirm shared understanding",
@@ -133,7 +134,22 @@ describe("human question contracts", () => {
       assumptions: ["HITL continues in the dashboard"],
       unknowns: ["PRD generation later"],
     });
+    expect(parsed.proposedTitle).toBe("Add editable reflect");
     expect(parsed.restatement).toContain("editable reflect");
+  });
+
+  it("accepts reflector output without proposedTitle for older on-disk runs", () => {
+    const parsed = ReflectOutputSchema.parse({
+      summary: "Restated",
+      restatement: "Legacy brief without a title field.",
+      goal: "Stay loadable",
+      users: [],
+      inScope: [],
+      outOfScope: [],
+      assumptions: [],
+      unknowns: [],
+    });
+    expect(parsed.proposedTitle).toBeUndefined();
   });
 
   it("accepts a parked question status", () => {

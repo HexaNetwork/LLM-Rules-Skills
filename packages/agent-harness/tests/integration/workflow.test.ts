@@ -19,6 +19,7 @@ import { createRunState, type RunState } from "../../src/domain.js";
 import { confirmGrillAndAdvance, createProjectFixture, fixtureConfig, fixtureRoot } from "../helpers.js";
 
 const REFLECT_OUTPUT = {
+  proposedTitle: "Add greeting tone",
   summary: "Restated greeting feature",
   restatement: "Add a greeting feature with a chosen tone.",
   goal: "Ship a greeting users understand",

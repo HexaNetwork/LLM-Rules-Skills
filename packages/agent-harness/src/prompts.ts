@@ -3,6 +3,7 @@ import type { AgentRole, WorkPacket } from "./domain.js";
 const ROLE_RULES: Record<AgentRole, string[]> = {
   reflector: [
     "Restate the idea in your own words without inventing requirements.",
+    "Propose a concise imperative feature title suitable as a run label (for example \"Add greeting tone\"), not a paragraph.",
     "Separate goal, users, in-scope, out-of-scope, assumptions, and unknowns.",
     "Do not ask grilling questions and do not plan implementation.",
     "Look up codebase facts when they clarify existing behavior; do not decide product preferences.",

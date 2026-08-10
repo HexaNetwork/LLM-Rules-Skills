@@ -93,10 +93,16 @@ describe("prompt rendering", () => {
   });
 
   it("keeps reflect and grill expected-output contracts in prompts", () => {
+    expect(REFLECT_EXPECTED_OUTPUT).toContain("proposedTitle:string");
     expect(REFLECT_EXPECTED_OUTPUT).toContain("restatement:string");
     expect(GRILL_EXPECTED_OUTPUT).toContain("needs_input");
     expect(GRILL_EXPECTED_OUTPUT).toContain("ready_to_plan");
     expect(GRILL_EXPECTED_OUTPUT).toContain("resolutionSummaries");
+  });
+
+  it("asks the reflector for a concise feature title", () => {
+    const reflectPacket: WorkPacket = { ...packet, role: "reflector" };
+    expect(renderPrompt(reflectPacket)).toContain("concise imperative feature title");
   });
 
   it("asks the planner to propose installs without installing them", () => {

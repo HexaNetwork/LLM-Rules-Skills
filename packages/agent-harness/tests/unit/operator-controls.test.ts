@@ -7,6 +7,7 @@ import { RunStore } from "../../src/store.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 const REFLECT_OUTPUT = {
+  proposedTitle: "Add greeting tone",
   summary: "Restated",
   restatement: "Ship greeting.",
   goal: "Greet users",

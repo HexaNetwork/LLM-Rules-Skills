@@ -84,7 +84,8 @@ describe("dashboard document", () => {
     expect(html).toContain("Raw session record");
     expect(html).toContain("data-session");
     expect(html).toContain("session-dialog");
-    expect(html).toContain("grill episode");
+    expect(html).toContain("model sessions");
+    expect(html).not.toMatch(/Sessions[\s\S]*?recorded tokens/);
     expect(html).toContain("Context mode");
     expect(html).toContain("Project settings");
     expect(html).toContain("settingsBtn");
@@ -473,8 +474,9 @@ describe("dashboard document", () => {
     // Buttons alone are not enough — clicks must set state.usageTab and re-render.
     expect(script).toMatch(/target\.dataset\.usageTab/);
     expect(script).toMatch(/state\.usageTab\s*=\s*target\.dataset\.usageTab/);
+    // Preserve the enclosing <details open> across remount (capture → render → restore).
     expect(script).toMatch(
-      /state\.usageTab\s*=\s*target\.dataset\.usageTab[\s\S]{0,80}renderRun\(\)/,
+      /state\.usageTab\s*=\s*target\.dataset\.usageTab[\s\S]{0,120}captureScrolls\(\)[\s\S]{0,40}renderRun\(\)[\s\S]{0,40}restoreScrolls\(\)/,
     );
   });
 

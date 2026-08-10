@@ -569,15 +569,7 @@ export const renderRunScript = `    function renderSidebar() {
         : '';
       html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div><div class="muted repo-label">Repository' + repoCopyBtn + '</div><div style="margin-top:4px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div></div>';
       html += '<div class="card third"><div class="card-label">Grill resolutions</div><div class="metric">' + grillTotal + '</div><div class="muted">' + (unknowns.length ? (openUnknownCount + ' open unknown(s) · ' + unknowns.length + ' in register') : 'decisions locked in') + '</div></div>';
-      var episode = s.grillEpisode;
-      var usage = s.usage || {};
-      var tokenTotals = { tokens: Number(usage.totalTokens || 0), cached: Number(usage.cacheReadTokens || 0) };
-      if (!tokenTotals.tokens) {
-        tokenTotals = state.detail.sessions.reduce(function (acc, session) { var sessionUsage = session.usage || {}; var total = sessionUsage.totalTokens; if (total == null && (sessionUsage.inputTokens != null || sessionUsage.outputTokens != null)) total = Number(sessionUsage.inputTokens || 0) + Number(sessionUsage.outputTokens || 0); acc.tokens += Number(total || 0); acc.cached += Number(sessionUsage.cacheReadTokens || 0); return acc; }, { tokens: 0, cached: 0 });
-      }
-      var episodeDetail = episode ? ('grill episode ' + episode.number + ' · ' + episode.questionsAnswered + ' answered' + (episode.closedAt ? ' · closed' : ' · active')) : 'bounded grill episodes';
-      if (tokenTotals.tokens) episodeDetail += ' · ' + number(tokenTotals.tokens) + ' recorded tokens' + (tokenTotals.cached ? ' (' + number(tokenTotals.cached) + ' served from cache)' : '');
-      html += '<div class="card third"><div class="card-label">Sessions</div><div class="metric">' + state.detail.sessions.length + '</div><div class="muted">' + esc(episodeDetail) + '</div><div class="faint" style="margin-top:12px">Updated ' + esc(ago(s.updatedAt)) + '</div></div>';
+      html += '<div class="card third"><div class="card-label">Sessions</div><div class="metric">' + state.detail.sessions.length + '</div><div class="muted">model sessions</div><div class="faint" style="margin-top:12px">Updated ' + esc(ago(s.updatedAt)) + '</div></div>';
       html += renderUsageBudgetCard(s);
       var brief = s.reflectBrief;
       var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");

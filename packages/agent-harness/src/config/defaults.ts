@@ -170,7 +170,9 @@ knowledge:
     apiKeyEnv: OPENAI_API_KEY
     batchSize: 32
     timeoutMs: 30000
-    minSimilarity: 0.2
+    minSimilarity: 0.3
+    # Cosine floor for semantic-only candidates (no lexical hit).
+    minSemanticOnlySimilarity: 0.45
     lexicalWeight: 1
     semanticWeight: 1
   graphify:
@@ -243,7 +245,8 @@ export function deploymentConfigYaml(options: {
             model: options.model || "qwen3-embedding",
             batchSize: 16,
             timeoutMs: 120_000,
-            minSimilarity: 0.2,
+            minSimilarity: 0.3,
+            minSemanticOnlySimilarity: 0.45,
             lexicalWeight: 1,
             semanticWeight: 1,
           },

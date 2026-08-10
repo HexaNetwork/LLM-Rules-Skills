@@ -11,6 +11,7 @@ export type EmbeddingSettings = {
   batchSize: number;
   timeoutMs: number;
   minSimilarity: number;
+  minSemanticOnlySimilarity: number;
   lexicalWeight: number;
   semanticWeight: number;
 };

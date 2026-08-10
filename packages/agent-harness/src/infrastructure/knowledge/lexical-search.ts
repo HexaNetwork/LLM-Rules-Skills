@@ -71,11 +71,14 @@ export function rankHybridResults(
   const lexicalRanks = new Map(lexical.map((result, index) => [result.id, index + 1]));
   const semanticRanks = new Map(semantic.map((result, index) => [result.id, index + 1]));
   const { lexicalWeight, semanticWeight } = config.knowledge.embeddings;
+  // Normalize raw RRF into 0–1 so dual-channel rank-1 ≈ 1.0 and single-channel ≈ 0.5.
+  const maxRrf = lexicalWeight / 61 + semanticWeight / 61;
   return [...byId.values()]
     .map((result) => {
-      const score =
+      const raw =
         (lexicalRanks.has(result.id) ? lexicalWeight / (60 + (lexicalRanks.get(result.id) ?? 0)) : 0) +
         (semanticRanks.has(result.id) ? semanticWeight / (60 + (semanticRanks.get(result.id) ?? 0)) : 0);
+      const score = maxRrf > 0 ? raw / maxRrf : 0;
       return { ...result, score: Number(score.toFixed(6)) };
     })
     .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))

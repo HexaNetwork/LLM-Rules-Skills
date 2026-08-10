@@ -65,6 +65,7 @@ describe("dashboard document", () => {
     expect(html).toContain("Resume run");
     expect(html).toContain("Use Graphify");
     expect(html).toContain("graphify:$(\"graphify\").checked");
+    expect(html).toContain("indexOf('graphify:') === 0 ? 'structural'");
     expect(html).toContain("Start from branch");
     expect(html).toContain('id="baseBranch"');
     expect(html).toContain("fillBaseBranchSelect");

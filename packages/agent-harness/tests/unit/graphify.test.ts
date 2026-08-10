@@ -173,6 +173,7 @@ describe("GraphifyRepositoryLookup", () => {
     expect(found.result).toMatchObject({
       source: "graphify:graphify-out/graph.json",
       title: "Repository relationships (Graphify)",
+      score: 0,
     });
     expect(found.result?.excerpt).toContain("LocalKnowledgeBase");
     expect(found.shapedQuery).toBe("knowledge loaded");

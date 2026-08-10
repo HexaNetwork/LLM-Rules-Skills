@@ -80,7 +80,7 @@ describe("LocalKnowledgeBase", () => {
             source: "graphify:graphify-out/graph.json",
             title: "Repository relationships (Graphify)",
             excerpt: "AgentCoordinator --calls--> LocalKnowledgeBase",
-            score: 1,
+            score: 0,
           },
           shapedQuery: "AgentCoordinator",
           usedFallback: false,
@@ -94,6 +94,7 @@ describe("LocalKnowledgeBase", () => {
 
     expect(results).toHaveLength(2);
     expect(results[0]?.source).toBe("graphify:graphify-out/graph.json");
+    expect(results[0]?.score).toBe(0);
     expect(results[1]?.source).toBe("docs/architecture.md");
   });
 
@@ -769,6 +770,117 @@ describe("LocalKnowledgeBase", () => {
         item.source === "docs/colors.md" &&
         (item.reason === "below-floor" || item.reason === "below-min-lexical")
       )).toBe(true);
+    } finally {
+      fetchMock.mockRestore();
+      delete process.env[apiKeyEnv];
+    }
+  });
+
+  it("omits weak semantic-only candidates below minSemanticOnlySimilarity", async () => {
+    const root = await fixtureRoot();
+    const base = fixtureConfig(root);
+    const apiKeyEnv = "AGENT_HARNESS_TEST_SEM_ONLY_KEY";
+    process.env[apiKeyEnv] = "test-key";
+    const weak = [0.4, Math.sqrt(1 - 0.4 ** 2)];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { input: string[] };
+      return new Response(JSON.stringify({
+        data: body.input.map((text, index) => ({
+          index,
+          embedding:
+            text.includes("SettlementWindow") || text.includes("SettlementWindow refunds")
+              ? [1, 0]
+              : weak,
+        })),
+      }), { status: 200 });
+    });
+    try {
+      await writeFile(
+        path.join(root, "docs", "settlement.md"),
+        "# SettlementWindow\n\nSettlementWindow closes the ledger and records refunds.\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(root, "docs", "palette.md"),
+        "# Palette\n\nTheme tokens define accent colors for the dashboard chrome.\n",
+        "utf8",
+      );
+      const knowledge = new LocalKnowledgeBase(fixtureConfig(root, {
+        knowledge: {
+          ...base.knowledge,
+          embeddings: {
+            ...base.knowledge.embeddings,
+            enabled: true,
+            endpoint: "https://embeddings.test/v1/embeddings",
+            apiKeyEnv,
+            minSimilarity: 0.3,
+            minSemanticOnlySimilarity: 0.45,
+          },
+        },
+      }));
+      await knowledge.refresh();
+
+      const results = await knowledge.search("SettlementWindow refunds", 6, {
+        repository: false,
+      });
+
+      expect(results.map((result) => result.source)).toEqual(["docs/settlement.md"]);
+      expect(results[0]?.score).toBeGreaterThan(0.4);
+    } finally {
+      fetchMock.mockRestore();
+      delete process.env[apiKeyEnv];
+    }
+  });
+
+  it("still fuses lexical hits with semantic evidence under the semantic-only gate", async () => {
+    const root = await fixtureRoot();
+    const base = fixtureConfig(root);
+    const apiKeyEnv = "AGENT_HARNESS_TEST_FUSE_KEY";
+    process.env[apiKeyEnv] = "test-key";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { input: string[] };
+      return new Response(JSON.stringify({
+        data: body.input.map((text, index) => ({
+          index,
+          embedding:
+            text.includes("delivery charge") || text.includes("carrier dispute refund")
+              ? [1, 0]
+              : [0, 1],
+        })),
+      }), { status: 200 });
+    });
+    try {
+      const knowledge = new LocalKnowledgeBase(fixtureConfig(root, {
+        knowledge: {
+          ...base.knowledge,
+          embeddings: {
+            ...base.knowledge.embeddings,
+            enabled: true,
+            endpoint: "https://embeddings.test/v1/embeddings",
+            apiKeyEnv,
+            minSimilarity: 0.3,
+            minSemanticOnlySimilarity: 0.45,
+          },
+        },
+      }));
+      await knowledge.upsertText(
+        "docs/billing.md",
+        "Billing adjustments",
+        "A delivery charge adjustment is issued after carrier disputes.",
+      );
+      await knowledge.upsertText(
+        "docs/unrelated.md",
+        "Unrelated theme",
+        "Dashboard chrome palette tokens define accent colors only.",
+      );
+
+      const results = await knowledge.search("carrier dispute refund delivery charge", 5, {
+        repository: false,
+      });
+
+      expect(results.map((result) => result.title)).toEqual(["Billing adjustments"]);
+      // Lexical + semantic dual-channel normalized RRF, not raw ~0.016.
+      expect(results[0]?.score).toBeCloseTo(1, 1);
     } finally {
       fetchMock.mockRestore();
       delete process.env[apiKeyEnv];

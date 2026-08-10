@@ -233,7 +233,9 @@ export const HarnessConfigSchema = z.object({
           apiKeyEnv: z.string().min(1).default("OPENAI_API_KEY"),
           batchSize: z.number().int().min(1).max(256).default(32),
           timeoutMs: z.number().int().positive().default(30_000),
-          minSimilarity: z.number().min(-1).max(1).default(0.2),
+          minSimilarity: z.number().min(-1).max(1).default(0.3),
+          // Stricter floor for chunks that enter ranking with no lexical evidence.
+          minSemanticOnlySimilarity: z.number().min(-1).max(1).default(0.45),
           lexicalWeight: z.number().positive().default(1),
           semanticWeight: z.number().positive().default(1),
         })

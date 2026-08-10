@@ -400,11 +400,17 @@ export class LocalKnowledgeBase {
     );
     const scoredLexicalIds = new Set(scoredLexical.map((result) => result.id));
     const acceptedLexicalIds = new Set(lexical.map((result) => result.id));
+    const { minSemanticOnlySimilarity } = this.config.knowledge.embeddings;
     const semanticCandidates: IndexedSearchResult[] = allowedChunks
       .filter((chunk) => {
         if (chunk.kind !== "document" || !semanticScores.has(chunk.id)) return false;
         // Embeddings must not resurrect lexical rows already refused by the floor.
         if (scoredLexicalIds.has(chunk.id) && !acceptedLexicalIds.has(chunk.id)) return false;
+        // Semantic-only hits (no lexical evidence) need a stricter cosine floor.
+        if (!acceptedLexicalIds.has(chunk.id)) {
+          const cosine = semanticScores.get(chunk.id) ?? 0;
+          if (cosine < minSemanticOnlySimilarity) return false;
+        }
         return true;
       })
       .map((chunk) => ({

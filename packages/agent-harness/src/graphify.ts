@@ -381,7 +381,8 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
           source: `graphify:${GRAPH_PATH}`,
           title: "Repository relationships (Graphify)",
           excerpt,
-          score: 1,
+          // Structural context is prepended; score is not comparable to doc RRF/TF-IDF.
+          score: 0,
         },
         shapedQuery: shaped.query,
         usedFallback: shaped.usedFallback,

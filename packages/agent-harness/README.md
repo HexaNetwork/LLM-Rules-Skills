@@ -151,7 +151,7 @@ An episode spans at most `workflow.maxGrillQuestionsPerEpisode` answered questio
 
 The default tracker and knowledge system require no external service. Human-readable issues and tasks are local Markdown. Configured docs, skills, and rules (`.md`, `.mdc`, `.yaml`, and supported source files) are chunked into `.agent-harness/knowledge/documents.json` and `chunks.json`; retrieval uses deterministic lexical scoring and stable tie-breaking.
 
-Semantic retrieval is an opt-in enhancement for documents. When enabled, the harness calls an OpenAI-compatible endpoint or a local Ollama endpoint during indexing, stores vectors alongside the lexical index in `.agent-harness/knowledge/embeddings.json`, and merges lexical and cosine-similarity rankings with reciprocal-rank fusion. The key is read only from an environment variable when the chosen provider needs one. Scope and visibility checks happen before vector candidates are ranked, and rules/skills remain on the role- and path-aware guidance path. If the endpoint, credentials, or local vector index are unavailable, search continues with lexical results.
+Semantic retrieval is an opt-in enhancement for documents. When enabled, the harness calls an OpenAI-compatible endpoint or a local Ollama endpoint during indexing, stores vectors alongside the lexical index in `.agent-harness/knowledge/embeddings.json`, and merges lexical and cosine-similarity rankings with reciprocal-rank fusion. Displayed hybrid scores are **normalized RRF** (dual-channel rank-1 ≈ 1.0, single-channel ≈ 0.5), not raw cosine or TF-IDF magnitudes. Semantic-only candidates (no lexical hit) must clear `minSemanticOnlySimilarity` (default 0.45), which is stricter than `minSimilarity` (default 0.3). The key is read only from an environment variable when the chosen provider needs one. Scope and visibility checks happen before vector candidates are ranked, and rules/skills remain on the role- and path-aware guidance path. If the endpoint, credentials, or local vector index are unavailable, search continues with lexical results.
 
 ```yaml
 knowledge:
@@ -161,7 +161,8 @@ knowledge:
     endpoint: https://api.openai.com/v1/embeddings
     model: text-embedding-3-small
     apiKeyEnv: OPENAI_API_KEY
-    minSimilarity: 0.2
+    minSimilarity: 0.3
+    minSemanticOnlySimilarity: 0.45
     lexicalWeight: 1
     semanticWeight: 1
 ```

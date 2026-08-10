@@ -45,6 +45,8 @@ describe("token-conscious defaults", () => {
     expect(config.knowledge.guidance.assignments).toBeUndefined();
     expect(config.knowledge.embeddings.enabled).toBe(false);
     expect(config.knowledge.embeddings.model).toBe("text-embedding-3-small");
+    expect(config.knowledge.embeddings.minSimilarity).toBe(0.3);
+    expect(config.knowledge.embeddings.minSemanticOnlySimilarity).toBe(0.45);
     expect(config.knowledge.relevanceFloor).toBe(0.55);
     expect(config.knowledge.minLexicalScore).toBe(0.05);
     expect(config.knowledge.maxChunksPerSource).toBe(1);

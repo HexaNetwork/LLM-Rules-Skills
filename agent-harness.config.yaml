@@ -15,12 +15,12 @@ agent:
 
 workflow:
   tdd: true
-  maxStepsPerRun: 25
   maxTestAttempts: 2
   maxImplementationAttempts: 3
   maxReviewAttempts: 2
-  maxFogPasses: 3
-  maxWayfindingTurnsPerEpisode: 6
+  maxGrillQuestionsPerEpisode: 5
+  staleAnswerMinutes: 30
+  grillQuestionsPerBatch: 3
   contextResults: 6
   contextCharacters: 12000
 

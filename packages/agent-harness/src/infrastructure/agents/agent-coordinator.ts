@@ -69,6 +69,7 @@ export class AgentCoordinator {
     const guidanceEnabled = retrievalEnabled && this.config.knowledge.guidance.enabled;
     let guidanceAudit: Awaited<ReturnType<LocalKnowledgeBase["selectGuidanceWithAudit"]>> = {
       selected: [],
+      missingAssignments: [],
       omittedAlwaysApply: [],
       omittedOverrides: [],
     };
@@ -97,9 +98,10 @@ export class AgentCoordinator {
         guidanceEnabled
           ? this.knowledge.selectGuidanceWithAudit(knowledgeQuery, {
               role: input.role,
+              assignment: this.config.knowledge.guidance.assignments?.[input.role],
               knownPaths: knownPaths(input.input),
             })
-          : Promise.resolve({ selected: [], omittedAlwaysApply: [], omittedOverrides: [] }),
+          : Promise.resolve({ selected: [], missingAssignments: [], omittedAlwaysApply: [], omittedOverrides: [] }),
         this.knowledge.searchWithAudit(
           knowledgeQuery,
           this.config.workflow.contextResults,

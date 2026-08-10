@@ -44,7 +44,7 @@ tracker:
   kind: local
 
 knowledge:
-  projectId: exploration-and-empire
+  projectId: agent-harness
   sources:
     - path: README.md
       scope: global
@@ -52,13 +52,39 @@ knowledge:
       scope: global
     - path: General
       scope: global
-    - path: E&E
-      scope: project
   chunkCharacters: 2000
   guidance:
     enabled: true
     maxResults: 6
     maxCharacters: 6000
+    assignments:
+      reflector:
+        rules: []
+        skills: [domain-modeling]
+      griller:
+        rules: []
+        skills: [grill-me, domain-modeling]
+      planner:
+        rules: [no-legacy-fallback-code]
+        skills: [domain-modeling, improve-codebase-architecture]
+      prompt-builder:
+        rules: []
+        skills: []
+      test-writer:
+        rules: []
+        skills: [tdd]
+      implementer:
+        rules: [no-legacy-fallback-code, class-size-soft-limit, generic-concept-reuse, module-surface-minimal]
+        skills: [tdd]
+      reviewer:
+        rules: [no-legacy-fallback-code, class-size-soft-limit, generic-concept-reuse, large-component-decomposition, module-surface-minimal]
+        skills: [code-review]
+      message-writer:
+        rules: []
+        skills: []
+      fixer:
+        rules: [no-legacy-fallback-code]
+        skills: [diagnose, tdd]
   # Enable to merge semantic document matches with the local lexical index.
   # The API key is read from apiKeyEnv, never stored in this file.
   embeddings:

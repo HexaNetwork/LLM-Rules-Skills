@@ -15,6 +15,7 @@ export const PROJECT_SCOPE_GUIDANCE_BONUS = 10;
 export function cloneGuidanceAudit(value: GuidanceSelectionAudit): GuidanceSelectionAudit {
   return {
     selected: value.selected.map((item) => ({ ...item })),
+    missingAssignments: (value.missingAssignments ?? []).map((item) => ({ ...item })),
     omittedAlwaysApply: value.omittedAlwaysApply.map((item) => ({ ...item })),
     omittedOverrides: (value.omittedOverrides ?? []).map((item) => ({ ...item })),
   };
@@ -38,6 +39,10 @@ export function guidanceOverrideName(document: Pick<KnowledgeDocument, "source" 
     if (skillIndex > 0) return parts[skillIndex - 1]!.toLowerCase();
   }
   return path.basename(normalized, path.extname(normalized)).toLowerCase();
+}
+
+function guidanceOverrideKey(document: Pick<KnowledgeDocument, "source" | "guidance">): string {
+  return `${document.guidance.kind}:${guidanceOverrideName(document)}`;
 }
 
 export function bestGuidanceExcerpt(content: string, terms: string[], chunkSize: number): string {
@@ -135,10 +140,19 @@ export function selectGuidanceFromDocuments(
   defaults: { maxResults: number; maxCharacters: number; projectId: string },
 ): GuidanceSelectionAudit {
   const terms = [...new Set(tokenize(`${options.role} ${query}`))];
-  const maxResults = options.maxResults ?? defaults.maxResults;
+  const assignment = options.assignment;
+  const assignedNames = assignment
+    ? new Map<string, number>([
+        ...assignment.rules.map((name, index) => [`rule:${name.trim().toLowerCase()}`, index] as const),
+        ...assignment.skills.map((name, index) => [`skill:${name.trim().toLowerCase()}`, assignment.rules.length + index] as const),
+      ])
+    : undefined;
+  const maxResults = assignment
+    ? Math.max(options.maxResults ?? defaults.maxResults, assignedNames!.size)
+    : (options.maxResults ?? defaults.maxResults);
   const maxCharacters = options.maxCharacters ?? defaults.maxCharacters;
-  if (terms.length === 0 || maxResults <= 0 || maxCharacters <= 0) {
-    return { selected: [], omittedAlwaysApply: [], omittedOverrides: [] };
+  if ((!assignment && terms.length === 0) || maxResults <= 0 || maxCharacters <= 0) {
+    return { selected: [], missingAssignments: [], omittedAlwaysApply: [], omittedOverrides: [] };
   }
   const activeProjectId = options.projectId ?? defaults.projectId;
   const knownPaths = uniquePaths(options.knownPaths ?? []);
@@ -151,12 +165,15 @@ export function selectGuidanceFromDocuments(
   const scored = filtered
     .flatMap((document) => {
       const guidance = document.guidance;
-      if (guidance.disableModelInvocation) return [];
-      if (guidance.roles.length > 0 && !guidance.roles.includes(options.role)) return [];
+      const overrideKey = guidanceOverrideKey(document);
+      const assignmentIndex = assignedNames?.get(overrideKey);
+      if (assignment && assignmentIndex === undefined) return [];
+      if (!assignment && guidance.disableModelInvocation) return [];
+      if (!assignment && guidance.roles.length > 0 && !guidance.roles.includes(options.role)) return [];
       const matchingGlobs = guidance.globs.filter((glob) =>
         knownPaths.some((filePath) => matchesGlob(glob, filePath)),
       );
-      if (guidance.kind === "rule" && knownPaths.length > 0 && guidance.globs.length > 0 && matchingGlobs.length === 0) {
+      if (!assignment && guidance.kind === "rule" && knownPaths.length > 0 && guidance.globs.length > 0 && matchingGlobs.length === 0) {
         return [];
       }
       const lexicalScore = scoreText(
@@ -165,17 +182,19 @@ export function selectGuidanceFromDocuments(
       );
       const roleMatch = guidance.roles.includes(options.role);
       const globMatch = matchingGlobs.length > 0;
-      if (!roleMatch && !globMatch && lexicalScore === 0) return [];
+      if (!assignment && !roleMatch && !globMatch && lexicalScore === 0) return [];
       const projectScope =
         document.scope === "project" &&
         (document.projectId === undefined || document.projectId === activeProjectId);
       const score =
         lexicalScore +
+        (assignmentIndex === undefined ? 0 : 1_000 - assignmentIndex) +
         (roleMatch ? 100 : 0) +
         (globMatch ? 80 : 0) +
         (guidance.alwaysApply ? 20 : 0) +
         (projectScope ? PROJECT_SCOPE_GUIDANCE_BONUS : 0);
       const reason = [
+        ...(assignmentIndex === undefined ? [] : ["agent assignment"]),
         ...(roleMatch ? ["role match"] : []),
         ...(globMatch ? [`path matches ${matchingGlobs.join(", ")}`] : []),
         ...(guidance.alwaysApply ? ["alwaysApply priority"] : []),
@@ -189,12 +208,12 @@ export function selectGuidanceFromDocuments(
   const projectGuidanceNames = new Set(
     scored
       .filter((candidate) => candidate.document.scope === "project")
-      .map((candidate) => guidanceOverrideName(candidate.document)),
+      .map((candidate) => guidanceOverrideKey(candidate.document)),
   );
   const omittedOverrides: GuidanceOmission[] = [];
   const candidates = scored.filter((candidate) => {
     if (candidate.document.scope !== "global") return true;
-    const name = guidanceOverrideName(candidate.document);
+    const name = guidanceOverrideKey(candidate.document);
     if (!projectGuidanceNames.has(name)) return true;
     omittedOverrides.push({
       source: candidate.document.source,
@@ -225,12 +244,24 @@ export function selectGuidanceFromDocuments(
     remaining -= excerpt.length;
   }
   const selectedSources = new Set(selected.map((item) => item.source));
+  const resolvedAssignmentKeys = new Set(candidates.map((item) => guidanceOverrideKey(item.document)));
+  const missingAssignments = [...(assignedNames?.keys() ?? [])]
+    .filter((key) => !resolvedAssignmentKeys.has(key))
+    .map((key) => {
+      const separator = key.indexOf(":");
+      return {
+        kind: key.slice(0, separator) as "rule" | "skill",
+        name: key.slice(separator + 1),
+        reason: "no active-project or General guidance entry was indexed",
+      };
+    });
   const overriddenSources = new Set(omittedOverrides.map((item) => item.source));
   const candidateSources = new Set(candidates.map((item) => item.document.source));
   const omittedAlwaysApply = filtered
     .filter(
       (document) =>
         document.guidance.alwaysApply &&
+        (!assignedNames || assignedNames.has(guidanceOverrideKey(document))) &&
         !selectedSources.has(document.source) &&
         !overriddenSources.has(document.source),
     )
@@ -241,5 +272,5 @@ export function selectGuidanceFromDocuments(
         ? "lower-ranked or omitted by the guidance budget"
         : omissionReason(document, options.role, knownPaths, terms),
     }));
-  return { selected, omittedAlwaysApply, omittedOverrides };
+  return { selected, missingAssignments, omittedAlwaysApply, omittedOverrides };
 }

@@ -128,6 +128,36 @@ knowledge:
     enabled: true
     maxResults: 6
     maxCharacters: 6000
+    # Complete, authoritative guidance map. Empty lists intentionally inject nothing.
+    # Project rules/skills with the same name override General/; otherwise General/ is used.
+    assignments:
+      reflector:
+        rules: []
+        skills: [domain-modeling]
+      griller:
+        rules: []
+        skills: [grill-me, domain-modeling]
+      planner:
+        rules: []
+        skills: [domain-modeling, improve-codebase-architecture]
+      prompt-builder:
+        rules: []
+        skills: []
+      test-writer:
+        rules: []
+        skills: [tdd]
+      implementer:
+        rules: []
+        skills: [tdd]
+      reviewer:
+        rules: []
+        skills: [code-review]
+      message-writer:
+        rules: []
+        skills: []
+      fixer:
+        rules: []
+        skills: [diagnose, tdd]
   # Optional semantic document retrieval. Vectors remain in the local index;
   # the API key is read from the named environment variable, never this file.
   embeddings:

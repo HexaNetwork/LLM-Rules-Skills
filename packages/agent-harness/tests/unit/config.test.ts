@@ -7,6 +7,7 @@ import {
   CONFIG_VERSION,
   HarnessConfigSchema,
   configurationHash,
+  configurationPolicyDiff,
   defaultConfigYaml,
   deploymentConfigYaml,
   loadRunConfig,
@@ -40,6 +41,7 @@ describe("token-conscious defaults", () => {
     expect(config.models.pricing).toEqual({});
     expect(config.workflow.maxProviderRetries).toBe(2);
     expect(config.knowledge.guidance).toMatchObject({ enabled: true, maxResults: 6, maxCharacters: 6_000 });
+    expect(config.knowledge.guidance.assignments).toBeUndefined();
     expect(config.knowledge.embeddings.enabled).toBe(false);
     expect(config.knowledge.embeddings.model).toBe("text-embedding-3-small");
     expect(config.knowledge.relevanceFloor).toBe(0.55);
@@ -89,6 +91,7 @@ describe("token-conscious defaults", () => {
     expect(defaultConfigYaml()).toContain("testPathPatterns:");
     expect(defaultConfigYaml()).toContain("sourceExtensions:");
     expect(defaultConfigYaml()).toContain("agent-harness/guidance/General");
+    expect(defaultConfigYaml()).toContain("assignments:");
     expect(defaultConfigYaml()).toContain("scope: global");
     const deployed = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({
       sources: [
@@ -117,6 +120,26 @@ describe("token-conscious defaults", () => {
       enabled: false,
       updateOnRefresh: false,
     });
+  });
+
+  it("requires assignments for every agent role when explicit guidance mapping is enabled", () => {
+    const complete = {
+      reflector: { rules: [], skills: [] },
+      griller: { rules: [], skills: [] },
+      planner: { rules: [], skills: [] },
+      "prompt-builder": { rules: [], skills: [] },
+      "test-writer": { rules: [], skills: ["tdd"] },
+      implementer: { rules: ["no-legacy-fallback-code"], skills: [] },
+      reviewer: { rules: [], skills: ["code-review"] },
+      "message-writer": { rules: [], skills: [] },
+      fixer: { rules: [], skills: ["diagnose"] },
+    };
+    expect(HarnessConfigSchema.parse({
+      knowledge: { guidance: { assignments: complete } },
+    }).knowledge.guidance.assignments).toEqual(complete);
+    expect(() => HarnessConfigSchema.parse({
+      knowledge: { guidance: { assignments: { implementer: complete.implementer } } },
+    })).toThrow();
   });
 
   it("classifies Go and Maven test paths with default patterns", () => {
@@ -202,6 +225,25 @@ repositoryRoot: .
       maxResults: 2,
       maxCharacters: 1_000,
     });
+  });
+
+  it("summarizes hashed-policy path diffs and ignores live overlays", () => {
+    const base = HarnessConfigSchema.parse({});
+    const liveOverlay = {
+      ...base,
+      workflow: { ...base.workflow, testPathPatterns: ["other/**"] },
+      git: { ...base.git, ignoredArtifactPatterns: ["**/Generated/**"] },
+    };
+    expect(configurationPolicyDiff(base, liveOverlay)).toEqual([]);
+
+    const hashedDrift = {
+      ...base,
+      commands: { ...base.commands, test: "./gradlew test" },
+      git: { ...base.git, baseBranch: "develop" },
+    };
+    expect(configurationPolicyDiff(base, hashedDrift)).toEqual(
+      expect.arrayContaining(["commands.test", "git.baseBranch"]),
+    );
   });
 
   it("defaults ignoredArtifactPatterns and omits them from configurationHash", () => {
@@ -290,5 +332,50 @@ repositoryRoot: .
 
     expect(loaded.workflow.testPathPatterns).toEqual(["**/src/main/test/**"]);
     expect(configurationHash(updated.config)).toBe(configurationHash(initial));
+  });
+
+  it("keeps loadRunConfig hash stable across mid-run testPathPatterns-only settings edits", async () => {
+    const root = await fixtureRoot();
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    await writeFile(
+      configPath,
+      [
+        "version: 2",
+        "repositoryRoot: .",
+        "commands:",
+        '  test: node -e "process.exit(0)"',
+        "workflow:",
+        "  testPathPatterns:",
+        "    - tests/**",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const initial = HarnessConfigSchema.parse({
+      repositoryRoot: root,
+      commands: { test: 'node -e "process.exit(0)"' },
+      workflow: { testPathPatterns: ["tests/**"] },
+    });
+    const stamped = configurationHash(initial);
+    const runId = "mid-run-test-paths";
+    const runDirectory = path.join(root, ".agent-harness", "runs", runId);
+    await mkdir(runDirectory, { recursive: true });
+    await writeFile(path.join(runDirectory, "config.json"), `${JSON.stringify(initial)}\n`, "utf8");
+
+    const afterPaths = await writeProjectSettings(configPath, {
+      workflow: { testPathPatterns: ["modules/**/src/test/**"] },
+    });
+    const loadedAfterPaths = await loadRunConfig(afterPaths.config, runId);
+    expect(configurationHash(loadedAfterPaths)).toBe(stamped);
+    expect(loadedAfterPaths.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
+    expect(loadedAfterPaths.commands.test).toBe('node -e "process.exit(0)"');
+
+    const afterCommand = await writeProjectSettings(configPath, {
+      commands: { test: "./gradlew test" },
+    });
+    const loadedAfterCommand = await loadRunConfig(afterCommand.config, runId);
+    expect(configurationHash(loadedAfterCommand)).toBe(stamped);
+    expect(loadedAfterCommand.commands.test).toBe('node -e "process.exit(0)"');
+    expect(loadedAfterCommand.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
   });
 });

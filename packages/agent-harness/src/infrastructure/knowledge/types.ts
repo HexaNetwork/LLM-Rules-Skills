@@ -134,6 +134,11 @@ export type GuidanceSelection = {
 
 export type GuidanceSelectionOptions = {
   role: string;
+  /** Authoritative name lists for this role. Undefined retains relevance-based selection. */
+  assignment?: {
+    rules: string[];
+    skills: string[];
+  };
   knownPaths?: string[];
   projectId?: string;
   includeProjects?: string[];
@@ -149,6 +154,8 @@ export type GuidanceOmission = {
 
 export type GuidanceSelectionAudit = {
   selected: GuidanceSelection[];
+  /** Explicitly assigned names that had neither an active-project nor General entry. */
+  missingAssignments: Array<{ kind: "rule" | "skill"; name: string; reason: string }>;
   omittedAlwaysApply: GuidanceOmission[];
   /** Global guidance dropped because a same-name project entry won. */
   omittedOverrides: GuidanceOmission[];

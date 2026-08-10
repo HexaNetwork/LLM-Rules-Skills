@@ -10,6 +10,7 @@ export {
   PreflightCommitOrderSchema,
   ProjectSettingsPatchSchema,
   configurationHash,
+  configurationPolicyDiff,
   type HarnessConfig,
   type KnowledgeScope,
   type KnowledgeSource,

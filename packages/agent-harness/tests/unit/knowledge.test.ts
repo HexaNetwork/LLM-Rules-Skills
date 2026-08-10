@@ -526,6 +526,67 @@ describe("LocalKnowledgeBase", () => {
     );
   });
 
+  it("uses authoritative agent assignments with project override and General fallback", async () => {
+    const root = await fixtureRoot();
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+    await knowledge.upsertText(
+      "General/skills/tdd/SKILL.md",
+      "Global TDD",
+      "---\nname: tdd\ndescription: test workflow\ndisable-model-invocation: true\n---\n\nglobal tdd guidance",
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "project/skills/tdd/SKILL.md",
+      "Project TDD",
+      "---\nname: tdd\ndescription: project test workflow\n---\n\nproject tdd guidance",
+      { scope: "project" },
+    );
+    await knowledge.upsertText(
+      "General/rules/no-legacy-fallback-code.mdc",
+      "No legacy",
+      "---\ndescription: compatibility rule\n---\n\nremove compatibility paths",
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "General/skills/diagnose/SKILL.md",
+      "Diagnose",
+      "---\nname: diagnose\ndescription: debugging\n---\n\ndiagnose failures",
+      { scope: "global" },
+    );
+
+    const audit = await knowledge.selectGuidanceWithAudit("unrelated words", {
+      role: "test-writer",
+      assignment: {
+        rules: ["no-legacy-fallback-code"],
+        skills: ["tdd"],
+      },
+    });
+
+    expect(audit.selected.map((item) => item.source)).toEqual([
+      "project/skills/tdd/SKILL.md",
+      "General/rules/no-legacy-fallback-code.mdc",
+    ]);
+    expect(audit.selected.every((item) => item.reason.includes("agent assignment"))).toBe(true);
+    expect(audit.selected.map((item) => item.source)).not.toContain("General/skills/diagnose/SKILL.md");
+    expect(audit.omittedOverrides).toEqual([
+      expect.objectContaining({ source: "General/skills/tdd/SKILL.md" }),
+    ]);
+    expect(audit.missingAssignments).toEqual([]);
+
+    await expect(knowledge.selectGuidance("debug failure", {
+      role: "fixer",
+      assignment: { rules: [], skills: [] },
+    })).resolves.toEqual([]);
+
+    const missing = await knowledge.selectGuidanceWithAudit("anything", {
+      role: "fixer",
+      assignment: { rules: ["does-not-exist"], skills: [] },
+    });
+    expect(missing.missingAssignments).toEqual([
+      expect.objectContaining({ kind: "rule", name: "does-not-exist" }),
+    ]);
+  });
+
   it("filters leftover run artifact chunks so only the active runId can retrieve them", async () => {
     const root = await fixtureRoot();
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root));

@@ -177,7 +177,9 @@ knowledge:
     model: qwen3-embedding
 ```
 
-Rules (`.mdc`) and skill roots (`SKILL.md`) are also classified as guidance. Before every worker invocation, the harness selects a bounded, auditable subset using the worker role, its objective, known planned or changed paths, rule `globs`, optional `roles`, and lexical relevance. `alwaysApply: true` is a ranking priority rather than unconditional prompt injection, so unrelated legacy rules do not consume every worker's context. The selected excerpts and reasons are persisted in the work packet, while omitted `alwaysApply` rules are recorded in its sibling guidance audit; generic retrieval excludes selected guidance to avoid duplication.
+Rules (`.mdc`) and skill roots (`SKILL.md`) are also classified as guidance. New configurations contain a complete `assignments` map for every agent role. That map is authoritative: each role receives only the named rules and skills, including explicitly assigned manual-only skills. A same-kind, same-name entry from the active project overrides the global `General/` entry; when no project entry exists, the harness falls back to `General/`. Empty lists intentionally inject no guidance.
+
+Configurations without `assignments` retain the legacy relevance selector for compatibility. It uses the worker role, objective, known paths, rule `globs`, optional front-matter `roles`, and lexical relevance. In legacy mode, `alwaysApply: true` is a ranking priority rather than unconditional prompt injection. Selected excerpts and reasons are persisted in the work packet, omitted `alwaysApply` rules are recorded in the sibling guidance audit, and generic retrieval excludes selected guidance to avoid duplication.
 
 New runs enable this behavior by default with separate packet budgets: guidance+context, serialized `input`, and a Graphify sub-budget. Guidance itself is capped at 6,000 characters and six entries:
 
@@ -198,9 +200,21 @@ knowledge:
     enabled: true
     maxResults: 6
     maxCharacters: 6000
+    assignments:
+      reflector: { rules: [], skills: [domain-modeling] }
+      griller: { rules: [], skills: [grill-me, domain-modeling] }
+      planner: { rules: [], skills: [domain-modeling, improve-codebase-architecture] }
+      prompt-builder: { rules: [], skills: [] }
+      test-writer: { rules: [], skills: [tdd] }
+      implementer: { rules: [], skills: [tdd] }
+      reviewer: { rules: [], skills: [code-review] }
+      message-writer: { rules: [], skills: [] }
+      fixer: { rules: [], skills: [diagnose, tdd] }
 ```
 
-A single budget authority (`buildWorkPacket`) applies these ceilings and records truncations beside the retrieval audit. Set `knowledge.guidance.enabled: false` to retain generic retrieval only. Frozen run configurations created before this setting continue with their original retrieval behavior.
+Policies such as `no-legacy-fallback-code` are deliberately opt-in. A project that wants the policy adds its name to the relevant role mappings; a project that needs compatibility behavior leaves it out or supplies a project-specific rule under another assigned name.
+
+Every role must appear when `assignments` is present. Assigned entries are not dropped by `maxResults`, although their excerpts still share `maxCharacters` and the overall context budget. A single budget authority (`buildWorkPacket`) applies these ceilings and records truncations beside the retrieval audit. Set `knowledge.guidance.enabled: false` to retain generic retrieval only. Frozen run configurations created before this setting continue with their original retrieval behavior.
 
 Every indexed document has a scope gate: `global` material is always eligible, while `project` material is eligible only for `knowledge.projectId`. A normal query therefore searches global guidance plus the active project's private documents. To include another project, name it with `--include-project`; only documents indexed with `visibility: shared` can cross that boundary. `private` and `restricted` documents are never returned to another project by this local index.
 

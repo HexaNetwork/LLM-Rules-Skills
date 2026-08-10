@@ -48,6 +48,23 @@ export type KnowledgeScope = z.infer<typeof KnowledgeScopeSchema>;
 export const KnowledgeVisibilitySchema = z.enum(["private", "shared", "restricted"]);
 export type KnowledgeVisibility = z.infer<typeof KnowledgeVisibilitySchema>;
 
+const GuidanceAssignmentSchema = z.object({
+  rules: z.array(z.string().min(1)).default([]),
+  skills: z.array(z.string().min(1)).default([]),
+}).strict();
+
+const GuidanceAssignmentsSchema = z.object({
+  reflector: GuidanceAssignmentSchema,
+  griller: GuidanceAssignmentSchema,
+  planner: GuidanceAssignmentSchema,
+  "prompt-builder": GuidanceAssignmentSchema,
+  "test-writer": GuidanceAssignmentSchema,
+  implementer: GuidanceAssignmentSchema,
+  reviewer: GuidanceAssignmentSchema,
+  "message-writer": GuidanceAssignmentSchema,
+  fixer: GuidanceAssignmentSchema,
+}).strict();
+
 export const KnowledgeSourceSchema = z
   .union([
     z.string().min(1),
@@ -204,6 +221,9 @@ export const HarnessConfigSchema = z.object({
           enabled: z.boolean().default(true),
           maxResults: z.number().int().min(0).max(20).default(6),
           maxCharacters: z.number().int().positive().default(6_000),
+          // When present, this complete map is authoritative. A listed name resolves
+          // to active-project guidance first and General/ guidance second.
+          assignments: GuidanceAssignmentsSchema.optional(),
         })
         .default({}),
       embeddings: z
@@ -316,6 +336,51 @@ export function configurationHash(config: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify(canonicalConfigForHash(config)))
     .digest("hex");
+}
+
+/**
+ * Short list of hashed-policy paths that differ between two configs.
+ * Omits live project-policy paths (test paths, ignored artifacts, env roots).
+ */
+export function configurationPolicyDiff(
+  left: unknown,
+  right: unknown,
+  maxEntries = 12,
+): string[] {
+  const diffs: string[] = [];
+  collectPolicyDiffs(canonicalConfigForHash(left), canonicalConfigForHash(right), "", diffs, maxEntries);
+  return diffs;
+}
+
+function collectPolicyDiffs(
+  left: unknown,
+  right: unknown,
+  keyPath: string,
+  out: string[],
+  maxEntries: number,
+): void {
+  if (out.length >= maxEntries) return;
+  if (left === right) return;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (JSON.stringify(left) !== JSON.stringify(right)) {
+      out.push(keyPath || "(root)");
+    }
+    return;
+  }
+  if (!isRecord(left) || !isRecord(right)) {
+    out.push(keyPath || "(root)");
+    return;
+  }
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of [...keys].sort()) {
+    if (out.length >= maxEntries) return;
+    const childPath = keyPath ? `${keyPath}.${key}` : key;
+    if (!(key in left) || !(key in right)) {
+      out.push(childPath);
+      continue;
+    }
+    collectPolicyDiffs(left[key], right[key], childPath, out, maxEntries);
+  }
 }
 
 function canonicalizeForHash(value: unknown, keyPath: string): unknown {

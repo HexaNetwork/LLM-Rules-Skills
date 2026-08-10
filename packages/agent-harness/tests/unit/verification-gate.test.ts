@@ -5,7 +5,12 @@ import { createFakeBackend } from "../../src/agent.js";
 import { configurationHash } from "../../src/config.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { VerificationSettingsPatchSchema } from "../../src/domain.js";
-import { confirmGrillAndAdvance, fixtureConfig, fixtureRoot } from "../helpers.js";
+import {
+  confirmGrillAndAdvance,
+  fixtureConfig,
+  fixtureRoot,
+  passingCommandRunner,
+} from "../helpers.js";
 
 const REFLECT_OUTPUT = {
   proposedTitle: "Add greeting tone",
@@ -61,7 +66,10 @@ describe("verification settings gate", () => {
       agent: { promptBuilder: false } as never,
       commands: { test: "npm test" } as never,
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new HarnessEngine(config, {
+      backend,
+      commands: passingCommandRunner(),
+    });
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     const reflectQ = state.questions.find((item) => item.status === "open");
@@ -103,6 +111,7 @@ describe("verification settings gate", () => {
     expect(state.configurationHash).toBe(configurationHash(engine.config));
 
     state = await engine.advance(state.runId);
+    expect(state.verificationBaselinePassedAt).toBeTruthy();
     expect(state.tasks).toHaveLength(1);
     expect(profilerCalls).toBe(1);
   });
@@ -127,7 +136,10 @@ describe("verification settings gate", () => {
       agent: { promptBuilder: false } as never,
       commands: { test: "npm test" } as never,
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new HarnessEngine(config, {
+      backend,
+      commands: passingCommandRunner(),
+    });
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
@@ -142,6 +154,7 @@ describe("verification settings gate", () => {
     expect(state.verificationConfirmedAt).toBeTruthy();
     expect(engine.config.commands.test).toBe("npm test");
     state = await engine.advance(state.runId);
+    expect(state.verificationBaselinePassedAt).toBeTruthy();
     expect(state.tasks).toHaveLength(1);
   });
 
@@ -190,7 +203,10 @@ describe("verification settings gate", () => {
       workflow: { tdd: false } as never,
       agent: { promptBuilder: false } as never,
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new HarnessEngine(config, {
+      backend,
+      commands: passingCommandRunner(),
+    });
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
@@ -242,7 +258,10 @@ describe("verification settings gate", () => {
       workflow: { tdd: false } as never,
       agent: { promptBuilder: false } as never,
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new HarnessEngine(config, {
+      backend,
+      commands: passingCommandRunner(),
+    });
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
@@ -272,7 +291,10 @@ describe("verification settings gate", () => {
       workflow: { tdd: false } as never,
       agent: { promptBuilder: false } as never,
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new HarnessEngine(config, {
+      backend,
+      commands: passingCommandRunner(),
+    });
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
@@ -282,6 +304,137 @@ describe("verification settings gate", () => {
     state = await confirmGrillAndAdvance(engine, state.runId);
     expect(state.verificationReady).toBeUndefined();
     expect(state.verificationConfirmedAt).toBeTruthy();
+    expect(state.verificationBaselinePassedAt).toBeTruthy();
     expect(state.tasks.length).toBeGreaterThan(0);
+  });
+
+  it("opens a baseline gate on failure and retries with an edited command", async () => {
+    const root = await fixtureRoot();
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => ({
+        status: "ready_to_plan",
+        summary: "Ready",
+        resolutions: [],
+      }),
+      "project-profiler": () => ({
+        summary: "Broken command",
+        configPatch: { commands: { test: "failing-baseline" } },
+      }),
+      planner: () => PLAN,
+    });
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false } as never,
+      agent: { promptBuilder: false } as never,
+      commands: { test: "npm test" } as never,
+    });
+    const engine = new HarnessEngine(config, {
+      backend,
+      commands: {
+        async run(command) {
+          if (command === "failing-baseline") {
+            return {
+              command,
+              exitCode: 1,
+              stdout: "1 failed",
+              stderr: "",
+              durationMs: 3,
+              timedOut: false,
+            };
+          }
+          return {
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          };
+        },
+      },
+    });
+    let state = await engine.start("Ship greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answerMany(state.runId, [
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
+    ]);
+    state = await engine.advance(state.runId);
+    state = await engine.confirmGrill(state.runId);
+    state = await engine.advance(state.runId);
+    state = await engine.confirmVerification(state.runId, {
+      patch: state.verificationReady!.proposedPatch,
+    });
+    state = await engine.advance(state.runId);
+    expect(state.phase).toBe("awaiting_input");
+    expect(state.verificationBaselineReady?.summary).toMatch(/failed/i);
+    expect(state.verificationBaselineReady?.evidence.command).toBe("failing-baseline");
+    expect(state.verificationBaselinePassedAt).toBeUndefined();
+
+    // Resume must not re-run while the gate is open.
+    const before = state.verificationBaselineReady!.readyAt;
+    state = await engine.advance(state.runId);
+    expect(state.verificationBaselineReady?.readyAt).toBe(before);
+
+    state = await engine.retryVerificationBaseline(state.runId, {
+      testCommand: 'node -e "process.exit(0)"',
+    });
+    expect(state.verificationBaselineReady).toBeUndefined();
+    expect(state.verificationBaselinePassedAt).toBeTruthy();
+    expect(engine.config.commands.test).toBe('node -e "process.exit(0)"');
+    expect(state.phase).toBe("planning");
+
+    state = await engine.advance(state.runId);
+    expect(state.tasks).toHaveLength(1);
+  });
+
+  it("treats greenfield no-tests output as an acceptable baseline", async () => {
+    const root = await fixtureRoot();
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => ({
+        status: "ready_to_plan",
+        summary: "Ready",
+        resolutions: [],
+      }),
+      "project-profiler": () => ({
+        summary: "Empty suite",
+        configPatch: { commands: { test: "vitest run" } },
+      }),
+      planner: () => PLAN,
+    });
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false } as never,
+      agent: { promptBuilder: false } as never,
+    });
+    const engine = new HarnessEngine(config, {
+      backend,
+      commands: {
+        async run(command) {
+          return {
+            command,
+            exitCode: 1,
+            stdout: "No test files found",
+            stderr: "",
+            durationMs: 5,
+            timedOut: false,
+          };
+        },
+      },
+    });
+    let state = await engine.start("Ship greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answerMany(state.runId, [
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
+    ]);
+    state = await engine.advance(state.runId);
+    state = await engine.confirmGrill(state.runId);
+    state = await engine.advance(state.runId);
+    state = await engine.confirmVerification(state.runId, {
+      patch: state.verificationReady!.proposedPatch,
+    });
+    state = await engine.advance(state.runId);
+    expect(state.verificationBaselineReady).toBeUndefined();
+    expect(state.verificationBaselinePassedAt).toBeTruthy();
+    expect(state.tasks).toHaveLength(1);
   });
 });

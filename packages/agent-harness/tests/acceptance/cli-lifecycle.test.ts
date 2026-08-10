@@ -207,11 +207,12 @@ describe("CLI acceptance lifecycle", () => {
         knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
       },
     });
-    await fixture.initGit();
-    await fixture.write("surprise.txt", "dirty\n");
+    // Config must exist on baseBranch; a later run-branch checkout must not delete it.
     const configPath = await writeAcceptanceConfig(fixture, {
       git: { enabled: true, autoCommitPreflight: false },
     });
+    await fixture.initGit();
+    await fixture.write("surprise.txt", "dirty\n");
 
     let release!: () => void;
     let reflecting!: () => void;

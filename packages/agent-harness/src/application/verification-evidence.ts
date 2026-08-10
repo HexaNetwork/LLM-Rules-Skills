@@ -1,6 +1,26 @@
 import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import type { VerificationEvidence, VerificationSettingsSnapshot } from "../domain.js";
+import type {
+  CommandEvidence,
+  VerificationEvidence,
+  VerificationSettingsSnapshot,
+} from "../domain.js";
+
+/** Greenfield / empty-suite runners often exit non-zero with this wording. */
+const NO_TESTS_FOUND = /no tests found|no test files found/i;
+const COMMAND_NOT_LAUNCHED = /command not found|not recognized/i;
+
+/**
+ * True when a pre-planner `commands.test` baseline is acceptable:
+ * exit 0, or runner output reports an empty suite (greenfield).
+ * Command-not-launched and timeouts remain failures.
+ */
+export function isVerificationBaselineAcceptable(evidence: CommandEvidence): boolean {
+  const output = `${evidence.stdout}\n${evidence.stderr}`;
+  if (COMMAND_NOT_LAUNCHED.test(output)) return false;
+  if (evidence.passed) return true;
+  return NO_TESTS_FOUND.test(output);
+}
 
 const MANIFEST_CANDIDATES = [
   "package.json",

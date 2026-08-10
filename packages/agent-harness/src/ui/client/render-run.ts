@@ -357,6 +357,15 @@ export const renderRunScript = `    function renderSidebar() {
       return '<div class="card question-card" id="verificationReadyCard"><div class="card-label">Confirm verification settings</div><p class="muted">Before planning, confirm how this run finds and runs tests. Edit the proposal or keep the current settings.</p><div class="resolution" style="margin:10px 0 12px"><strong>Summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div><div class="muted" style="margin-bottom:10px"><strong>Current</strong><div style="margin-top:4px">Test command: <code>' + esc(currentTest) + '</code></div><div style="margin-top:4px">Path patterns: <code>' + esc(currentPatterns.replace(/\\n/g, ", ") || "(none)") + '</code></div></div><form id="verificationReadyForm"><label class="muted" for="verificationTestCommand">Test command</label><input id="verificationTestCommand" type="text" value="' + attr(testValue) + '" style="width:100%;margin:4px 0 10px"><label class="muted" for="verificationTestPatterns">Test path patterns (one per line)</label><textarea id="verificationTestPatterns" rows="4" style="width:100%;margin:4px 0 10px">' + esc(patternsValue) + '</textarea><label style="display:flex;align-items:center;gap:8px;margin:8px 0 12px"><input type="checkbox" id="verificationPersistDefaults"' + (persist ? " checked" : "") + '> Also write these as project defaults</label><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="keepCurrentVerificationBtn">Keep current</button><button type="button" class="btn primary" id="confirmVerificationBtn">Confirm verification</button></div></form></div>';
     }
 
+    function renderVerificationBaselineReady(gate) {
+      var evidence = gate.evidence || {};
+      var draft = state.verificationBaselineDraft || {};
+      var testValue = draft.testCommand != null ? draft.testCommand : (evidence.command || "");
+      var persist = !!draft.persistProjectDefaults;
+      var output = [evidence.stderr, evidence.stdout].filter(Boolean).join("\\n").slice(-4000);
+      return '<div class="card question-card" id="verificationBaselineReadyCard"><div class="card-label">Verification baseline failed</div><p class="muted">The confirmed test command did not pass before planning. Edit the command and retry, or cancel the run.</p><div class="resolution" style="margin:10px 0 12px"><strong>Summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div><div class="muted" style="margin-bottom:10px"><div>Command: <code>' + esc(evidence.command || "") + '</code></div><div style="margin-top:4px">Exit: <code>' + esc(String(evidence.exitCode == null ? "" : evidence.exitCode)) + '</code> · ' + (evidence.passed ? "PASS" : "FAIL") + (evidence.durationMs != null ? " · " + esc(String(evidence.durationMs)) + "ms" : "") + '</div></div>' + (output ? '<pre class="code-block" style="max-height:220px;overflow:auto;margin:0 0 12px">' + esc(output) + '</pre>' : '') + '<form id="verificationBaselineReadyForm"><label class="muted" for="verificationBaselineTestCommand">Test command</label><input id="verificationBaselineTestCommand" type="text" value="' + attr(testValue) + '" style="width:100%;margin:4px 0 10px"><label style="display:flex;align-items:center;gap:8px;margin:8px 0 12px"><input type="checkbox" id="verificationBaselinePersistDefaults"' + (persist ? " checked" : "") + '> Also write this as the project default test command</label><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn primary" id="retryVerificationBaselineBtn">Retry baseline</button></div></form></div>';
+    }
+
     function renderInstallApproval(installs) {
       var rows = installs.map(function (item) {
         var selected = state.installSelections[item.id];
@@ -427,6 +436,10 @@ export const renderRunScript = `    function renderSidebar() {
                 ? "Accepting the current tree and continuing"
                 : jobAction === "retry"
                   ? "Retrying the blocked transition"
+                  : jobAction === "confirm_verification"
+                    ? "Confirming verification and running the baseline"
+                    : jobAction === "retry_verification_baseline"
+                      ? "Retrying the verification baseline"
                   : "An agent or deterministic command is working";
         if (jobDetail) thinkingDetail = jobDetail;
         if (activityText) thinkingDetail = activityText;
@@ -437,6 +450,8 @@ export const renderRunScript = `    function renderSidebar() {
         var pendingInstalls = (s.proposedInstalls || []).filter(function (item) { return !item.decision; });
         if (s.verificationReady) {
           html += renderVerificationReady(s.verificationReady);
+        } else if (s.verificationBaselineReady) {
+          html += renderVerificationBaselineReady(s.verificationBaselineReady);
         } else if (pendingInstalls.length) {
           html += renderInstallApproval(pendingInstalls);
         } else if (s.grillReady) {

@@ -403,6 +403,24 @@ export async function handleRunsRoutes(
         const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId);
         await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
       });
+    } else if (action === "retry_verification_baseline") {
+      const persistProjectDefaults =
+        optionalBoolean(body.persistProjectDefaults, "persistProjectDefaults") ?? false;
+      if (persistProjectDefaults && !ctx.configPath) {
+        throw new HttpError(400, "Cannot persist project defaults without a config file path");
+      }
+      const testCommand = optionalString(body.testCommand, "testCommand", 2_000);
+      ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Retrying the verification baseline");
+        await engine.retryVerificationBaseline(runId, {
+          testCommand,
+          persistProjectDefaults,
+          configPath: ctx.configPath,
+        });
+        // Reload frozen config in case the operator edited commands.test.
+        const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId);
+        await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
+      });
     } else if (action === "set_tdd") {
       const tdd = optionalBoolean(body.tdd, "tdd");
       if (tdd == null) throw new HttpError(400, "tdd must be a boolean");

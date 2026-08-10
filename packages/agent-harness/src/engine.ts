@@ -124,6 +124,17 @@ export class HarnessEngine {
     return this.planning.confirmVerification(runId, options);
   }
 
+  retryVerificationBaseline(
+    runId: string,
+    options?: {
+      testCommand?: string;
+      persistProjectDefaults?: boolean;
+      configPath?: string;
+    },
+  ): Promise<RunState> {
+    return this.planning.retryVerificationBaseline(runId, options);
+  }
+
   retry(
     runId: string,
     options?: { force?: boolean; maxRunTokens?: number; maxRunCostUsd?: number },

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { HarnessEngine } from "../../src/engine.js";
-import { confirmGrillAndAdvance } from "../helpers.js";
+import { confirmGrillAndAdvance, passingCommandRunner } from "../helpers.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 import { createScriptedBackend } from "../testkit/scripted-backend.js";
 
@@ -98,7 +98,10 @@ describe("verification gate integration", () => {
       },
     ]);
 
-    const engine = new HarnessEngine(fixture.config, { backend: scripted.backend });
+    const engine = new HarnessEngine(fixture.config, {
+      backend: scripted.backend,
+      commands: passingCommandRunner(),
+    });
     let state = await engine.start("Add greeting");
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, REFLECT_OUTPUT.restatement);
@@ -135,14 +138,13 @@ describe("verification gate integration", () => {
     expect(frozen.commands.test).toBe("npm run test:unit");
 
     state = await engine.advance(state.runId);
+    expect(state.verificationBaselinePassedAt).toBeTruthy();
     const plannerCall = scripted.calls.find((call) => call.role === "planner");
     expect(plannerCall).toBeTruthy();
     const plannerPayload = JSON.stringify(plannerCall?.input);
     expect(plannerPayload).toContain("npm run test:unit");
     expect(plannerPayload).toContain("confirmedBrief");
     expect(plannerPayload).not.toMatch(/"idea"\s*:/);
-    // After confirmGrillAndAdvance-style flow the helper would finish planning;
-    // here we stop once the planner saw the updated default.
     expect(state.tasks[0]?.id).toBe("greet");
   });
 
@@ -187,13 +189,102 @@ describe("verification gate integration", () => {
         output: { approved: true, summary: "ok", findings: [] },
       },
     ]);
-    const engine = new HarnessEngine(fixture.config, { backend: scripted.backend });
+    const engine = new HarnessEngine(fixture.config, {
+      backend: scripted.backend,
+      commands: passingCommandRunner(),
+    });
     let state = await engine.start("Add greeting");
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, REFLECT_OUTPUT.restatement);
     state = await engine.advance(state.runId);
     state = await confirmGrillAndAdvance(engine, state.runId);
     expect(state.verificationConfirmedAt).toBeTruthy();
+    expect(state.verificationBaselinePassedAt).toBeTruthy();
     expect(state.tasks.length).toBeGreaterThan(0);
+  });
+
+  it("baseline failure opens a gate; retry with a new command reaches the planner", async () => {
+    fixture = await createProjectFixture({
+      config: {
+        agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
+        workflow: { tdd: false },
+        commands: { test: "npm test", gates: [] },
+        git: { enabled: false },
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
+      },
+    });
+    const scripted = createScriptedBackend([
+      { role: "reflector", output: REFLECT_OUTPUT },
+      {
+        role: "griller",
+        output: { status: "ready_to_plan", summary: "Ready", resolutions: [] },
+      },
+      {
+        role: "project-profiler",
+        output: {
+          summary: "Use failing suite",
+          configPatch: { commands: { test: "failing-baseline" } },
+        },
+      },
+      {
+        role: "planner",
+        output: {
+          summary: "One task",
+          tasks: [
+            {
+              id: "greet",
+              title: "Ship greeting",
+              description: "Render greeting",
+              acceptanceCriteria: ["ok"],
+              blockedBy: [],
+              tdd: false,
+            },
+          ],
+        },
+      },
+    ]);
+    const engine = new HarnessEngine(fixture.config, {
+      backend: scripted.backend,
+      commands: {
+        async run(command) {
+          if (command === "failing-baseline") {
+            return {
+              command,
+              exitCode: 1,
+              stdout: "AssertionError",
+              stderr: "",
+              durationMs: 4,
+              timedOut: false,
+            };
+          }
+          return {
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          };
+        },
+      },
+    });
+    let state = await engine.start("Add greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answer(state.runId, state.activeQuestionId!, REFLECT_OUTPUT.restatement);
+    state = await engine.advance(state.runId);
+    state = await engine.confirmGrill(state.runId);
+    state = await engine.advance(state.runId);
+    state = await engine.confirmVerification(state.runId, {
+      patch: state.verificationReady!.proposedPatch,
+    });
+    state = await engine.advance(state.runId);
+    expect(state.verificationBaselineReady?.evidence.exitCode).toBe(1);
+
+    state = await engine.retryVerificationBaseline(state.runId, {
+      testCommand: 'node -e "process.exit(0)"',
+    });
+    expect(state.verificationBaselinePassedAt).toBeTruthy();
+    state = await engine.advance(state.runId);
+    expect(state.tasks[0]?.id).toBe("greet");
   });
 });

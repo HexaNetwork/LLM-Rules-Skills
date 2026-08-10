@@ -219,6 +219,14 @@ export const CommandEvidenceSchema = z.object({
 });
 export type CommandEvidence = z.infer<typeof CommandEvidenceSchema>;
 
+/** Operator gate when the pre-planner `commands.test` baseline fails; absent when not pending. */
+export const VerificationBaselineReadyGateSchema = z.object({
+  summary: z.string().min(1),
+  evidence: CommandEvidenceSchema,
+  readyAt: z.string(),
+});
+export type VerificationBaselineReadyGate = z.infer<typeof VerificationBaselineReadyGateSchema>;
+
 export const PackageManagerSchema = z.enum([
   "npm",
   "pnpm",
@@ -401,6 +409,10 @@ export const RunStateSchema = z.object({
   verificationReady: VerificationReadyGateSchema.optional(),
   // Set once the operator confirms verification; skips re-proposal on resume.
   verificationConfirmedAt: z.string().optional(),
+  // Set when the pre-planner commands.test baseline fails; cleared on retry/pass.
+  verificationBaselineReady: VerificationBaselineReadyGateSchema.optional(),
+  // Set once the baseline test run is acceptable; skips re-run on resume.
+  verificationBaselinePassedAt: z.string().optional(),
   // Distinguishes a yielded run from one paused on human input.
   yieldedAt: z.string().optional(),
   // Finish the active task, then halt before starting the next frontier task.

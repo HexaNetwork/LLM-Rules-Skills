@@ -377,6 +377,47 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     );
 
   program
+    .command("retry-verification-baseline")
+    .description("Retry the pre-planner commands.test baseline after a failure gate")
+    .requiredOption("--run-id <id>", "run id")
+    .option("--test-command <command>", "override commands.test for this run before retrying")
+    .option(
+      "--persist-project-defaults",
+      "also write the test command into the project config file",
+      false,
+    )
+    .option("--config <path>", "config path")
+    .option("--no-advance", "retry without launching the planner on success")
+    .action(
+      async (options: {
+        runId: string;
+        testCommand?: string;
+        persistProjectDefaults: boolean;
+        config?: string;
+        advance: boolean;
+      }) => {
+        const loaded = await loadConfig(options.config);
+        const config = await loadRunConfig(loaded.config, options.runId);
+        const engine = new HarnessEngine(config, { backend: dependencies.createBackend() });
+        if (options.persistProjectDefaults && !options.testCommand) {
+          throw new Error("--persist-project-defaults requires --test-command");
+        }
+        let state = await engine.retryVerificationBaseline(options.runId, {
+          testCommand: options.testCommand,
+          persistProjectDefaults: options.persistProjectDefaults,
+          configPath: loaded.path,
+        });
+        if (options.advance && !state.verificationBaselineReady) {
+          const refreshed = await loadRunConfig(loaded.config, options.runId);
+          state = await new HarnessEngine(refreshed, {
+            backend: dependencies.createBackend(),
+          }).advance(options.runId);
+        }
+        printState(state);
+      },
+    );
+
+  program
     .command("retry")
     .description("Explicitly retry a bounded step after inspecting a blocked run")
     .requiredOption("--run-id <id>", "run id")
@@ -698,6 +739,15 @@ function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {
     );
     console.log(
       `Or keep current: agent-harness confirm-verification --run-id ${state.runId} --keep-current`,
+    );
+  }
+  if (state.phase === "awaiting_input" && state.verificationBaselineReady) {
+    console.log(`Verification baseline failed: ${state.verificationBaselineReady.summary}`);
+    console.log(
+      `Retry with: agent-harness retry-verification-baseline --run-id ${state.runId}`,
+    );
+    console.log(
+      `Or edit the command: agent-harness retry-verification-baseline --run-id ${state.runId} --test-command "…"`,
     );
   }
   const question = state.questions.find((item) => item.id === state.activeQuestionId);

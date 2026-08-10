@@ -14,6 +14,7 @@ export const stateScript = `  (function () {
       noteText: "", noteAsUnknown: false,
       grillFeedbackText: "",
       verificationDraft: {},
+      verificationBaselineDraft: {},
       elapsedTimer: null,
       cancelling: false,
       lastSoundPhase: null,

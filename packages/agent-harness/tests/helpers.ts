@@ -1,6 +1,8 @@
 import type { HarnessConfig } from "../src/config.js";
+import type { CommandResult } from "../src/commands.js";
 import type { HarnessEngine } from "../src/engine.js";
 import type { RunState } from "../src/domain.js";
+import type { CommandRunner } from "../src/application/dependencies.js";
 import {
   buildFixtureConfig,
   createProjectFixture,
@@ -12,11 +14,36 @@ export { createScriptedBackend } from "./testkit/scripted-backend.js";
 export type { ScriptedStep } from "./testkit/scripted-backend.js";
 export { git } from "./testkit/git.js";
 
+/** Deterministic command runner that always exits 0 (keeps baseline flowing in suites). */
+export function passingCommandRunner(
+  override?: (command: string) => Partial<CommandResult> | undefined,
+): CommandRunner {
+  return {
+    async run(command) {
+      const partial = override?.(command) ?? {};
+      return {
+        command,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        durationMs: 1,
+        timedOut: false,
+        ...partial,
+      };
+    },
+  };
+}
+
 /** Clear the grillReady gate and advance into planning / the next grilling turn. */
 export async function confirmGrillAndAdvance(
   engine: HarnessEngine,
   runId: string,
   feedback?: string,
+  options: {
+    /** When true, auto-retry a baseline failure with an exit-0 command. */
+    clearBaselineFailure?: boolean;
+    testCommand?: string;
+  } = {},
 ): Promise<RunState> {
   await engine.confirmGrill(runId, feedback ? { feedback } : {});
   let state = await engine.advance(runId);
@@ -26,6 +53,14 @@ export async function confirmGrillAndAdvance(
     });
     state = await engine.advance(runId);
   }
+  if (options.clearBaselineFailure && state.verificationBaselineReady) {
+    state = await engine.retryVerificationBaseline(runId, {
+      testCommand: options.testCommand ?? 'node -e "process.exit(0)"',
+    });
+    if (!state.verificationBaselineReady) {
+      state = await engine.advance(runId);
+    }
+  }
   return state;
 }
 
@@ -33,10 +68,23 @@ export async function confirmGrillAndAdvance(
 export async function confirmVerificationAndAdvance(
   engine: HarnessEngine,
   runId: string,
-  options: Parameters<HarnessEngine["confirmVerification"]>[1] = {},
+  options: Parameters<HarnessEngine["confirmVerification"]>[1] & {
+    /** When true, auto-retry a baseline failure with an exit-0 command. */
+    clearBaselineFailure?: boolean;
+    testCommand?: string;
+  } = {},
 ): Promise<RunState> {
-  let state = await engine.confirmVerification(runId, options);
+  const { clearBaselineFailure, testCommand, ...confirmOptions } = options;
+  let state = await engine.confirmVerification(runId, confirmOptions);
   state = await engine.advance(runId);
+  if (clearBaselineFailure && state.verificationBaselineReady) {
+    state = await engine.retryVerificationBaseline(runId, {
+      testCommand: testCommand ?? 'node -e "process.exit(0)"',
+    });
+    if (!state.verificationBaselineReady) {
+      state = await engine.advance(runId);
+    }
+  }
   return state;
 }
 

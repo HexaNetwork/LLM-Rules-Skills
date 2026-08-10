@@ -43,6 +43,7 @@ export const eventsScript = `    async function waitForJob(runId) {
         await bootstrap(true);
         if (action === 'answer') scrollMainToTop();
         if (action === 'resolve_installs' || action === 'confirm_grill' || action === 'confirm_verification') scrollMainToTop();
+        if (action === 'retry_verification_baseline') scrollMainToTop();
         state.pinScrollTop = false;
         if (!result.ok) {
           playTone('error');
@@ -51,6 +52,7 @@ export const eventsScript = `    async function waitForJob(runId) {
         }
         var landedGrillReady = !!(state.detail && state.detail.state && state.detail.state.grillReady);
         var landedVerification = !!(state.detail && state.detail.state && state.detail.state.verificationReady);
+        var landedBaseline = !!(state.detail && state.detail.state && state.detail.state.verificationBaselineReady);
         var doneMsg = action === 'answer'
           ? (landedGrillReady ? 'Grilling complete — review before planning' : 'Answer recorded')
             : (action === 'ignore_artifacts' ? 'Ignored artifacts and continued'
@@ -61,11 +63,18 @@ export const eventsScript = `    async function waitForJob(runId) {
               : (landedVerification
                 ? 'Confirm verification settings before planning'
                 : 'Continuing to planning'))
-            : (action === 'confirm_verification' ? 'Verification confirmed — planning'
+            : (action === 'confirm_verification'
+              ? (landedBaseline
+                ? 'Baseline tests failed — fix the command and retry'
+                : 'Verification confirmed — planning')
+            : (action === 'retry_verification_baseline'
+              ? (landedBaseline
+                ? 'Baseline still failing — inspect evidence and retry'
+                : 'Baseline passed — planning')
             : (action === 'set_tdd' ? 'TDD updated'
             : (action === 'commit_preflight' ? 'Working tree committed — continuing'
             : (action === 'accept_tree' ? 'Current tree accepted — continuing'
-            : (action === 'retry' ? 'Retry started' : 'Action completed'))))))));
+            : (action === 'retry' ? 'Retry started' : 'Action completed')))))))));
         toast(doneMsg);
       } catch (error) {
         state.pinScrollTop = false;
@@ -310,6 +319,17 @@ export const eventsScript = `    async function waitForJob(runId) {
         state.verificationDraft = {};
         runAction('confirm_verification', body);
       }
+      if (target.id === 'retryVerificationBaselineBtn') {
+        var baselineGate = state.detail && state.detail.state && state.detail.state.verificationBaselineReady;
+        var baselineDraft = state.verificationBaselineDraft || {};
+        var baselineFallback = (baselineGate && baselineGate.evidence && baselineGate.evidence.command) || '';
+        var baselineCommand = (baselineDraft.testCommand != null ? baselineDraft.testCommand : baselineFallback).trim();
+        var baselinePersist = !!baselineDraft.persistProjectDefaults;
+        var baselineBody = { persistProjectDefaults: baselinePersist };
+        if (baselineCommand) baselineBody.testCommand = baselineCommand;
+        state.verificationBaselineDraft = {};
+        runAction('retry_verification_baseline', baselineBody);
+      }
       if (target.id === 'soundMuteBtn') {
         setSoundsMuted(!soundsMuted());
       }
@@ -396,12 +416,20 @@ export const eventsScript = `    async function waitForJob(runId) {
         state.verificationDraft = state.verificationDraft || {};
         state.verificationDraft.testPathPatterns = event.target.value;
       }
+      if (event.target.id === 'verificationBaselineTestCommand') {
+        state.verificationBaselineDraft = state.verificationBaselineDraft || {};
+        state.verificationBaselineDraft.testCommand = event.target.value;
+      }
     });
     document.addEventListener('change', function (event) {
       if (event.target.id === 'noteAsUnknown') state.noteAsUnknown = event.target.checked;
       if (event.target.id === 'verificationPersistDefaults') {
         state.verificationDraft = state.verificationDraft || {};
         state.verificationDraft.persistProjectDefaults = !!event.target.checked;
+      }
+      if (event.target.id === 'verificationBaselinePersistDefaults') {
+        state.verificationBaselineDraft = state.verificationBaselineDraft || {};
+        state.verificationBaselineDraft.persistProjectDefaults = !!event.target.checked;
       }
       if (event.target.dataset && event.target.dataset.installId) {
         state.installSelections[event.target.dataset.installId] = event.target.value;

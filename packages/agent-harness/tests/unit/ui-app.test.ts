@@ -126,6 +126,10 @@ describe("dashboard document", () => {
     expect(html).toContain("confirm_verification");
     expect(html).toContain("confirmVerificationBtn");
     expect(html).toContain("Keep current");
+    expect(html).toContain("Verification baseline failed");
+    expect(html).toContain("retry_verification_baseline");
+    expect(html).toContain("retryVerificationBaselineBtn");
+    expect(html).toContain("verificationBaselineReady");
   });
 
   it("preserves HITL editing state across background polling", () => {

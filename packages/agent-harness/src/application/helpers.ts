@@ -28,6 +28,12 @@ export function pendingVerificationReady(
   return state.verificationReady;
 }
 
+export function pendingVerificationBaselineReady(
+  state: RunState,
+): RunState["verificationBaselineReady"] | undefined {
+  return state.verificationBaselineReady;
+}
+
 export function unique(values: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];

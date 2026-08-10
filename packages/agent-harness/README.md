@@ -158,6 +158,8 @@ When the griller returns `ready_to_plan`, the run pauses on an explicit **grill-
 
 After grill confirmation and before the planner runs, a **verification settings gate** appears (`awaiting_input` with `verificationReady`). A tools-off `project-profiler` proposes `commands.test` and `workflow.testPathPatterns` from repository evidence; the operator must confirm or edit (optionally also writing project defaults) via the dashboard or `agent-harness confirm-verification` before planning continues.
 
+After verification settings are confirmed, the harness runs the confirmed `commands.test` once as a **verification baseline**. Exit 0 passes; greenfield runners that print “no tests found” / “no test files found” also pass. Real failures, launch errors, and timeouts open an `awaiting_input` gate (`verificationBaselineReady`) with command evidence. Retry via the dashboard or `agent-harness retry-verification-baseline` (optionally editing `commands.test`); the planner does not run until the baseline is acceptable.
+
 An episode spans at most `workflow.maxGrillQuestionsPerEpisode` answered questions (five by default), then checkpoints and rolls to a new provider agent with the confirmed brief and resolutions so far. Staleness is measured once per batch from its shared `askedAt`: if a batch is submitted more than `workflow.staleAnswerMinutes` (30 by default) after it was asked, the harness discards the episode and continues with a cold packet containing only those questions and answers. Planning, implementation tasks, and review retain clean boundaries. If the Cursor checkpoint cannot be resumed, the backend creates a fresh agent and submits the complete packet instead.
 
 ## Scope-aware local retrieval

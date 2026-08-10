@@ -300,11 +300,11 @@ export function renderDashboard(): string {
     .switch-row { display:flex; justify-content:space-between; align-items:center; gap:20px; border:1px solid var(--line-soft); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
     .switch-row input { accent-color:var(--lime); width:18px;height:18px; }
     .columns { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-    .toast { position:fixed; top:16px; left:50%; max-width:min(560px, calc(100vw - 32px)); width:max-content; background:#20262d; border:1px solid #39414b; color:var(--text); padding:12px 14px; border-radius:11px; box-shadow:var(--shadow); opacity:0; transform:translate(-50%, -12px); pointer-events:none; transition:.2s; z-index:40; display:flex; align-items:flex-start; gap:12px; }
+    .toast { position:fixed; top:16px; left:50%; max-width:min(560px, calc(100vw - 32px)); width:max-content; background:#20262d; border:1px solid #39414b; color:var(--text); padding:12px 14px; border-radius:11px; box-shadow:var(--shadow); opacity:0; transform:translate(-50%, -12px); pointer-events:none; transition:.2s; z-index:40; display:flex; align-items:center; gap:12px; }
     .toast.show { opacity:1; transform:translate(-50%, 0); pointer-events:auto; }
     .toast.error { border-color:rgba(255,115,115,.5); background:rgba(32,20,22,.96); }
     .toast-message { flex:1; min-width:0; white-space:pre-wrap; word-break:break-word; }
-    .toast-dismiss { flex:none; width:28px; height:28px; padding:0; border:0; border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; font-size:18px; line-height:1; }
+    .toast-dismiss { flex:none; display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:0; border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; font-size:18px; line-height:1; }
     .toast-dismiss:hover { color:var(--text); background:rgba(255,255,255,.06); }
     .toast-dismiss[hidden] { display:none; }
     .install-item { border:1px solid var(--line-soft); border-radius:10px; padding:12px 14px; margin-bottom:10px; }

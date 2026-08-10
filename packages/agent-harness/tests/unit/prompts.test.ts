@@ -159,12 +159,20 @@ describe("prompt rendering", () => {
       "Do not write Markdown interview prose, headings, or reports as the deliverable.",
     );
     const createPlanIndex = afterPacket.indexOf("You may deliver that JSON via CreatePlan");
+    const planBodyIndex = afterPacket.indexOf(
+      "If using CreatePlan, the plan body is that JSON object",
+    );
+    const noAlongsideIndex = afterPacket.indexOf('"JSON alongside this plan"');
     const expectedOutputIndex = afterPacket.indexOf(`Expected output: ${packet.expectedOutput}`);
     expect(workPacketIndex).toBeGreaterThan(-1);
     expect(noMarkdownIndex).toBeGreaterThan(-1);
     expect(createPlanIndex).toBeGreaterThan(noMarkdownIndex);
-    expect(expectedOutputIndex).toBeGreaterThan(createPlanIndex);
+    expect(planBodyIndex).toBeGreaterThan(createPlanIndex);
+    expect(noAlongsideIndex).toBeGreaterThan(planBodyIndex);
+    expect(expectedOutputIndex).toBeGreaterThan(noAlongsideIndex);
     expect(rendered).toContain("Return exactly one JSON object matching the expected output contract.");
+    expect(rendered).toContain("plan body must be that JSON only");
+    expect(rendered).toContain("research briefings");
     expect(rendered).not.toContain("Do not wrap the object in Markdown");
   });
 });

@@ -12,7 +12,7 @@ Interview relentlessly about every aspect of this plan until shared understandin
 
 When running as the harness **griller** worker, the deliverable is **only** the expected JSON contract (`needs_input` or `ready_to_plan`). Put questions, options, recommendations, resolutions, and `openUnknowns` in that JSON. The harness UI shows them to the operator; the next turn receives structured answers.
 
-Do **not** write Markdown interview reports, headings, bullet briefings, or chat-style Q&A as the session result. Codebase facts belong in `summary` / question `context`, not in a freeform Markdown document.
+Do **not** write Markdown interview reports, headings, bullet briefings, or chat-style Q&A as the session result. Codebase facts belong in `summary` / question `context`, not in a freeform Markdown document. When plan mode uses CreatePlan, the plan body must be that JSON contract only — Markdown research notes are not a valid deliverable.
 
 Prefer fewer questions; batch only mutually independent ones. Dependent forks stay sequential across turns.
 

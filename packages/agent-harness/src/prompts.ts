@@ -18,7 +18,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "When you incorporate answers, return one `resolutionSummaries` entry per answered `questionId` — a specific statement of what that one answer settled. Do not reuse the same text across entries; the turn-level `summary` covers the turn.",
     "Do not enact the plan; when understanding is sufficient, return ready_to_plan with compact resolutions.",
     "Human answers and operator notes are authoritative and used verbatim — never second-guess or soften them.",
-    "Return exactly one JSON object matching the expected output contract. Do not write Markdown interview prose, headings, or reports as the deliverable.",
+    "Return exactly one JSON object matching the expected output contract. Do not write Markdown interview prose, headings, or reports as the deliverable. If you use CreatePlan, the plan body must be that JSON only — not a Markdown research plan.",
   ],
   planner: [
     "Do not edit the working tree. Produce the task list only.",
@@ -137,7 +137,10 @@ function outputContractLines(role: AgentRole): string[] {
     return [
       "Return exactly one JSON object matching the expected output contract.",
       "Do not write Markdown interview prose, headings, or reports as the deliverable.",
-      "You may deliver that JSON via CreatePlan or as raw assistant result text (a single ```json fence is allowed).",
+      "You may deliver that JSON via CreatePlan or as raw assistant result text.",
+      "If using CreatePlan, the plan body is that JSON object (raw or one ```json fence) — nothing else.",
+      "Do not write headings, research briefings, tables, or \"JSON alongside this plan\" Markdown in CreatePlan.",
+      "Put codebase facts in JSON fields (summary, question context), not outside the object.",
     ];
   }
   return [

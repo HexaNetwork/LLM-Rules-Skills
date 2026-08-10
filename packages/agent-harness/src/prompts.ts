@@ -74,9 +74,10 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
   "project-profiler": [
     "You only propose verification settings for this repository. Do not edit files.",
     "Propose the smallest change to commands.test and/or workflow.testPathPatterns grounded in the evidence packet.",
+    "Prefer the evidence packet when it is strong and complete; do not contradict clear manifests or sample test paths.",
     "Prefer the existing currentSettings when they already match the evidence.",
-    "Never invent shell pipelines beyond a single test runner command.",
-    "The work packet is complete. Do not call tools, inspect files, or search the repository.",
+    "When tools are allowed and the repository has no build manifests (empty/greenfield), infer a single stack from the confirmed brief/idea and propose matching commands.test and testPathPatterns. Explain that inference in summary.",
+    "Never invent shell pipelines beyond a single test runner command. Prefer conventional commands (./gradlew test, npm test -- --run, pytest, go test ./..., etc.).",
     "Return exactly one raw JSON object with top-level summary and configPatch fields. Do not use Markdown headings or code fences.",
   ],
 };

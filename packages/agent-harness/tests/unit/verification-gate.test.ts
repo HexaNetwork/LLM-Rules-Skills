@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
@@ -164,6 +164,96 @@ describe("verification settings gate", () => {
       commands: { test: "npm test" },
       workflow: { testPathPatterns: ["**/*.test.ts"] },
     });
+  });
+
+  it("enables tools when verification evidence is thin", async () => {
+    const root = await fixtureRoot();
+    let observedAllowTools: boolean | undefined;
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => ({
+        status: "ready_to_plan",
+        summary: "Ready",
+        resolutions: [],
+      }),
+      "project-profiler": (request) => {
+        observedAllowTools = request.allowTools;
+        return {
+          summary: "No manifests; proposing npm from brief",
+          configPatch: { commands: { test: "npm test -- --run" } },
+        };
+      },
+      planner: () => PLAN,
+    });
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false } as never,
+      agent: { promptBuilder: false } as never,
+    });
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Ship greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answerMany(state.runId, [
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
+    ]);
+    state = await engine.advance(state.runId);
+    state = await engine.confirmGrill(state.runId);
+    state = await engine.advance(state.runId);
+    expect(state.verificationReady).toBeTruthy();
+    expect(observedAllowTools).toBe(true);
+  });
+
+  it("keeps tools off when nested single-stack evidence is strong", async () => {
+    const root = await fixtureRoot();
+    await mkdir(path.join(root, "civcraft"), { recursive: true });
+    await writeFile(path.join(root, "settings.gradle.kts"), 'rootProject.name = "demo"\n', "utf8");
+    await writeFile(path.join(root, "gradlew"), "#!/bin/sh\n", "utf8");
+    await writeFile(path.join(root, "civcraft", "build.gradle.kts"), "plugins { java }\n", "utf8");
+    await mkdir(path.join(root, "civcraft", "src", "main", "test"), { recursive: true });
+    await writeFile(
+      path.join(root, "civcraft", "src", "main", "test", "ThingTest.java"),
+      "class ThingTest {}\n",
+      "utf8",
+    );
+
+    let observedAllowTools: boolean | undefined;
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => ({
+        status: "ready_to_plan",
+        summary: "Ready",
+        resolutions: [],
+      }),
+      "project-profiler": (request) => {
+        observedAllowTools = request.allowTools;
+        return {
+          summary: "Use Gradle wrapper tests",
+          configPatch: {
+            commands: { test: "./gradlew test" },
+            workflow: {
+              testPathPatterns: ["**/src/main/test/**", "**/*Test.java"],
+            },
+          },
+        };
+      },
+      planner: () => PLAN,
+    });
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false } as never,
+      agent: { promptBuilder: false } as never,
+    });
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Ship greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answerMany(state.runId, [
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
+    ]);
+    state = await engine.advance(state.runId);
+    state = await engine.confirmGrill(state.runId);
+    state = await engine.advance(state.runId);
+    expect(state.verificationReady?.evidence?.sampleTestPaths).toEqual(
+      expect.arrayContaining(["civcraft/src/main/test/ThingTest.java"]),
+    );
+    expect(observedAllowTools).toBe(false);
   });
 
   it("confirmGrillAndAdvance clears verification before planning", async () => {

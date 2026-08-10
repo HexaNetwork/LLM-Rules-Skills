@@ -181,6 +181,7 @@ export const VerificationEvidenceSchema = z.object({
       excerpt: z.string().optional(),
     }),
   ),
+  sampleTestPaths: z.array(z.string().min(1)).default([]),
   currentSettings: VerificationSettingsSnapshotSchema,
 });
 export type VerificationEvidence = z.infer<typeof VerificationEvidenceSchema>;

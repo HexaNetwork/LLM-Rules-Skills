@@ -66,13 +66,28 @@ describe("prompt rendering", () => {
     expect(rendered).toContain("Do not call tools, inspect files, or search the repository");
   });
 
-  it("requires project-profilers to propose verification settings without tools", () => {
+  it("requires project-profilers to propose verification settings only", () => {
     const profilerPacket: WorkPacket = { ...packet, role: "project-profiler" };
     const rendered = renderPrompt(profilerPacket);
     expect(rendered).toContain("commands.test");
     expect(rendered).toContain("workflow.testPathPatterns");
-    expect(rendered).toContain("Do not call tools, inspect files, or search the repository");
+    expect(rendered).toContain("Prefer the evidence packet when it is strong");
+    expect(rendered).toContain("empty/greenfield");
     expect(rendered).toContain("Never invent shell pipelines");
+    expect(rendered).toContain("Do not edit files");
+  });
+
+  it("honors tools-off constraints passed into the project-profiler packet", () => {
+    const profilerPacket: WorkPacket = {
+      ...packet,
+      role: "project-profiler",
+      constraints: [
+        "The work packet contains every fact needed. Do not call tools, inspect files, or search the repository.",
+      ],
+    };
+    expect(renderPrompt(profilerPacket)).toContain(
+      "Do not call tools, inspect files, or search the repository",
+    );
   });
 
   it("keeps reflect and grill expected-output contracts in prompts", () => {

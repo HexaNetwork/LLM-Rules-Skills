@@ -18,7 +18,11 @@ import { compactDomainSeed } from "../knowledge.js";
 import type { ApplicationContext } from "./application-context.js";
 import { applyFrozenConfigRepair } from "./frozen-config-repair.js";
 import { pendingInstallApprovals, pendingVerificationReady } from "./helpers.js";
-import { collectVerificationEvidence } from "./verification-evidence.js";
+import {
+  collectVerificationEvidence,
+  verificationEvidenceNeedsTools,
+} from "./verification-evidence.js";
+
 
 export class PlanningService {
   constructor(private readonly ctx: ApplicationContext) {}
@@ -199,6 +203,7 @@ export class PlanningService {
       this.ctx.config.repositoryRoot,
       currentSettings,
     );
+    const allowTools = verificationEvidenceNeedsTools(evidence);
     const output = await this.ctx.agents.invoke({
       runId: state.runId,
       role: "project-profiler",
@@ -210,21 +215,31 @@ export class PlanningService {
         evidence,
         currentSettings,
       },
-      constraints: [
-        "The work packet contains every fact needed. Do not call tools, inspect files, or search the repository.",
-        "Return exactly one raw JSON object with top-level summary and configPatch fields; no Markdown or code fences.",
-        "configPatch may only include workflow.testPathPatterns and/or commands.test.",
-        "Prefer the existing currentSettings when they already match the evidence.",
-        "Propose a single test runner command — never invent shell pipelines.",
-      ],
+      constraints: allowTools
+        ? [
+            "Evidence is thin, empty, or ambiguous. You may list and read repository files to choose verification settings.",
+            "Do not create, edit, or delete project files — only inspect and propose settings.",
+            "When the repository has no build manifests, infer a single stack from the confirmed brief/idea and explain that inference in summary.",
+            "Return exactly one raw JSON object with top-level summary and configPatch fields; no Markdown or code fences.",
+            "configPatch may only include workflow.testPathPatterns and/or commands.test.",
+            "Propose a single test runner command — never invent shell pipelines.",
+          ]
+        : [
+            "The work packet contains every fact needed. Do not call tools, inspect files, or search the repository.",
+            "Return exactly one raw JSON object with top-level summary and configPatch fields; no Markdown or code fences.",
+            "configPatch may only include workflow.testPathPatterns and/or commands.test.",
+            "Prefer the existing currentSettings when they already match the evidence.",
+            "Propose a single test runner command — never invent shell pipelines.",
+          ],
       expectedOutput:
         '{"summary":"concise explanation","configPatch":{"workflow":{"testPathPatterns":[]},"commands":{"test":"…"}}}',
       schema: ProjectProfilerOutputSchema,
       retrieval: false,
       buildPrompt: false,
-      allowTools: false,
+      allowTools,
       signal: this.ctx.signalFor(state.runId),
     });
+
     VerificationSettingsPatchSchema.parse(output.configPatch);
     assertVerificationOnlyPatch(output.configPatch);
     const now = new Date().toISOString();

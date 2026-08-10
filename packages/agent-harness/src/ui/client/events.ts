@@ -188,9 +188,9 @@ export const eventsScript = `    async function waitForJob(runId) {
       var target = event.target.closest('button,a'); if (!target) return;
       if (target.dataset.copyPath != null) {
         var path = target.dataset.copyPath;
-        if (!path) { toast('No repository path', true); return; }
-        var copied = function () { toast('Path copied'); };
-        var failed = function () { toast('Could not copy path', true); };
+        if (!path) { toast('Nothing to copy', true); return; }
+        var copied = function () { toast('Copied'); };
+        var failed = function () { toast('Could not copy', true); };
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(path).then(copied).catch(failed);
         } else {

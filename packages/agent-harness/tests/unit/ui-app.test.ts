@@ -97,6 +97,9 @@ describe("dashboard document", () => {
     expect(html).toMatch(/Build progress[\s\S]*?Repository/);
     expect(html).toContain("data-copy-path");
     expect(html).toContain("copy-path-btn");
+    expect(html).toContain("Copy branch name");
+    expect(html).toContain("Copy base SHA");
+    expect(html).toContain("Copy worktree path");
     expect(html).toContain("bootstrap.project.root");
     expect(html).toContain("data-setting-key");
     expect(html).toContain("Settings apply to new runs. Blocked runs use a reviewed recommended repair");

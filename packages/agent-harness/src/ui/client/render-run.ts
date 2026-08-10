@@ -608,10 +608,11 @@ export const renderRunScript = `    function renderSidebar() {
         html += renderFogCard(s);
       }
       var repoRoot = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.root) || "";
-      var repoCopyBtn = repoRoot
-        ? '<button type="button" class="copy-path-btn" data-copy-path="' + attr(repoRoot) + '" title="Copy path" aria-label="Copy repository path"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg></button>'
-        : '';
-      html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div><div class="muted repo-label">Repository' + repoCopyBtn + '</div><div style="margin-top:4px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div></div>';
+      function copyPathBtn(value, ariaLabel) {
+        if (!value) return "";
+        return '<button type="button" class="copy-path-btn" data-copy-path="' + attr(value) + '" title="Copy" aria-label="' + attr(ariaLabel) + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg></button>';
+      }
+      html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div><div class="muted repo-label">Repository' + copyPathBtn(repoRoot, "Copy repository path") + '</div><div style="margin-top:4px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div></div>';
       html += '<div class="card third"><div class="card-label">Grill resolutions</div><div class="metric">' + grillTotal + '</div><div class="muted">' + (unknowns.length ? (openUnknownCount + ' open unknown(s) · ' + unknowns.length + ' in register') : 'decisions locked in') + '</div></div>';
       var activityTotals = (state.detail.agentActivity && state.detail.agentActivity.totals) || {};
       var contextCount = activityTotals.providerContexts != null ? activityTotals.providerContexts : ((state.detail.sessions || []).length);
@@ -625,15 +626,16 @@ export const renderRunScript = `    function renderSidebar() {
       var delivery = state.detail.workspace || {};
       var deliveryBranch = s.branchName || delivery.branchName;
       var deliveryBranchLabel = deliveryBranch || "branch pending";
-      var baseSha = delivery.baseSha ? String(delivery.baseSha).slice(0, 12) : "";
+      var fullBaseSha = delivery.baseSha ? String(delivery.baseSha) : "";
+      var baseSha = fullBaseSha ? fullBaseSha.slice(0, 12) : "";
       var worktreePath = delivery.worktreePath || "";
       html += '<div class="card third"><div class="card-label">Delivery</div>';
-      html += '<div class="muted">Branch</div><div style="margin:4px 0 10px"><code>' + esc(deliveryBranchLabel) + '</code></div>';
+      html += '<div class="muted repo-label">Branch' + copyPathBtn(deliveryBranch, "Copy branch name") + '</div><div style="margin:4px 0 10px"><code>' + esc(deliveryBranchLabel) + '</code></div>';
       if (baseSha) {
-        html += '<div class="muted">Base SHA</div><div style="margin:4px 0 10px"><code title="' + attr(delivery.baseSha || "") + '">' + esc(baseSha) + '</code></div>';
+        html += '<div class="muted repo-label">Base SHA' + copyPathBtn(fullBaseSha, "Copy base SHA") + '</div><div style="margin:4px 0 10px"><code title="' + attr(fullBaseSha) + '">' + esc(baseSha) + '</code></div>';
       }
       if (worktreePath) {
-        html += '<div class="muted">Worktree</div><div style="margin:4px 0 10px"><code title="' + attr(worktreePath) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(worktreePath) + '</code></div>';
+        html += '<div class="muted repo-label">Worktree' + copyPathBtn(worktreePath, "Copy worktree path") + '</div><div style="margin:4px 0 10px"><code title="' + attr(worktreePath) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(worktreePath) + '</code></div>';
       }
       html += '<div class="muted">TDD</div><div style="margin-top:4px">' + renderRunTddControl(s) + '</div></div>';
       html += renderInstallLogPanel();

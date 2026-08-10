@@ -385,12 +385,13 @@ export const renderRunScript = `    function renderSidebar() {
         }
         var configAmendControls = '';
         if (canEditSettings) {
+          // Must be a .card so it spans the full 12-column overview grid (bare .resolution defaults to 1 col).
           configAmendControls =
-            '<div class="resolution" style="margin-top:12px"><strong>Amend this run\\'s configuration</strong>' +
+            '<div class="card"><div class="resolution" style="margin-top:0"><strong>Amend this run\\'s configuration</strong>' +
             '<div class="muted" style="margin-top:5px">Review and confirm a settings patch before the harness rewrites this blocked run\\'s frozen snapshot and hash. It will not resume automatically.</div>' +
             '<div class="field" style="margin-top:10px"><label for="configAmendPatch">Settings patch (JSON)</label><textarea id="configAmendPatch" rows="5" placeholder="{&quot;workflow&quot;:{&quot;testPathPatterns&quot;:[&quot;tests/**&quot;,&quot;src/**/test/**&quot;]}}"></textarea></div>' +
             '<label class="faint" style="display:flex;gap:7px;align-items:center"><input id="persistConfigAmendment" type="checkbox"> Also use this patch as the project default for future runs</label>' +
-            '<button class="btn" style="margin-top:10px" data-action="amend_config">Review and amend configuration</button></div>';
+            '<button class="btn" style="margin-top:10px" data-action="amend_config">Review and amend configuration</button></div></div>';
         }
         var fixer = s.fixerRecovery;
         var fixerControls = '';

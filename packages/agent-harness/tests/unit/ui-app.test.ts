@@ -94,6 +94,8 @@ describe("dashboard document", () => {
     expect(html).toContain("Settings apply to new runs. Blocked runs require an explicit reviewed amendment");
     expect(html).toContain("Settings freeze into new runs; blocked runs can be amended");
     expect(html).toContain("Amend this run");
+    // Overview grid children without .card span 1/12 columns — amend must be a full-width card.
+    expect(html).toMatch(/class="card"[^>]*>[\s\S]*?Amend this run/);
     expect(html).toContain("Applies to new runs; blocked runs require an explicit reviewed amendment");
     expect(html).toContain("Settings saved");
     expect(html).not.toContain("Settings saved for new runs");

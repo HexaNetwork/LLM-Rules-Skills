@@ -139,6 +139,153 @@ export const HARNESS_META_STOPWORDS = [
 
 const MIN_GRAPHIFY_TOKENS = 2;
 
+const SEED_SCORE = 1_000_000;
+const QUERY_SCORE = 1_000;
+const METHOD_NOISE_PENALTY = 100;
+
+const HEADER_START_RE =
+  /^Traversal:.*?\|\s*Start:\s*\[([^\]]*)\]\s*\|\s*\d+\s+nodes?\s+found\b/im;
+const NODE_LINE_RE = /^NODE\s+(.+?)\s+\[([^\]]*)\]\s*$/;
+const START_TOKEN_RE = /['"]([^'"]+)['"]/g;
+
+/**
+ * Re-rank Graphify CLI stdout so seed / query hits appear before hub noise,
+ * then pack under maxChars. Unparseable dumps pass through unchanged.
+ */
+export function rankGraphifyExcerpt(
+  raw: string,
+  shapedQuery: string,
+  maxChars: number,
+): string {
+  const trimmed = raw.trim();
+  if (!trimmed || maxChars <= 0) return trimmed;
+
+  const lines = trimmed.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => HEADER_START_RE.test(line));
+  const nodes: Array<{ line: string; label: string; src: string; index: number }> = [];
+  let truncationNotice: string | undefined;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const match = NODE_LINE_RE.exec(line);
+    if (match) {
+      const attrs = match[2] ?? "";
+      const srcMatch = /\bsrc=(\S+)/.exec(attrs);
+      nodes.push({
+        line,
+        label: (match[1] ?? "").trim(),
+        src: srcMatch?.[1] ?? "",
+        index: nodes.length,
+      });
+      continue;
+    }
+    if (nodes.length > 0 && line.trim() && i !== headerIndex) {
+      // Trailing non-NODE text after the body (e.g. truncation notices).
+      truncationNotice = truncationNotice
+        ? `${truncationNotice}\n${line}`
+        : line;
+    }
+  }
+
+  if (nodes.length === 0) return trimmed;
+  if (headerIndex < 0) return trimmed;
+
+  const headerLine = lines[headerIndex]!;
+  const startMatch = HEADER_START_RE.exec(headerLine);
+  if (!startMatch) return trimmed;
+
+  const seeds = parseStartTokens(startMatch[1] ?? "");
+  const queryTokens = shapedQuery
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  const ranked = [...nodes].sort((a, b) => {
+    const scoreDiff =
+      scoreGraphifyNode(b, seeds, queryTokens) - scoreGraphifyNode(a, seeds, queryTokens);
+    if (scoreDiff !== 0) return scoreDiff;
+    return a.index - b.index;
+  });
+
+  const parts: string[] = [];
+  let used = 0;
+  const pushIfFits = (chunk: string): boolean => {
+    const next = used === 0 ? chunk.length : used + 1 + chunk.length;
+    if (next > maxChars) return false;
+    parts.push(chunk);
+    used = next;
+    return true;
+  };
+
+  if (!pushIfFits(headerLine)) return trimmed.slice(0, maxChars);
+
+  for (const node of ranked) {
+    pushIfFits(node.line);
+  }
+
+  if (truncationNotice) {
+    pushIfFits(truncationNotice);
+  }
+
+  return parts.join("\n");
+}
+
+function parseStartTokens(rawList: string): string[] {
+  const tokens: string[] = [];
+  for (const match of rawList.matchAll(START_TOKEN_RE)) {
+    const token = match[1]?.trim();
+    if (token) tokens.push(token);
+  }
+  return tokens;
+}
+
+function scoreGraphifyNode(
+  node: { label: string; src: string },
+  seeds: readonly string[],
+  queryTokens: readonly string[],
+): number {
+  let score = 0;
+  const labelLower = node.label.toLocaleLowerCase();
+  const srcLower = node.src.toLocaleLowerCase();
+  const basenameLower = pathBasenameWithoutExt(node.src).toLocaleLowerCase();
+
+  for (const seed of seeds) {
+    const seedLower = seed.toLocaleLowerCase();
+    if (
+      labelLower === seedLower ||
+      basenameLower === seedLower ||
+      labelLower.includes(seedLower)
+    ) {
+      score += SEED_SCORE;
+      break;
+    }
+  }
+
+  for (const token of queryTokens) {
+    const tokenLower = token.toLocaleLowerCase();
+    if (
+      labelLower.includes(tokenLower) ||
+      srcLower.includes(tokenLower) ||
+      basenameLower.includes(tokenLower)
+    ) {
+      score += QUERY_SCORE;
+      break;
+    }
+  }
+
+  if (node.label.startsWith(".")) {
+    score -= METHOD_NOISE_PENALTY;
+  }
+
+  return score;
+}
+
+function pathBasenameWithoutExt(src: string): string {
+  if (!src) return "";
+  const base = src.replace(/\\/g, "/").split("/").pop() ?? src;
+  return base.replace(/\.[^.]+$/, "");
+}
+
 export function graphifyStopwordSet(extra: readonly string[] = []): Set<string> {
   return new Set(
     [...ENGLISH_STOPWORDS, ...HARNESS_META_STOPWORDS, ...extra].map((word) =>
@@ -357,12 +504,12 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
         ],
         { cwd: this.config.repositoryRoot, timeoutMs: settings.queryTimeoutMs },
       );
-      const excerpt = result.stdout.trim();
+      const rawExcerpt = result.stdout.trim();
       if (
         result.exitCode !== 0 ||
         result.timedOut ||
-        !excerpt ||
-        /^No matching nodes found\.?$/im.test(excerpt)
+        !rawExcerpt ||
+        /^No matching nodes found\.?$/im.test(rawExcerpt)
       ) {
         if (result.exitCode !== 0 || result.timedOut) {
           this.warn(`query failed: ${failureDetail(result)}`);
@@ -376,6 +523,11 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
         this.searchCache.set(cacheKey, miss);
         return cloneRepositoryLookupSearch(miss);
       }
+      const excerpt = rankGraphifyExcerpt(
+        rawExcerpt,
+        shaped.query,
+        this.config.workflow.graphifyCharacters,
+      );
       const hit: RepositoryLookupSearch = {
         result: {
           source: `graphify:${GRAPH_PATH}`,

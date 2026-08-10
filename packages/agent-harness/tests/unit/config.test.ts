@@ -35,6 +35,7 @@ describe("token-conscious defaults", () => {
     // Prefer Math.min(20_000, inputCharacters/2) so a full-size diff fits inputCharacters.
     expect(config.workflow.reviewDiffCharacters).toBe(12_000);
     expect(config.workflow.graphifyCharacters).toBe(3_000);
+    expect(config.knowledge.graphify.queryBudgetTokens).toBe(4_000);
     expect(config.workflow.generateCommitMessages).toBe(false);
     expect(config.workflow.maxStepsPerRun).toBe(40);
     expect(config.workflow.maxRunTokens).toBe(0);

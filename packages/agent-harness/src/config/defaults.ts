@@ -186,7 +186,9 @@ knowledge:
     updateOnRefresh: false
     updateTimeoutMs: 120000
     queryTimeoutMs: 15000
-    queryBudgetTokens: 1200
+    # Larger CLI budget so seed nodes are present for harness re-ranking;
+    # prompt size remains workflow.graphifyCharacters.
+    queryBudgetTokens: 4000
     # Extra stopwords merged over the built-in English + harness lists.
     stopwords: []
     # File extensions that trigger a graphify rebuild after a verified commit.

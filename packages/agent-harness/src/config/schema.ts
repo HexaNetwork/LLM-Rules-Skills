@@ -247,7 +247,7 @@ export const HarnessConfigSchema = z.object({
           updateOnRefresh: z.boolean().default(false),
           updateTimeoutMs: z.number().int().positive().default(120_000),
           queryTimeoutMs: z.number().int().positive().default(15_000),
-          queryBudgetTokens: z.number().int().positive().max(10_000).default(1_200),
+          queryBudgetTokens: z.number().int().positive().max(10_000).default(4_000),
           roles: z.array(AgentRoleSchema).default(REPOSITORY_LOOKUP_ROLES),
           // Project-specific noise merged over the built-in English + harness lists.
           stopwords: z.array(z.string().min(1)).default([]),

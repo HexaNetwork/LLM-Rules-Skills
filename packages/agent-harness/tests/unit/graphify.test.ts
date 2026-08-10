@@ -6,12 +6,28 @@ import {
   GraphifyRepositoryLookup,
   HARNESS_META_STOPWORDS,
   buildGraphifyQuery,
+  rankGraphifyExcerpt,
   shapeGraphifyQuery,
   prepareGraphifyForRun,
   type GraphifyCommandResult,
   type GraphifyRunner,
 } from "../../src/graphify.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
+
+const HUB_ORDERED_DUMP = [
+  "Traversal: BFS | Start: ['Point2D', 'TownChunkValidation', 'CultureZone'] | 150 nodes found",
+  "NODE .format() [src=src/util/Format.kt loc=L12 community=0]",
+  "NODE Resident [src=src/resident/Resident.kt loc=L40 community=0]",
+  "NODE Town [src=src/town/Town.kt loc=L10 community=0]",
+  "NODE CivGlobal [src=src/CivGlobal.kt loc=L1 community=0]",
+  ...Array.from({ length: 40 }, (_, i) =>
+    `NODE HubNode${i} [src=src/hub/Hub${i}.kt loc=L${i + 1} community=1]`,
+  ),
+  "NODE CultureZone [src=src/culture/CultureZone.kt loc=L8 community=2]",
+  "NODE Point2D [src=src/geom/Point2D.kt loc=L3 community=2]",
+  "NODE TownChunkValidation [src=src/town/TownChunkValidation.kt loc=L20 community=2]",
+  "... truncated",
+].join("\n");
 
 describe("graphify stopword lists", () => {
   it("keeps built-in lists disjoint and free of duplicates", () => {
@@ -77,6 +93,51 @@ describe("shapeGraphifyQuery", () => {
     );
     expect(shaped.query).toBe("");
     expect(shaped.skippedReason).toBe("generic-query");
+  });
+});
+
+describe("rankGraphifyExcerpt", () => {
+  it("promotes Start seeds ahead of hub noise within the character budget", () => {
+    const shapedQuery = "Point2D TownChunkValidation CultureZone";
+    const ranked = rankGraphifyExcerpt(HUB_ORDERED_DUMP, shapedQuery, 3_000);
+
+    expect(ranked).toContain("TownChunkValidation");
+    expect(ranked).toContain("CultureZone");
+    expect(ranked).toContain("Point2D");
+    expect(ranked.startsWith("Traversal:")).toBe(true);
+
+    const firstNode = ranked.split("\n").find((line) => line.startsWith("NODE "));
+    expect(firstNode).toBeTruthy();
+    expect(firstNode).not.toMatch(/^NODE \.format\(\)/);
+    expect(firstNode).not.toMatch(/^NODE Resident\b/);
+    expect(ranked).toContain("... truncated");
+  });
+
+  it("passes through unparseable or NODE-less stdout unchanged", () => {
+    const plain = "Graphify could not parse this reply.";
+    expect(rankGraphifyExcerpt(plain, "Point2D", 3_000)).toBe(plain);
+
+    const headerOnly =
+      "Traversal: BFS | Start: ['Point2D'] | 0 nodes found\n(no body)";
+    expect(rankGraphifyExcerpt(headerOnly, "Point2D", 3_000)).toBe(headerOnly);
+  });
+
+  it("demotes method-noise labels relative to type nodes", () => {
+    const dump = [
+      "Traversal: BFS | Start: ['CultureZone'] | 3 nodes found",
+      "NODE .format() [src=src/util/Format.kt loc=L12]",
+      "NODE CultureZone [src=src/culture/CultureZone.kt loc=L8]",
+      "NODE .toString() [src=src/util/Format.kt loc=L40]",
+    ].join("\n");
+
+    const ranked = rankGraphifyExcerpt(dump, "CultureZone", 3_000);
+    const nodeLabels = ranked
+      .split("\n")
+      .filter((line) => line.startsWith("NODE "))
+      .map((line) => line.slice("NODE ".length).split(" [")[0]);
+
+    expect(nodeLabels[0]).toBe("CultureZone");
+    expect(nodeLabels.slice(1)).toEqual([".format()", ".toString()"]);
   });
 });
 
@@ -246,6 +307,37 @@ describe("GraphifyRepositoryLookup", () => {
     expect(runner).toHaveBeenCalledTimes(1);
     expect(second).toEqual(first);
     expect(second.result).not.toBe(first.result);
+  });
+
+  it("stores a seed-first excerpt when the CLI returns a hub-ordered dump", async () => {
+    const root = await fixtureRoot();
+    const graphPath = path.join(root, "graphify-out", "graph.json");
+    await mkdir(path.dirname(graphPath), { recursive: true });
+    await writeFile(graphPath, "{}\n", "utf8");
+    const runner = vi.fn<GraphifyRunner>().mockResolvedValue(result(`${HUB_ORDERED_DUMP}\n`));
+    const config = fixtureConfig(root, {
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true },
+      },
+      workflow: {
+        ...fixtureConfig(root).workflow,
+        graphifyCharacters: 3_000,
+      },
+    });
+
+    const outcome = await new GraphifyRepositoryLookup(config, runner).search(
+      "Point2D TownChunkValidation CultureZone placement",
+    );
+
+    const excerpt = outcome.result?.excerpt ?? "";
+    expect(excerpt).toContain("TownChunkValidation");
+    expect(excerpt).toContain("CultureZone");
+    expect(excerpt).toContain("Point2D");
+    const firstNode = excerpt.split("\n").find((line) => line.startsWith("NODE "));
+    expect(firstNode).toMatch(/TownChunkValidation|CultureZone|Point2D/);
+    expect(firstNode).not.toMatch(/^NODE \.format\(\)/);
+    expect(firstNode).not.toMatch(/^NODE Resident\b/);
   });
 });
 

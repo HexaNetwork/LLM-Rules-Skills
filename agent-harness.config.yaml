@@ -111,4 +111,4 @@ knowledge:
     updateOnRefresh: true
     updateTimeoutMs: 120000
     queryTimeoutMs: 15000
-    queryBudgetTokens: 1200
+    queryBudgetTokens: 4000

@@ -127,14 +127,21 @@ describe("prompt rendering", () => {
     }
   });
 
-  it("keeps griller CreatePlan delivery while still ending with the expected-output contract", () => {
+  it("keeps griller CreatePlan delivery while forbidding Markdown interview prose", () => {
     const grillPacket: WorkPacket = { ...packet, role: "griller" };
     const rendered = renderPrompt(grillPacket);
     const workPacketIndex = rendered.indexOf("WORK PACKET");
-    const createPlanIndex = rendered.indexOf("You may deliver that JSON via CreatePlan");
-    const expectedOutputIndex = rendered.indexOf(`Expected output: ${packet.expectedOutput}`);
-    expect(createPlanIndex).toBeGreaterThan(workPacketIndex);
+    const afterPacket = rendered.slice(workPacketIndex);
+    const noMarkdownIndex = afterPacket.indexOf(
+      "Do not write Markdown interview prose, headings, or reports as the deliverable.",
+    );
+    const createPlanIndex = afterPacket.indexOf("You may deliver that JSON via CreatePlan");
+    const expectedOutputIndex = afterPacket.indexOf(`Expected output: ${packet.expectedOutput}`);
+    expect(workPacketIndex).toBeGreaterThan(-1);
+    expect(noMarkdownIndex).toBeGreaterThan(-1);
+    expect(createPlanIndex).toBeGreaterThan(noMarkdownIndex);
     expect(expectedOutputIndex).toBeGreaterThan(createPlanIndex);
+    expect(rendered).toContain("Return exactly one JSON object matching the expected output contract.");
     expect(rendered).not.toContain("Do not wrap the object in Markdown");
   });
 });

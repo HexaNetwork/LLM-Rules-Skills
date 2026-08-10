@@ -17,6 +17,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "When you incorporate answers, return one `resolutionSummaries` entry per answered `questionId` — a specific statement of what that one answer settled. Do not reuse the same text across entries; the turn-level `summary` covers the turn.",
     "Do not enact the plan; when understanding is sufficient, return ready_to_plan with compact resolutions.",
     "Human answers and operator notes are authoritative and used verbatim — never second-guess or soften them.",
+    "Return exactly one JSON object matching the expected output contract. Do not write Markdown interview prose, headings, or reports as the deliverable.",
   ],
   planner: [
     "Do not edit the working tree. Produce the task list only.",
@@ -133,7 +134,8 @@ function outputContractLines(role: AgentRole): string[] {
   if (EPISODE_ROLES.has(role)) {
     return [
       "Return exactly one JSON object matching the expected output contract.",
-      "You may deliver that JSON via CreatePlan or as the assistant result text.",
+      "Do not write Markdown interview prose, headings, or reports as the deliverable.",
+      "You may deliver that JSON via CreatePlan or as raw assistant result text (a single ```json fence is allowed).",
     ];
   }
   return [

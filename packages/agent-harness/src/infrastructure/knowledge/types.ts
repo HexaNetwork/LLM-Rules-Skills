@@ -12,6 +12,8 @@ export const GuidanceMetadataSchema = z.object({
   globs: z.array(z.string()).default([]),
   alwaysApply: z.boolean().default(false),
   roles: z.array(z.string()).default([]),
+  /** When true, exclude from harness auto-injection (Cursor slash-entrypoint skills). */
+  disableModelInvocation: z.boolean().default(false),
 });
 export type GuidanceMetadata = z.infer<typeof GuidanceMetadataSchema>;
 

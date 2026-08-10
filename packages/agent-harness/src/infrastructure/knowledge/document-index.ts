@@ -58,6 +58,7 @@ export function guidanceMetadata(source: string, content: string): GuidanceMetad
     roles: Array.isArray(frontMatter.roles)
       ? frontMatter.roles.filter((value): value is string => typeof value === "string")
       : typeof frontMatter.roles === "string" ? [frontMatter.roles] : [],
+    disableModelInvocation: frontMatter["disable-model-invocation"] === true,
   });
 }
 

@@ -151,6 +151,7 @@ export function selectGuidanceFromDocuments(
   const scored = filtered
     .flatMap((document) => {
       const guidance = document.guidance;
+      if (guidance.disableModelInvocation) return [];
       if (guidance.roles.length > 0 && !guidance.roles.includes(options.role)) return [];
       const matchingGlobs = guidance.globs.filter((glob) =>
         knownPaths.some((filePath) => matchesGlob(glob, filePath)),

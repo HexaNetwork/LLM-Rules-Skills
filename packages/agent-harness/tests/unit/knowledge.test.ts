@@ -367,6 +367,51 @@ describe("LocalKnowledgeBase", () => {
     expect(generic.map((item) => item.source)).toEqual(["docs/login.md"]);
   });
 
+  it("excludes disable-model-invocation skills and reviewer-only code-review from fixer selection", async () => {
+    const root = await fixtureRoot();
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+    await knowledge.upsertText(
+      "General/skills/implement-auto/SKILL.md",
+      "implement-auto",
+      [
+        "---",
+        "name: implement-auto",
+        "description: Review failed recovery orchestration for chat entrypoints",
+        "disable-model-invocation: true",
+        "---",
+        "",
+        "Review failed. Emit ## Standards and ## Spec markdown for the recovery plan.",
+      ].join("\n"),
+      { scope: "global" },
+    );
+    await knowledge.upsertText(
+      "General/skills/code-review/SKILL.md",
+      "code-review",
+      [
+        "---",
+        "name: code-review",
+        "description: Review failed Standards and Spec checks after test writer failures",
+        "roles: [reviewer]",
+        "---",
+        "",
+        "Review failed. Report ## Standards and ## Spec findings side by side.",
+      ].join("\n"),
+      { scope: "global" },
+    );
+
+    const failureQuery = "Review failed. Test writer misclassified test paths.";
+    const fixerSelected = await knowledge.selectGuidance(failureQuery, { role: "fixer" });
+    expect(fixerSelected.map((item) => item.source)).toEqual([]);
+
+    const reviewerSelected = await knowledge.selectGuidance(failureQuery, { role: "reviewer" });
+    expect(reviewerSelected.map((item) => item.source)).toEqual([
+      "General/skills/code-review/SKILL.md",
+    ]);
+    expect(reviewerSelected.map((item) => item.source)).not.toContain(
+      "General/skills/implement-auto/SKILL.md",
+    );
+  });
+
   it("does not select shared guidance from another project without explicit inclusion", async () => {
     const root = await fixtureRoot();
     const base = fixtureConfig(root);

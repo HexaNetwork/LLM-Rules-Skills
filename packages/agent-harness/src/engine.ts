@@ -1,5 +1,5 @@
 import type { HarnessConfig, PreflightCommitOrder } from "./config.js";
-import type { ReflectOutput, RunState, VerificationSettingsPatch } from "./domain.js";
+import type { ReflectOutput, RunState, RunWorkspace, VerificationSettingsPatch } from "./domain.js";
 import { isTestPath, reconcileUnknowns } from "./domain.js";
 import { ApplicationContext } from "./application/application-context.js";
 import type { HarnessDependencies } from "./application/dependencies.js";
@@ -8,6 +8,8 @@ import {
   pendingGrillReady,
   taskForPacket,
   type CancelResult,
+  type CleanupResult,
+  type MigrateWorkspaceResult,
 } from "./application/helpers.js";
 import { InterviewService } from "./application/interview-service.js";
 import { PlanningService } from "./application/planning-service.js";
@@ -17,14 +19,16 @@ import { RunLifecycleService } from "./application/run-lifecycle-service.js";
 import { TaskExecutionService } from "./application/task-execution-service.js";
 
 export type { HarnessDependencies } from "./application/dependencies.js";
-export type { CancelResult } from "./application/helpers.js";
+export type { CancelResult, CleanupResult, MigrateWorkspaceResult } from "./application/helpers.js";
 export { pendingGrillReady, taskForPacket } from "./application/helpers.js";
 export { isTestPath, reconcileUnknowns };
+export { openRunHarness } from "./application/run-engine-factory.js";
 
 /**
  * Compatibility facade: dependency composition and public method forwarding only.
  */
 export class HarnessEngine {
+  private readonly ctx: ApplicationContext;
   readonly store;
   readonly knowledge;
   readonly tracker;
@@ -43,6 +47,7 @@ export class HarnessEngine {
     dependencies: HarnessDependencies,
   ) {
     const ctx = new ApplicationContext(config, dependencies, runCancellationRegistry);
+    this.ctx = ctx;
     this.store = ctx.store;
     this.knowledge = ctx.knowledge;
     this.tracker = ctx.tracker;
@@ -62,6 +67,18 @@ export class HarnessEngine {
       this.recovery,
     );
     ctx.setPhaseStepper((state) => this.advancer.advanceOne(state));
+  }
+
+  bindWorkspace(workspace: RunWorkspace): void {
+    this.ctx.bindWorkspace(workspace);
+  }
+
+  get workspace(): RunWorkspace {
+    return this.ctx.workspace;
+  }
+
+  get paths() {
+    return this.ctx.paths;
   }
 
   start(
@@ -155,6 +172,14 @@ export class HarnessEngine {
 
   cancel(runId: string): Promise<CancelResult> {
     return this.recovery.cancel(runId);
+  }
+
+  cleanup(runId: string, options?: { discard?: boolean }): Promise<CleanupResult> {
+    return this.recovery.cleanup(runId, options);
+  }
+
+  migrateWorkspace(runId: string): Promise<MigrateWorkspaceResult> {
+    return this.recovery.migrateWorkspace(runId);
   }
 
   requestStop(runId: string): Promise<RunState> {

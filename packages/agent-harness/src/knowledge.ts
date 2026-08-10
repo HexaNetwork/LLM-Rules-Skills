@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { z } from "zod";
+import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
 import type {
   HarnessConfig,
   KnowledgeScope,
@@ -82,6 +83,8 @@ export class LocalKnowledgeBase {
   private readonly documentsPath: string;
   private readonly chunksPath: string;
   private readonly embeddings: LocalEmbeddingIndex;
+  private readonly repositoryLookup: RepositoryLookup;
+  private readonly paths: HarnessPaths;
   private cachedDocuments?: KnowledgeDocument[];
   private cachedChunks?: KnowledgeChunk[];
   private indexGeneration = "";
@@ -91,14 +94,21 @@ export class LocalKnowledgeBase {
 
   constructor(
     private readonly config: HarnessConfig,
-    private readonly repositoryLookup: RepositoryLookup = new GraphifyRepositoryLookup(config),
+    repositoryLookup?: RepositoryLookup,
+    paths: HarnessPaths = resolveHarnessPaths(config),
   ) {
+    this.paths = paths;
+    this.repositoryLookup = repositoryLookup ?? new GraphifyRepositoryLookup(config, undefined, paths);
     this.directory = config.knowledge.sharedIndexDirectory
-      ? path.resolve(config.repositoryRoot, config.knowledge.sharedIndexDirectory)
-      : path.resolve(config.repositoryRoot, config.stateDirectory, "knowledge");
+      ? path.resolve(paths.controlRoot, config.knowledge.sharedIndexDirectory)
+      : path.join(paths.stateRoot, "knowledge");
     this.documentsPath = path.join(this.directory, "documents.json");
     this.chunksPath = path.join(this.directory, "chunks.json");
     this.embeddings = new LocalEmbeddingIndex(this.directory, config.knowledge.embeddings);
+  }
+
+  private get workspaceRoot(): string {
+    return this.paths.workspaceRoot;
   }
 
   async refresh(onProgress?: (progress: KnowledgeRefreshProgress) => void): Promise<number> {
@@ -108,8 +118,8 @@ export class LocalKnowledgeBase {
       classification: { scope: KnowledgeScope; projectId?: string; visibility: KnowledgeVisibility };
     }> = [];
     for (const source of this.config.knowledge.sources) {
-      const resolved = path.resolve(this.config.repositoryRoot, source.path);
-      assertInside(this.config.repositoryRoot, resolved);
+      const resolved = path.resolve(this.workspaceRoot, source.path);
+      assertInside(this.workspaceRoot, resolved);
       const discovered: string[] = [];
       await collectFiles(resolved, discovered);
       const classification = resolveClassification(this.config, source);
@@ -139,7 +149,7 @@ export class LocalKnowledgeBase {
     // Rebuild chunk terms even when source text is unchanged. This also repairs
     // indexes created before term maps used null-prototype objects.
     const configuredDocumentIds = new Set(sortedFiles.map(({ filePath, classification }) => hash(
-      `${classification.scope}:${classification.projectId}:${normalizePath(path.relative(this.config.repositoryRoot, filePath))}`,
+      `${classification.scope}:${classification.projectId}:${normalizePath(path.relative(this.workspaceRoot, filePath))}`,
     )));
     const documents = await this.loadDocuments();
     // A shared index can be maintained by more than one project config, so it
@@ -172,7 +182,7 @@ export class LocalKnowledgeBase {
     if (!info.isFile() || info.size > 2_000_000) return false;
     if (!TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return false;
     const content = await readFile(filePath, "utf8");
-    const source = normalizePath(path.relative(this.config.repositoryRoot, filePath));
+    const source = normalizePath(path.relative(this.workspaceRoot, filePath));
     return this.upsertText(
       source,
       path.basename(filePath),

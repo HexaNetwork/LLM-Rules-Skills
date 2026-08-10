@@ -125,11 +125,14 @@ export const renderRunScript = `    function renderSidebar() {
         internal: { title: "The harness hit an internal error",
           hint: "This is unlikely to clear on retry. Capture the failure detail and file a bug, or Retry anyway only to unblock." }
       };
-      if (/Working tree diverged|Diverging paths/i.test(text)) {
+      if (/Working tree diverged|Workspace diverged|Diverging paths/i.test(text)) {
+        var componentHint = /HEAD|index|working files/i.test(text)
+          ? " The failure names whether HEAD, the index, or working files changed inside this run's worktree."
+          : "";
         return {
           id: "tree-divergence",
-          title: "The working tree diverged from the harness's last known state",
-          hint: "Inspect the unexpected changes. Accept the current tree to continue from here, or restore the tree and retry.",
+          title: "This run's worktree diverged from the harness's last known state",
+          hint: "Inspect the unexpected changes in this run's worktree. Accept the current tree to continue from here, or restore the tree and retry." + componentHint,
         };
       }
       if (/not a git repository/i.test(text)) {
@@ -476,39 +479,58 @@ export const renderRunScript = `    function renderSidebar() {
       } else if (!state.detail.job && !["completed","cancelled","awaiting_input","blocked"].includes(s.phase) && !s.stopAfterTask) {
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">Dashboard work does not continue automatically after a restart. Resume queues the next transition and refreshes the document index first.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }
+      var controlNotice = (state.detail.events || []).slice().reverse().find(function (event) {
+        return event.type === "run.control_checkout_notice";
+      });
+      if (controlNotice && controlNotice.detail && controlNotice.detail.message && !["completed","cancelled"].includes(s.phase)) {
+        html += '<div class="card"><div class="alert warning"><div><strong>Control checkout is dirty</strong><div class="muted" style="margin-top:5px">' + esc(String(controlNotice.detail.message)) + '</div></div></div></div>';
+      }
+      var workspaceMeta = state.detail.workspace || {};
+      if (!state.detail.job && workspaceMeta.kind === "legacy-shared") {
+        html += '<div class="card"><div class="alert"><div><strong>Legacy shared checkout</strong><div class="muted" style="margin-top:5px">This run still uses the shared repository lock and old branch/preflight semantics. Migrate only when the tree is clean.</div></div><button class="btn" data-action="migrate_workspace">Migrate to worktree</button></div></div>';
+      }
+      if (!state.detail.job && ["completed","cancelled"].includes(s.phase) && workspaceMeta.kind === "git-worktree" && workspaceMeta.worktreePath && !workspaceMeta.removedAt) {
+        html += '<div class="card"><div class="alert"><div><strong>Worktree cleanup</strong><div class="muted" style="margin-top:5px">Remove the registered worktree after verifying cleanliness and publication state. State, events, and retained branches stay on disk.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" data-action="cleanup">Clean up worktree</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button></div></div></div>';
+      }
       if (s.phase === "blocked" && !state.detail.job) {
         var remediation = blockedRemediation(s);
         var failureText = String(s.failure || "");
-        var isTreeDivergence = /Working tree diverged|Diverging paths/i.test(failureText);
+        var isTreeDivergence = /Working tree diverged|Workspace diverged|Diverging paths/i.test(failureText);
         var isDirtyTree = !isTreeDivergence && (remediation.id === "dirty-tree" || /dirty working tree|uncommitted changes|working tree is not clean/i.test(failureText));
         var failureDetail = (isDirtyTree || isTreeDivergence)
           ? '<pre style="margin-top:8px">' + esc(s.failure || "") + '</pre>'
           : '<details data-details-key="raw-failure"><summary>Raw failure detail</summary><pre>' + esc(s.failure || "The current transition could not complete.") + '</pre></details>';
         var commitControls = "";
         if (isDirtyTree) {
-          var settingsValues = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.settings && state.bootstrap.project.settings.values) || {};
-          var defaultOrder = settingsValues["git.preflightCommitOrder"] === "commit-then-branch" ? "commit-then-branch" : "branch-then-commit";
-          var otherOrder = defaultOrder === "commit-then-branch" ? "branch-then-commit" : "commit-then-branch";
-          var gitInfo = state.detail.git;
-          var currentBranch = gitInfo ? gitInfo.currentBranch : null;
-          var baseBranch = gitInfo ? gitInfo.baseBranch : null;
-          var onBaseBranch = !!(currentBranch && baseBranch && currentBranch === baseBranch);
-          var orderLabel = function (order) {
-            return order === "commit-then-branch" ? "Commit then branch" : "Branch then commit";
-          };
-          var defaultBtnClass = defaultOrder === "commit-then-branch" && onBaseBranch ? "btn danger" : "btn primary";
-          var otherBtnClass = otherOrder === "commit-then-branch" && onBaseBranch ? "btn danger" : "btn";
-          var cautionNote = onBaseBranch
-            ? '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Heads up</strong><div class="muted" style="margin-top:3px">' + esc(currentBranch) + ' is your base branch. Committing onto the current branch lands these changes directly on it.</div></div></div>'
-            : "";
-          var baseBranchLine = baseBranch
-            ? '<div class="muted" style="margin-top:10px">Base branch: <code>' + esc(baseBranch) + '</code></div>'
-            : "";
-          commitControls = baseBranchLine +
-            '<div class="preflight-commit-actions" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
-            '<button class="' + defaultBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(defaultOrder) + '">' + esc(orderLabel(defaultOrder)) + ' and retry</button>' +
-            '<button class="' + otherBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(otherOrder) + '">' + esc(orderLabel(otherOrder)) + ' and retry</button>' +
-            '</div>' + cautionNote;
+          var workspaceKind = (state.detail.workspace && state.detail.workspace.kind) || "git-worktree";
+          if (workspaceKind === "legacy-shared") {
+            var settingsValues = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.settings && state.bootstrap.project.settings.values) || {};
+            var defaultOrder = settingsValues["git.preflightCommitOrder"] === "commit-then-branch" ? "commit-then-branch" : "branch-then-commit";
+            var otherOrder = defaultOrder === "commit-then-branch" ? "branch-then-commit" : "commit-then-branch";
+            var gitInfo = state.detail.git;
+            var currentBranch = gitInfo ? gitInfo.currentBranch : null;
+            var baseBranch = gitInfo ? gitInfo.baseBranch : null;
+            var onBaseBranch = !!(currentBranch && baseBranch && currentBranch === baseBranch);
+            var orderLabel = function (order) {
+              return order === "commit-then-branch" ? "Commit then branch" : "Branch then commit";
+            };
+            var defaultBtnClass = defaultOrder === "commit-then-branch" && onBaseBranch ? "btn danger" : "btn primary";
+            var otherBtnClass = otherOrder === "commit-then-branch" && onBaseBranch ? "btn danger" : "btn";
+            var cautionNote = onBaseBranch
+              ? '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Heads up</strong><div class="muted" style="margin-top:3px">' + esc(currentBranch) + ' is your base branch. Committing onto the current branch lands these changes directly on it.</div></div></div>'
+              : "";
+            var baseBranchLine = baseBranch
+              ? '<div class="muted" style="margin-top:10px">Base branch: <code>' + esc(baseBranch) + '</code></div>'
+              : "";
+            commitControls = baseBranchLine +
+              '<div class="preflight-commit-actions" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
+              '<button class="' + defaultBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(defaultOrder) + '">' + esc(orderLabel(defaultOrder)) + ' and retry</button>' +
+              '<button class="' + otherBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(otherOrder) + '">' + esc(orderLabel(otherOrder)) + ' and retry</button>' +
+              '</div>' + cautionNote;
+          } else {
+            commitControls =
+              '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Committed-base worktree</strong><div class="muted" style="margin-top:3px">Commit or stash changes inside this run\\'s worktree, then retry. Control-checkout dirt is never imported, and preflight commit-order controls are not offered for worktree runs.</div></div></div>';
+          }
         }
         var acceptTreeControls = "";
         if (isTreeDivergence) {
@@ -600,7 +622,20 @@ export const renderRunScript = `    function renderSidebar() {
       var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");
       var briefBody = brief ? (brief.confirmed || brief.draft) : "The reflector will restate the idea for your confirmation before grilling begins.";
       html += '<div class="card two-thirds"><div class="card-label">' + esc(briefTitle) + '</div><pre class="brief-body" data-scroll-key="brief">' + esc(briefBody) + '</pre></div>';
-      html += '<div class="card third"><div class="card-label">Delivery</div><div class="muted">Branch</div><div style="margin:4px 0 13px"><code>' + esc(s.branchName || "Not created yet") + '</code></div><div class="muted">TDD</div><div style="margin-top:4px">' + renderRunTddControl(s) + '</div></div>';
+      var delivery = state.detail.workspace || {};
+      var deliveryBranch = s.branchName || delivery.branchName;
+      var deliveryBranchLabel = deliveryBranch || "branch pending";
+      var baseSha = delivery.baseSha ? String(delivery.baseSha).slice(0, 12) : "";
+      var worktreePath = delivery.worktreePath || "";
+      html += '<div class="card third"><div class="card-label">Delivery</div>';
+      html += '<div class="muted">Branch</div><div style="margin:4px 0 10px"><code>' + esc(deliveryBranchLabel) + '</code></div>';
+      if (baseSha) {
+        html += '<div class="muted">Base SHA</div><div style="margin:4px 0 10px"><code title="' + attr(delivery.baseSha || "") + '">' + esc(baseSha) + '</code></div>';
+      }
+      if (worktreePath) {
+        html += '<div class="muted">Worktree</div><div style="margin:4px 0 10px"><code title="' + attr(worktreePath) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(worktreePath) + '</code></div>';
+      }
+      html += '<div class="muted">TDD</div><div style="margin-top:4px">' + renderRunTddControl(s) + '</div></div>';
       html += renderInstallLogPanel();
       html += '<div class="card"><div class="card-label">Recent activity</div><div class="timeline">' + (state.detail.events.slice(-10).reverse().map(renderEvent).join("") || '<div class="muted">No events yet.</div>') + '</div></div>';
       html += '</div>';

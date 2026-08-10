@@ -279,42 +279,56 @@ With TDD on, the harness launches a test writer first, restricts its reported/ob
 
 Agents cannot claim a command passed. The harness owns process execution and records exit code, stdout, stderr, duration, and timestamp.
 
-## Repository lock
+## Per-run worktrees
 
-`start` (preflight / Graphify / knowledge refresh) and `advance` take a process-wide repository lock at `<stateDirectory>/repo.lock`. That serialises working-tree work across runs — including a CLI `advance` beside the UI, or two UI instances — so branch switches and `changedFiles()` reads cannot interleave against one shared tree.
+Every new Git-enabled run gets a registered linked worktree under `<stateDirectory>/worktrees/<runId>` (see [ADR 0010](../../docs/adr/0010-per-run-worktrees.md)). The project checkout is the **control root**; the worktree is the **execution root**. Durable harness state (`runs/`, locks, knowledge) stays on the control/state root. Agents, commands, Graphify, and Git mutations for the run use the worktree.
 
-Hold time matches the work: a long `advance` blocks every other run for the same duration. That is intentional with one working tree. `answer`, `answerMany`, `addNote`, `status`, and `cancel` do not take the repository lock, so human input and cancellation stay available while a run is executing. Locks are never taken over automatically, because an age/liveness check cannot safely race another contender; if a holder dies, inspect it and explicitly run `agent-harness unlock --run-id <id> --repo`.
+At start the harness resolves `git.baseBranch` to an immutable `baseSha`, runs `git worktree add --detach`, and writes `workspace.json`. No delivery branch is created yet. A human-readable branch is created later at publish from the confirmed feature title plus a short run id. Local task commits are valid on detached `HEAD`.
 
-True parallel runs need isolated worktrees; that remains deferred under [Parallel task execution](../../docs/roadmap.md#parallel-task-execution) in the roadmap.
+### Dirty control checkout
+
+A dirty operator checkout is **not** a blocker for ordinary new worktree runs. The run starts from the **committed** base only; uncommitted control-checkout changes are never imported. When the control tree is dirty, start records `run.control_checkout_notice` and the CLI/dashboard surface a non-blocking notice. Commit changes yourself if you need them in a run (an import-uncommitted operation is deliberately not implemented yet).
+
+`git.autoCommitPreflight` and `git.preflightCommitOrder` apply only to **legacy-shared** runs (no `workspace.json` / pre-worktree resumes). New worktree runs do not offer branch-then-commit / commit-then-branch controls.
+
+### Locking and concurrency
+
+- **Per-run lock** — state/config/workspace mutation for one run.
+- **Workspace-admin lock** — short lock around shared Git worktree metadata (add/remove/rename branch refs).
+- **Shared-index lock** — knowledge/Graphify refresh coordination.
+- **Repository lock** — retained only for **legacy-shared** runs that still mutate the shared checkout.
+
+Independent worktree runs can advance concurrently. Inspect locks with `agent-harness unlock --run-id <id> --inspect-only` (distinguishes run, legacy repository, workspace-admin, and shared-index). `unlock --repo` remains available while legacy runs exist.
+
+### Cleanup, recovery, and disk use
+
+Worktrees share Git objects with the main repo but can accumulate working trees and build artifacts. Cleanup is explicit and conservative:
+
+```bash
+agent-harness cleanup --run-id <id>
+agent-harness cleanup --run-id <id> --discard   # unpublished commits not on a retained ref
+```
+
+Cleanup verifies the recorded path, registration, run id, Git common directory, cleanliness, and publication/discard state before `git worktree remove`. It refuses dirty trees, active/non-settled runs, path mismatches, and unpublished detached history without `--discard`. It never runs `git worktree prune`. Completed published runs keep `workspace.json`, state, events, and the delivery branch; only the worktree directory is removed (`run.worktree_removed`).
+
+If a worktree is missing or moved, resume blocks with a recoverable workspace failure. Manual repair: restore the directory at the recorded path, or recreate a linked worktree at the recorded `baseSha`/`HEAD` with the same path, then resume. Prefer `agent-harness migrate-workspace --run-id <id>` only for clean **legacy-shared** runs.
+
+### Legacy runs
+
+Runs without `workspace.json` reopen as `legacy-shared` with the old repository lock and branch/preflight semantics. Do not silently create a worktree for a dirty legacy run. Explicit migration (`migrate-workspace` / dashboard **Migrate to worktree**) creates a worktree from the current branch/`HEAD` only when the shared tree is clean and emits `run.workspace_migrated`.
 
 ## Git ownership
 
 Agents never run git. The harness:
 
-- refuses to create a run branch from a dirty working tree (checked at `start()`, and again before the planner as a resume guard);
-- creates or reuses `git.branchPrefix/<runId>` from the configured local base branch **at run start** (before Graphify, knowledge refresh, reflect, and grill), so interview and indexing see the same tree as implementation;
+- starts each new Git-enabled run in a detached worktree at the committed base SHA (control checkout branch/index/files are left alone);
+- creates a delivery branch only when publication needs a named ref;
 - requires every committed path to have been reported by the task worker;
 - asks the small model for commit and pull-request text, with a deterministic fallback;
 - optionally pushes and opens a pull request with `gh`;
 - never auto-merges.
 
-New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI `--base-branch`) can override the starting/`--base` branch for that run only; the project default remains `git.baseBranch`. The checkout happens immediately when the run starts — not later at planning.
-
-### Preflight commit
-
-A dirty tree at `start()` blocks by default (`blockedFrom: "new"`), with the offending paths in the failure message. Before that check (and any other porcelain-based dirty/fingerprint read), the harness silently restores tracked paths that are dirty in `git status` but unchanged versus `HEAD` — typical Windows/`core.autocrlf` line-ending or stale-stat phantoms. Real content edits are left alone and still block.
-
-Resolving a real dirty tree by committing is available two ways:
-
-- **Explicit action (default path):** on a blocked run, the dashboard's "Commit changes and retry" control (or `agent-harness retry --run-id <id> --commit-dirty [order]`) commits the tree and clears the block. The offending paths stay visible next to the control so you see what gets swept in before clicking.
-- **`git.autoCommitPreflight: true`:** `start()` commits a dirty tree itself instead of blocking. Off by default.
-
-Both paths honor `git.preflightCommitOrder`, which is user-selectable, not fixed:
-
-- `branch-then-commit` (default): creates `git.branchPrefix/<runId>` from **current HEAD** — not `config.git.baseBranch` — then commits onto it. This is a deliberate deviation from the branching rule above: it exists so the dirty tree rides onto the run branch instead of the operator's checked-out branch, and it is recorded on the `run.preflight_committed` audit event (`detail.deviation`).
-- `commit-then-branch`: commits on whatever branch is currently checked out; `start()` / the preflight action then creates the run branch from `config.git.baseBranch` before indexing and interview. The dashboard shows a caution when that checkout is the same as `config.git.baseBranch`, since that means the commit lands directly on it. The tree fingerprint is stamped **after** that branch cut so a baseBranch hop cannot false-block the following `advance()` on divergence.
-
-Either way the commit message defaults to `chore: commit working tree before harness run <runId>`, and the audit event records the order, resulting sha, branch, and the exact list of committed files — the harness state directory (`.agent-harness/`) is never included.
+New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI `--base-branch`) can override the base branch for that run only; the project default remains `git.baseBranch`. The worktree is created immediately when the run starts — the delivery branch is not.
 
 ## Trust boundary
 

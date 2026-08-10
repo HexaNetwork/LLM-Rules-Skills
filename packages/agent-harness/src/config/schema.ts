@@ -16,11 +16,18 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  */
 export const CONFIG_VERSION = 8;
 
-/** Environment paths / live project policy — omitted from configurationHash. */
+/** Environment paths / workspace identity — omitted from configurationHash. */
 const CONFIG_HASH_OMIT_PATHS = new Set([
   "repositoryRoot",
   "stateDirectory",
   "knowledge.sharedIndexDirectory",
+  // Runtime workspace metadata (lives in workspace.json; omitted if present on a snapshot).
+  "worktreePath",
+  "controlRoot",
+  "gitCommonDir",
+  "baseSha",
+  "branchName",
+  "headSha",
 ]);
 
 /** Default build/generated globs ignored when deciding dirty / unreported paths. */
@@ -333,6 +340,43 @@ export const ProjectSettingsPatchSchema = z
   .strict();
 
 export type ProjectSettingsPatch = z.infer<typeof ProjectSettingsPatchSchema>;
+
+/**
+ * Permitted frozen run-policy mutations (project-settings repairs plus budget/TDD).
+ * Paths and workspace identity are not patchable here.
+ */
+export const RunPolicyPatchSchema = z
+  .object({
+    workflow: z
+      .object({
+        maxGrillQuestionsPerEpisode: z.number().int().positive().max(50).optional(),
+        staleAnswerMinutes: z.number().int().positive().max(24 * 60).optional(),
+        grillQuestionsPerBatch: z.number().int().min(1).max(6).optional(),
+        testPathPatterns: z.array(z.string().min(1)).max(500).optional(),
+        maxRunTokens: z.number().int().nonnegative().optional(),
+        maxRunCostUsd: z.number().nonnegative().optional(),
+        tdd: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    commands: z
+      .object({
+        test: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    git: z
+      .object({
+        autoCommitPreflight: z.boolean().optional(),
+        preflightCommitOrder: PreflightCommitOrderSchema.optional(),
+        ignoredArtifactPatterns: z.array(z.string().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+export type RunPolicyPatch = z.infer<typeof RunPolicyPatchSchema>;
 
 export const CONFIG_NAMES = [
   "agent-harness.config.yaml",

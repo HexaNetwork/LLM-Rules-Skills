@@ -21,12 +21,13 @@ export class RunJobConflictError extends Error {
 }
 
 /**
- * Process-local mutation queue: one job per run, serialized across runs.
+ * Process-local mutation queues: one active job per run, concurrent across runs.
  * Routes enqueue work here and never mutate a run inline.
  */
 export class RunJobService {
   private readonly jobs = new Map<string, UiJob>();
-  private queue = Promise.resolve();
+  /** Tail of the per-run promise chain (independent across run IDs). */
+  private readonly queues = new Map<string, Promise<void>>();
 
   get(runId: string): UiJob | undefined {
     return this.jobs.get(runId);
@@ -53,7 +54,8 @@ export class RunJobService {
       queuedAt: new Date().toISOString(),
     };
     this.jobs.set(runId, job);
-    const scheduled = this.queue
+    const previous = this.queues.get(runId) ?? Promise.resolve();
+    const scheduled = previous
       .catch(() => undefined)
       .then(async () => {
         this.jobs.set(runId, {
@@ -78,6 +80,10 @@ export class RunJobService {
           }, FAILED_JOB_TTL_MS);
         }
       });
-    this.queue = scheduled.catch(() => undefined);
+    const next = scheduled.catch(() => undefined);
+    this.queues.set(runId, next);
+    void next.finally(() => {
+      if (this.queues.get(runId) === next) this.queues.delete(runId);
+    });
   }
 }

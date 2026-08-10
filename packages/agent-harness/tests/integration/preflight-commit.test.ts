@@ -4,15 +4,97 @@ import { promisify } from "node:util";
 import { mkdir, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
+import { writeRunWorkspace } from "../../src/config.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
+import { createRunState, type RunState } from "../../src/domain.js";
+import { canonicalizeWorkspacePath } from "../../src/domain/workspace.js";
 import { HarnessEngine } from "../../src/engine.js";
-import { GitService } from "../../src/git.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 import {
   createProjectFixture,
   type ProjectFixture,
 } from "../testkit/project-fixture.js";
+import { git as runGit } from "../testkit/git.js";
 
 const exec = promisify(execFile);
+
+/**
+ * New Git starts use per-run worktrees and no longer block on a dirty control
+ * checkout. Commit-order preflight remains for legacy-shared runs only.
+ */
+async function startThenBlockDirtyWorktree(
+  engine: HarnessEngine,
+  runId: string,
+  files: Record<string, string>,
+  blockedFrom: RunState["blockedFrom"] = "new",
+): Promise<RunState> {
+  const started = await engine.start("Add a feature", runId, false, false);
+  expect(started.phase).toBe("new");
+  const worktree = engine.paths.workspaceRoot;
+  for (const [relative, contents] of Object.entries(files)) {
+    const absolute = path.join(worktree, relative);
+    await mkdir(path.dirname(absolute), { recursive: true });
+    await writeFile(absolute, contents, "utf8");
+  }
+  return engine.store.record(
+    {
+      ...started,
+      phase: "blocked",
+      blockedFrom,
+      failure: "dirty tree",
+      blockedKind: "workspace",
+      blockedRetriable: true,
+    },
+    "run.blocked",
+    {},
+  );
+}
+
+async function createLegacyBlockedRun(
+  root: string,
+  runId: string,
+  dirtyFiles: Record<string, string>,
+): Promise<HarnessEngine> {
+  const config = fixtureConfig(root, { git: { enabled: true } as never });
+  const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+  await engine.store.initialize();
+  const state = createRunState(
+    runId,
+    "Legacy dirty tree",
+    new Date().toISOString(),
+    configurationHash(config),
+    CONFIG_VERSION,
+  );
+  await engine.store.create(state);
+  await engine.store.writeJson(runId, "config.json", {
+    ...config,
+    configVersion: CONFIG_VERSION,
+  });
+  await writeRunWorkspace(config, runId, {
+    version: 1,
+    kind: "legacy-shared",
+    controlRoot: canonicalizeWorkspacePath(root),
+    createdAt: new Date().toISOString(),
+  });
+  for (const [relative, contents] of Object.entries(dirtyFiles)) {
+    const absolute = path.join(root, relative);
+    await mkdir(path.dirname(absolute), { recursive: true });
+    await writeFile(absolute, contents, "utf8");
+  }
+  await engine.store.record(
+    {
+      ...state,
+      phase: "blocked",
+      blockedFrom: "new",
+      failure: "dirty tree",
+      blockedKind: "workspace",
+      blockedRetriable: true,
+    },
+    "run.blocked",
+    {},
+  );
+  return engine;
+}
 
 describe("commitPreflight", () => {
   let migratedFixture: ProjectFixture | undefined;
@@ -24,274 +106,159 @@ describe("commitPreflight", () => {
     }
   });
 
-  it("branch-then-commit cuts the run branch from HEAD, commits onto it, and leaves the base branch untouched", async () => {
+  it("refuses commit-order controls for git-worktree runs", async () => {
     migratedFixture = await createProjectFixture({
       config: { git: { enabled: true } as never },
     });
     await migratedFixture.initGit();
-    const baseHeadBefore = (await migratedFixture.git("rev-parse", "main")).trim();
-    await migratedFixture.write("surprise.txt", "untracked\n");
-
     const engine = new HarnessEngine(migratedFixture.config, {
       backend: createFakeBackend({}),
     });
-    const blocked = await engine.start("Add a feature", "run-branch-first");
-    expect(blocked.phase).toBe("blocked");
-    expect(blocked.blockedFrom).toBe("new");
+    await startThenBlockDirtyWorktree(engine, "run-worktree-gate", {
+      "surprise.txt": "untracked\n",
+    });
 
-    const resumed = await engine.commitPreflight("run-branch-first", { order: "branch-then-commit" });
+    await expect(
+      engine.commitPreflight("run-worktree-gate", { order: "branch-then-commit" }),
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/not offered for worktree|committed base/i),
+    });
+  });
+
+  it("legacy-shared branch-then-commit still cuts the run branch from HEAD", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    const controlBranch = (await git(root, "branch", "--show-current")).trim();
+    const engine = await createLegacyBlockedRun(root, "run-branch-first", {
+      "surprise.txt": "untracked\n",
+    });
+
+    const resumed = await engine.commitPreflight("run-branch-first", {
+      order: "branch-then-commit",
+    });
     expect(resumed.phase).toBe("new");
     expect(resumed.blockedFrom).toBeUndefined();
-    expect(resumed.failure).toBeUndefined();
     expect(resumed.branchName).toBe("harness/run-branch-first");
-
-    expect((await migratedFixture.git("branch", "--show-current")).trim()).toBe(
-      "harness/run-branch-first",
-    );
-    expect((await migratedFixture.git("status", "--porcelain")).trim()).toBe("");
-
-    const baseHeadAfter = (await migratedFixture.git("rev-parse", "main")).trim();
-    expect(baseHeadAfter).toBe(baseHeadBefore);
-
-    const subject = (await migratedFixture.git("log", "-1", "--format=%s")).trim();
+    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-branch-first");
+    expect((await git(root, "status", "--porcelain")).trim()).toBe("");
+    // Operator started on main; branch-then-commit moved the shared checkout onto the run branch.
+    expect(controlBranch).toBe("main");
+    const subject = (await git(root, "log", "-1", "--format=%s")).trim();
     expect(subject).toContain("run-branch-first");
   });
 
-  it("commit-then-branch commits on the current branch, then cuts the run branch for interview", async () => {
+  it("legacy-shared commit-then-branch commits then cuts the run branch", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
-    await writeFile(path.join(root, "surprise.txt"), "untracked\n", "utf8");
-
-    const config = fixtureConfig(root, { git: { enabled: true } as never });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
-    const blocked = await engine.start("Add a feature", "run-commit-first");
-    expect(blocked.phase).toBe("blocked");
-
-    const resumed = await engine.commitPreflight("run-commit-first", { order: "commit-then-branch" });
-    expect(resumed.phase).toBe("new");
-    // Preflight commit landed on main; the run branch is cut afterward so
-    // reflect/grill do not keep using the operator checkout.
-    expect(resumed.branchName).toBe("harness/run-commit-first");
-    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-commit-first");
-    expect((await git(root, "status", "--porcelain")).trim()).toBe("");
-
-    const raw = await engine.store.readText("run-commit-first", "events.jsonl");
-    const events = raw
-      .trim()
-      .split(/\r?\n/)
-      .map((line) => JSON.parse(line) as { type: string; detail: Record<string, unknown> });
-    const committed = events.find((event) => event.type === "run.preflight_committed");
-    expect(committed!.detail.branch).toBe("main");
-    expect(events.some((event) => event.type === "run.branch_ready")).toBe(true);
-  });
-
-  it("commit-then-branch from a non-base branch restamps fingerprint so advance does not false-block", async () => {
-    const root = await fixtureRoot();
-    await initGitRepo(root);
-    await git(root, "switch", "-c", "feature/operator");
-    await writeFile(path.join(root, "surprise.txt"), "from-feature\n", "utf8");
-
-    const config = fixtureConfig(root, {
-      git: { enabled: true, baseBranch: "main" } as never,
-      workflow: { tdd: false } as never,
+    const engine = await createLegacyBlockedRun(root, "run-commit-first", {
+      "surprise.txt": "untracked\n",
     });
-    const engine = new HarnessEngine(config, {
-      backend: createFakeBackend({
-        reflector: () => ({
-          proposedTitle: "Add a feature",
-          summary: "Restated feature",
-          restatement: "Add the feature from the dirty tree.",
-          goal: "Ship the feature",
-          users: ["operators"],
-          inScope: ["feature"],
-          outOfScope: [],
-          assumptions: [],
-          unknowns: [],
-        }),
-      }),
-    });
-    const blocked = await engine.start("Add a feature", "run-from-feature");
-    expect(blocked.phase).toBe("blocked");
 
-    const resumed = await engine.commitPreflight("run-from-feature", { order: "commit-then-branch" });
-    expect(resumed.phase).toBe("new");
-    expect(resumed.treeFingerprint).toBeTruthy();
-
-    expect((await git(root, "log", "feature/operator", "-1", "--format=%s")).trim()).toMatch(
-      /working tree|run-from-feature/i,
-    );
-    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-from-feature");
-    expect((await git(root, "rev-parse", "HEAD")).trim()).toBe(
-      (await git(root, "rev-parse", "main")).trim(),
-    );
-
-    const gitService = new GitService(config);
-    expect(resumed.treeFingerprint).toBe(await gitService.treeFingerprint());
-
-    const advanced = await engine.advance("run-from-feature");
-    expect(advanced.phase).not.toBe("blocked");
-    expect(String(advanced.failure || "")).not.toMatch(/Working tree diverged/i);
-  });
-
-  it("is safe to call on a run blocked from 'planning'", async () => {
-    const root = await fixtureRoot();
-    await initGitRepo(root);
-
-    const config = fixtureConfig(root, { git: { enabled: true } as never });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
-    const started = await engine.start("Add a feature", "run-planning-block");
-    expect(started.phase).toBe("new");
-
-    // Simulate a run that reached "planning" before going dirty and getting blocked there.
-    await engine.store.record(
-      { ...started, phase: "blocked", blockedFrom: "planning", failure: "dirty tree during plan" },
-      "run.blocked",
-      {},
-    );
-    await writeFile(path.join(root, "late-change.txt"), "late\n", "utf8");
-
-    const resumed = await engine.commitPreflight("run-planning-block", { order: "branch-then-commit" });
-    expect(resumed.phase).toBe("planning");
-    expect(resumed.blockedFrom).toBeUndefined();
-    expect(resumed.branchName).toBe("harness/run-planning-block");
-    expect((await git(root, "status", "--porcelain")).trim()).toBe("");
-  });
-
-  it("commits tracked files under a gitignored directory during preflight", async () => {
-    const root = await fixtureRoot();
-    await initGitRepo(root);
-    await mkdir(path.join(root, ".cursor", "skills"), { recursive: true });
-    await writeFile(path.join(root, ".cursor", "skills", "note.md"), "v1\n", "utf8");
-    await git(root, "add", "-f", "--", ".cursor/skills/note.md");
-    await git(root, "commit", "-m", "track cursor skill");
-    await writeFile(path.join(root, ".gitignore"), ".agent-harness/\n/.cursor/\n", "utf8");
-    await git(root, "add", "--", ".gitignore");
-    await git(root, "commit", "-m", "ignore .cursor");
-    await writeFile(path.join(root, ".cursor", "skills", "note.md"), "v2\n", "utf8");
-
-    const config = fixtureConfig(root, { git: { enabled: true } as never });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
-    const blocked = await engine.start("Add a feature", "run-ignored-tracked");
-    expect(blocked.phase).toBe("blocked");
-    expect(blocked.failure).toMatch(/dirty working tree|uncommitted changes/i);
-
-    const resumed = await engine.commitPreflight("run-ignored-tracked", {
+    const resumed = await engine.commitPreflight("run-commit-first", {
       order: "commit-then-branch",
     });
     expect(resumed.phase).toBe("new");
-    expect(resumed.failure).toBeUndefined();
+    expect(resumed.branchName).toBe("harness/run-commit-first");
     expect((await git(root, "status", "--porcelain")).trim()).toBe("");
-    expect(await git(root, "show", "--pretty=", "--name-only", "HEAD")).toContain(
-      ".cursor/skills/note.md",
-    );
+    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-commit-first");
+
+    const raw = await engine.store.readText("run-commit-first", "events.jsonl");
+    expect(raw).toContain("run.preflight_committed");
   });
 
-  it("never commits the harness state directory, even when it is not gitignored", async () => {
-    const root = await fixtureRoot();
-    await git(root, "init");
-    await git(root, "config", "user.email", "harness@example.com");
-    await git(root, "config", "user.name", "Harness Test");
-    await git(root, "add", "--all");
-    await git(root, "commit", "-m", "initial");
-    await git(root, "branch", "-M", "main");
-    await writeFile(path.join(root, "surprise.txt"), "x\n", "utf8");
-
-    const config = fixtureConfig(root, { git: { enabled: true } as never });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
-    await engine.start("Add a feature", "run-state-guard");
-
-    const resumed = await engine.commitPreflight("run-state-guard", { order: "commit-then-branch" });
-    expect(resumed.phase).toBe("new");
-
-    const committedFiles = (await git(root, "show", "--name-only", "--format=", "HEAD"))
-      .split(/\r?\n/)
-      .filter(Boolean);
-    expect(committedFiles).toContain("surprise.txt");
-    expect(committedFiles.some((file) => file.startsWith(".agent-harness/"))).toBe(false);
-
-    // The (ungitignored) state directory is still there, untracked, proving it was excluded on purpose.
-    expect(await git(root, "status", "--porcelain")).toContain(".agent-harness/");
-  });
-
-  it("records the committed file list and order on the audit event", async () => {
+  it("legacy-shared records order and files on the audit event", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
-    await writeFile(path.join(root, "surprise.txt"), "x\n", "utf8");
-    await writeFile(path.join(root, "second.txt"), "y\n", "utf8");
-
-    const config = fixtureConfig(root, { git: { enabled: true } as never });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
-    await engine.start("Add a feature", "audit-run");
+    const engine = await createLegacyBlockedRun(root, "audit-run", {
+      "surprise.txt": "x\n",
+      "second.txt": "y\n",
+    });
     await engine.commitPreflight("audit-run", { order: "commit-then-branch" });
 
-    const raw = await engine.store.readText("audit-run", "events.jsonl");
-    const events = raw
+    const events = (await engine.store.readText("audit-run", "events.jsonl"))
       .trim()
       .split(/\r?\n/)
       .map((line) => JSON.parse(line) as { type: string; detail: Record<string, unknown> });
     const event = events.find((item) => item.type === "run.preflight_committed");
-    expect(event).toBeTruthy();
-    expect(event!.detail.order).toBe("commit-then-branch");
-    expect(event!.detail.files).toEqual(
-      expect.arrayContaining(["surprise.txt", "second.txt"]),
-    );
-    expect(event!.detail.auto).toBe(false);
+    expect(event?.detail.order).toBe("commit-then-branch");
+    expect(event?.detail.files).toEqual(expect.arrayContaining(["surprise.txt", "second.txt"]));
+    expect(event?.detail.auto).toBe(false);
   });
 
-  it("branch-then-commit records the baseBranch deviation in the audit event detail", async () => {
+  it("legacy-shared branch-then-commit records the baseBranch deviation", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
-    await writeFile(path.join(root, "surprise.txt"), "x\n", "utf8");
-
-    const config = fixtureConfig(root, { git: { enabled: true } as never });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
-    await engine.start("Add a feature", "deviation-run");
+    const engine = await createLegacyBlockedRun(root, "deviation-run", {
+      "surprise.txt": "x\n",
+    });
     await engine.commitPreflight("deviation-run", { order: "branch-then-commit" });
 
-    const raw = await engine.store.readText("deviation-run", "events.jsonl");
-    const event = raw
+    const event = (await engine.store.readText("deviation-run", "events.jsonl"))
       .trim()
       .split(/\r?\n/)
       .map((line) => JSON.parse(line) as { type: string; detail: Record<string, unknown> })
       .find((item) => item.type === "run.preflight_committed");
     expect(event!.detail.deviation).toMatch(/current HEAD/i);
   });
+
+  it("legacy-shared never commits the harness state directory", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    const engine = await createLegacyBlockedRun(root, "run-state-guard", {
+      "surprise.txt": "x\n",
+    });
+    await engine.commitPreflight("run-state-guard", { order: "commit-then-branch" });
+
+    const committedFiles = (await runGit(root, "show", "--name-only", "--format=", "HEAD"))
+      .split(/\r?\n/)
+      .filter(Boolean);
+    expect(committedFiles).toContain("surprise.txt");
+    expect(committedFiles.some((file) => file.startsWith(".agent-harness/"))).toBe(false);
+  });
 });
 
-describe("start() with git.autoCommitPreflight", () => {
-  it("proceeds on a dirty tree when autoCommitPreflight is true", async () => {
+describe("start() with dirty control checkout (worktree semantics)", () => {
+  it("starts cleanly without auto-committing the control checkout when autoCommitPreflight is true", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
     await writeFile(path.join(root, "surprise.txt"), "auto\n", "utf8");
 
     const config = fixtureConfig(root, {
-      git: { enabled: true, autoCommitPreflight: true, preflightCommitOrder: "commit-then-branch" } as never,
+      git: {
+        enabled: true,
+        autoCommitPreflight: true,
+        preflightCommitOrder: "commit-then-branch",
+      } as never,
     });
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
     const state = await engine.start("Add a feature", "auto-commit-run");
 
     expect(state.phase).toBe("new");
     expect(state.blockedFrom).toBeUndefined();
-    expect((await git(root, "status", "--porcelain")).trim()).toBe("");
-    expect(state.branchName).toBe("harness/auto-commit-run");
-    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/auto-commit-run");
+    // Control dirty file remains; it is not imported into the worktree.
+    expect((await git(root, "status", "--porcelain")).trim()).toContain("surprise.txt");
+    expect(state.branchName).toBeUndefined();
+    expect((await git(root, "branch", "--list", "harness/*")).trim()).toBe("");
 
     const raw = await engine.store.readText("auto-commit-run", "events.jsonl");
-    expect(raw).toContain("run.preflight_committed");
-    expect(raw).toContain("run.branch_ready");
+    expect(raw).toContain("run.worktree_created");
+    expect(raw).toContain("run.control_checkout_notice");
+    expect(raw).not.toContain("run.preflight_committed");
   });
 
-  it("still blocks on a dirty tree when autoCommitPreflight is false (unchanged default behavior)", async () => {
+  it("also starts cleanly when autoCommitPreflight is false (dirty control is non-blocking)", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
     await writeFile(path.join(root, "surprise.txt"), "x\n", "utf8");
 
-    const config = fixtureConfig(root, { git: { enabled: true, autoCommitPreflight: false } as never });
+    const config = fixtureConfig(root, {
+      git: { enabled: true, autoCommitPreflight: false } as never,
+    });
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
     const state = await engine.start("Add a feature", "no-auto-run");
 
-    expect(state.phase).toBe("blocked");
-    expect(state.blockedFrom).toBe("new");
+    expect(state.phase).toBe("new");
+    expect(state.blockedFrom).toBeUndefined();
   });
 
   it("leaves existing behavior unchanged when git.enabled is false", async () => {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WorkspaceEvidenceSchema } from "./domain/workspace.js";
 
 export const CONTRACT_VERSION = "2" as const;
 
@@ -406,6 +407,8 @@ export const RunStateSchema = z.object({
   configurationHash: z.string().min(1),
   // Bumped on frozen-config shape migrations; older runs resume via their snapshot.
   configVersion: z.number().int().nonnegative().default(0),
+  // Monotonic revision of the frozen run policy; used for optimistic config updates.
+  configRevision: z.number().int().nonnegative().default(0),
   idea: z.string().min(1),
   phase: RunPhaseSchema,
   reflectBrief: ReflectBriefSchema.optional(),
@@ -427,8 +430,11 @@ export const RunStateSchema = z.object({
   blockedKind: z.string().optional(),
   blockedRetriable: z.boolean().optional(),
   fixerRecovery: FixerRecoverySchema.optional(),
-  // Last known working-tree fingerprint (HEAD + porcelain); divergence blocks advance.
+  // Last known working-tree fingerprint; divergence blocks advance.
+  // Legacy runs may hold an opaque sha256; new stamps use evidence.fingerprint (`vN:…`).
   treeFingerprint: z.string().optional(),
+  // Structured run-local workspace evidence (preferred over scalar treeFingerprint).
+  workspaceEvidence: WorkspaceEvidenceSchema.optional(),
   grillEpisode: GrillEpisodeSchema.optional(),
   // Set when grilling finished; cleared by confirmGrill (continue or reopen).
   grillReady: GrillReadyGateSchema.optional(),
@@ -675,3 +681,6 @@ export function createRunState(
 
 export * from "./domain/policies.js";
 export * from "./domain/transitions.js";
+export * from "./domain/workspace.js";
+export * from "./domain/workspace-cleanup.js";
+

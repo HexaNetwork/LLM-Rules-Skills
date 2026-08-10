@@ -1,22 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { CONFIG_VERSION, configurationHash } from "../config.js";
-import { createRunState, isTerminalPhase, type RunState } from "../domain.js";
-import { classifyFailure, HarnessFailure } from "../errors.js";
+import { spawn } from "node:child_process";
+import { CONFIG_VERSION, configurationHash, writeRunWorkspace } from "../config.js";
+import { createRunState, type RunState } from "../domain.js";
+import { classifyFailure } from "../errors.js";
 import { prepareGraphifyForRun } from "../graphify.js";
+import { WorktreeManager } from "../git/worktree-manager.js";
 import type { ApplicationContext } from "./application-context.js";
-import {
-  defaultPreflightCommitMessage,
-  dirtyTreeMessage,
-  preflightCommitDetail,
-} from "./helpers.js";
 import type { RecoveryService } from "./recovery-service.js";
-
-const terminal = isTerminalPhase;
 
 export class RunLifecycleService {
   constructor(
     private readonly ctx: ApplicationContext,
-    private readonly recovery: RecoveryService,
+    private readonly _recovery: RecoveryService,
   ) {}
 
   async start(
@@ -40,71 +35,64 @@ export class RunLifecycleService {
       configVersion: CONFIG_VERSION,
     });
     state = await this.ctx.store.record(state, "run.created", { idea: idea.trim() });
-    // Lock ordering: repository → run, always (avoid deadlock with paths that take both).
-    await this.ctx.store.withRepositoryLock({ runId, action: "start" }, async () => {
-      try {
-        // Dirty-tree guard, then cut the run branch BEFORE Graphify / knowledge /
-        // reflect / grill so interview and indexing see the same tree as planning.
-        if (this.ctx.config.git.enabled) {
-          const dirty = await this.ctx.git.changedFiles();
-          if (dirty.length > 0) {
-            if (!this.ctx.config.git.autoCommitPreflight) {
-              throw new HarnessFailure(dirtyTreeMessage(dirty), "workspace", true);
-            }
-            const order = this.ctx.config.git.preflightCommitOrder;
-            const commit = await this.recovery.runPreflightCommit(runId, order, defaultPreflightCommitMessage(runId));
-            state = await this.ctx.store.record(
-              {
-                ...state,
-                branchName: commit.runBranch ?? state.branchName,
-              },
-              "run.preflight_committed",
-              preflightCommitDetail(order, commit, true),
-            );
-          }
-          state = await this.ensureRunBranchReady(state);
-          if (dirty.length > 0 && this.ctx.config.git.autoCommitPreflight) {
-            state = await this.ctx.store.record(
-              { ...state, treeFingerprint: await this.ctx.git.treeFingerprint() },
-              "run.tree_fingerprint",
-              {},
-            );
-          }
+    // Worktree add takes the short workspace-admin lock inside WorktreeManager.
+    // Shared knowledge refresh takes the shared-index lock. No repository lock on start.
+    try {
+      if (this.ctx.config.git.enabled) {
+        state = await this.prepareGitWorkspace(state);
+      } else {
+        const workspace = {
+          version: 1 as const,
+          kind: "git-disabled" as const,
+          controlRoot: this.ctx.paths.controlRoot,
+          createdAt: new Date().toISOString(),
+        };
+        await writeRunWorkspace(this.ctx.config, runId, workspace);
+        this.ctx.bindWorkspace(workspace);
+      }
+      if (prepareGraphify && this.ctx.config.knowledge.graphify.enabled) {
+        if (this.ctx.graphifySetupRunner) {
+          await prepareGraphifyForRun(
+            this.ctx.config,
+            this.ctx.graphifyRunner,
+            this.ctx.graphifySetupRunner,
+            this.ctx.paths,
+          );
+        } else {
+          await prepareGraphifyForRun(
+            this.ctx.config,
+            this.ctx.graphifyRunner,
+            undefined,
+            this.ctx.paths,
+          );
         }
-        if (prepareGraphify && this.ctx.config.knowledge.graphify.enabled) {
-          if (this.ctx.graphifySetupRunner) {
-            await prepareGraphifyForRun(
-              this.ctx.config,
-              this.ctx.graphifyRunner,
-              this.ctx.graphifySetupRunner,
-            );
-          } else {
-            await prepareGraphifyForRun(this.ctx.config, this.ctx.graphifyRunner);
-          }
-        }
-        if (refreshKnowledge) await this.ctx.knowledge.refresh();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const classified = classifyFailure(error);
-        state = await this.ctx.store.record(
-          {
-            ...state,
-            phase: "blocked",
-            blockedFrom: "new",
-            failure: message,
-            blockedKind: classified.kind,
-            blockedRetriable: classified.retriable,
-          },
-          "run.blocked",
-          {
-            blockedFrom: "new",
-            error: message,
-            blockedKind: classified.kind,
-            blockedRetriable: classified.retriable,
-          },
+      }
+      if (refreshKnowledge) {
+        await this.ctx.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>
+          this.ctx.knowledge.refresh(),
         );
       }
-    });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const classified = classifyFailure(error);
+      state = await this.ctx.store.record(
+        {
+          ...state,
+          phase: "blocked",
+          blockedFrom: "new",
+          failure: message,
+          blockedKind: classified.kind,
+          blockedRetriable: classified.retriable,
+        },
+        "run.blocked",
+        {
+          blockedFrom: "new",
+          error: message,
+          blockedKind: classified.kind,
+          blockedRetriable: classified.retriable,
+        },
+      );
+    }
     await this.ctx.syncArtifacts(state);
     return state;
   }
@@ -114,16 +102,86 @@ export class RunLifecycleService {
   }
 
   /**
-   * Switch onto `git.branchPrefix/<runId>` (from `git.baseBranch` when creating).
-   * Idempotent when already on the run branch (e.g. after branch-then-commit preflight).
+   * New Git-enabled runs get a detached worktree at baseSha.
+   * Legacy shared-checkout semantics remain only for resumed runs without workspace.json.
    */
-  private async ensureRunBranchReady(state: RunState): Promise<RunState> {
-    const branchName = await this.ctx.git.ensureRunBranch(state.runId);
-    if (!branchName || state.branchName === branchName) return state;
-    return this.ctx.store.record(
-      { ...state, branchName },
-      "run.branch_ready",
-      { branch: branchName, baseBranch: this.ctx.config.git.baseBranch },
+  private async prepareGitWorkspace(state: RunState): Promise<RunState> {
+    const manager = new WorktreeManager({
+      controlRoot: this.ctx.paths.controlRoot,
+      stateRoot: this.ctx.paths.stateRoot,
+      store: this.ctx.store,
+    });
+
+    let workspace;
+    try {
+      workspace = await manager.create({
+        runId: state.runId,
+        baseBranch: this.ctx.config.git.baseBranch,
+      });
+      await writeRunWorkspace(this.ctx.config, state.runId, workspace);
+      this.ctx.bindWorkspace(workspace);
+    } catch (error) {
+      // WorktreeManager.create already reconciles a just-registered clean worktree.
+      throw error;
+    }
+
+    state = await this.ctx.store.record(
+      state,
+      "run.worktree_created",
+      {
+        baseBranch: workspace.baseBranch,
+        baseSha: workspace.baseSha,
+        // Paths stay in workspace.json; event carries only non-sensitive coordinates.
+        kind: workspace.kind,
+      },
     );
+
+    const dirtyPaths = await controlCheckoutDirtyPaths(this.ctx.paths.controlRoot);
+    if (dirtyPaths.length > 0) {
+      const shown = dirtyPaths.slice(0, 10);
+      const more =
+        dirtyPaths.length > shown.length ? ` (+${dirtyPaths.length - shown.length} more)` : "";
+      state = await this.ctx.store.record(state, "run.control_checkout_notice", {
+        dirty: true,
+        includedInRun: false,
+        pathCount: dirtyPaths.length,
+        message:
+          "Control checkout has uncommitted changes that are not included in this run. " +
+          `The run starts from the committed base ${workspace.baseBranch ?? "branch"}` +
+          (workspace.baseSha ? ` @ ${workspace.baseSha.slice(0, 12)}` : "") +
+          `. Dirty paths: ${shown.join(", ")}${more}. Commit those changes yourself if you need them in a run.`,
+      });
+    }
+    return state;
   }
+}
+
+/** Porcelain paths in the operator control checkout (not the run worktree). */
+async function controlCheckoutDirtyPaths(controlRoot: string): Promise<string[]> {
+  const result = await new Promise<{ exitCode: number; stdout: string }>((resolve, reject) => {
+    const child = spawn(
+      "git",
+      ["status", "--porcelain=v1", "--untracked-files=all", "-z"],
+      {
+        cwd: controlRoot,
+        shell: false,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout = `${stdout}${chunk.toString("utf8")}`.slice(-200_000);
+    });
+    child.once("error", reject);
+    child.once("close", (code) => resolve({ exitCode: code ?? 1, stdout }));
+  });
+  if (result.exitCode !== 0 || !result.stdout) return [];
+  const paths: string[] = [];
+  for (const entry of result.stdout.split("\0")) {
+    if (entry.length < 4) continue;
+    const filePath = entry.slice(3).replace(/\0.*/, "").trim();
+    if (filePath) paths.push(filePath.replaceAll("\\", "/"));
+  }
+  return paths;
 }

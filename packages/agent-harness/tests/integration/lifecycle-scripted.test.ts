@@ -1,12 +1,14 @@
 import path from "node:path";
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentBackend, AgentRequest } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { confirmGrillAndAdvance } from "../helpers.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
+import { git as runGit } from "../testkit/git.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 import { createScriptedBackend } from "../testkit/scripted-backend.js";
+import { migrateRunWorkspace } from "../../src/domain/workspace.js";
 
 const REFLECT_OUTPUT = {
   proposedTitle: "Add greeting tone",
@@ -159,7 +161,8 @@ describe("Phase 5 scripted full lifecycle", () => {
         expect(state.tasks[0]?.evidence.some((item) => item.passed)).toBe(true);
         expect(state.tasks[0]?.redCheckpointSha).toMatch(/^[a-f0-9]{40}$/);
         expect(state.tasks[0]?.redBaseSha).toMatch(/^[a-f0-9]{40}$/);
-        expect(state.branchName).toMatch(/^harness\//);
+        // Delivery branch is created at publication from the confirmed title + short run id.
+        expect(state.branchName).toMatch(/^harness\/add-greeting-tone-[a-z0-9]{1,8}$/);
 
         const runDir = path.join(fixture!.root, ".agent-harness", "runs", state.runId);
         const events = await readFile(path.join(runDir, "events.jsonl"), "utf8");
@@ -184,17 +187,24 @@ describe("Phase 5 scripted full lifecycle", () => {
         const brief = await readFile(path.join(runDir, "brief.md"), "utf8");
         expect(brief).toContain("Confirmed brief");
 
-        const log = await fixture!.git("log", "-1", "--format=%B");
+        const workspace = migrateRunWorkspace(
+          await engine.store.readJson(state.runId, "workspace.json"),
+          { controlRoot: fixture!.root },
+        );
+        const worktree = workspace.worktreePath!;
+        const log = await runGit(worktree, "log", "-1", "--format=%B");
         expect(log).toContain("Harness-Task: greet");
         expect(log).toContain(`Harness-Red-Checkpoints: ${state.tasks[0]!.redCheckpointSha}`);
-        expect(await fixture!.git("show", "--pretty=", "--name-only", "HEAD")).toContain(
+        expect(await runGit(worktree, "show", "--pretty=", "--name-only", "HEAD")).toContain(
           "src/greet.ts",
         );
-        // Published history is one atomic task commit (checkpoint squashed away).
+        // Detached history is one atomic task commit ahead of the immutable base.
         const commits = (
-          await fixture!.git("rev-list", "--count", `main..${state.branchName}`)
+          await runGit(worktree, "rev-list", "--count", `${workspace.baseSha}..HEAD`)
         ).trim();
         expect(Number(commits)).toBe(1);
+        // Control checkout remains on the original tip.
+        expect((await fixture!.git("log", "-1", "--format=%s")).trim()).toBe("initial");
 
         scripted.assertExhausted();
         expect(scripted.calls.map((call) => call.role)).toEqual([
@@ -214,22 +224,30 @@ describe("Phase 5 scripted full lifecycle", () => {
 
 function withWorkspaceSideEffects(
   inner: AgentBackend,
-  fixture: ProjectFixture,
+  _fixture: ProjectFixture,
 ): AgentBackend {
   return {
     readiness: inner.readiness?.bind(inner),
     release: inner.release?.bind(inner),
     async run(request: AgentRequest) {
+      const workspaceRoot = request.cwd;
       if (request.role === "test-writer") {
         process.env.HARNESS_FORCE_RED = "1";
-        await fixture.write(
-          "tests/greet.test.ts",
+        await mkdir(path.join(workspaceRoot, "tests"), { recursive: true });
+        await writeFile(
+          path.join(workspaceRoot, "tests", "greet.test.ts"),
           'test("greets", () => { throw new Error("not implemented"); });\n',
+          "utf8",
         );
       }
       if (request.role === "implementer") {
         delete process.env.HARNESS_FORCE_RED;
-        await fixture.write("src/greet.ts", 'export const greet = () => "hi";\n');
+        await mkdir(path.join(workspaceRoot, "src"), { recursive: true });
+        await writeFile(
+          path.join(workspaceRoot, "src", "greet.ts"),
+          'export const greet = () => "hi";\n',
+          "utf8",
+        );
       }
       return inner.run(request);
     },

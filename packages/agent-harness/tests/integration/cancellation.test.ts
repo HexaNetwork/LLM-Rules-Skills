@@ -21,23 +21,36 @@ describe("out-of-band cancellation", () => {
   it("cancels a blocked run instead of no-opping back to blocked", async () => {
     const fixture = await createProjectFixture();
     await fixture.initGit();
-    await fixture.write("dirty.txt", "uncommitted\n");
     const config = fixtureConfig(fixture.root, {
       git: { ...fixtureConfig(fixture.root).git, enabled: true, autoCommitPreflight: false },
     });
     const engine = new HarnessEngine(config, { backend: createFakeBackend() });
     try {
       const started = await engine.start("blocked then cancel");
-      expect(started.phase).toBe("blocked");
-      expect(started.blockedKind).toBe("workspace");
+      expect(started.phase).toBe("new");
+      // Simulate a recoverable workspace block after start (dirty control no longer blocks).
+      const blocked = await engine.store.record(
+        {
+          ...started,
+          phase: "blocked",
+          blockedFrom: "new",
+          failure: "simulated workspace block",
+          blockedKind: "workspace",
+          blockedRetriable: true,
+        },
+        "run.blocked",
+        {},
+      );
+      expect(blocked.phase).toBe("blocked");
+      expect(blocked.blockedKind).toBe("workspace");
 
-      const cancelled = await engine.cancel(started.runId);
+      const cancelled = await engine.cancel(blocked.runId);
       expect(cancelled.pending).toBe(false);
       expect(cancelled.state.phase).toBe("cancelled");
 
-      const reloaded = await engine.store.load(started.runId);
+      const reloaded = await engine.store.load(blocked.runId);
       expect(reloaded.phase).toBe("cancelled");
-      const events = await engine.store.readText(started.runId, "events.jsonl");
+      const events = await engine.store.readText(blocked.runId, "events.jsonl");
       expect(events).toContain("run.cancelled");
     } finally {
       await fixture.cleanup();

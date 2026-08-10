@@ -50,22 +50,31 @@ describe("durable idea-to-feature workflow", () => {
       commands: { test: 'node -e "process.exit(1)"', gates: [] } as never,
     });
     const backend = createFakeBackend({
-      "test-writer": async () => {
-        await fixture.write("tests/new-behavior.test.ts", "export {};\n");
+      "test-writer": async (request) => {
+        await mkdir(path.join(request.cwd, "tests"), { recursive: true });
+        await writeFile(
+          path.join(request.cwd, "tests", "new-behavior.test.ts"),
+          "export {};\n",
+          "utf8",
+        );
         return { summary: "Added a failing test.", changedFiles: ["tests/new-behavior.test.ts"] };
       },
     });
     const engine = new HarnessEngine(config, { backend });
     const started = await engine.start("Preserve an approved setup change");
 
-    // This models a persisted project-default repair. It is intentionally dirty,
-    // but known before the next test-writer invocation begins.
-    await fixture.write("agent-harness.config.yaml", "workflow:\n  testPathPatterns:\n    - tests/**\n");
+    // This models a persisted project-default repair. It is intentionally dirty
+    // in the run worktree, but known before the next test-writer invocation begins.
+    await writeFile(
+      path.join(engine.paths.workspaceRoot, "agent-harness.config.yaml"),
+      "workflow:\n  testPathPatterns:\n    - tests/**\n",
+      "utf8",
+    );
     const state = await engine.store.load(started.runId);
     await engine.store.writeJson(started.runId, "state.json", {
       ...state,
       phase: "executing",
-      treeFingerprint: await new GitService(config).treeFingerprint(),
+      treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
       tasks: [{
         id: "test-path-baseline",
         title: "Write a failing test",

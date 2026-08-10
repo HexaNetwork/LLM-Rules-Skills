@@ -198,7 +198,7 @@ describe("CLI acceptance lifecycle", () => {
     });
   });
 
-  it("cancel, unlock --repo, and retry work against real fixture files", async () => {
+  it("cancel, unlock --repo, dirty-control notice, and cleanup work against real fixture files", async () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 },
@@ -207,7 +207,6 @@ describe("CLI acceptance lifecycle", () => {
         knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
       },
     });
-    // Config must exist on baseBranch; a later run-branch checkout must not delete it.
     const configPath = await writeAcceptanceConfig(fixture, {
       git: { enabled: true, autoCommitPreflight: false },
     });
@@ -223,53 +222,46 @@ describe("CLI acceptance lifecycle", () => {
       release = resolve;
     });
     const scripted = createScriptedBackend([
-      // Consumed by retry --commit-dirty after the dirty-tree block.
-      { role: "reflector", output: ACCEPTANCE_REFLECT },
-      // Held so cancel can race an in-flight advance.
       { role: "reflector", waitFor: hold, output: ACCEPTANCE_REFLECT },
     ]);
-    let reflectCalls = 0;
     const originalRun = scripted.backend.run.bind(scripted.backend);
     scripted.backend.run = async (request) => {
-      if (request.role === "reflector") {
-        reflectCalls += 1;
-        if (reflectCalls >= 2) reflecting();
-      }
+      if (request.role === "reflector") reflecting();
       return originalRun(request);
     };
 
-    await withDiagnosticArtifacts({ testName: "acceptance-cancel-unlock-retry", fixture }, async () => {
+    await withDiagnosticArtifacts({ testName: "acceptance-cancel-unlock-cleanup", fixture }, async () => {
       const deps = { createBackend: () => scripted.backend };
 
-      // Dirty-tree start blocks before agents; retry --commit-dirty unblocks via real git files.
-      const blockedId = "acceptance-retry-run";
-      const blockedStart = await runCli(
+      // Dirty control checkout is a non-blocking notice for worktree runs.
+      const noticeId = "acceptance-dirty-notice";
+      const noticed = await runCli(
         [
           "start",
           "--idea",
-          "Retry after dirty tree",
+          "Dirty control notice",
           "--config",
           configPath,
           "--run-id",
-          blockedId,
+          noticeId,
           "--tdd",
           "off",
+          "--no-advance",
         ],
         deps,
       );
-      expect(blockedStart.code).toBe(0);
-      expect(blockedStart.stdout.join("\n")).toMatch(/blocked/i);
+      expect(noticed.code).toBe(0);
+      expect(noticed.stdout.join("\n")).toMatch(/Notice:|not included|committed base/i);
+      expect(noticed.stdout.join("\n")).not.toMatch(/phase: blocked|blockedFrom/i);
 
-      const retried = await runCli(
-        ["retry", "--run-id", blockedId, "--config", configPath, "--commit-dirty", "branch-then-commit"],
+      const refuseCommit = await runCli(
+        ["retry", "--run-id", noticeId, "--config", configPath, "--commit-dirty", "branch-then-commit"],
         deps,
       );
-      expect(retried.code).toBe(0);
-      expect(retried.stdout.join("\n")).toMatch(/awaiting_input|Run /);
+      expect(refuseCommit.code).not.toBe(0);
 
       // Cancel while a later advance is in flight.
       const runId = "acceptance-cancel-run";
-      // Tree is clean after preflight; start a fresh run and hold the reflector.
       const startPromise = runCli(
         ["start", "--idea", "Cancel me", "--config", configPath, "--run-id", runId, "--tdd", "off"],
         deps,
@@ -284,6 +276,13 @@ describe("CLI acceptance lifecycle", () => {
 
       const status = await runCli(["status", "--run-id", runId, "--config", configPath, "--json"], deps);
       expect(JSON.parse(status.stdout.join("\n")).phase).toBe("cancelled");
+
+      const cleaned = await runCli(
+        ["cleanup", "--run-id", runId, "--config", configPath],
+        deps,
+      );
+      expect(cleaned.code).toBe(0);
+      expect(cleaned.stdout.join("\n")).toMatch(/Removed worktree|Cleanup no-op/i);
 
       // Plant an abandoned repository lock and clear it via unlock --repo.
       const lockPath = path.join(fixture!.root, ".agent-harness", "repo.lock");
@@ -300,11 +299,17 @@ describe("CLI acceptance lifecycle", () => {
         "utf8",
       );
       const unlocked = await runCli(
-        ["unlock", "--run-id", runId, "--repo", "--config", configPath],
+        ["unlock", "--run-id", runId, "--repo", "--inspect-only", "--config", configPath],
         deps,
       );
       expect(unlocked.code).toBe(0);
-      expect(unlocked.stdout.join("\n")).toMatch(/repository lock|No run lock|Removed/i);
+      expect(unlocked.stdout.join("\n")).toMatch(/workspace-admin|shared-index|repository \(legacy-shared\)/i);
+
+      const unlockedRemove = await runCli(
+        ["unlock", "--run-id", runId, "--repo", "--config", configPath],
+        deps,
+      );
+      expect(unlockedRemove.code).toBe(0);
       await expect(access(lockPath)).rejects.toThrow();
     });
   });

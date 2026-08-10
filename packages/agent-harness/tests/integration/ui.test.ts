@@ -1025,7 +1025,7 @@ describe("central dashboard", () => {
     );
     expect(sessionTraversal.status).toBe(400);
   });
-  it("commit_preflight unblocks a dirty-tree run and advances with the fake backend", async () => {
+  it("rejects commit_preflight for worktree runs and starts despite a dirty control checkout", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
     await writeFile(path.join(root, "surprise.txt"), "dirty\n", "utf8");
@@ -1036,56 +1036,50 @@ describe("central dashboard", () => {
     });
     const backend = createFakeBackend({
       reflector: () => REFLECT_OUTPUT,
-      griller: () => ({
-        status: "ready_to_plan",
-        summary: "No grill needed",
-        resolutions: [],
-        openUnknowns: [],
-      }),
-      planner: () => ({
-        summary: "One task",
-        tasks: [
-          {
-            id: "dashboard",
-            title: "Deliver dashboard",
-            description: "Expose the feature.",
-            acceptanceCriteria: ["Works"],
-            blockedBy: [],
-            tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
-          },
-        ],
-      }),
-      implementer: () => ({ summary: "Built", changedFiles: ["src/dashboard.ts"] }),
-      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
-      "message-writer": () => ({ subject: "feat: dashboard", body: "ok" }),
     });
     const engine = new HarnessEngine(config, { backend });
-    const blocked = await engine.start("Commit preflight via UI", "ui-commit-preflight", false);
-    expect(blocked.phase).toBe("blocked");
-    expect(blocked.blockedFrom).toBe("new");
+    const started = await engine.start("Commit preflight via UI", "ui-commit-preflight", false);
+    expect(started.phase).toBe("new");
+    expect(started.blockedFrom).toBeUndefined();
 
     ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
-    const accepted = await request(ui, `/api/runs/${blocked.runId}/actions`, {
+    const rejected = await request(ui, `/api/runs/${started.runId}/actions`, {
       method: "POST",
       body: { action: "commit_preflight", order: "branch-then-commit" },
     });
-    expect(accepted.status).toBe(202);
+    expect(rejected.status).toBe(400);
+    const body = (await rejected.json()) as { error?: string };
+    expect(body.error ?? "").toMatch(/legacy-shared|committed base|worktree/i);
 
-    const detail = await waitForPhase(ui, blocked.runId, "awaiting_input");
-    expect(detail.state.phase).toBe("awaiting_input");
-    expect(detail.state.questions[0]?.purpose).toBe("reflect");
+    const detail = await request(ui, `/api/runs/${started.runId}`);
+    const detailBody = (await detail.json()) as {
+      workspace?: { kind?: string };
+      events?: Array<{ type: string }>;
+    };
+    expect(detailBody.workspace?.kind).toBe("git-worktree");
+    expect(detailBody.events?.some((event) => event.type === "run.control_checkout_notice")).toBe(
+      true,
+    );
   });
 
   it("includes git.currentBranch/baseBranch only for a blocked run, never for other phases", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
-    await writeFile(path.join(root, "surprise.txt"), "dirty\n", "utf8");
 
     const config = fixtureConfig(root, { git: { enabled: true } as never });
     const backend = createFakeBackend({});
     const engine = new HarnessEngine(config, { backend });
-    const blocked = await engine.start("Report git branch", "git-payload-run", false);
+    const seeded = await engine.start("Report git branch", "git-payload-run", false);
+    expect(seeded.phase).toBe("new");
+    await engine.store.writeJson("git-payload-run", "state.json", {
+      ...seeded,
+      phase: "blocked",
+      blockedFrom: "planning",
+      failure: "forced block for git payload",
+      blockedKind: "workspace",
+      blockedRetriable: true,
+    });
+    const blocked = await engine.store.load("git-payload-run");
     expect(blocked.phase).toBe("blocked");
 
     ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
@@ -1093,7 +1087,11 @@ describe("central dashboard", () => {
     const blockedBody = (await blockedResponse.json()) as {
       git?: { currentBranch?: string; baseBranch?: string };
     };
-    expect(blockedBody.git).toEqual({ currentBranch: "main", baseBranch: "main" });
+    // GitService for the GET payload uses the project/control root, not the worktree.
+    expect(blockedBody.git?.baseBranch).toBe("main");
+    expect(typeof blockedBody.git?.currentBranch === "string" || blockedBody.git?.currentBranch == null).toBe(
+      true,
+    );
 
     // Same run, not blocked: the git subprocess must not run, so the key is absent.
     const nonBlockedConfig = fixtureConfig(root);

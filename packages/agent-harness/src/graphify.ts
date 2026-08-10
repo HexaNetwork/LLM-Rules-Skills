@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { access, stat } from "node:fs/promises";
+import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
 import type { HarnessConfig } from "./config.js";
 import type { SearchResult } from "./knowledge.js";
 
@@ -406,16 +407,26 @@ export interface RepositoryLookup {
 }
 
 export class GraphifyRepositoryLookup implements RepositoryLookup {
-  private readonly graphPath: string;
+  private readonly paths: HarnessPaths;
   private readonly warned = new Set<string>();
   private readonly searchCache = new Map<string, RepositoryLookupSearch>();
 
   constructor(
     private readonly config: HarnessConfig,
     private readonly runner: GraphifyRunner = runGraphify,
+    paths: HarnessPaths = resolveHarnessPaths(config),
   ) {
-    this.graphPath = path.resolve(config.repositoryRoot, GRAPH_PATH);
-    assertInside(config.repositoryRoot, this.graphPath);
+    this.paths = paths;
+  }
+
+  private get workspaceRoot(): string {
+    return this.paths.workspaceRoot;
+  }
+
+  private get graphPath(): string {
+    const resolved = path.resolve(this.workspaceRoot, GRAPH_PATH);
+    assertInside(this.workspaceRoot, resolved);
+    return resolved;
   }
 
   async refresh(): Promise<void> {
@@ -435,8 +446,8 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
     try {
       const result = await this.runner(
         settings.command,
-        ["update", this.config.repositoryRoot],
-        { cwd: this.config.repositoryRoot, timeoutMs: settings.updateTimeoutMs },
+        ["update", this.workspaceRoot],
+        { cwd: this.workspaceRoot, timeoutMs: settings.updateTimeoutMs },
       );
       if (result.exitCode !== 0 || result.timedOut) {
         this.warn(`update failed: ${failureDetail(result)}`);
@@ -502,7 +513,7 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
           "--graph",
           this.graphPath,
         ],
-        { cwd: this.config.repositoryRoot, timeoutMs: settings.queryTimeoutMs },
+        { cwd: this.workspaceRoot, timeoutMs: settings.queryTimeoutMs },
       );
       const rawExcerpt = result.stdout.trim();
       if (
@@ -604,16 +615,18 @@ export async function prepareGraphifyForRun(
   config: HarnessConfig,
   runner: GraphifyRunner = runGraphify,
   setupRunner: GraphifySetupRunner = runGraphifySetup,
+  paths: HarnessPaths = resolveHarnessPaths(config),
 ): Promise<GraphifyPreparation> {
   const settings = config.knowledge.graphify;
   if (!settings.enabled) {
     return { enabled: false, installed: false, graphReady: false, setupRan: false };
   }
-  const graphPath = path.resolve(config.repositoryRoot, GRAPH_PATH);
-  assertInside(config.repositoryRoot, graphPath);
+  const workspaceRoot = paths.workspaceRoot;
+  const graphPath = path.resolve(workspaceRoot, GRAPH_PATH);
+  assertInside(workspaceRoot, graphPath);
   const [version, graphReady] = await Promise.all([
     runner(settings.command, ["--version"], {
-      cwd: config.repositoryRoot,
+      cwd: workspaceRoot,
       timeoutMs: settings.queryTimeoutMs,
     }),
     exists(graphPath),
@@ -623,23 +636,23 @@ export async function prepareGraphifyForRun(
   }
 
   const scriptPath = path.join(
-    config.repositoryRoot,
+    workspaceRoot,
     "agent-harness",
     "scripts",
     process.platform === "win32" ? "setup-graphify.ps1" : "setup-graphify.sh",
   );
   if (!(await exists(scriptPath))) {
     throw new Error(
-      `Graphify is required before starting a new run, but ${path.relative(config.repositoryRoot, scriptPath)} is missing. Run \`agent-harness graphify scripts --project .\` first.`,
+      `Graphify is required before starting a new run, but ${path.relative(workspaceRoot, scriptPath)} is missing. Run \`agent-harness graphify scripts --project .\` first.`,
     );
   }
-  const setup = await setupRunner(scriptPath, config.repositoryRoot);
+  const setup = await setupRunner(scriptPath, workspaceRoot);
   if (setup.exitCode !== 0 || setup.timedOut) {
     throw new Error(`Graphify setup failed: ${failureDetail(setup)}`);
   }
   const [afterSetup, graphAfterSetup] = await Promise.all([
     runner(settings.command, ["--version"], {
-      cwd: config.repositoryRoot,
+      cwd: workspaceRoot,
       timeoutMs: settings.queryTimeoutMs,
     }),
     exists(graphPath),

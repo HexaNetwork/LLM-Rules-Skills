@@ -1,7 +1,4 @@
-import {
-  HarnessConfigSchema,
-  configurationHash,
-} from "../config.js";
+import { writeRunWorkspace } from "../config.js";
 import {
   MessageOutputSchema,
   ReviewOutputSchema,
@@ -10,6 +7,8 @@ import {
   canToggleTaskTdd,
   includesSourcePath,
   isTestPath,
+  proposeDeliveryBranchName,
+  slugifyFeatureTitle,
   type BuildTask,
   type MessageOutput,
   type RunState,
@@ -31,6 +30,7 @@ import {
   repairEdgeKey,
 } from "./evidence-fingerprint.js";
 import { normalizePathKey, taskForPacket, unique } from "./helpers.js";
+import { updateRunConfig } from "./update-run-config.js";
 
 export class TaskExecutionService {
   constructor(private readonly ctx: ApplicationContext) {}
@@ -425,7 +425,7 @@ export class TaskExecutionService {
     const evidence = [];
     for (const gate of this.ctx.config.commands.gates) {
       const result = await this.ctx.deps.commands.run(gate.command, {
-        cwd: this.ctx.config.repositoryRoot,
+        cwd: this.ctx.paths.workspaceRoot,
         timeoutMs: gate.timeoutMs,
         signal: this.ctx.signalFor(state.runId),
         ...this.ctx.commandEnvironmentOptions(),
@@ -534,6 +534,7 @@ export class TaskExecutionService {
             reportedPaths: task.changedFiles,
             redCheckpointShas: checkpointShas,
             expectedBranch: state.branchName,
+            baseSha: this.ctx.workspace.baseSha,
           })
         : await this.ctx.git.commitTask(task.id, message, task.changedFiles, {
             redCheckpointShas: checkpointShas,
@@ -571,14 +572,64 @@ export class TaskExecutionService {
       },
       fallback,
     );
-    const pullRequestUrl = state.branchName
-      ? await this.ctx.git.publish(state.branchName, message)
-      : undefined;
+    let working = state;
+    if (this.ctx.config.git.enabled) {
+      working = await this.ensureDeliveryBranchForPublish(working);
+    }
+    const pullRequestUrl =
+      working.branchName && this.ctx.config.git.push
+        ? await this.ctx.git.publish(working.branchName, message)
+        : undefined;
     return this.ctx.store.record(
-      { ...state, phase: "completed", pullRequestUrl },
+      { ...working, phase: "completed", pullRequestUrl },
       "run.completed",
       { pullRequestUrl },
     );
+  }
+
+  /**
+   * Create the delivery branch immediately before push/PR (or at publication when push is off).
+   * Retains explicit/legacy branch names; freezes the late-created name against later title edits.
+   */
+  private async ensureDeliveryBranchForPublish(state: RunState): Promise<RunState> {
+    const existing = this.ctx.workspace.branchName ?? state.branchName;
+    const title =
+      state.reflectBrief?.confirmedStructured?.proposedTitle ??
+      state.reflectBrief?.structured?.proposedTitle ??
+      state.idea;
+    const titleSlug = slugifyFeatureTitle(title);
+    const branchName =
+      existing ??
+      proposeDeliveryBranchName({
+        branchPrefix: this.ctx.config.git.branchPrefix,
+        title,
+        runId: state.runId,
+      });
+
+    const ensured = await this.ctx.store.withWorkspaceAdminLock(
+      { runId: state.runId, action: "create-delivery-branch" },
+      () => this.ctx.git.ensureDeliveryBranch(branchName),
+    );
+
+    const workspace = {
+      ...this.ctx.workspace,
+      branchName: ensured.branchName,
+    };
+    await writeRunWorkspace(this.ctx.config, state.runId, workspace);
+    this.ctx.bindWorkspace(workspace);
+
+    let next: RunState = { ...state, branchName: ensured.branchName };
+    // Audit when we first register a delivery branch for this run (create or attach).
+    if (!existing || ensured.created) {
+      next = await this.ctx.store.record(next, "run.branch_created", {
+        titleSlug,
+        branchName: ensured.branchName,
+        headSha: ensured.headSha,
+        created: ensured.created,
+        retainedExisting: Boolean(existing),
+      });
+    }
+    return next;
   }
 
   async message(
@@ -609,7 +660,7 @@ export class TaskExecutionService {
     const command = task.testCommand ?? this.ctx.config.commands.test;
     const gate = this.ctx.config.commands.gates.find((item) => item.command === command);
     const result = await this.ctx.deps.commands.run(command, {
-      cwd: this.ctx.config.repositoryRoot,
+      cwd: this.ctx.paths.workspaceRoot,
       timeoutMs: gate?.timeoutMs ?? 10 * 60 * 1000,
       signal: this.ctx.signalFor(runId),
       ...this.ctx.commandEnvironmentOptions(),
@@ -662,31 +713,29 @@ export class TaskExecutionService {
         return state;
       }
 
-      this.ctx.config.workflow.tdd = tdd;
-      const parsed = HarnessConfigSchema.parse(this.ctx.config);
-      this.ctx.config.workflow.tdd = parsed.workflow.tdd;
-      const raw = (await this.ctx.store.readJson(state.runId, "config.json")) as Record<string, unknown>;
-      const frozenVersion =
-        typeof raw.configVersion === "number" ? raw.configVersion : state.configVersion;
-      const frozenWorkflow =
-        typeof raw.workflow === "object" && raw.workflow !== null && !Array.isArray(raw.workflow)
-          ? (raw.workflow as Record<string, unknown>)
-          : {};
-      // Persist intentional mutation onto the frozen snapshot — do not dump live overlays.
-      await this.ctx.store.writeJson(state.runId, "config.json", {
-        ...raw,
-        workflow: { ...frozenWorkflow, tdd: parsed.workflow.tdd },
-        configVersion: frozenVersion,
-      });
-      const nextHash = configurationHash(this.ctx.config);
       const previous = state.tasks;
       const tasks = previous.map((task) => (canToggleTaskTdd(task) ? { ...task, tdd } : task));
       const tasksUpdated = tasks.filter((task, index) => task.tdd !== previous[index]?.tdd).length;
-      state = await this.ctx.store.record(
-        { ...state, tasks, configurationHash: nextHash },
-        "run.tdd_updated",
-        { tdd, tasksUpdated },
-      );
+      if (this.ctx.config.workflow.tdd === tdd) {
+        state = await this.ctx.store.record(
+          { ...state, tasks },
+          "run.tdd_updated",
+          { tdd, tasksUpdated },
+        );
+      } else {
+        const result = await updateRunConfig(
+          this.ctx,
+          state.runId,
+          state.configRevision ?? 0,
+          { workflow: { tdd } },
+          { reason: "tdd", detail: { tdd, tasksUpdated } },
+          {
+            alreadyLocked: true,
+            transformState: (next) => ({ ...next, tasks }),
+          },
+        );
+        state = result.state;
+      }
       await this.ctx.syncArtifacts(state);
       return state;
     });

@@ -10,6 +10,7 @@ export {
   KnowledgeVisibilitySchema,
   PreflightCommitOrderSchema,
   ProjectSettingsPatchSchema,
+  RunPolicyPatchSchema,
   configurationHash,
   configurationPolicyDiff,
   type HarnessConfig,
@@ -18,6 +19,7 @@ export {
   type KnowledgeVisibility,
   type PreflightCommitOrder,
   type ProjectSettingsPatch,
+  type RunPolicyPatch,
 } from "./config/schema.js";
 export {
   defaultConfigYaml,
@@ -27,7 +29,10 @@ export {
 export {
   loadConfig,
   loadRunConfig,
+  loadRunWorkspace,
+  runWorkspacePath,
   writeProjectSettings,
+  writeRunWorkspace,
 } from "./config/io.js";
 export {
   applyLiveProjectPolicy,

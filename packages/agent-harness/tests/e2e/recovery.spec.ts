@@ -7,7 +7,7 @@ import {
   withE2EHarness,
 } from "./helpers.js";
 
-test("recovery: dirty git start → commit preflight via UI → workflow continues", async ({
+test("recovery: dirty control checkout starts with notice; worktree preflight orders are hidden", async ({
   page,
 }) => {
   await withE2EHarness(
@@ -27,21 +27,21 @@ test("recovery: dirty git start → commit preflight via UI → workflow continu
     },
     async ({ page, fixture }) => {
       await startNewRun(page, "Recover from a dirty working tree");
-      await waitForRunStatus(page, /blocked/i);
-      await expect(page.getByText(/dirty|working tree|uncommitted/i).first()).toBeVisible();
-
-      await page
-        .getByRole("button", { name: /branch then commit and retry/i })
-        .click();
-
-      await waitForRunStatus(page, /awaiting input|reflect/i);
-      await expect(page.getByTestId("reflect-form")).toBeVisible();
+      // Worktree runs do not block on a dirty control checkout.
+      await waitForRunStatus(page, /awaiting input|reflect|new|running|queued/i);
+      await expect(page.getByText(/Control checkout is dirty|not included|committed base/i).first()).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(
+        page.getByRole("button", { name: /branch then commit and retry/i }),
+      ).toHaveCount(0);
 
       const runId = await selectedRunId(page);
       const events = await fixture.read(`.agent-harness/runs/${runId}/events.jsonl`);
-      expect(events).toMatch(/preflight_committed|run\.preflight/i);
-      expect(await fixture.git("log", "-1", "--format=%s")).toMatch(/harness|working tree/i);
-      expect(await fixture.git("status", "--porcelain")).not.toContain("surprise.txt");
+      expect(events).toMatch(/run\.control_checkout_notice/);
+      expect(events).not.toMatch(/run\.preflight_committed/);
+      // Control dirt remains; it was not imported into the worktree.
+      expect(await fixture.git("status", "--porcelain")).toContain("surprise.txt");
     },
   );
 });

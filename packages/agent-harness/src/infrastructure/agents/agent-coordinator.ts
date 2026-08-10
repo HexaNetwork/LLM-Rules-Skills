@@ -4,6 +4,7 @@ import type {
   InvocationKind,
   InvocationTrigger,
 } from "../../application/agent-activity.js";
+import { resolveHarnessPaths, type HarnessPaths } from "../../application/paths.js";
 import type { HarnessConfig } from "../../config.js";
 import { modelForRole } from "../../config.js";
 import {
@@ -46,7 +47,12 @@ export class AgentCoordinator {
     private readonly backend: AgentBackend,
     private readonly store: RunStore,
     private readonly knowledge: LocalKnowledgeBase,
+    private readonly paths: HarnessPaths = resolveHarnessPaths(config),
   ) {}
+
+  private get workspaceRoot(): string {
+    return this.paths.workspaceRoot;
+  }
 
   async invoke<T>(input: InvokeInput<T>): Promise<T> {
     return (await this.invokeInternal(input)).value;
@@ -296,7 +302,7 @@ export class AgentCoordinator {
                 retainProviderSession: options.retainProviderSession || retainForRepair,
                 mode: options.mode,
                 allowTools: options.allowTools,
-                cwd: this.config.repositoryRoot,
+                cwd: this.workspaceRoot,
                 signal,
                 taskId,
                 onStep: (step) => {

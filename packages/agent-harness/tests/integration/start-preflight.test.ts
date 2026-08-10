@@ -4,14 +4,18 @@ import { promisify } from "node:util";
 import { writeFile, access } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
+import { dirtyTreeMessage } from "../../src/application/helpers.js";
+import { resolveHarnessPaths } from "../../src/application/paths.js";
+import { migrateRunWorkspace } from "../../src/domain/workspace.js";
 import { GitService } from "../../src/git.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
+import { git as runGit } from "../testkit/git.js";
 
 const exec = promisify(execFile);
 
 describe("run-start git preflight", () => {
-  it("blocks with blockedFrom 'new' on a dirty tree and never invokes the reflector", async () => {
+  it("starts a worktree run while the control checkout is dirty without importing changes", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
     await writeFile(path.join(root, "surprise.txt"), "untracked\n", "utf8");
@@ -19,16 +23,35 @@ describe("run-start git preflight", () => {
     const config = fixtureConfig(root, { git: { enabled: true } as never });
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
 
-    const state = await engine.start("Add a feature");
-    expect(state.phase).toBe("blocked");
-    expect(state.blockedFrom).toBe("new");
-    expect(state.failure).toMatch(/uncommitted changes/i);
-    expect(state.failure).toContain("surprise.txt");
+    const state = await engine.start("Add a feature", "dirty-control");
+    expect(state.phase).toBe("new");
+    expect(state.blockedFrom).toBeUndefined();
+    expect(await access(path.join(root, "surprise.txt")).then(() => true)).toBe(true);
+
+    const workspace = migrateRunWorkspace(
+      await engine.store.readJson("dirty-control", "workspace.json"),
+      { controlRoot: root },
+    );
+    expect(workspace.kind).toBe("git-worktree");
+    await expect(
+      access(path.join(workspace.worktreePath!, "surprise.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const events = (await engine.store.readText("dirty-control", "events.jsonl"))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { type: string; detail: Record<string, unknown> });
+    const notice = events.find((event) => event.type === "run.control_checkout_notice");
+    expect(notice?.detail.dirty).toBe(true);
+    expect(notice?.detail.includedInRun).toBe(false);
+    expect(String(notice?.detail.message ?? "")).toMatch(/not included|committed base/i);
   });
 
-  it("proceeds past start on a clean tree and cuts the run branch before reflect", async () => {
+  it("starts detached at baseSha without creating a delivery branch or switching control", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
+    const controlBranch = (await git(root, "branch", "--show-current")).trim();
+    const baseSha = (await git(root, "rev-parse", "HEAD")).trim();
 
     const config = fixtureConfig(root, { git: { enabled: true } as never });
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
@@ -36,14 +59,23 @@ describe("run-start git preflight", () => {
     const state = await engine.start("Add a feature", "run-early-branch");
     expect(state.phase).toBe("new");
     expect(state.blockedFrom).toBeUndefined();
-    expect(state.branchName).toBe("harness/run-early-branch");
-    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-early-branch");
+    expect(state.branchName).toBeUndefined();
+    expect((await git(root, "branch", "--show-current")).trim()).toBe(controlBranch);
+    expect((await git(root, "branch", "--list", "harness/*")).trim()).toBe("");
+
+    const workspace = migrateRunWorkspace(
+      await engine.store.readJson("run-early-branch", "workspace.json"),
+      { controlRoot: root },
+    );
+    expect(workspace.baseSha).toBe(baseSha);
+    expect((await runGit(workspace.worktreePath!, "rev-parse", "HEAD")).trim()).toBe(baseSha);
 
     const raw = await engine.store.readText("run-early-branch", "events.jsonl");
-    expect(raw).toContain("run.branch_ready");
+    expect(raw).toContain("run.worktree_created");
+    expect(raw).not.toContain("run.branch_ready");
   });
 
-  it("cuts the run branch from git.baseBranch, not the operator checkout", async () => {
+  it("creates the worktree from git.baseBranch while leaving the operator checkout alone", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
     await writeFile(path.join(root, "only-on-feature.txt"), "feature\n", "utf8");
@@ -57,23 +89,36 @@ describe("run-start git preflight", () => {
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
     const state = await engine.start("Add a feature", "run-from-base");
 
-    expect(state.branchName).toBe("harness/run-from-base");
-    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-from-base");
-    // File that exists only on feature must not be present after cutting from main.
-    await expect(access(path.join(root, "only-on-feature.txt"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    expect(state.branchName).toBeUndefined();
+    expect((await git(root, "branch", "--show-current")).trim()).toBe("feature");
+    expect(await access(path.join(root, "only-on-feature.txt")).then(() => true)).toBe(true);
+
+    const workspace = migrateRunWorkspace(
+      await engine.store.readJson("run-from-base", "workspace.json"),
+      { controlRoot: root },
+    );
+    await expect(
+      access(path.join(workspace.worktreePath!, "only-on-feature.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("skips the preflight entirely when git.enabled is false", async () => {
+  it("skips worktree creation when git.enabled is false", async () => {
     const root = await fixtureRoot();
     await writeFile(path.join(root, "surprise.txt"), "untracked\n", "utf8");
 
     const config = fixtureConfig(root);
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
 
-    const state = await engine.start("Add a feature");
+    const state = await engine.start("Add a feature", "git-off");
     expect(state.phase).toBe("new");
+    const workspace = migrateRunWorkspace(
+      await engine.store.readJson("git-off", "workspace.json"),
+      { controlRoot: root },
+    );
+    expect(workspace.kind).toBe("git-disabled");
+    expect(resolveHarnessPaths(config, workspace).workspaceRoot).toBe(
+      resolveHarnessPaths(config).controlRoot,
+    );
   });
 
   it("blocks with a clear workspace message when git.enabled but the project is not a git repository", async () => {
@@ -92,23 +137,16 @@ describe("run-start git preflight", () => {
     expect(state.failure).not.toMatch(/failed \(128\)/);
   });
 
-  it("truncates the offending-path list for a large dirty tree", async () => {
-    const root = await fixtureRoot();
-    await initGitRepo(root);
-    for (let index = 0; index < 15; index += 1) {
-      await writeFile(path.join(root, `file-${String(index).padStart(2, "0")}.txt`), "x\n", "utf8");
-    }
-
-    const config = fixtureConfig(root, { git: { enabled: true } as never });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
-
-    const state = await engine.start("Add a feature");
-    expect(state.phase).toBe("blocked");
-    expect(state.failure).toContain("+5 more");
-    expect(state.failure?.match(/file-\d\d\.txt/g)).toHaveLength(10);
+  it("formats dirty-tree messages with a truncated path list for operators", () => {
+    const paths = Array.from({ length: 15 }, (_, index) =>
+      `file-${String(index).padStart(2, "0")}.txt`,
+    );
+    const message = dirtyTreeMessage(paths);
+    expect(message).toContain("+5 more");
+    expect(message.match(/file-\d\d\.txt/g)).toHaveLength(10);
   });
 
-  it("still rejects a tree that goes dirty after a clean start (defense in depth)", async () => {
+  it("still rejects ensureRunBranch when the shared tree goes dirty (legacy helper)", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
 

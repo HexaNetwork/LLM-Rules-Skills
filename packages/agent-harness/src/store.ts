@@ -26,13 +26,24 @@ type TransitionJournal = {
   state: RunState;
   event: RunEvent;
   owner?: Pick<LockBody, "pid" | "hostname">;
+  /** When set, recovery also restores this frozen config snapshot. */
+  config?: unknown;
 };
+
+/** Test-only fault injection points for config+state transitions. */
+export type ConfigTransitionFault =
+  | "after_journal"
+  | "after_config"
+  | "after_state"
+  | "after_event";
 
 export class RunStore {
   readonly root: string;
+  /** @internal Test seam: throw after the named config-transition boundary. */
+  configTransitionFault?: ConfigTransitionFault;
 
-  constructor(readonly config: HarnessConfig) {
-    this.root = path.resolve(config.repositoryRoot, config.stateDirectory);
+  constructor(readonly config: HarnessConfig, stateRoot: string) {
+    this.root = stateRoot;
   }
 
   runDirectory(runId: string): string {
@@ -119,6 +130,7 @@ export class RunStore {
     state: RunState,
     type: string,
     detail: Record<string, unknown> = {},
+    options: { config?: unknown } = {},
   ): Promise<RunState> {
     // If a previous transition failed after writing its journal, finish it
     // before creating a later sequence number.
@@ -139,13 +151,25 @@ export class RunStore {
       expectedRevision: state.revision,
       state: next,
       event,
-      owner: { pid: process.pid, hostname: localHostname() },
+      // Fault-injection omits owner so same-process recovery matches a dead writer.
+      ...(this.configTransitionFault
+        ? {}
+        : { owner: { pid: process.pid, hostname: localHostname() } }),
+      ...(options.config !== undefined ? { config: options.config } : {}),
     };
     // State and history are a recoverable transaction: after a process crash,
-    // load() can finish whichever durable write did not complete.
+    // load() can finish whichever durable write did not complete. When config
+    // is included, recovery also restores the matching frozen snapshot.
     await atomicJson(this.transitionJournalPath(state.runId), journal);
+    await this.maybeFault("after_journal");
+    if (options.config !== undefined) {
+      await atomicJson(path.join(this.runDirectory(state.runId), "config.json"), options.config);
+      await this.maybeFault("after_config");
+    }
     await atomicJson(path.join(this.runDirectory(state.runId), "state.json"), next);
+    await this.maybeFault("after_state");
     await this.appendEventOnce(state.runId, event);
+    await this.maybeFault("after_event");
     await unlink(this.transitionJournalPath(state.runId));
     return next;
   }
@@ -276,6 +300,14 @@ export class RunStore {
     return path.join(this.root, "repo.lock");
   }
 
+  workspaceAdminLockPath(): string {
+    return path.join(this.root, "locks", "workspace-admin.lock");
+  }
+
+  sharedIndexLockPath(): string {
+    return path.join(this.root, "locks", "shared-index.lock");
+  }
+
   async withLock<T>(runId: string, work: () => Promise<T>): Promise<T> {
     const lockPath = this.runLockPath(runId);
     const handle = await acquireLockFile(lockPath, () => {
@@ -324,8 +356,9 @@ export class RunStore {
   }
 
   /**
-   * Serialises git / working-tree work across runs. Callers that also take a
-   * per-run lock must acquire this first (repository → run) to avoid deadlock.
+   * Legacy-shared checkout exclusion. Worktree/git-disabled runs must not take
+   * this for normal advancement. Callers that also take a per-run lock must
+   * acquire this first (repository → run) to avoid deadlock.
    */
   async withRepositoryLock<T>(
     holder: { runId: string; action: string },
@@ -369,6 +402,103 @@ export class RunStore {
     ageMs: number | null;
   } | null> {
     return readLockInfo(this.repositoryLockPath());
+  }
+
+  /**
+   * Short lock around shared Git worktree-metadata mutations
+   * (add/register/remove/rename). Normal advancement does not take this lock.
+   */
+  async withWorkspaceAdminLock<T>(
+    holder: { runId: string; action: string },
+    work: () => Promise<T>,
+  ): Promise<T> {
+    return this.withNamedLock(this.workspaceAdminLockPath(), holder, work, (lockPath, body) => {
+      const runId = body?.runId ?? "unknown";
+      const action = body?.action ?? "unknown";
+      const at = body?.at ?? "unknown time";
+      throw new Error(
+        `Workspace administration is in use by run ${runId} (${action}) since ${at}. Wait, or remove ${lockPath} if that process is gone.`,
+      );
+    });
+  }
+
+  /**
+   * Short lock around mutable shared knowledge-index updates under stateRoot.
+   * Graphify graphs in a run worktree are run-local and do not need this lock.
+   */
+  async withSharedIndexLock<T>(
+    holder: { runId: string; action: string },
+    work: () => Promise<T>,
+  ): Promise<T> {
+    return this.withNamedLock(this.sharedIndexLockPath(), holder, work, (lockPath, body) => {
+      const runId = body?.runId ?? "unknown";
+      const action = body?.action ?? "unknown";
+      const at = body?.at ?? "unknown time";
+      throw new Error(
+        `Shared knowledge index is in use by run ${runId} (${action}) since ${at}. Wait, or remove ${lockPath} if that process is gone.`,
+      );
+    });
+  }
+
+  async inspectSharedIndexLock(): Promise<{
+    path: string;
+    body: LockBody | null;
+    ageMs: number | null;
+  } | null> {
+    return readLockInfo(this.sharedIndexLockPath());
+  }
+
+  async inspectWorkspaceAdminLock(): Promise<{
+    path: string;
+    body: LockBody | null;
+    ageMs: number | null;
+  } | null> {
+    return readLockInfo(this.workspaceAdminLockPath());
+  }
+
+  /**
+   * Short coordination locks wait briefly for the holder to finish.
+   * Repository/run locks stay fail-fast via acquireLockFile.
+   */
+  private async withNamedLock<T>(
+    lockPath: string,
+    holder: { runId: string; action: string },
+    work: () => Promise<T>,
+    onBusy: (lockPath: string, body: LockBody | null) => never,
+    options: { waitMs?: number; pollMs?: number } = {},
+  ): Promise<T> {
+    const waitMs = options.waitMs ?? 30_000;
+    const pollMs = options.pollMs ?? 50;
+    const deadline = Date.now() + Math.max(0, waitMs);
+    await mkdir(path.dirname(lockPath), { recursive: true });
+
+    for (;;) {
+      try {
+        const handle = await open(lockPath, "wx");
+        await handle.writeFile(
+          JSON.stringify({
+            pid: process.pid,
+            hostname: localHostname(),
+            at: new Date().toISOString(),
+            runId: holder.runId,
+            action: holder.action,
+          } satisfies LockBody),
+        );
+        try {
+          return await work();
+        } finally {
+          await handle.close();
+          await unlink(lockPath).catch(() => undefined);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (Date.now() >= deadline) {
+          const info = await readLockInfo(lockPath);
+          onBusy(lockPath, info?.body ?? null);
+        }
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+      }
+    }
   }
 
   /** Operator escape hatch: remove a run lock (and optionally the repository lock). */
@@ -429,6 +559,11 @@ export class RunStore {
       // writer finish rather than racing its event append.
       return;
     }
+    if (pending.config !== undefined) {
+      // Restore the matching frozen snapshot before (or with) state recovery so
+      // a crash after config.json cannot leave a new policy with a stale hash.
+      await atomicJson(path.join(this.runDirectory(runId), "config.json"), pending.config);
+    }
     const statePath = path.join(this.runDirectory(runId), "state.json");
     const current = RunStateSchema.parse(JSON.parse(await readStable(statePath)));
     if (current.revision === pending.expectedRevision) {
@@ -442,6 +577,12 @@ export class RunStore {
     await unlink(journalPath).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
     });
+  }
+
+  private async maybeFault(boundary: ConfigTransitionFault): Promise<void> {
+    if (this.configTransitionFault === boundary) {
+      throw new Error(`fault injection: config transition crashed at ${boundary}`);
+    }
   }
 
   private async appendEventOnce(runId: string, event: RunEvent): Promise<void> {
@@ -580,7 +721,13 @@ function parseTransitionJournal(raw: string): TransitionJournal {
     throw new Error("Inconsistent pending transition journal");
   }
   const owner = isLockOwner(value.owner) ? value.owner : undefined;
-  return { expectedRevision: value.expectedRevision, state, event, ...(owner ? { owner } : {}) };
+  return {
+    expectedRevision: value.expectedRevision,
+    state,
+    event,
+    ...(owner ? { owner } : {}),
+    ...(value.config !== undefined ? { config: value.config } : {}),
+  };
 }
 
 function isLockOwner(value: unknown): value is Pick<LockBody, "pid" | "hostname"> {

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { AgentCoordinator, createFakeBackend } from "../../src/agent.js";
@@ -240,7 +241,7 @@ describe("implementer packet evidence projection", () => {
         graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
       },
     });
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
     await knowledge.refresh();

@@ -1,5 +1,11 @@
 import type { PreflightCommitOrder } from "../config.js";
-import type { BuildTask, ProposedInstall, RunState } from "../domain.js";
+import type {
+  BuildTask,
+  ProposedInstall,
+  RunState,
+  RunWorkspace,
+  RunWorkspaceKind,
+} from "../domain.js";
 import { CONFIG_FAILURE_PATTERN } from "../errors.js";
 
 export type PreflightCommitResult = {
@@ -12,6 +18,18 @@ export type PreflightCommitResult = {
 export type CancelResult = {
   state: RunState;
   pending: boolean;
+};
+
+export type CleanupResult = {
+  state: RunState;
+  removed: boolean;
+  reason: string;
+  retainedBranch?: string;
+};
+
+export type MigrateWorkspaceResult = {
+  state: RunState;
+  workspace: RunWorkspace;
 };
 
 export function pendingInstallApprovals(state: RunState): ProposedInstall[] {
@@ -80,6 +98,22 @@ export function repairRoute(input: {
 /** True when recovery should use the config-fixer (frozen snapshot patch), not a file fixer. */
 export function isConfigFixerCandidate(blockedKind?: string, failure?: string): boolean {
   return repairRoute({ blockedKind, failure }) === "config-fixer";
+}
+
+/** Legacy shared-checkout runs keep commit-order recovery; worktree runs do not. */
+export function offersPreflightCommitOrders(kind: RunWorkspaceKind): boolean {
+  return kind === "legacy-shared";
+}
+
+export function preflightCommitUnavailableMessage(kind: RunWorkspaceKind): string {
+  if (kind === "git-worktree") {
+    return (
+      "Preflight commit-order controls are not offered for worktree runs. " +
+      "New runs start from the committed base branch only; uncommitted control-checkout " +
+      "changes are never imported. Commit or stash changes inside the run worktree, then retry."
+    );
+  }
+  return `Preflight commit-order controls are not available for ${kind} workspaces.`;
 }
 
 export function defaultPreflightCommitMessage(runId: string): string {

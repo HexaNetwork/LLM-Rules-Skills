@@ -2,13 +2,45 @@ import { createHash } from "node:crypto";
 import { access } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { relative as pathRelative, resolve as pathResolve } from "node:path";
+import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
 import type { HarnessConfig } from "./config.js";
 import type { MessageOutput } from "./domain.js";
+import { buildWorkspaceEvidence, type WorkspaceEvidence } from "./domain/workspace.js";
 import { HarnessFailure } from "./errors.js";
 import { matchesGlob } from "./knowledge.js";
 
+export {
+  MIN_GIT_WORKTREE_VERSION,
+  assertGitWorktreeCapability,
+  evaluateGitWorktreeSupport,
+  parseGitVersionOutput,
+  probeGitCapabilities,
+  type GitCapabilities,
+  type GitVersion,
+  type GitWorktreeSupportEvaluation,
+} from "./git/capabilities.js";
+
+export {
+  WorktreeManager,
+  type CreateWorktreeInput,
+  type WorktreeInspection,
+  type WorktreeManagerOptions,
+} from "./git/worktree-manager.js";
+
+
 export class GitService {
-  constructor(private readonly config: HarnessConfig) {}
+  constructor(
+    private readonly config: HarnessConfig,
+    private readonly paths: HarnessPaths = resolveHarnessPaths(config),
+  ) {}
+
+  private get workspaceRoot(): string {
+    return this.paths.workspaceRoot;
+  }
+
+  private get stateRoot(): string {
+    return this.paths.stateRoot;
+  }
 
   /**
    * True when `file` matches any configured artifact glob.
@@ -93,7 +125,7 @@ export class GitService {
     const existing: string[] = [];
     for (const filePath of paths) {
       try {
-        await access(pathResolve(this.config.repositoryRoot, filePath));
+        await access(pathResolve(this.workspaceRoot, filePath));
         existing.push(normalize(filePath));
       } catch {
         // Skip paths that no longer exist.
@@ -136,14 +168,54 @@ export class GitService {
   }
 
   /**
-   * Cheap identity of HEAD + working tree (state-directory paths excluded).
-   * Returns `"git-disabled"` when git is off.
+   * Structured run-local workspace evidence (HEAD, index identity, porcelain digest).
+   * Fingerprint calculation does not write trees; index identity hashes `git ls-files -s`.
+   */
+  async workspaceEvidence(): Promise<WorkspaceEvidence> {
+    if (!this.config.git.enabled) {
+      return buildWorkspaceEvidence({
+        headSha: "git-disabled",
+        indexTreeSha: "git-disabled",
+        statusDigest: "git-disabled",
+        changedPaths: [],
+      });
+    }
+    const headSha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+    const indexTreeSha = await this.indexIdentity();
+    const { paths, filteredPorcelain } = await this.porcelainStatus();
+    const statusDigest = createHash("sha256").update(filteredPorcelain).digest("hex");
+    return buildWorkspaceEvidence({
+      headSha,
+      indexTreeSha,
+      statusDigest,
+      changedPaths: paths,
+    });
+  }
+
+  /**
+   * Versioned evidence fingerprint for new stamps.
+   * Prefer `workspaceEvidence()` when component diagnostics are needed.
    */
   async treeFingerprint(): Promise<string> {
+    return (await this.workspaceEvidence()).fingerprint;
+  }
+
+  /**
+   * Opaque pre-evidence fingerprint (HEAD + filtered porcelain).
+   * Kept so runs stamped before structured evidence can still resume.
+   */
+  async legacyTreeFingerprint(): Promise<string> {
     if (!this.config.git.enabled) return "git-disabled";
     const head = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
     const { filteredPorcelain } = await this.porcelainStatus();
     return createHash("sha256").update(`${head}\0${filteredPorcelain}`).digest("hex");
+  }
+
+  /** Non-mutating index identity: hash of staged blob/mode/path entries. */
+  private async indexIdentity(): Promise<string> {
+    const result = await this.git(["ls-files", "-s", "-z"], true);
+    const payload = result.exitCode === 0 ? result.stdout : "";
+    return createHash("sha256").update(payload).digest("hex");
   }
 
   /**
@@ -172,9 +244,7 @@ export class GitService {
     entries: PorcelainEntry[];
   }> {
     const result = await this.git(["status", "--porcelain=v1", "--untracked-files=all", "-z"]);
-    const statePrefix = normalize(
-      pathRelative(this.config.repositoryRoot, pathResolve(this.config.repositoryRoot, this.config.stateDirectory)),
-    );
+    const statePrefix = normalize(pathRelative(this.workspaceRoot, this.stateRoot));
     const artifactPatterns = this.config.git.ignoredArtifactPatterns;
     const records = result.stdout.split("\0").filter(Boolean);
     const paths: string[] = [];
@@ -240,15 +310,42 @@ export class GitService {
   async createRunBranchFromHead(runId: string): Promise<string> {
     if (!this.config.git.enabled) throw new Error("git is not enabled");
     const branch = this.branchForRun(runId);
+    const ensured = await this.ensureDeliveryBranch(branch);
+    return ensured.branchName;
+  }
+
+  /**
+   * Create or attach a named delivery branch at the current HEAD.
+   * Never resets an existing branch that points elsewhere — naming conflicts fail hard.
+   */
+  async ensureDeliveryBranch(branchName: string): Promise<{
+    branchName: string;
+    headSha: string;
+    created: boolean;
+  }> {
+    if (!this.config.git.enabled) throw new Error("git is not enabled");
+    const headSha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
     const current = (await this.git(["branch", "--show-current"])).stdout.trim();
-    if (current === branch) return branch;
-    const exists = (await this.git(["show-ref", "--verify", `refs/heads/${branch}`], true)).exitCode === 0;
-    if (exists) {
-      await this.git(["switch", branch]);
-    } else {
-      await this.git(["switch", "-c", branch]);
+    if (current === branchName) {
+      return { branchName, headSha, created: false };
     }
-    return branch;
+    const exists =
+      (await this.git(["show-ref", "--verify", `refs/heads/${branchName}`], true)).exitCode === 0;
+    if (exists) {
+      const tip = (await this.git(["rev-parse", branchName])).stdout.trim();
+      if (tip !== headSha) {
+        throw new HarnessFailure(
+          `Delivery branch ${branchName} already exists at ${tip.slice(0, 8)} but this run's HEAD is ${headSha.slice(0, 8)}. ` +
+            "Choose a different branch name or delete the conflicting local branch; the harness will not reset it.",
+          "workspace",
+          true,
+        );
+      }
+      await this.git(["switch", branchName]);
+      return { branchName, headSha, created: false };
+    }
+    await this.git(["switch", "-c", branchName]);
+    return { branchName, headSha, created: true };
   }
 
   /** Stages and commits everything except the harness state directory. */
@@ -405,7 +502,7 @@ export class GitService {
 
   /**
    * Squash RED checkpoint commit(s) plus current dirty production changes into one task commit.
-   * Only rewrites the unpushed harness-owned run branch after verifying HEAD/branch.
+   * Only rewrites unpushed harness-owned history after verifying branch/worktree lineage.
    */
   async squashCheckpointsIntoTaskCommit(args: {
     taskId: string;
@@ -413,16 +510,43 @@ export class GitService {
     reportedPaths: string[];
     redCheckpointShas: string[];
     expectedBranch?: string;
+    /** Immutable run base; when set, HEAD must descend from it (worktree ownership). */
+    baseSha?: string;
   }): Promise<string | undefined> {
     if (!this.config.git.enabled) return undefined;
     if (await this.isTaskCommitted(args.taskId)) {
       return (await this.git(["rev-parse", "HEAD"])).stdout.trim();
     }
+    // Detached per-run worktrees have no delivery branch yet; branch equality
+    // only applies when HEAD is on a named branch (legacy shared checkout).
     if (args.expectedBranch) {
       const current = await this.currentBranch();
-      if (current !== args.expectedBranch) {
+      if (current != null && current !== args.expectedBranch) {
         throw new HarnessFailure(
-          `Refusing to squash checkpoints: expected branch ${args.expectedBranch}, on ${current ?? "detached"}`,
+          `Refusing to squash checkpoints: expected branch ${args.expectedBranch}, on ${current}`,
+          "workspace",
+          true,
+        );
+      }
+    }
+    if (args.baseSha) {
+      const lineage = await this.git(
+        ["merge-base", "--is-ancestor", args.baseSha, "HEAD"],
+        true,
+      );
+      if (lineage.exitCode !== 0) {
+        throw new HarnessFailure(
+          `Refusing to squash checkpoints: HEAD does not descend from run base ${args.baseSha.slice(0, 8)}`,
+          "workspace",
+          true,
+        );
+      }
+    }
+    for (const sha of args.redCheckpointShas) {
+      const owned = await this.git(["merge-base", "--is-ancestor", sha, "HEAD"], true);
+      if (owned.exitCode !== 0) {
+        throw new HarnessFailure(
+          `Refusing to squash checkpoints: checkpoint ${sha.slice(0, 8)} is not in this run's HEAD lineage`,
           "workspace",
           true,
         );
@@ -448,6 +572,18 @@ export class GitService {
       return this.commitTask(args.taskId, args.message, args.reportedPaths, {
         redCheckpointShas: args.redCheckpointShas,
       });
+    }
+    // Reject rewriting history that is already published / reachable from remotes.
+    const remoteContains = await this.git(
+      ["for-each-ref", "--format=%(refname:short)", "--contains", oldestCheckpoint, "refs/remotes"],
+      true,
+    );
+    if (remoteContains.exitCode === 0 && remoteContains.stdout.trim()) {
+      throw new HarnessFailure(
+        "Refusing to squash checkpoints: history is reachable from a remote-tracking branch (published/upstream-backed)",
+        "workspace",
+        true,
+      );
     }
     const base = await this.git(["rev-parse", `${oldestCheckpoint}^`], true);
     if (base.exitCode !== 0) {
@@ -497,7 +633,7 @@ export class GitService {
         "--body",
         message.body,
       ],
-      this.config.repositoryRoot,
+      this.workspaceRoot,
       false,
     );
     return result.stdout.trim().split(/\r?\n/).at(-1);
@@ -505,11 +641,11 @@ export class GitService {
 
   private async git(args: string[], allowFailure = false): Promise<ProgramResult> {
     try {
-      return await runProgram("git", args, this.config.repositoryRoot, allowFailure);
+      return await runProgram("git", args, this.workspaceRoot, allowFailure);
     } catch (error) {
       if (error instanceof Error && /not a git repository/i.test(error.message)) {
         throw new HarnessFailure(
-          `git.enabled is true but ${this.config.repositoryRoot} is not a git repository. ` +
+          `git.enabled is true but ${this.workspaceRoot} is not a git repository. ` +
             "Run `git init` and make an initial commit, or set git.enabled: false in agent-harness.config.yaml.",
           "workspace",
           true,

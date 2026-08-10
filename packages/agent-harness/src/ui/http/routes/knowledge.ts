@@ -50,7 +50,11 @@ export async function handleKnowledgeRoutes(
   }
 
   if (request.method === "POST" && url.pathname === "/api/knowledge/refresh") {
-    json(response, 200, { changed: await ctx.knowledge.refresh() });
+    const changed = await ctx.store.withSharedIndexLock(
+      { runId: "dashboard", action: "refresh-knowledge" },
+      () => ctx.knowledge.refresh(),
+    );
+    json(response, 200, { changed });
     return true;
   }
 
@@ -59,7 +63,11 @@ export async function handleKnowledgeRoutes(
     const relativePath = requiredString(body.path, "path", 2_000);
     const target = path.resolve(projectConfig.repositoryRoot, relativePath);
     assertInside(projectConfig.repositoryRoot, target);
-    json(response, 200, { changed: await ctx.knowledge.upsertFile(target) });
+    const changed = await ctx.store.withSharedIndexLock(
+      { runId: "dashboard", action: "upsert-knowledge" },
+      () => ctx.knowledge.upsertFile(target),
+    );
+    json(response, 200, { changed });
     return true;
   }
 

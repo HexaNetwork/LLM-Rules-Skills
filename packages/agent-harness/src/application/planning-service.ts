@@ -35,9 +35,22 @@ export class PlanningService {
   constructor(private readonly ctx: ApplicationContext) {}
 
   async plan(state: RunState): Promise<RunState> {
-    // Idempotent: start() (and commit-then-branch preflight) already cut the run
-    // branch. Keep the guard here so resume/retry cannot plan on a drifted checkout.
-    const branchName = await this.ctx.git.ensureRunBranch(state.runId);
+    // Worktree runs stay detached until publication (Slice 4). Legacy shared-tree
+    // runs still ensure `git.branchPrefix/<runId>` before planning.
+    let branchName = state.branchName;
+    if (this.ctx.usesGitWorktree()) {
+      branchName = this.ctx.workspace.branchName ?? state.branchName;
+      const dirty = await this.ctx.git.changedFiles();
+      if (dirty.length > 0) {
+        throw new HarnessFailure(
+          `Refusing to start on a dirty working tree. Commit or stash first: ${dirty.join(", ")}`,
+          "workspace",
+          true,
+        );
+      }
+    } else {
+      branchName = await this.ctx.git.ensureRunBranch(state.runId);
+    }
 
     // Idempotent resume: a prior plan.created may have persisted tasks before a
     // post-planner workspace block. Do not re-invoke the planner.
@@ -160,70 +173,68 @@ export class PlanningService {
       configPath?: string;
     } = {},
   ): Promise<RunState> {
-    return this.ctx.store.withRepositoryLock({ runId, action: "confirmVerification" }, () =>
-      this.ctx.store.withLock(runId, async () => {
-        let state = await this.ctx.store.load(runId);
-        const gate = pendingVerificationReady(state);
-        if (state.phase !== "awaiting_input" || !gate) {
-          throw new Error(`Run ${runId} is not awaiting verification confirmation`);
+    return this.ctx.withMutatingRunLock(runId, "confirmVerification", async () => {
+      let state = await this.ctx.store.load(runId);
+      const gate = pendingVerificationReady(state);
+      if (state.phase !== "awaiting_input" || !gate) {
+        throw new Error(`Run ${runId} is not awaiting verification confirmation`);
+      }
+
+      const keepCurrent = Boolean(options.keepCurrent);
+      const rawPatch = keepCurrent
+        ? {}
+        : (options.patch ?? gate.proposedPatch);
+      const patch = VerificationSettingsPatchSchema.parse(rawPatch);
+      // Reject unrelated keys that ProjectSettingsPatch would otherwise allow.
+      assertVerificationOnlyPatch(patch);
+
+      let reportPaths: string[] = [];
+      if (options.persistProjectDefaults) {
+        if (!options.configPath) {
+          throw new Error("Cannot persist project defaults without a config file path");
         }
+        const projectPatch = toProjectSettingsPatch(patch, gate.currentSettings, keepCurrent);
+        await writeProjectSettings(options.configPath, projectPatch);
+        const relative = pathRelativeToRepo(this.ctx.paths.controlRoot, options.configPath);
+        if (relative) reportPaths = [relative];
+      }
 
-        const keepCurrent = Boolean(options.keepCurrent);
-        const rawPatch = keepCurrent
-          ? {}
-          : (options.patch ?? gate.proposedPatch);
-        const patch = VerificationSettingsPatchSchema.parse(rawPatch);
-        // Reject unrelated keys that ProjectSettingsPatch would otherwise allow.
-        assertVerificationOnlyPatch(patch);
-
-        let reportPaths: string[] = [];
-        if (options.persistProjectDefaults) {
-          if (!options.configPath) {
-            throw new Error("Cannot persist project defaults without a config file path");
-          }
-          const projectPatch = toProjectSettingsPatch(patch, gate.currentSettings, keepCurrent);
-          const updated = await writeProjectSettings(options.configPath, projectPatch);
-          const relative = pathRelativeToRepo(updated.config.repositoryRoot, options.configPath);
-          if (relative) reportPaths = [relative];
-        }
-
-        const effectivePatch = keepCurrent
-          ? {}
-          : mergeVerificationPatch(gate.currentSettings, patch);
-        const hasChange = verificationPatchChangesSettings(gate.currentSettings, effectivePatch);
-        if (hasChange) {
-          state = await applyFrozenConfigRepair(
-            this.ctx,
-            state,
-            effectivePatch as ProjectSettingsPatch,
-            {
-              persistedProjectDefaults: Boolean(options.persistProjectDefaults),
-              reportPaths,
-              allowNoChange: false,
-            },
-          );
-        }
-
-        const now = new Date().toISOString();
-        state = await this.ctx.store.record(
+      const effectivePatch = keepCurrent
+        ? {}
+        : mergeVerificationPatch(gate.currentSettings, patch);
+      const hasChange = verificationPatchChangesSettings(gate.currentSettings, effectivePatch);
+      if (hasChange) {
+        state = await applyFrozenConfigRepair(
+          this.ctx,
+          state,
+          effectivePatch as ProjectSettingsPatch,
           {
-            ...state,
-            verificationReady: undefined,
-            verificationConfirmedAt: now,
-            phase: "planning",
-          },
-          "verification.confirmed",
-          {
-            keepCurrent,
-            persistProjectDefaults: Boolean(options.persistProjectDefaults),
-            patch: effectivePatch,
+            persistedProjectDefaults: Boolean(options.persistProjectDefaults),
             reportPaths,
+            allowNoChange: false,
           },
         );
-        await this.ctx.syncArtifacts(state);
-        return state;
-      }),
-    );
+      }
+
+      const now = new Date().toISOString();
+      state = await this.ctx.store.record(
+        {
+          ...state,
+          verificationReady: undefined,
+          verificationConfirmedAt: now,
+          phase: "planning",
+        },
+        "verification.confirmed",
+        {
+          keepCurrent,
+          persistProjectDefaults: Boolean(options.persistProjectDefaults),
+          patch: effectivePatch,
+          reportPaths,
+        },
+      );
+      await this.ctx.syncArtifacts(state);
+      return state;
+    });
   }
 
   /**
@@ -238,58 +249,56 @@ export class PlanningService {
       configPath?: string;
     } = {},
   ): Promise<RunState> {
-    return this.ctx.store.withRepositoryLock({ runId, action: "retryVerificationBaseline" }, () =>
-      this.ctx.store.withLock(runId, async () => {
-        let state = await this.ctx.store.load(runId);
-        const gate = pendingVerificationBaselineReady(state);
-        if (state.phase !== "awaiting_input" || !gate) {
-          throw new Error(`Run ${runId} is not awaiting a verification baseline retry`);
-        }
+    return this.ctx.withMutatingRunLock(runId, "retryVerificationBaseline", async () => {
+      let state = await this.ctx.store.load(runId);
+      const gate = pendingVerificationBaselineReady(state);
+      if (state.phase !== "awaiting_input" || !gate) {
+        throw new Error(`Run ${runId} is not awaiting a verification baseline retry`);
+      }
 
-        const testCommand = options.testCommand?.trim();
-        let reportPaths: string[] = [];
-        if (testCommand) {
-          const patch: VerificationSettingsPatch = { commands: { test: testCommand } };
-          assertVerificationOnlyPatch(patch);
-          if (options.persistProjectDefaults) {
-            if (!options.configPath) {
-              throw new Error("Cannot persist project defaults without a config file path");
-            }
-            const updated = await writeProjectSettings(options.configPath, patch);
-            const relative = pathRelativeToRepo(updated.config.repositoryRoot, options.configPath);
-            if (relative) reportPaths = [relative];
+      const testCommand = options.testCommand?.trim();
+      let reportPaths: string[] = [];
+      if (testCommand) {
+        const patch: VerificationSettingsPatch = { commands: { test: testCommand } };
+        assertVerificationOnlyPatch(patch);
+        if (options.persistProjectDefaults) {
+          if (!options.configPath) {
+            throw new Error("Cannot persist project defaults without a config file path");
           }
-          const current = currentVerificationSettings(this.ctx);
-          if (testCommand !== current.commands.test) {
-            state = await applyFrozenConfigRepair(this.ctx, state, patch as ProjectSettingsPatch, {
-              persistedProjectDefaults: Boolean(options.persistProjectDefaults),
-              reportPaths,
-              allowNoChange: false,
-            });
-          }
-        } else if (options.persistProjectDefaults) {
-          throw new Error("persistProjectDefaults requires testCommand when retrying the baseline");
+          await writeProjectSettings(options.configPath, patch);
+          const relative = pathRelativeToRepo(this.ctx.paths.controlRoot, options.configPath);
+          if (relative) reportPaths = [relative];
         }
-
-        state = await this.ctx.store.record(
-          {
-            ...state,
-            verificationBaselineReady: undefined,
-            phase: "planning",
-          },
-          "verification.baseline_retried",
-          {
-            testCommand: testCommand ?? this.ctx.config.commands.test,
-            persistProjectDefaults: Boolean(options.persistProjectDefaults),
+        const current = currentVerificationSettings(this.ctx);
+        if (testCommand !== current.commands.test) {
+          state = await applyFrozenConfigRepair(this.ctx, state, patch as ProjectSettingsPatch, {
+            persistedProjectDefaults: Boolean(options.persistProjectDefaults),
             reportPaths,
-          },
-        );
-        await this.ctx.syncArtifacts(state);
+            allowNoChange: false,
+          });
+        }
+      } else if (options.persistProjectDefaults) {
+        throw new Error("persistProjectDefaults requires testCommand when retrying the baseline");
+      }
 
-        const baseline = await this.runVerificationBaseline(state);
-        return baseline.state;
-      }),
-    );
+      state = await this.ctx.store.record(
+        {
+          ...state,
+          verificationBaselineReady: undefined,
+          phase: "planning",
+        },
+        "verification.baseline_retried",
+        {
+          testCommand: testCommand ?? this.ctx.config.commands.test,
+          persistProjectDefaults: Boolean(options.persistProjectDefaults),
+          reportPaths,
+        },
+      );
+      await this.ctx.syncArtifacts(state);
+
+      const baseline = await this.runVerificationBaseline(state);
+      return baseline.state;
+    });
   }
 
   private async runVerificationBaseline(
@@ -341,7 +350,7 @@ export class PlanningService {
     const command = this.ctx.config.commands.test;
     const gate = this.ctx.config.commands.gates.find((item) => item.command === command);
     const result = await this.ctx.deps.commands.run(command, {
-      cwd: this.ctx.config.repositoryRoot,
+      cwd: this.ctx.paths.workspaceRoot,
       timeoutMs: gate?.timeoutMs ?? 10 * 60 * 1000,
       signal: this.ctx.signalFor(runId),
       ...this.ctx.commandEnvironmentOptions(),
@@ -358,7 +367,7 @@ export class PlanningService {
   ): Promise<RunState> {
     const currentSettings = currentVerificationSettings(this.ctx);
     const evidence = await collectVerificationEvidence(
-      this.ctx.config.repositoryRoot,
+      this.ctx.paths.workspaceRoot,
       currentSettings,
     );
     const allowTools = verificationEvidenceNeedsTools(evidence);

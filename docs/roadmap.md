@@ -25,7 +25,7 @@ Implement GitHub, Linear, and Jira behind `TrackerPort`. Preserve the map-as-ind
 
 ### Parallel task execution
 
-Use isolated worktrees or patch sandboxes per frontier task, with explicit conflict detection and an integration gate. Sequential execution remains the safe default.
+Per-run isolated worktrees (control root vs execution root, late delivery branches, narrowed locks) shipped under [ADR 0010](./adr/0010-per-run-worktrees.md). What remains deferred is **parallel frontier tasks inside one run** — multiple task worktrees/patch sandboxes with explicit conflict detection and an integration gate. Sequential task execution inside a run remains the safe default.
 
 ### Semantic retrieval
 

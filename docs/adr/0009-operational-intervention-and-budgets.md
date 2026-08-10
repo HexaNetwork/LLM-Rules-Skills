@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; shared-working-tree lock grain superseded for worktree-backed runs by [ADR 0010](0010-per-run-worktrees.md). Legacy-shared runs (missing `workspace.json`) still follow this ADR's repository-lock semantics until explicitly migrated.
 
 ## Context
 

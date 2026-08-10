@@ -113,18 +113,18 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
   {
     key: "git.autoCommitPreflight",
     category: "Git",
-    label: "Auto-commit a dirty tree before a run",
+    label: "Auto-commit a dirty tree before a run (legacy)",
     description:
-      "When on, start() commits a dirty working tree itself instead of blocking. Off by default; the blocked-run card always offers this as an explicit action either way.",
+      "Legacy-shared runs only. New worktree runs always start from the committed base branch; a dirty control checkout is a non-blocking notice and is never imported. This setting has no effect on worktree starts.",
     type: "boolean",
     appliesTo: "new_runs",
   },
   {
     key: "git.preflightCommitOrder",
     category: "Git",
-    label: "Preflight commit order",
+    label: "Preflight commit order (legacy)",
     description:
-      "Whether a preflight commit lands on the run branch (cut from current HEAD, not baseBranch) or on the current branch before the run branch is created from baseBranch at start.",
+      "Legacy-shared runs only. Controls whether a dirty-tree recovery commit lands on the run branch first or on the current branch. Worktree runs do not offer these commit-order controls.",
     type: "enum",
     options: [
       { value: "branch-then-commit", label: "Branch then commit" },

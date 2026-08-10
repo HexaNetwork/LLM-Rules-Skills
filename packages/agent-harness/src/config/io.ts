@@ -1,6 +1,11 @@
 import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import yaml from "js-yaml";
+import { resolveHarnessPaths } from "../application/paths.js";
+import {
+  migrateRunWorkspace,
+  type RunWorkspace,
+} from "../domain/workspace.js";
 import {
   CONFIG_NAMES,
   HarnessConfigSchema,
@@ -84,13 +89,42 @@ export async function loadRunConfig(
   _projectConfig: HarnessConfig,
   runId: string,
 ): Promise<HarnessConfig> {
-  const snapshot = path.resolve(
-    _projectConfig.repositoryRoot,
-    _projectConfig.stateDirectory,
-    "runs",
-    runId,
-    "config.json",
-  );
+  const { stateRoot } = resolveHarnessPaths(_projectConfig);
+  const snapshot = path.join(stateRoot, "runs", runId, "config.json");
   const raw: unknown = JSON.parse(await readFile(snapshot, "utf8"));
   return normalizeFrozenRunConfig(raw);
+}
+
+export function runWorkspacePath(projectConfig: HarnessConfig, runId: string): string {
+  const { stateRoot } = resolveHarnessPaths(projectConfig);
+  return path.join(stateRoot, "runs", runId, "workspace.json");
+}
+
+/**
+ * Load workspace metadata. Missing files migrate to `legacy-shared`.
+ */
+export async function loadRunWorkspace(
+  projectConfig: HarnessConfig,
+  runId: string,
+): Promise<RunWorkspace> {
+  const { controlRoot } = resolveHarnessPaths(projectConfig);
+  const snapshot = runWorkspacePath(projectConfig, runId);
+  try {
+    const raw: unknown = JSON.parse(await readFile(snapshot, "utf8"));
+    return migrateRunWorkspace(raw, { controlRoot });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return migrateRunWorkspace(null, { controlRoot });
+    }
+    throw error;
+  }
+}
+
+export async function writeRunWorkspace(
+  projectConfig: HarnessConfig,
+  runId: string,
+  workspace: RunWorkspace,
+): Promise<void> {
+  const snapshot = runWorkspacePath(projectConfig, runId);
+  await writeFile(snapshot, `${JSON.stringify(workspace, null, 2)}\n`, "utf8");
 }

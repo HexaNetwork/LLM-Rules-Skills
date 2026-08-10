@@ -317,10 +317,12 @@ describe("dashboard document", () => {
     expect(html).toContain("Action completed");
   });
 
-  it("labels both dirty-tree preflight buttons with and retry", () => {
+  it("labels both dirty-tree preflight buttons with and retry for legacy-shared only", () => {
     const html = renderDashboard();
 
+    expect(html).toContain('workspaceKind === "legacy-shared"');
     expect(html).toContain("' and retry</button>'");
+    expect(html).toContain("Committed-base worktree");
     expect(html).not.toContain("' instead</button>'");
   });
 
@@ -409,6 +411,17 @@ describe("dashboard document", () => {
     expect(html).toContain("(run.title || \"\") + \" \" + run.idea");
   });
 
+  it("shows worktree, base SHA, and branch pending in delivery status", () => {
+    const html = renderDashboard();
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+
+    expect(script).toContain("branch pending");
+    expect(script).toContain("Base SHA");
+    expect(script).toContain("Worktree");
+    expect(script).toContain("state.detail.workspace");
+    expect(script).not.toContain("Not created yet");
+  });
+
   it("shows an operator note box during grilling/awaiting_input with an ask-me-about-this toggle", () => {
     const html = renderDashboard();
 
@@ -492,6 +505,8 @@ describe("dashboard document", () => {
     const html = renderDashboard();
 
     expect(html).toContain('order === "commit-then-branch" ? "Commit then branch" : "Branch then commit"');
+    expect(html).toContain('data-action="cleanup"');
+    expect(html).toContain('data-action="migrate_workspace"');
   });
 
   it("offers Accept current tree and continue for working-tree divergence blocks", () => {
@@ -500,7 +515,7 @@ describe("dashboard document", () => {
     expect(html).toContain("isTreeDivergence");
     expect(html).toContain('data-action="accept_tree"');
     expect(html).toContain("Accept current tree and continue");
-    expect(html).toContain("Working tree diverged|Diverging paths");
+    expect(html).toContain("Working tree diverged|Workspace diverged|Diverging paths");
   });
 
   it("hides the blocked error card while a recovery job is in flight", () => {

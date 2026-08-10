@@ -1,4 +1,5 @@
 import path from "node:path";
+import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { readFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRunState } from "../../src/domain.js";
@@ -18,7 +19,7 @@ describe("local tracker", () => {
 
   it("writes the confirmed brief and grill resolutions", async () => {
     fixture = await createProjectFixture();
-    const store = new RunStore(fixture.config);
+    const store = new RunStore(fixture.config, resolveHarnessPaths(fixture.config).stateRoot);
     await store.initialize();
     const now = new Date().toISOString();
     let state = createRunState("brief-test", "Ship billing", now);

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { createHash } from "node:crypto";
 import { readFile, utimes, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
@@ -70,7 +71,7 @@ describe("stall protection", () => {
   it("rejects a concurrent runner instead of waiting on its lock", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     await store.create(createRunState("locked", "Test locking", new Date().toISOString()));
     let release!: () => void;
@@ -100,7 +101,7 @@ describe("stall protection", () => {
   it("requires an explicit unlock for a lock naming a dead pid", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     await store.create(createRunState("stale-dead", "Test locking", new Date().toISOString()));
     const lockPath = path.join(store.runDirectory("stale-dead"), "run.lock");
@@ -120,7 +121,7 @@ describe("stall protection", () => {
   it("refuses a lock naming the current process pid regardless of age", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     await store.create(createRunState("alive-pid", "Test locking", new Date().toISOString()));
     const lockPath = path.join(store.runDirectory("alive-pid"), "run.lock");
@@ -145,7 +146,7 @@ describe("stall protection", () => {
   it("refuses an unparseable lock younger than 30 minutes", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     await store.create(createRunState("garbage-lock", "Test locking", new Date().toISOString()));
     const lockPath = path.join(store.runDirectory("garbage-lock"), "run.lock");
@@ -159,7 +160,8 @@ describe("stall protection", () => {
 
 describe("durable transition journal", () => {
   it("recovers a state write and missing event after an interrupted transition", async () => {
-    const store = new RunStore(fixtureConfig(await fixtureRoot()));
+    const config = fixtureConfig(await fixtureRoot());
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     await store.create(createRunState("journal-run", "Journal recovery", new Date().toISOString()));
     const state = await store.load("journal-run");

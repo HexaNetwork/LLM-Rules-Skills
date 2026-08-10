@@ -298,6 +298,48 @@ repositoryRoot: .
     expect(drift).not.toBe(before);
   });
 
+  it("excludes every runtime path and workspace identity field from configurationHash", () => {
+    const base = HarnessConfigSchema.parse({
+      repositoryRoot: "D:/control/root",
+      stateDirectory: "D:/state/root",
+      knowledge: { sharedIndexDirectory: "D:/shared/index" },
+    });
+    const stamped = configurationHash(base);
+
+    expect(
+      configurationHash({
+        ...base,
+        repositoryRoot: "E:/other/control",
+        stateDirectory: "E:/other/state",
+        knowledge: {
+          ...base.knowledge,
+          sharedIndexDirectory: "E:/other/shared",
+        },
+      }),
+    ).toBe(stamped);
+
+    // Workspace identity is runtime metadata; even if present on a snapshot it must not hash.
+    expect(
+      configurationHash({
+        ...base,
+        worktreePath: "D:/state/worktrees/run-1",
+        controlRoot: "D:/control/root",
+        gitCommonDir: "D:/control/root/.git",
+        baseSha: "a".repeat(40),
+        branchName: "agent/feature-run",
+        headSha: "b".repeat(40),
+      }),
+    ).toBe(stamped);
+
+    // Policy still hashes: git.baseBranch is an intentional run policy choice.
+    expect(
+      configurationHash({
+        ...base,
+        git: { ...base.git, baseBranch: "develop" },
+      }),
+    ).not.toBe(stamped);
+  });
+
   it("persists ignoredArtifactPatterns via project settings without mutating frozen runs", async () => {
     const root = await fixtureRoot();
     const configPath = path.join(root, "agent-harness.config.yaml");

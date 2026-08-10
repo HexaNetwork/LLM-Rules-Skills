@@ -1,10 +1,10 @@
 import path from "node:path";
 import type { InvokeInput } from "../agent.js";
 import {
-  HarnessConfigSchema,
-  configurationHash,
+  loadRunWorkspace,
   normalizeFrozenRunConfig,
   ProjectSettingsPatchSchema,
+  writeRunWorkspace,
   type PreflightCommitOrder,
 } from "../config.js";
 import {
@@ -12,6 +12,7 @@ import {
   FixerPlanSchema,
   WorkerOutputSchema,
   clearBlock,
+  decideWorktreeCleanup,
   isCancelSettled,
   isTerminalPhase,
   type FixerRecovery,
@@ -22,6 +23,7 @@ import {
 } from "../domain.js";
 import { classifyFailure, HarnessFailure, RunCancelledError } from "../errors.js";
 import { commandEvidence, runApprovedInstall } from "../commands.js";
+import { WorktreeManager } from "../git/worktree-manager.js";
 import type { ApplicationContext } from "./application-context.js";
 import { applyFrozenConfigRepair } from "./frozen-config-repair.js";
 import type { InterviewService } from "./interview-service.js";
@@ -30,16 +32,42 @@ import {
   defaultPreflightCommitMessage,
   indexOfTaskForReportedPaths,
   isConfigFixerCandidate,
+  offersPreflightCommitOrders,
   pendingInstallApprovals,
   preflightCommitDetail,
+  preflightCommitUnavailableMessage,
   repairRoute,
   unique,
   type CancelResult,
+  type CleanupResult,
+  type MigrateWorkspaceResult,
   type PreflightCommitResult,
 } from "./helpers.js";
+import { updateRunConfig } from "./update-run-config.js";
 import { accrueRunUsage } from "./usage-ledger.js";
 
 const terminal = isTerminalPhase;
+
+function cleanupRefusalMessage(reason: string): string {
+  switch (reason) {
+    case "run-not-settled":
+      return "Refusing cleanup: run is still active. Cancel or complete it first.";
+    case "dirty-worktree":
+      return "Refusing cleanup: run worktree is dirty. Commit, stash, or discard local changes first.";
+    case "path-invalid":
+      return "Refusing cleanup: recorded worktree path failed validation.";
+    case "not-registered":
+      return "Refusing cleanup: worktree is not registered in git worktree list.";
+    case "git-common-dir-mismatch":
+      return "Refusing cleanup: worktree does not match the recorded Git common directory.";
+    case "unpublished-requires-discard":
+      return "Refusing cleanup: commits are not reachable from a retained named ref. Pass --discard to explicitly discard unpublished work.";
+    case "not-git-worktree":
+      return "Refusing cleanup: run is not a git-worktree workspace.";
+    default:
+      return `Refusing cleanup (${reason}).`;
+  }
+}
 
 export class RecoveryService {
   constructor(
@@ -78,7 +106,7 @@ export class RecoveryService {
   }
 
   async proposeFix(runId: string, guidance: string): Promise<RunState> {
-    return this.ctx.store.withRepositoryLock({ runId, action: "proposeFix" }, () => this.ctx.store.withLock(runId, async () => {
+    return this.ctx.withMutatingRunLock(runId, "proposeFix", async () => {
       const state = await this.ctx.store.load(runId);
       if (state.phase !== "blocked" || !state.failure || !state.blockedFrom) {
         throw new Error(`Run ${runId} is not blocked with a recoverable failure`);
@@ -87,7 +115,7 @@ export class RecoveryService {
         return this.proposeConfigFix(state, guidance.trim());
       }
       return this.proposeFileFix(state, guidance.trim());
-    }));
+    });
   }
 
   private async proposeConfigFix(state: RunState, guidance: string): Promise<RunState> {
@@ -208,7 +236,7 @@ export class RecoveryService {
       reportPaths?: string[];
     },
   ): Promise<RunState> {
-    return this.ctx.store.withRepositoryLock({ runId, action: "applyApprovedFix" }, () => this.ctx.store.withLock(runId, async () => {
+    return this.ctx.withMutatingRunLock(runId, "applyApprovedFix", async () => {
       let state = await this.ctx.store.load(runId);
       const recovery = state.fixerRecovery;
       if (state.phase !== "blocked" || !state.blockedFrom || !recovery || recovery.status !== "proposed") {
@@ -243,13 +271,14 @@ export class RecoveryService {
           result: `Applied recommended configuration repair: ${JSON.stringify(configPatch)}`,
           changedFiles: unique(options?.reportPaths ?? []),
         };
+        const stamped = this.ctx.config.git.enabled
+          ? await this.ctx.stampWorkspaceEvidence()
+          : undefined;
         const updated = await this.ctx.store.record(
           {
             ...clearBlock(state, resumePhase),
             fixerRecovery: appliedRecovery,
-            treeFingerprint: this.ctx.config.git.enabled
-              ? await this.ctx.git.treeFingerprint()
-              : state.treeFingerprint,
+            ...(stamped ?? {}),
           },
           "fixer.applied",
           {
@@ -294,10 +323,10 @@ export class RecoveryService {
       const result = invoked.value;
       const changedFiles = this.ctx.config.git.enabled ? await this.ctx.git.changedFiles() : result.changedFiles;
       const allowedPaths = new Set(
-        recovery.plan.allowedPaths.map((candidate) => normalizeRecoveryPath(candidate, this.ctx.config.repositoryRoot)),
+        recovery.plan.allowedPaths.map((candidate) => normalizeRecoveryPath(candidate, this.ctx.paths.workspaceRoot)),
       );
       const unexpectedChanges = changedFiles.filter(
-        (candidate) => !allowedPaths.has(normalizeRecoveryPath(candidate, this.ctx.config.repositoryRoot)),
+        (candidate) => !allowedPaths.has(normalizeRecoveryPath(candidate, this.ctx.paths.workspaceRoot)),
       );
       if (unexpectedChanges.length > 0) {
         throw new HarnessFailure(
@@ -313,18 +342,21 @@ export class RecoveryService {
         result: result.summary,
         changedFiles: unique(changedFiles),
       };
+      const stamped = this.ctx.config.git.enabled
+        ? await this.ctx.stampWorkspaceEvidence()
+        : undefined;
       const updated = await this.ctx.store.record(
         {
           ...clearBlock(state, resumePhase),
           fixerRecovery: appliedRecovery,
-          treeFingerprint: this.ctx.config.git.enabled ? await this.ctx.git.treeFingerprint() : state.treeFingerprint,
+          ...(stamped ?? {}),
         },
         "fixer.applied",
         { summary: result.summary, changedFiles: appliedRecovery.changedFiles, role: "fixer" },
       );
       await this.ctx.syncArtifacts(updated);
       return updated;
-    }));
+    });
   }
 
   async retry(
@@ -365,97 +397,92 @@ export class RecoveryService {
   /**
    * Rewrite maxRunTokens / maxRunCostUsd on the frozen run config snapshot and
    * re-stamp configurationHash so resume does not treat it as config drift.
+   * Caller must hold the run lock.
    */
-
   async raiseRunBudget(
     state: RunState,
     ceilings: { maxRunTokens?: number; maxRunCostUsd?: number },
   ): Promise<RunState> {
-    if (ceilings.maxRunTokens != null) {
-      this.ctx.config.workflow.maxRunTokens = ceilings.maxRunTokens;
-    }
-    if (ceilings.maxRunCostUsd != null) {
-      this.ctx.config.workflow.maxRunCostUsd = ceilings.maxRunCostUsd;
-    }
-    // Validate via the same schema that freezes run configs.
-    const parsed = HarnessConfigSchema.parse(this.ctx.config);
-    this.ctx.config.workflow.maxRunTokens = parsed.workflow.maxRunTokens;
-    this.ctx.config.workflow.maxRunCostUsd = parsed.workflow.maxRunCostUsd;
-
-    const raw = (await this.ctx.store.readJson(state.runId, "config.json")) as Record<string, unknown>;
-    const frozenVersion =
-      typeof raw.configVersion === "number" ? raw.configVersion : state.configVersion;
-    const frozenWorkflow =
-      typeof raw.workflow === "object" && raw.workflow !== null && !Array.isArray(raw.workflow)
-        ? (raw.workflow as Record<string, unknown>)
-        : {};
-    // Persist intentional budget mutations onto the frozen snapshot — do not dump live overlays.
-    await this.ctx.store.writeJson(state.runId, "config.json", {
-      ...raw,
+    const patch = {
       workflow: {
-        ...frozenWorkflow,
-        maxRunTokens: parsed.workflow.maxRunTokens,
-        maxRunCostUsd: parsed.workflow.maxRunCostUsd,
+        ...(ceilings.maxRunTokens != null ? { maxRunTokens: ceilings.maxRunTokens } : {}),
+        ...(ceilings.maxRunCostUsd != null ? { maxRunCostUsd: ceilings.maxRunCostUsd } : {}),
       },
-      configVersion: frozenVersion,
-    });
-    return {
-      ...state,
-      configurationHash: configurationHash(this.ctx.config),
     };
+    const result = await updateRunConfig(
+      this.ctx,
+      state.runId,
+      state.configRevision ?? 0,
+      patch,
+      {
+        reason: "budget",
+        detail: {
+          ...(ceilings.maxRunTokens != null ? { maxRunTokens: ceilings.maxRunTokens } : {}),
+          ...(ceilings.maxRunCostUsd != null ? { maxRunCostUsd: ceilings.maxRunCostUsd } : {}),
+        },
+      },
+      { alreadyLocked: true, allowNoChange: true },
+    );
+    return result.state;
   }
 
   /**
    * Operator accepts the current working tree after a divergence block: re-stamps
-   * `treeFingerprint`, clears the block, and audits `run.tree_accepted`.
+   * workspace evidence, clears the block, and audits `run.workspace_accepted`.
    * Optional `reportPaths` are appended to the active task's `changedFiles` so a
    * follow-on commit (e.g. after ignore_artifacts dirties the project config) treats
    * them as intentional rather than unreported.
    */
 
   async acceptTree(runId: string, options?: { reportPaths?: string[] }): Promise<RunState> {
-    return this.ctx.store.withRepositoryLock({ runId, action: "acceptTree" }, async () =>
-      this.ctx.store.withLock(runId, async () => {
-        let state = await this.ctx.store.load(runId);
-        if (state.phase !== "blocked" || !state.blockedFrom) {
-          throw new Error(`Run ${runId} is not resumably blocked`);
+    return this.ctx.withMutatingRunLock(runId, "acceptTree", async () => {
+      let state = await this.ctx.store.load(runId);
+      if (state.phase !== "blocked" || !state.blockedFrom) {
+        throw new Error(`Run ${runId} is not resumably blocked`);
+      }
+      const resumePhase = state.blockedFrom;
+      const previousEvidence = state.workspaceEvidence;
+      const previousFingerprint = previousEvidence?.fingerprint ?? state.treeFingerprint;
+      const reportPaths = unique(
+        (options?.reportPaths ?? []).map((file) => file.replaceAll("\\", "/")),
+      );
+      if (reportPaths.length > 0) {
+        const targetIndex = indexOfTaskForReportedPaths(state);
+        if (targetIndex >= 0) {
+          state = {
+            ...state,
+            tasks: state.tasks.map((task, index) =>
+              index === targetIndex
+                ? { ...task, changedFiles: unique([...task.changedFiles, ...reportPaths]) }
+                : task,
+            ),
+          };
         }
-        const resumePhase = state.blockedFrom;
-        const previousFingerprint = state.treeFingerprint;
-        const reportPaths = unique(
-          (options?.reportPaths ?? []).map((file) => file.replaceAll("\\", "/")),
-        );
-        if (reportPaths.length > 0) {
-          const targetIndex = indexOfTaskForReportedPaths(state);
-          if (targetIndex >= 0) {
-            state = {
-              ...state,
-              tasks: state.tasks.map((task, index) =>
-                index === targetIndex
-                  ? { ...task, changedFiles: unique([...task.changedFiles, ...reportPaths]) }
-                  : task,
-              ),
-            };
-          }
-        }
-        const recorded = new Set(state.tasks.flatMap((task) => task.changedFiles));
-        const current = this.ctx.config.git.enabled ? await this.ctx.git.changedFiles() : [];
-        const divergingPaths = current.filter((file) => !recorded.has(file));
-        const listed = divergingPaths.length > 0 ? divergingPaths : current;
-        const treeFingerprint = await this.ctx.git.treeFingerprint();
-        state = await this.ctx.store.record(
-          { ...clearBlock(state, resumePhase), treeFingerprint },
-          "run.tree_accepted",
-          {
-            previousFingerprint,
-            treeFingerprint,
-            divergingPaths: listed,
-            ...(reportPaths.length > 0 ? { reportPaths } : {}),
-          },
-        );
-        return state;
-      }),
-    );
+      }
+      const recorded = new Set(state.tasks.flatMap((task) => task.changedFiles));
+      const current = this.ctx.config.git.enabled ? await this.ctx.git.changedFiles() : [];
+      const divergingPaths = current.filter((file) => !recorded.has(file));
+      const listed = divergingPaths.length > 0 ? divergingPaths : current;
+      const stamped = this.ctx.config.git.enabled
+        ? await this.ctx.stampWorkspaceEvidence()
+        : undefined;
+      state = await this.ctx.store.record(
+        {
+          ...clearBlock(state, resumePhase),
+          ...(stamped ?? {}),
+        },
+        "run.workspace_accepted",
+        {
+          previousFingerprint,
+          treeFingerprint: stamped?.treeFingerprint,
+          previousEvidence,
+          acceptedEvidence: stamped?.workspaceEvidence,
+          divergingPaths: listed,
+          ...(reportPaths.length > 0 ? { reportPaths } : {}),
+        },
+      );
+      return state;
+    });
   }
 
   /** Resolves a dirty tree the harness itself found by committing it, then clears the block like retry(). */
@@ -464,45 +491,59 @@ export class RecoveryService {
     runId: string,
     options?: { order?: PreflightCommitOrder; message?: string },
   ): Promise<RunState> {
-    // Lock ordering: repository → run (mutates the shared working tree).
-    return this.ctx.store.withRepositoryLock({ runId, action: "commitPreflight" }, async () =>
-      this.ctx.store.withLock(runId, async () => {
-        let state = await this.ctx.store.load(runId);
-        if (state.phase !== "blocked" || !state.blockedFrom) {
-          throw new Error(`Run ${runId} is not resumably blocked`);
-        }
-        const order = options?.order ?? this.ctx.config.git.preflightCommitOrder;
-        const message = options?.message ?? defaultPreflightCommitMessage(runId);
-        const commit = await this.runPreflightCommit(runId, order, message);
-        // Fingerprint after ensureRunBranch: that hop can move HEAD.
-        let branchName = commit.runBranch ?? state.branchName;
-        let cutRunBranch = false;
-        if (order === "commit-then-branch" && this.ctx.config.git.enabled) {
-          const ensured = await this.ctx.git.ensureRunBranch(runId);
-          if (ensured) {
-            cutRunBranch = ensured !== branchName;
-            branchName = ensured;
-          }
-        }
-        state = await this.ctx.store.record(
-          {
-            ...clearBlock(state, state.blockedFrom),
-            branchName,
-            treeFingerprint: await this.ctx.git.treeFingerprint(),
-          },
-          "run.preflight_committed",
-          preflightCommitDetail(order, commit, false),
+    return this.ctx.withMutatingRunLock(runId, "commitPreflight", async () => {
+      let state = await this.ctx.store.load(runId);
+      if (state.phase !== "blocked" || !state.blockedFrom) {
+        throw new Error(`Run ${runId} is not resumably blocked`);
+      }
+      if (!offersPreflightCommitOrders(this.ctx.workspace.kind)) {
+        throw new HarnessFailure(
+          preflightCommitUnavailableMessage(this.ctx.workspace.kind),
+          "workspace",
+          false,
         );
-        if (cutRunBranch && branchName) {
-          state = await this.ctx.store.record(
-            state,
-            "run.branch_ready",
-            { branch: branchName, baseBranch: this.ctx.config.git.baseBranch },
-          );
+      }
+      const order = options?.order ?? this.ctx.config.git.preflightCommitOrder;
+      const message = options?.message ?? defaultPreflightCommitMessage(runId);
+      const commit = await this.runPreflightCommit(runId, order, message);
+      // Fingerprint after ensureRunBranch: that hop can move HEAD.
+      let branchName = commit.runBranch ?? state.branchName;
+      let cutRunBranch = false;
+      if (order === "commit-then-branch" && this.ctx.config.git.enabled) {
+        // Shared branch-ref creation takes the short workspace-admin lock.
+        const ensured = await this.ctx.store.withWorkspaceAdminLock(
+          { runId, action: "create-run-branch" },
+          () =>
+            this.ctx.usesGitWorktree()
+              ? this.ctx.git.createRunBranchFromHead(runId)
+              : this.ctx.git.ensureRunBranch(runId),
+        );
+        if (ensured) {
+          cutRunBranch = ensured !== branchName;
+          branchName = ensured;
         }
-        return state;
-      }),
-    );
+      }
+      const stamped = this.ctx.config.git.enabled
+        ? await this.ctx.stampWorkspaceEvidence()
+        : undefined;
+      state = await this.ctx.store.record(
+        {
+          ...clearBlock(state, state.blockedFrom),
+          branchName,
+          ...(stamped ?? {}),
+        },
+        "run.preflight_committed",
+        preflightCommitDetail(order, commit, false),
+      );
+      if (cutRunBranch && branchName) {
+        state = await this.ctx.store.record(
+          state,
+          "run.branch_ready",
+          { branch: branchName, baseBranch: this.ctx.config.git.baseBranch },
+        );
+      }
+      return state;
+    });
   }
 
   async runPreflightCommit(
@@ -512,7 +553,10 @@ export class RecoveryService {
   ): Promise<PreflightCommitResult> {
     // branch-then-commit must cut the branch before committing so the dirty tree rides onto it.
     if (order === "branch-then-commit") {
-      const runBranch = await this.ctx.git.createRunBranchFromHead(runId);
+      const runBranch = await this.ctx.store.withWorkspaceAdminLock(
+        { runId, action: "create-run-branch" },
+        () => this.ctx.git.createRunBranchFromHead(runId),
+      );
       const result = await this.ctx.git.commitWorkingTree(message);
       return { committedBranch: runBranch, runBranch, sha: result.sha, files: result.files };
     }
@@ -551,6 +595,152 @@ export class RecoveryService {
       return { state: locked.value, pending: false };
     }
     return { state: await this.ctx.store.load(runId), pending: true };
+  }
+
+  /**
+   * Explicit migration: move a clean legacy-shared run onto a registered worktree at HEAD.
+   * Refuses when the shared tree is dirty; never migrates silently.
+   */
+  async migrateWorkspace(runId: string): Promise<MigrateWorkspaceResult> {
+    return this.ctx.withMutatingRunLock(runId, "migrateWorkspace", async () => {
+      const state = await this.ctx.store.load(runId);
+      const workspace = await loadRunWorkspace(this.ctx.config, runId);
+      this.ctx.bindWorkspace(workspace);
+
+      if (workspace.kind !== "legacy-shared") {
+        throw new HarnessFailure(
+          `Workspace migration only applies to legacy-shared runs (this run is ${workspace.kind})`,
+          "workspace",
+          false,
+        );
+      }
+      if (!this.ctx.config.git.enabled) {
+        throw new HarnessFailure("Cannot migrate workspace while git.enabled is false", "config", false);
+      }
+
+      const dirty = await this.ctx.git.changedFiles();
+      if (dirty.length > 0) {
+        throw new HarnessFailure(
+          `Refusing to migrate a dirty legacy checkout. Commit or stash first: ${dirty.slice(0, 10).join(", ")}`,
+          "workspace",
+          false,
+        );
+      }
+
+      const evidence = await this.ctx.git.workspaceEvidence();
+      const headSha = evidence.headSha;
+      const currentBranch = await this.ctx.git.currentBranch();
+      const sourceBranch =
+        workspace.branchName ?? state.branchName ?? currentBranch ?? this.ctx.config.git.baseBranch;
+      const baseBranch = workspace.baseBranch ?? this.ctx.config.git.baseBranch;
+
+      const manager = new WorktreeManager({
+        controlRoot: this.ctx.paths.controlRoot,
+        stateRoot: this.ctx.paths.stateRoot,
+        store: this.ctx.store,
+      });
+      const migrated = await manager.create({
+        runId,
+        baseBranch,
+        baseSha: headSha,
+        branchName: sourceBranch,
+      });
+      await writeRunWorkspace(this.ctx.config, runId, migrated);
+      this.ctx.bindWorkspace(migrated);
+
+      const nextState = await this.ctx.store.record(state, "run.workspace_migrated", {
+        sourceKind: "legacy-shared",
+        sourceBranch,
+        sourceSha: headSha,
+        baseBranch: migrated.baseBranch,
+        baseSha: migrated.baseSha,
+        kind: migrated.kind,
+      });
+      return { state: nextState, workspace: migrated };
+    });
+  }
+
+  /**
+   * Explicitly remove a settled run's registered worktree after conservative checks.
+   * Never prunes abandoned worktrees implicitly. Retains workspace.json, state, events, and branch.
+   */
+  async cleanup(
+    runId: string,
+    options?: { discard?: boolean },
+  ): Promise<CleanupResult> {
+    return this.ctx.withMutatingRunLock(runId, "cleanup", async () => {
+      const state = await this.ctx.store.load(runId);
+      const workspace = await loadRunWorkspace(this.ctx.config, runId);
+      this.ctx.bindWorkspace(workspace);
+
+      if (workspace.kind !== "git-worktree") {
+        throw new HarnessFailure(
+          `Cleanup only applies to git-worktree runs (this run is ${workspace.kind})`,
+          "workspace",
+          false,
+        );
+      }
+
+      if (workspace.removedAt) {
+        return {
+          state,
+          removed: false,
+          reason: "already-removed",
+          retainedBranch: workspace.branchName ?? state.branchName,
+        };
+      }
+
+      const manager = new WorktreeManager({
+        controlRoot: this.ctx.paths.controlRoot,
+        stateRoot: this.ctx.paths.stateRoot,
+        store: this.ctx.store,
+      });
+      const inspection = await manager.inspectCleanupTarget(workspace);
+      const retainedBranch = workspace.branchName ?? state.branchName;
+      const decision = decideWorktreeCleanup({
+        phase: state.phase,
+        workspaceKind: workspace.kind,
+        alreadyRemoved: false,
+        dirty: inspection.dirty,
+        pathValid: inspection.pathValid,
+        registered: inspection.registered,
+        gitCommonDirMatches: inspection.gitCommonDirMatches,
+        commitsReachableFromRetainedRef: inspection.commitsReachableFromRetainedRef,
+        hasRetainedNamedRef: Boolean(retainedBranch),
+        discard: options?.discard === true,
+      });
+
+      if (!decision.allow) {
+        throw new HarnessFailure(cleanupRefusalMessage(decision.reason), "workspace", false);
+      }
+
+      await manager.removeRegisteredWorktree(workspace, runId);
+      const removedAt = new Date().toISOString();
+      const nextWorkspace = {
+        ...workspace,
+        removedAt,
+        branchName: retainedBranch ?? workspace.branchName,
+      };
+      await writeRunWorkspace(this.ctx.config, runId, nextWorkspace);
+      this.ctx.bindWorkspace(nextWorkspace);
+
+      const nextState = await this.ctx.store.record(
+        state,
+        "run.worktree_removed",
+        {
+          reason: decision.reason,
+          discarded: options?.discard === true,
+          ...(retainedBranch ? { retainedBranch } : {}),
+          ...(inspection.headSha ? { headSha: inspection.headSha } : {}),
+        },
+      );
+      return {
+        state: nextState,
+        removed: true,
+        reason: decision.reason,
+        retainedBranch,
+      };
+    });
   }
 
   /** Finish the current task, then halt before starting the next frontier task. */
@@ -615,9 +805,8 @@ export class RecoveryService {
     runId: string,
     decisions: { accepted?: string[]; denied?: string[] },
   ): Promise<RunState> {
-    // Installs mutate manifests and lockfiles, so they need the same shared
-    // worktree exclusion as an advancing run. Keep repository -> run ordering.
-    return this.ctx.store.withRepositoryLock({ runId, action: "resolve-installs" }, () => this.ctx.store.withLock(runId, async () => {
+    // Legacy-shared installs still take the repository lock; worktree installs are run-local.
+    return this.ctx.withMutatingRunLock(runId, "resolve-installs", async () => {
       let state = await this.ctx.store.load(runId);
       const pending = pendingInstallApprovals(state);
       if (state.phase !== "awaiting_input" || pending.length === 0) {
@@ -656,7 +845,7 @@ export class RecoveryService {
           continue;
         }
         const result = await runApprovedInstall(item.manager, item.packages, {
-          cwd: this.ctx.config.repositoryRoot,
+          cwd: this.ctx.paths.workspaceRoot,
           timeoutMs: 10 * 60 * 1000,
           signal: this.ctx.signalFor(runId),
           ...this.ctx.commandEnvironmentOptions(),
@@ -690,12 +879,15 @@ export class RecoveryService {
         });
       }
 
+      const stamped = this.ctx.config.git.enabled
+        ? await this.ctx.stampWorkspaceEvidence()
+        : undefined;
       state = await this.ctx.store.record(
         {
           ...state,
           proposedInstalls: nextInstalls,
           phase: "executing",
-          treeFingerprint: await this.ctx.git.treeFingerprint(),
+          ...(stamped ?? {}),
         },
         "installs.resolved",
         {
@@ -705,7 +897,7 @@ export class RecoveryService {
       );
       await this.ctx.syncArtifacts(state);
       return state;
-    }));
+    });
   }
 
   /**

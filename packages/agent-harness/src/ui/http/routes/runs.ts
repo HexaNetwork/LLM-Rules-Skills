@@ -5,8 +5,10 @@ import {
   HarnessConfigSchema,
   ProjectSettingsPatchSchema,
   loadRunConfig,
+  loadRunWorkspace,
   writeProjectSettings,
 } from "../../../config.js";
+import { openRunHarness } from "../../../application/run-engine-factory.js";
 import { HarnessEngine } from "../../../engine.js";
 import { VerificationSettingsPatchSchema } from "../../../domain.js";
 import { GitService, pathToIgnoredArtifactGlob } from "../../../git.js";
@@ -152,8 +154,17 @@ export async function handleRunsRoutes(
         if (latest.phase === "blocked" || latest.phase === "cancelled" || latest.phase === "completed") {
           return;
         }
+        const opened = await openRunHarness(projectConfig, runId, {
+          backend: ctx.backend,
+          store: ctx.store,
+        });
         ctx.jobs.setDetail(runId, "Checking Graphify for this project");
-        const graphifyReady = await prepareGraphifyForRun(runConfig);
+        const graphifyReady = await prepareGraphifyForRun(
+          opened.config,
+          undefined,
+          undefined,
+          opened.paths,
+        );
         if (graphifyReady.enabled) {
           ctx.jobs.setDetail(
             runId,
@@ -170,9 +181,11 @@ export async function handleRunsRoutes(
         ) {
           return;
         }
-        await ctx.knowledge.refresh((progress) => {
-          ctx.jobs.setDetail(runId, progress.message);
-        });
+        await ctx.store.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>
+          opened.engine.knowledge.refresh((progress) => {
+            ctx.jobs.setDetail(runId, progress.message);
+          }),
+        );
         const beforeAdvance = await ctx.store.load(runId);
         if (
           beforeAdvance.phase === "blocked" ||
@@ -181,7 +194,7 @@ export async function handleRunsRoutes(
         ) {
           return;
         }
-        await engine.advance(runId);
+        await opened.engine.advance(runId);
       });
     }
     json(response, 202, { run: summarizeRun(state, ctx.jobs.get(runId)) });
@@ -201,14 +214,16 @@ export async function handleRunsRoutes(
       json(response, 200, { unchanged: true, signature });
       return true;
     }
-    const [events, sessions, agentActivity, artifacts, runConfig, installLog] = await Promise.all([
-      readEvents(ctx.store, runId),
-      readSessionSummaries(ctx.store, runId),
-      readAgentActivity(ctx.store, runId),
-      listArtifacts(ctx.store, runId),
-      loadRunConfig(projectConfig, runId).catch(() => null),
-      readInstallLog(ctx.store, runId),
-    ]);
+    const [events, sessions, agentActivity, artifacts, runConfig, installLog, workspace] =
+      await Promise.all([
+        readEvents(ctx.store, runId),
+        readSessionSummaries(ctx.store, runId),
+        readAgentActivity(ctx.store, runId),
+        listArtifacts(ctx.store, runId),
+        loadRunConfig(projectConfig, runId).catch(() => null),
+        readInstallLog(ctx.store, runId),
+        loadRunWorkspace(projectConfig, runId).catch(() => null),
+      ]);
     // git.currentBranch spawns a subprocess; only pay for it when the UI
     // actually needs it (blocked runs), and never fold it into the signature.
     const git =
@@ -227,6 +242,16 @@ export async function handleRunsRoutes(
           maxContextTurns: runConfig.workflow.maxContextTurns,
         }
       : undefined;
+    const deliveryWorkspace = workspace
+      ? {
+          kind: workspace.kind,
+          worktreePath: workspace.worktreePath,
+          baseBranch: workspace.baseBranch,
+          baseSha: workspace.baseSha,
+          branchName: workspace.branchName ?? state.branchName,
+          removedAt: workspace.removedAt,
+        }
+      : undefined;
     json(response, 200, {
       state,
       job,
@@ -239,6 +264,7 @@ export async function handleRunsRoutes(
       signature,
       ...(git ? { git } : {}),
       ...(ceilings ? { ceilings } : {}),
+      ...(deliveryWorkspace ? { workspace: deliveryWorkspace } : {}),
     });
     return true;
   }
@@ -263,8 +289,16 @@ export async function handleRunsRoutes(
     ) {
       throw new HttpError(503, ctx.agentReadiness.message ?? "The configured agent backend is unavailable");
     }
-    const runConfig = await loadRunConfig(projectConfig, runId);
-    const engine = new HarnessEngine(runConfig, { backend: ctx.backend });
+    const opened = await openRunHarness(
+      projectConfig,
+      runId,
+      { backend: ctx.backend, store: ctx.store },
+      {
+        validateWorktree:
+          action !== "cancel" && action !== "note" && action !== "stop",
+      },
+    );
+    const engine = opened.engine;
     if (action === "continue") {
       ctx.jobs.enqueue(runId, action, () => engine.advance(runId));
     } else if (action === "resume") {
@@ -274,9 +308,11 @@ export async function handleRunsRoutes(
       // and rebuild knowledge first in case the index was cleared while
       // the dashboard was stopped.
       ctx.jobs.enqueue(runId, "resume run", async () => {
-        await ctx.knowledge.refresh((progress) => {
-          ctx.jobs.setDetail(runId, progress.message);
-        });
+        await ctx.store.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>
+          engine.knowledge.refresh((progress) => {
+            ctx.jobs.setDetail(runId, progress.message);
+          }),
+        );
         await engine.advance(runId);
       });
     } else if (action === "answer") {
@@ -330,6 +366,13 @@ export async function handleRunsRoutes(
         await engine.advance(runId);
       });
     } else if (action === "commit_preflight") {
+      if (opened.workspace.kind !== "legacy-shared") {
+        throw new HttpError(
+          400,
+          "Preflight commit-order controls are only available for legacy-shared runs. " +
+            "Worktree runs start from the committed base and never import control-checkout dirt.",
+        );
+      }
       const order = optionalEnum(body.order, "order", PREFLIGHT_COMMIT_ORDER_VALUES);
       const message = optionalString(body.message, "message", 500);
       ctx.jobs.enqueue(runId, action, async () => {
@@ -337,6 +380,17 @@ export async function handleRunsRoutes(
         await engine.commitPreflight(runId, { order, message });
         ctx.jobs.setDetail(runId, "Resuming the run");
         await engine.advance(runId);
+      });
+    } else if (action === "cleanup") {
+      const discard = optionalBoolean(body.discard, "discard") ?? false;
+      ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Cleaning up run worktree");
+        await engine.cleanup(runId, { discard });
+      });
+    } else if (action === "migrate_workspace") {
+      ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Migrating legacy workspace to a worktree");
+        await engine.migrateWorkspace(runId);
       });
     } else if (action === "accept_tree") {
       ctx.jobs.enqueue(runId, action, async () => {

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { RunStore } from "../../src/store.js";
 import { createRunState } from "../../src/domain.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 describe("concurrent state.json read/write", () => {
   it("reads stay clean while writeState swaps the file underneath", async () => {
-    const store = new RunStore(fixtureConfig(await fixtureRoot()));
+    const config = fixtureConfig(await fixtureRoot());
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     let state = createRunState("race-run", "Race the reader", new Date().toISOString(), "hash", 1);
     await store.create(state);

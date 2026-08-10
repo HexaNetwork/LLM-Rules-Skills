@@ -13,6 +13,7 @@ import {
   loadRunConfig,
   type HarnessConfig,
 } from "../config.js";
+import { openRunHarness } from "../application/run-engine-factory.js";
 import { HarnessEngine } from "../engine.js";
 import { GitService } from "../git.js";
 import {
@@ -249,6 +250,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           ? await readFile(path.resolve(options.idea.slice(1)), "utf8")
           : options.idea;
         let state = await engine.start(idea, options.runId ?? randomUUID());
+        await printControlCheckoutNotice(engine, state.runId);
         if (options.advance) state = await engine.advance(state.runId);
         printState(state);
       },
@@ -260,8 +262,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
     .action(async (options: { runId: string; config?: string }) => {
-      const config = await runConfig(options.config, options.runId);
-      const engine = new HarnessEngine(config, { backend: dependencies.createBackend() });
+      const engine = await openRunEngine(options.config, options.runId, dependencies.createBackend);
       const state = await engine.advance(options.runId);
       printState(state);
     });
@@ -282,8 +283,11 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         config?: string;
         advance: boolean;
       }) => {
-        const config = await runConfig(options.config, options.runId);
-        const engine = new HarnessEngine(config, { backend: dependencies.createBackend() });
+        const engine = await openRunEngine(
+          options.config,
+          options.runId,
+          dependencies.createBackend,
+        );
         let state = await engine.answer(options.runId, options.question, options.text);
         if (options.advance) state = await engine.advance(options.runId);
         printState(state);
@@ -304,8 +308,11 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         config?: string;
         advance: boolean;
       }) => {
-        const config = await runConfig(options.config, options.runId);
-        const engine = new HarnessEngine(config, { backend: dependencies.createBackend() });
+        const engine = await openRunEngine(
+          options.config,
+          options.runId,
+          dependencies.createBackend,
+        );
         let state = await engine.confirmGrill(options.runId, { feedback: options.feedback });
         if (options.advance) state = await engine.advance(options.runId);
         printState(state);
@@ -342,8 +349,9 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         advance: boolean;
       }) => {
         const loaded = await loadConfig(options.config);
-        const config = await loadRunConfig(loaded.config, options.runId);
-        const engine = new HarnessEngine(config, { backend: dependencies.createBackend() });
+        let opened = await openRunHarness(loaded.config, options.runId, {
+          backend: dependencies.createBackend(),
+        });
         const hasOverrides =
           options.testCommand != null || options.testPathPattern.length > 0;
         if (options.keepCurrent && hasOverrides) {
@@ -360,17 +368,17 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
                   ? { workflow: { testPathPatterns: options.testPathPattern } }
                   : {}),
               };
-        let state = await engine.confirmVerification(options.runId, {
+        let state = await opened.engine.confirmVerification(options.runId, {
           keepCurrent: options.keepCurrent,
           patch,
           persistProjectDefaults: options.persistProjectDefaults,
           configPath: loaded.path,
         });
         if (options.advance) {
-          const refreshed = await loadRunConfig(loaded.config, options.runId);
-          state = await new HarnessEngine(refreshed, {
+          opened = await openRunHarness(loaded.config, options.runId, {
             backend: dependencies.createBackend(),
-          }).advance(options.runId);
+          });
+          state = await opened.engine.advance(options.runId);
         }
         printState(state);
       },
@@ -397,21 +405,22 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         advance: boolean;
       }) => {
         const loaded = await loadConfig(options.config);
-        const config = await loadRunConfig(loaded.config, options.runId);
-        const engine = new HarnessEngine(config, { backend: dependencies.createBackend() });
+        let opened = await openRunHarness(loaded.config, options.runId, {
+          backend: dependencies.createBackend(),
+        });
         if (options.persistProjectDefaults && !options.testCommand) {
           throw new Error("--persist-project-defaults requires --test-command");
         }
-        let state = await engine.retryVerificationBaseline(options.runId, {
+        let state = await opened.engine.retryVerificationBaseline(options.runId, {
           testCommand: options.testCommand,
           persistProjectDefaults: options.persistProjectDefaults,
           configPath: loaded.path,
         });
         if (options.advance && !state.verificationBaselineReady) {
-          const refreshed = await loadRunConfig(loaded.config, options.runId);
-          state = await new HarnessEngine(refreshed, {
+          opened = await openRunHarness(loaded.config, options.runId, {
             backend: dependencies.createBackend(),
-          }).advance(options.runId);
+          });
+          state = await opened.engine.advance(options.runId);
         }
         printState(state);
       },
@@ -451,8 +460,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       commitDirty?: string | boolean;
       acceptTree: boolean;
     }) => {
-      const config = await runConfig(options.config, options.runId);
-      const engine = new HarnessEngine(config, { backend: dependencies.createBackend() });
+      const engine = await openRunEngine(options.config, options.runId, dependencies.createBackend);
       if (options.maxRunTokens != null && (!Number.isFinite(options.maxRunTokens) || options.maxRunTokens < 0)) {
         throw new Error("--max-run-tokens must be a non-negative number");
       }
@@ -465,6 +473,12 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       if (options.acceptTree) {
         await engine.acceptTree(options.runId);
       } else if (options.commitDirty) {
+        if (engine.workspace.kind !== "legacy-shared") {
+          throw new Error(
+            "Preflight commit-order controls are only available for legacy-shared runs. " +
+              "Worktree runs start from the committed base and never import control-checkout dirt.",
+          );
+        }
         const order = typeof options.commitDirty === "string" ? options.commitDirty : undefined;
         if (order != null && order !== "branch-then-commit" && order !== "commit-then-branch") {
           throw new Error("--commit-dirty must be branch-then-commit or commit-then-branch");
@@ -487,8 +501,12 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .option("--config <path>", "config path")
     .option("--json", "print the full state", false)
     .action(async (options: { runId: string; config?: string; json: boolean }) => {
-      const config = await runConfig(options.config, options.runId);
-      const engine = new HarnessEngine(config, { backend: dependencies.createBackend("unused") });
+      const engine = await openRunEngine(
+        options.config,
+        options.runId,
+        () => dependencies.createBackend("unused"),
+        { validateWorktree: false },
+      );
       const state = await engine.status(options.runId);
       if (options.json) {
         const usage = await aggregateSessionUsage(engine, options.runId);
@@ -504,8 +522,12 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
     .action(async (options: { runId: string; config?: string }) => {
-      const config = await runConfig(options.config, options.runId);
-      const engine = new HarnessEngine(config, { backend: dependencies.createBackend("unused") });
+      const engine = await openRunEngine(
+        options.config,
+        options.runId,
+        () => dependencies.createBackend("unused"),
+        { validateWorktree: false },
+      );
       const result = await engine.cancel(options.runId);
       if (result.pending) {
         console.log(`Cancellation pending for ${options.runId}; the advancing process will finish it.`);
@@ -514,29 +536,95 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     });
 
   program
-    .command("unlock")
-    .description("Force-remove a stale run lock, and optionally the repository lock")
+    .command("cleanup")
+    .description("Remove a settled run's worktree after conservative safety checks")
     .requiredOption("--run-id <id>", "run id")
-    .option("--repo", "also remove the repository lock when present", false)
     .option("--config <path>", "config path")
-    .action(async (options: { runId: string; repo: boolean; config?: string }) => {
-      const config = await runConfig(options.config, options.runId);
-      const engine = new HarnessEngine(config, { backend: dependencies.createBackend("unused") });
+    .option(
+      "--discard",
+      "explicitly discard unpublished commits not reachable from a retained named ref",
+      false,
+    )
+    .action(async (options: { runId: string; config?: string; discard: boolean }) => {
+      const engine = await openRunEngine(
+        options.config,
+        options.runId,
+        () => dependencies.createBackend("unused"),
+        { validateWorktree: false },
+      );
+      const result = await engine.cleanup(options.runId, { discard: options.discard });
+      if (result.removed) {
+        console.log(
+          `Removed worktree for ${options.runId} (${result.reason}` +
+            (result.retainedBranch ? `; retained branch ${result.retainedBranch}` : "") +
+            ").",
+        );
+      } else {
+        console.log(`Cleanup no-op for ${options.runId} (${result.reason}).`);
+      }
+      printState(result.state);
+    });
+
+  program
+    .command("migrate-workspace")
+    .description(
+      "Explicitly migrate a clean legacy-shared run onto a registered worktree at HEAD",
+    )
+    .requiredOption("--run-id <id>", "run id")
+    .option("--config <path>", "config path")
+    .action(async (options: { runId: string; config?: string }) => {
+      const engine = await openRunEngine(
+        options.config,
+        options.runId,
+        () => dependencies.createBackend("unused"),
+        { validateWorktree: false },
+      );
+      const result = await engine.migrateWorkspace(options.runId);
+      console.log(
+        `Migrated ${options.runId} to git-worktree` +
+          (result.workspace.worktreePath ? ` at ${result.workspace.worktreePath}` : "") +
+          ".",
+      );
+      printState(result.state);
+    });
+
+  program
+    .command("unlock")
+    .description(
+      "Inspect locks and force-remove a stale run lock (optionally the legacy repository lock)",
+    )
+    .requiredOption("--run-id <id>", "run id")
+    .option("--repo", "also remove the legacy repository lock when present", false)
+    .option("--inspect-only", "print lock status without removing anything", false)
+    .option("--config <path>", "config path")
+    .action(async (options: {
+      runId: string;
+      repo: boolean;
+      inspectOnly: boolean;
+      config?: string;
+    }) => {
+      const engine = await openRunEngine(
+        options.config,
+        options.runId,
+        () => dependencies.createBackend("unused"),
+        { validateWorktree: false },
+      );
       const store = engine.store;
       const runLock = await store.inspectRunLock(options.runId);
-      if (runLock) {
-        printLockRemoval("run", runLock);
-      } else {
-        console.log(`No run lock found for ${options.runId}.`);
-      }
-      let repoLock: Awaited<ReturnType<typeof store.inspectRepositoryLock>> | undefined;
+      const repoLock = await store.inspectRepositoryLock();
+      const workspaceAdminLock = await store.inspectWorkspaceAdminLock();
+      const sharedIndexLock = await store.inspectSharedIndexLock();
+      printLockStatus("run", runLock);
+      printLockStatus("repository (legacy-shared)", repoLock);
+      printLockStatus("workspace-admin", workspaceAdminLock);
+      printLockStatus("shared-index", sharedIndexLock);
+      if (options.inspectOnly) return;
+
+      if (runLock) printLockRemoval("run", runLock);
+      else console.log(`No run lock found for ${options.runId}.`);
       if (options.repo) {
-        repoLock = await store.inspectRepositoryLock();
-        if (repoLock) {
-          printLockRemoval("repository", repoLock);
-        } else {
-          console.log("Repository lock not present.");
-        }
+        if (repoLock) printLockRemoval("repository", repoLock);
+        else console.log("Repository lock not present.");
       }
       const result = await store.unlock(options.runId, { repo: options.repo });
       if (result.run && runLock) console.log(`Removed run lock: ${runLock.path}`);
@@ -676,6 +764,22 @@ async function runConfig(configPath: string | undefined, runId: string): Promise
   return loadRunConfig(config, runId);
 }
 
+async function openRunEngine(
+  configPath: string | undefined,
+  runId: string,
+  createBackend: CliDependencies["createBackend"],
+  options?: { validateWorktree?: boolean },
+): Promise<HarnessEngine> {
+  const { config } = await loadConfig(configPath);
+  const opened = await openRunHarness(
+    config,
+    runId,
+    { backend: createBackend() },
+    options,
+  );
+  return opened.engine;
+}
+
 async function aggregateSessionUsage(
   engine: HarnessEngine,
   runId: string,
@@ -706,6 +810,27 @@ async function aggregateSessionUsage(
   return { inputTokens, outputTokens, totalTokens, sessions: files.length };
 }
 
+function printLockStatus(
+  kind: string,
+  info: { path: string; body: { pid: number; hostname: string; at: string; runId?: string; action?: string } | null; ageMs: number | null } | null,
+): void {
+  if (!info) {
+    console.log(`Lock ${kind}: absent`);
+    return;
+  }
+  const ageSeconds = info.ageMs == null ? "unknown" : `${Math.round(info.ageMs / 1000)}s`;
+  if (info.body) {
+    console.log(
+      `Lock ${kind}: held pid=${info.body.pid} hostname=${info.body.hostname}` +
+        (info.body.runId ? ` run=${info.body.runId}` : "") +
+        (info.body.action ? ` action=${info.body.action}` : "") +
+        ` at=${info.body.at} age=${ageSeconds} path=${info.path}`,
+    );
+  } else {
+    console.log(`Lock ${kind}: present (unparseable body, age=${ageSeconds}) path=${info.path}`);
+  }
+}
+
 function printLockRemoval(
   kind: "run" | "repository",
   info: { path: string; body: { pid: number; hostname: string; at: string } | null; ageMs: number | null },
@@ -717,6 +842,26 @@ function printLockRemoval(
     );
   } else {
     console.log(`Breaking ${kind} lock (unparseable body, age=${ageSeconds}): ${info.path}`);
+  }
+}
+
+async function printControlCheckoutNotice(
+  engine: HarnessEngine,
+  runId: string,
+): Promise<void> {
+  try {
+    const raw = await engine.store.readText(runId, "events.jsonl");
+    const notice = raw
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { type: string; detail?: { message?: string } })
+      .reverse()
+      .find((event) => event.type === "run.control_checkout_notice");
+    if (notice?.detail?.message) {
+      console.log(`Notice: ${notice.detail.message}`);
+    }
+  } catch {
+    // Best-effort operator notice only.
   }
 }
 

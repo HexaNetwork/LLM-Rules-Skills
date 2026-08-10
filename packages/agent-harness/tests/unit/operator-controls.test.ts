@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { createFakeBackend } from "../../src/agent.js";
 import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { HarnessEngine } from "../../src/engine.js";
@@ -101,7 +102,7 @@ describe("operator controls", () => {
       workflow: { tdd: false } as never,
       agent: { promptBuilder: false } as never,
     });
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const runId = "stop-run";
     const now = new Date().toISOString();
@@ -155,7 +156,7 @@ describe("operator controls", () => {
       workflow: { tdd: true } as never,
       agent: { promptBuilder: false } as never,
     });
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const runId = "tdd-run";
     const now = new Date().toISOString();
@@ -224,7 +225,7 @@ describe("operator controls", () => {
   it("requires an approved fixer plan before clearing a blocked run", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, { agent: { promptBuilder: false } as never });
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const runId = "fixer-run";
     const hash = configurationHash(config);
@@ -274,7 +275,7 @@ describe("operator controls", () => {
       workflow: { tdd: true, testPathPatterns: ["tests/**"] } as never,
       agent: { promptBuilder: false } as never,
     });
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const runId = "config-fixer-run";
     const hash = configurationHash(config);
@@ -328,7 +329,7 @@ describe("operator controls", () => {
     };
     expect(frozen.workflow.testPathPatterns).toEqual(["tests/**", "sample-app/tests/**"]);
     const events = await engine.store.readText(runId, "events.jsonl");
-    expect(events).toContain("run.config_repaired");
+    expect(events).toContain("run.config_updated");
     expect(events).toContain("fixer.applied");
   });
 
@@ -338,7 +339,7 @@ describe("operator controls", () => {
       workflow: { tdd: true, testPathPatterns: ["tests/**"] } as never,
       agent: { promptBuilder: false } as never,
     });
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const runId = "misclassified-config";
     const hash = configurationHash(config);
@@ -399,7 +400,7 @@ describe("operator controls", () => {
       workflow: { tdd: true, testPathPatterns: ["tests/**"] } as never,
       agent: { promptBuilder: false } as never,
     });
-    const store = new RunStore(config);
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const runId = "wrong-fixer-role";
     const hash = configurationHash(config);

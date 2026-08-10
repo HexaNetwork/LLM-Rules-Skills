@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { applyReflectOutput, createRunState, type ReflectOutput } from "../../src/domain.js";
 import { RunStore } from "../../src/store.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
@@ -28,7 +29,7 @@ describe("persistTransition", () => {
 
   it("writes artifacts, checkpoints state, then appends the expected events", async () => {
     fixture = await createProjectFixture();
-    const store = new RunStore(fixture.config);
+    const store = new RunStore(fixture.config, resolveHarnessPaths(fixture.config).stateRoot);
     await store.initialize();
     const initial = createRunState("persist-run", "Add greeting", NOW);
     await store.create({ ...initial, phase: "reflecting" });
@@ -58,7 +59,7 @@ describe("persistTransition", () => {
 
   it("keeps prior state recoverable when artifact writes fail", async () => {
     fixture = await createProjectFixture();
-    const store = new RunStore(fixture.config);
+    const store = new RunStore(fixture.config, resolveHarnessPaths(fixture.config).stateRoot);
     await store.initialize();
     const initial = createRunState("persist-fail", "Add greeting", NOW);
     await store.create({ ...initial, phase: "reflecting" });

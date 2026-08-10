@@ -1,7 +1,10 @@
+import path from "node:path";
+import { writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend, type AgentRequest } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
+import { git as runGit } from "../testkit/git.js";
 
 const REFLECT_OUTPUT = {
   proposedTitle: "Add greeting tone",
@@ -40,7 +43,7 @@ describe("plan() workspace guard", () => {
     }
   });
 
-  it("blocks on a dirty tree before invoking the planner", async () => {
+  it("blocks on a dirty worktree before invoking the planner", async () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true } as never,
@@ -67,7 +70,7 @@ describe("plan() workspace guard", () => {
     const engine = new HarnessEngine(fixture.config, { backend });
     const planning = await reachPlanning(engine);
 
-    await fixture.write("package-lock.json", "{}\n");
+    await writeFile(path.join(engine.paths.workspaceRoot, "package-lock.json"), "{}\n", "utf8");
 
     const blocked = await engine.advance(planning.runId);
     expect(blocked.phase).toBe("blocked");
@@ -79,7 +82,7 @@ describe("plan() workspace guard", () => {
     expect(blocked.tasks).toHaveLength(0);
   });
 
-  it("persists the plan when the planner dirties the tree, and retry skips re-planning", async () => {
+  it("persists the plan when the planner dirties the worktree, and retry skips re-planning", async () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true } as never,
@@ -90,6 +93,7 @@ describe("plan() workspace guard", () => {
     await fixture.initGit();
 
     let plannerCalls = 0;
+    let worktreeRoot = "";
     const backend = createFakeBackend({
       reflector: () => REFLECT_OUTPUT,
       griller: () => ({
@@ -97,11 +101,13 @@ describe("plan() workspace guard", () => {
         summary: "Ready",
         resolutions: [],
       }),
-      planner: async () => {
+      planner: async (request) => {
         plannerCalls += 1;
-        await fixture!.write(
-          "package-lock.json",
+        worktreeRoot = request.cwd;
+        await writeFile(
+          path.join(request.cwd, "package-lock.json"),
           `{"lockfileVersion":${plannerCalls}}\n`,
+          "utf8",
         );
         return PLAN_OUTPUT;
       },
@@ -126,9 +132,9 @@ describe("plan() workspace guard", () => {
       .map((line) => JSON.parse(line) as { type: string });
     expect(events.some((event) => event.type === "plan.created")).toBe(true);
 
-    // Operator clears the dirty tree the planner left behind.
-    await fixture.git("add", "--all");
-    await fixture.git("commit", "-m", "chore: accept planner side effect");
+    // Operator clears the dirty worktree the planner left behind.
+    await runGit(worktreeRoot, "add", "--all");
+    await runGit(worktreeRoot, "commit", "-m", "chore: accept planner side effect");
 
     await engine.retry(runId);
     // Resume skips re-planning; with no implementer the run blocks once executing starts.

@@ -2,10 +2,12 @@ import {
   CONFIG_VERSION,
   configurationHash,
   configurationPolicyDiff,
+  loadRunWorkspace,
   normalizeFrozenRunConfig,
 } from "../config.js";
 import { isTerminalPhase, type RunState } from "../domain.js";
 import { classifyFailure, HarnessFailure, RunCancelledError } from "../errors.js";
+import { WorktreeManager } from "../git/worktree-manager.js";
 import type { ApplicationContext } from "./application-context.js";
 import type { InterviewService } from "./interview-service.js";
 import type { PlanningService } from "./planning-service.js";
@@ -36,12 +38,10 @@ export class RunAdvancer {
     this.ctx.cancellation.register(runId);
     let state: RunState;
     try {
-      // Lock ordering: repository → run, always (avoid deadlock with paths that take both).
-      state = await this.ctx.store.withRepositoryLock({ runId, action: "advance" }, async () => {
-        return this.ctx.store.withLock(runId, async () => {
-          const loaded = await this.ctx.store.load(runId);
-          return this.runAdvanceLoop(runId, loaded);
-        });
+      // Legacy-shared: repository → run. Worktree/git-disabled: run lock only.
+      state = await this.ctx.withMutatingRunLock(runId, "advance", async () => {
+        const loaded = await this.ctx.store.load(runId);
+        return this.runAdvanceLoop(runId, loaded);
       });
     } finally {
       this.ctx.cancellation.release(runId);
@@ -68,6 +68,7 @@ export class RunAdvancer {
   async runAdvanceLoop(runId: string, state: RunState): Promise<RunState> {
     try {
       state = await this.ensureCompatibleConfiguration(state);
+      await this.ensureWorkspaceBound(runId);
       if (!(terminal(state.phase) || state.phase === "awaiting_input")) {
         if (await this.ctx.isCancelRequested(runId)) {
           state = await this.recovery.completeCancellation(state);
@@ -193,6 +194,22 @@ export class RunAdvancer {
         false,
       );
     }
+  }
+
+  /**
+   * Rebind execution roots from durable workspace.json and validate worktree identity.
+   * Missing/moved worktrees fail with a retriable workspace error (recorded as blocked).
+   */
+  async ensureWorkspaceBound(runId: string): Promise<void> {
+    const workspace = await loadRunWorkspace(this.ctx.config, runId);
+    this.ctx.bindWorkspace(workspace);
+    if (workspace.kind !== "git-worktree") return;
+    const manager = new WorktreeManager({
+      controlRoot: this.ctx.paths.controlRoot,
+      stateRoot: this.ctx.paths.stateRoot,
+      store: this.ctx.store,
+    });
+    await manager.open(workspace);
   }
 
   async ensureCompatibleConfiguration(state: RunState): Promise<RunState> {

@@ -469,10 +469,13 @@ describe("working-tree divergence guard", () => {
       .trim()
       .split(/\r?\n/)
       .map((line) => JSON.parse(line) as { type: string; detail: Record<string, unknown> });
-    const accepted = events.find((event) => event.type === "run.tree_accepted");
+    const accepted = events.find((event) => event.type === "run.workspace_accepted");
     expect(accepted).toBeTruthy();
     expect(accepted!.detail.previousFingerprint).toBe(previousFingerprint);
     expect(accepted!.detail.treeFingerprint).toBe(state.treeFingerprint);
+    expect(accepted!.detail.acceptedEvidence).toMatchObject({
+      fingerprint: state.treeFingerprint,
+    });
     expect(accepted!.detail.divergingPaths).toEqual(expect.arrayContaining(["external-edit.txt"]));
   });
 
@@ -525,7 +528,7 @@ describe("working-tree divergence guard", () => {
       .trim()
       .split(/\r?\n/)
       .map((line) => JSON.parse(line) as { type: string; detail: Record<string, unknown> });
-    const accepted = events.find((event) => event.type === "run.tree_accepted");
+    const accepted = events.find((event) => event.type === "run.workspace_accepted");
     expect(accepted!.detail.reportPaths).toEqual(["agent-harness.config.yaml"]);
   });
 

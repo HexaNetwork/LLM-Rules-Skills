@@ -18,6 +18,7 @@ import type { LocalKnowledgeBase } from "../knowledge.js";
 import { LocalKnowledgeBase as LocalKnowledgeBaseImpl } from "../knowledge.js";
 import { RunStore } from "../store.js";
 import { LocalTracker, type TrackerPort } from "../tracker.js";
+import { resolveHarnessPaths, type HarnessPaths } from "./paths.js";
 
 export type Clock = { now(): Date };
 
@@ -33,6 +34,7 @@ export type CommandRunner = {
 
 /** Narrow injectable bundle used by application services. */
 export type ApplicationDependencies = {
+  paths: HarnessPaths;
   store: RunStore;
   agents: AgentCoordinator;
   tracker: TrackerPort;
@@ -58,6 +60,7 @@ export type HarnessDependencies = {
   sleep?: (ms: number) => Promise<void>;
   clock?: Clock;
   commands?: CommandRunner;
+  paths?: HarnessPaths;
 };
 
 export const systemClock: Clock = {
@@ -72,20 +75,23 @@ export function createApplicationDependencies(
   config: HarnessConfig,
   dependencies: HarnessDependencies,
 ): ApplicationDependencies {
-  const store = dependencies.store ?? new RunStore(config);
+  const paths = dependencies.paths ?? resolveHarnessPaths(config);
+  const store = dependencies.store ?? new RunStore(config, paths.stateRoot);
   const graphifyRunner = dependencies.graphifyRunner ?? runGraphify;
   const knowledge =
     dependencies.knowledge ??
     new LocalKnowledgeBaseImpl(
       config,
-      new GraphifyRepositoryLookup(config, graphifyRunner),
+      new GraphifyRepositoryLookup(config, graphifyRunner, paths),
+      paths,
     );
   return {
+    paths,
     store,
     knowledge,
     tracker: dependencies.tracker ?? new LocalTracker(store),
-    git: dependencies.git ?? new GitServiceImpl(config),
-    agents: new AgentCoordinatorImpl(config, dependencies.backend, store, knowledge),
+    git: dependencies.git ?? new GitServiceImpl(config, paths),
+    agents: new AgentCoordinatorImpl(config, dependencies.backend, store, knowledge, paths),
     commands: dependencies.commands ?? processCommandRunner,
     clock: dependencies.clock ?? systemClock,
     sleep: dependencies.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),

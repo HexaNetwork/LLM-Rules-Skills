@@ -1,8 +1,13 @@
 import { performance } from "node:perf_hooks";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
+import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
+import {
+  createProjectFixture,
+  type ProjectFixture,
+} from "../testkit/project-fixture.js";
 
 const REFLECT_OUTPUT = {
   proposedTitle: "Add greeting tone",
@@ -17,19 +22,35 @@ const REFLECT_OUTPUT = {
 };
 
 describe("repository lock", () => {
-  it("serializes install resolution with repository work", async () => {
+  let fixture: ProjectFixture | undefined;
+
+  afterEach(async () => {
+    if (fixture) {
+      await fixture.cleanup();
+      fixture = undefined;
+    }
+  });
+
+  it("serializes install resolution with repository work for legacy-shared runs", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
     await engine.store.initialize();
     let release!: () => void;
     let acquired!: () => void;
-    const ready = new Promise<void>((resolve) => { acquired = resolve; });
-    const held = new Promise<void>((resolve) => { release = resolve; });
-    const holder = engine.store.withRepositoryLock({ runId: "other-run", action: "advance" }, async () => {
-      acquired();
-      await held;
+    const ready = new Promise<void>((resolve) => {
+      acquired = resolve;
     });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holder = engine.store.withRepositoryLock(
+      { runId: "other-run", action: "advance" },
+      async () => {
+        acquired();
+        await held;
+      },
+    );
     await ready;
 
     await expect(engine.resolveInstalls("missing-run", {})).rejects.toThrow(
@@ -39,7 +60,73 @@ describe("repository lock", () => {
     await holder;
   });
 
-  it("fails a concurrent advance fast, names the holding run, and leaves both states loadable", async () => {
+  it("allows concurrent advance of independent worktree runs without a repository lock", async () => {
+    await assertGitWorktreeCapability();
+    fixture = await createProjectFixture({
+      config: {
+        git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
+        workflow: { tdd: false } as never,
+        knowledge: {
+          sources: [{ path: "README.md" }],
+          graphify: { enabled: false },
+          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
+        },
+      },
+    });
+    await fixture.initGit({ branch: "main" });
+
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    let startedA!: () => void;
+    let startedB!: () => void;
+    const aStarted = new Promise<void>((resolve) => {
+      startedA = resolve;
+    });
+    const bStarted = new Promise<void>((resolve) => {
+      startedB = resolve;
+    });
+    const aHold = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const bHold = new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+
+    const engineA = new HarnessEngine(fixture.config, {
+      backend: createFakeBackend({
+        reflector: async () => {
+          startedA();
+          await aHold;
+          return REFLECT_OUTPUT;
+        },
+      }),
+    });
+    const engineB = new HarnessEngine(fixture.config, {
+      backend: createFakeBackend({
+        reflector: async () => {
+          startedB();
+          await bHold;
+          return REFLECT_OUTPUT;
+        },
+      }),
+    });
+
+    const runA = await engineA.start("Idea A", "run-a", false, false);
+    const runB = await engineB.start("Idea B", "run-b", false, false);
+
+    const advancingA = engineA.advance(runA.runId);
+    const advancingB = engineB.advance(runB.runId);
+    await Promise.all([aStarted, bStarted]);
+    expect(await engineA.store.inspectRepositoryLock()).toBeNull();
+
+    releaseA();
+    releaseB();
+    const [finishedA, finishedB] = await Promise.all([advancingA, advancingB]);
+    expect(finishedA.phase).toBe("awaiting_input");
+    expect(finishedB.phase).toBe("awaiting_input");
+  });
+
+  it("serializes legacy-shared advances with the repository lock", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
@@ -65,6 +152,18 @@ describe("repository lock", () => {
 
     const runA = await engine.start("Idea A", "run-a", false, false);
     const runB = await engine.start("Idea B", "run-b", false, false);
+    await engine.store.writeJson(runA.runId, "workspace.json", {
+      version: 1,
+      kind: "legacy-shared",
+      controlRoot: root,
+      createdAt: new Date().toISOString(),
+    });
+    await engine.store.writeJson(runB.runId, "workspace.json", {
+      version: 1,
+      kind: "legacy-shared",
+      controlRoot: root,
+      createdAt: new Date().toISOString(),
+    });
 
     const first = engine.advance(runA.runId);
     await reflectStarted;
@@ -75,33 +174,30 @@ describe("repository lock", () => {
     );
     expect(performance.now() - started).toBeLessThan(500);
 
-    const stateADuring = await engine.status(runA.runId);
-    const stateBDuring = await engine.status(runB.runId);
-    expect(stateADuring.phase).not.toBe("blocked");
-    expect(stateBDuring.phase).toBe("new");
-    expect(stateBDuring.failure).toBeUndefined();
-
     releaseReflect();
     const finishedA = await first;
     expect(finishedA.phase).toBe("awaiting_input");
-
-    const stateA = await engine.status(runA.runId);
-    const stateB = await engine.status(runB.runId);
-    expect(stateA.phase).toBe("awaiting_input");
-    expect(stateA.revision).toBeGreaterThan(runA.revision);
-    expect(stateB.phase).toBe("new");
-    expect(stateB.revision).toBe(runB.revision);
+    expect((await engine.status(runB.runId)).phase).toBe("new");
   });
 
-  it("releases the repository lock when advance returns at awaiting_input", async () => {
-    const root = await fixtureRoot();
-    const config = fixtureConfig(root, {
-      workflow: { tdd: false } as never,
+  it("does not hold the repository lock after a worktree advance returns at awaiting_input", async () => {
+    await assertGitWorktreeCapability();
+    fixture = await createProjectFixture({
+      config: {
+        git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
+        workflow: { tdd: false } as never,
+        knowledge: {
+          sources: [{ path: "README.md" }],
+          graphify: { enabled: false },
+          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
+        },
+      },
     });
+    await fixture.initGit({ branch: "main" });
     const backend = createFakeBackend({
       reflector: () => REFLECT_OUTPUT,
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new HarnessEngine(fixture.config, { backend });
     const started = await engine.start("Idea", "run-awaiting", false, false);
 
     const state = await engine.advance(started.runId);

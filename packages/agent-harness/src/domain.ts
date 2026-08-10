@@ -184,6 +184,10 @@ export const VerificationEvidenceSchema = z.object({
   ),
   sampleTestPaths: z.array(z.string().min(1)).default([]),
   currentSettings: VerificationSettingsSnapshotSchema,
+  host: z.object({
+    platform: z.string().min(1), // Node process.platform
+    isWindows: z.boolean(),
+  }),
 });
 export type VerificationEvidence = z.infer<typeof VerificationEvidenceSchema>;
 

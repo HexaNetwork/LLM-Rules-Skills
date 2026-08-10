@@ -77,6 +77,19 @@ describe("prompt rendering", () => {
     expect(rendered).not.toContain("brief/idea");
     expect(rendered).toContain("Never invent shell pipelines");
     expect(rendered).toContain("Do not edit files");
+    expect(rendered).toContain("evidence.host.platform");
+    expect(rendered).toContain("evidence.host.isWindows");
+    expect(rendered).toContain("On Windows (win32), do not use ./ prefixes");
+    expect(rendered).toContain("On POSIX hosts, prefer conventional POSIX invocation");
+    expect(rendered).toContain("never invent a stack");
+  });
+
+  it("requires config-fixers to stay OS-aware for shell-launch repairs", () => {
+    const configFixerPacket: WorkPacket = { ...packet, role: "config-fixer" };
+    const rendered = renderPrompt(configFixerPacket);
+    expect(rendered).toContain("shell-launch failure");
+    expect(rendered).toContain("host-compatible");
+    expect(rendered).toContain("do not invent a stack");
   });
 
   it("honors tools-off constraints passed into the project-profiler packet", () => {

@@ -118,7 +118,15 @@ export async function collectVerificationEvidence(
     }
   });
 
-  return { manifests, sampleTestPaths, currentSettings };
+  return {
+    manifests,
+    sampleTestPaths,
+    currentSettings,
+    host: {
+      platform: process.platform,
+      isWindows: process.platform === "win32",
+    },
+  };
 }
 
 /**

@@ -536,7 +536,7 @@ export const renderRunScript = `    function renderSidebar() {
         }
         var fixer = s.fixerRecovery;
         var fixerControls = '';
-        var isConfigBlock = s.blockedKind === 'config' || /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths/i.test(String(s.failure || ''));
+        var isConfigBlock = s.blockedKind === 'config' || /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths|Test command could not be launched/i.test(String(s.failure || ''));
         if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
           var repairDetails = formatConfigRepair(fixer.plan.configPatch || {});
           var persistButton = canEditSettings

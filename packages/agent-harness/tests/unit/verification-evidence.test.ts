@@ -43,6 +43,8 @@ describe("collectVerificationEvidence", () => {
     expect(evidence.manifests.every((entry) => entry.present === false)).toBe(true);
     expect(evidence.manifests.some((entry) => entry.path === "settings.gradle.kts")).toBe(true);
     expect(evidence.manifests.some((entry) => entry.path === "gradlew")).toBe(true);
+    expect(evidence.host.platform).toBe(process.platform);
+    expect(evidence.host.isWindows).toBe(process.platform === "win32");
     expect(verificationEvidenceNeedsTools(evidence)).toBe(true);
   });
 
@@ -93,7 +95,11 @@ describe("verificationEvidenceNeedsTools", () => {
   function evidence(
     partial: Pick<VerificationEvidence, "manifests" | "sampleTestPaths">,
   ): VerificationEvidence {
-    return { ...partial, currentSettings: SETTINGS };
+    return {
+      ...partial,
+      currentSettings: SETTINGS,
+      host: { platform: process.platform, isWindows: process.platform === "win32" },
+    };
   }
 
   it("treats single-stack nested Gradle evidence as strong", () => {

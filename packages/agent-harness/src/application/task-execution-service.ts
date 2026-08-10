@@ -17,7 +17,7 @@ import {
 } from "../domain.js";
 
 const terminal = isTerminalPhase;
-import { HarnessFailure, RunCancelledError } from "../errors.js";
+import { CONFIG_FAILURE_PATTERN, HarnessFailure, RunCancelledError } from "../errors.js";
 import { commandEvidence, recentEvidenceOutput } from "../commands.js";
 import { compactDomainSeed } from "../knowledge.js";
 import { taskFrontier } from "../tracker.js";
@@ -30,11 +30,9 @@ export class TaskExecutionService {
   async execute(state: RunState): Promise<RunState> {
     const failed = state.tasks.find((task) => task.status === "failed");
     if (failed) {
-      throw new HarnessFailure(
-        `Task ${failed.id} failed: ${failed.failure ?? "unknown failure"}`,
-        "contract",
-        false,
-      );
+      const detail = failed.failure ?? "unknown failure";
+      const kind = CONFIG_FAILURE_PATTERN.test(detail) ? "config" : "contract";
+      throw new HarnessFailure(`Task ${failed.id} failed: ${detail}`, kind, false);
     }
     const active = state.tasks.find((task) => task.status === "active");
     if (!active) {
@@ -141,13 +139,19 @@ export class TaskExecutionService {
     }
     const evidence = await this.runTargetedTest(state.runId, task, "tdd:red");
     const attempts = { ...task.attempts, tests: task.attempts.tests + 1 };
+    const commandOutput = `${evidence.stdout}\n${evidence.stderr}`;
+    const commandNotLaunched = /command not found|not recognized/i.test(commandOutput);
     const meaningfulRed =
       evidence.exitCode !== 0 &&
       evidence.exitCode !== 124 &&
-      !/no tests found|no test files found|command not found|not recognized/i.test(
-        `${evidence.stdout}\n${evidence.stderr}`,
-      );
+      !/no tests found|no test files found/i.test(commandOutput) &&
+      !commandNotLaunched;
     const exhausted = !meaningfulRed && attempts.tests >= this.ctx.config.workflow.maxTestAttempts;
+    const redFailure = exhausted
+      ? commandNotLaunched
+        ? formatCommandNotLaunchedFailure(evidence.command, evidence.stderr, evidence.stdout)
+        : "Test writer could not produce a meaningful RED run"
+      : undefined;
     const updated: BuildTask = {
       ...task,
       attempts,
@@ -159,7 +163,7 @@ export class TaskExecutionService {
       evidence: [...task.evidence, evidence],
       step: meaningfulRed ? "red" : exhausted ? "failed" : "writing_tests",
       status: exhausted ? "failed" : "active",
-      failure: exhausted ? "Test writer could not produce a meaningful RED run" : undefined,
+      failure: redFailure,
     };
     return this.updateTask(
       await this.ctx.withTreeFingerprint(state),
@@ -531,4 +535,11 @@ export class TaskExecutionService {
       return state;
     });
   }
+}
+
+function formatCommandNotLaunchedFailure(command: string, stderr: string, stdout: string): string {
+  const detail = (stderr.trim() || stdout.trim()).slice(0, 500);
+  return detail
+    ? `Test command could not be launched: ${command}\n${detail}`
+    : `Test command could not be launched: ${command}`;
 }

@@ -40,4 +40,15 @@ describe("repairRoute", () => {
     expect(CONFIG_FAILURE_PATTERN.test(message)).toBe(true);
     expect(classifyFailure(new Error(message))).toEqual({ kind: "config", retriable: false });
   });
+
+  it("routes command-not-launched RED exhaustion to config-fixer", () => {
+    const message =
+      "Test command could not be launched: ./gradlew test\n'.' is not recognized as an internal or external command";
+    expect(CONFIG_FAILURE_PATTERN.test(message)).toBe(true);
+    expect(repairRoute({ blockedKind: "contract", failure: message })).toBe("config-fixer");
+    expect(classifyFailure(new Error(`Task task-1 failed: ${message}`))).toEqual({
+      kind: "config",
+      retriable: false,
+    });
+  });
 });

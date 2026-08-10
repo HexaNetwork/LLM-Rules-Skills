@@ -7,7 +7,12 @@
   "scripts": {
     "build": "npm run build -w @hexanetwork/agent-harness",
     "test": "npm run test -w @hexanetwork/agent-harness",
+    "test:unit": "npm run test:unit -w @hexanetwork/agent-harness",
+    "test:integration": "npm run test:integration -w @hexanetwork/agent-harness",
+    "test:e2e": "npm run test:e2e -w @hexanetwork/agent-harness",
+    "test:acceptance": "npm run test:acceptance -w @hexanetwork/agent-harness",
     "test:run": "npm run test:run -w @hexanetwork/agent-harness",
+    "test:all": "npm run test:all -w @hexanetwork/agent-harness",
     "typecheck": "npm run typecheck -w @hexanetwork/agent-harness",
     "lint": "npm run lint -w @hexanetwork/agent-harness"
   }

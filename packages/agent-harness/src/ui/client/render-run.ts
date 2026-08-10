@@ -314,6 +314,7 @@ export const renderRunScript = `    function renderSidebar() {
       var open = unknowns.filter(function (u) { return u.status === "fog" || u.status === "asked"; });
       var parked = unknowns.filter(function (u) { return u.status === "parked"; });
       var resolved = unknowns.filter(function (u) { return u.status === "resolved"; });
+      var dropped = unknowns.filter(function (u) { return u.status === "dropped"; });
       var openHtml = open.length ? open.map(function (u) {
         return '<div class="fog-entry impact-' + attr(u.impact) + '"><div class="item-head"><div class="item-title">' + esc(u.title) + '</div><span class="tag">' + esc(u.impact) + '</span></div>' + (u.whyItMatters ? '<div class="muted" style="margin-top:4px">' + esc(u.whyItMatters) + '</div>' : '') + '</div>';
       }).join("") : '<div class="muted">No open unknowns right now.</div>';
@@ -323,7 +324,10 @@ export const renderRunScript = `    function renderSidebar() {
       var resolvedHtml = resolved.length ? '<details data-details-key="fog-resolved"><summary>' + resolved.length + ' resolved</summary>' + resolved.map(function (u) {
         return '<div class="fog-entry impact-' + attr(u.impact) + '"><div class="item-title">' + esc(u.title) + '</div></div>';
       }).join("") + '</details>' : "";
-      return '<div class="card fog-card"><div class="card-label">Open unknowns</div><p class="fog-summary">' + esc(fogSummaryLine(unknowns)) + '</p>' + openHtml + parkedHtml + resolvedHtml + '</div>';
+      var droppedHtml = dropped.length ? '<details data-details-key="fog-dropped"><summary>' + dropped.length + ' dropped</summary>' + dropped.map(function (u) {
+        return '<div class="fog-entry impact-' + attr(u.impact) + '"><div class="item-title">' + esc(u.title) + '</div>' + (u.whyItMatters ? '<div class="muted" style="margin-top:4px">' + esc(u.whyItMatters) + '</div>' : '') + '</div>';
+      }).join("") + '</details>' : "";
+      return '<div class="card fog-card"><div class="card-label">Open unknowns</div><p class="fog-summary">' + esc(fogSummaryLine(unknowns)) + '</p>' + openHtml + parkedHtml + resolvedHtml + droppedHtml + '</div>';
     }
 
     function renderNoteBox(s) {

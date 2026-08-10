@@ -351,6 +351,7 @@ describe("dashboard document", () => {
     expect(html).toContain('" parked · "');
     expect(html).toContain('" dropped"');
     expect(html).toContain('data-details-key="fog-resolved"');
+    expect(html).toContain('data-details-key="fog-dropped"');
     expect(html).toContain("fog-entry impact-");
   });
 

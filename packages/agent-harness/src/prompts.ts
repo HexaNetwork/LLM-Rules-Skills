@@ -6,6 +6,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "Separate goal, users, in-scope, out-of-scope, assumptions, and unknowns.",
     "Do not ask grilling questions and do not plan implementation.",
     "Look up codebase facts when they clarify existing behavior; do not decide product preferences.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   griller: [
     "You may return 1..N questions in a single turn, but ONLY questions that are mutually independent — where the answer to one would not change how you would phrase, scope, or offer options on another.",
@@ -24,36 +25,43 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "Declare only genuine blocking edges and use the agreed domain vocabulary.",
     "Plan from the confirmed reflect brief and grill resolutions only.",
     "Propose dependency installs needed before implementation in proposedInstalls; do not install them yourself.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   "prompt-builder": [
     "Turn the packet into a precise prompt without changing scope or inventing facts.",
     "Preserve every acceptance criterion, constraint, selected guidance block, evidence block, and output contract.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   "test-writer": [
     "Edit tests only. Do not implement production behavior and do not commit.",
     "Test public behavior at the agreed seam with independent expected values.",
     "Return after creating a meaningful failing test.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   implementer: [
     "Edit the working tree but never commit, push, or open a pull request.",
     "Treat supplied command output as ground truth and fix the reported behavior.",
     "Do not weaken, delete, or bypass tests.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   reviewer: [
     "Do not edit files.",
     "Block only for a demonstrable correctness, security, or acceptance failure.",
     "Use advisory findings for optional improvements.",
     "The diff is the primary evidence. Read the listed omitted files from disk before commenting on them.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   "message-writer": [
     "Do not run git commands.",
     "Write an imperative conventional-commit subject or a concise pull-request title and body.",
     "Describe only verified changes present in the packet.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   fixer: [
     "When asked to plan, do not edit files. Explain a minimal, reversible recovery plan grounded in the reported failure and operator guidance.",
     "When asked to apply an approved plan, edit only what is necessary to address that plan. Do not commit, push, open a pull request, weaken tests, or change scope.",
     "Treat the reported failure and the operator's guidance as authoritative. Report the files actually changed and validation performed.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   "config-fixer": [
     "You only propose harness settings patches. Do not edit repository files.",
@@ -72,11 +80,11 @@ export function renderPrompt(packet: WorkPacket): string {
     ...ROLE_RULES[packet.role].map((rule) => `- ${rule}`),
     ...packet.constraints.map((constraint) => `- ${constraint}`),
     ...renderGuidance(packet),
-    ...outputContractLines(packet.role),
-    `Expected output: ${packet.expectedOutput}`,
     "",
     "WORK PACKET",
     JSON.stringify(packetForJson),
+    ...outputContractLines(packet.role),
+    `Expected output: ${packet.expectedOutput}`,
   ].join("\n");
 }
 
@@ -114,16 +122,15 @@ export function renderContinuationPrompt(
 const EPISODE_ROLES = new Set<AgentRole>(["griller"]);
 
 function outputContractLines(role: AgentRole): string[] {
-  if (role === "config-fixer") {
+  if (EPISODE_ROLES.has(role)) {
     return [
-      "Return exactly one raw JSON object matching the expected output contract.",
-      "Do not wrap the object in Markdown or split its fields into separate sections.",
+      "Return exactly one JSON object matching the expected output contract.",
+      "You may deliver that JSON via CreatePlan or as the assistant result text.",
     ];
   }
-  if (!EPISODE_ROLES.has(role)) return [];
   return [
-    "Return exactly one JSON object matching the expected output contract.",
-    "You may deliver that JSON via CreatePlan or as the assistant result text.",
+    "Return exactly one raw JSON object matching the expected output contract.",
+    "Do not wrap the object in Markdown or split its fields into separate sections.",
   ];
 }
 

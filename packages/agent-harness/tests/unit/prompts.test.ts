@@ -101,4 +101,31 @@ describe("prompt rendering", () => {
     const plannerPacket: WorkPacket = { ...packet, role: "planner" };
     expect(renderPrompt(plannerPacket)).toContain("Do not edit the working tree. Produce the task list only.");
   });
+
+  it("requires schema-validated workers to return one raw JSON object after the work packet", () => {
+    for (const role of ["test-writer", "implementer"] as const) {
+      const rendered = renderPrompt({ ...packet, role });
+      const workPacketIndex = rendered.indexOf("WORK PACKET");
+      const noMarkdownIndex = rendered.indexOf(
+        "Do not wrap the object in Markdown or split its fields into separate sections.",
+      );
+      const expectedOutputIndex = rendered.indexOf(`Expected output: ${packet.expectedOutput}`);
+      expect(workPacketIndex).toBeGreaterThan(-1);
+      expect(noMarkdownIndex).toBeGreaterThan(workPacketIndex);
+      expect(expectedOutputIndex).toBeGreaterThan(noMarkdownIndex);
+      expect(rendered).toContain("Return exactly one raw JSON object matching the expected output contract.");
+      expect(rendered).toContain("Do not use Markdown headings or code fences.");
+    }
+  });
+
+  it("keeps griller CreatePlan delivery while still ending with the expected-output contract", () => {
+    const grillPacket: WorkPacket = { ...packet, role: "griller" };
+    const rendered = renderPrompt(grillPacket);
+    const workPacketIndex = rendered.indexOf("WORK PACKET");
+    const createPlanIndex = rendered.indexOf("You may deliver that JSON via CreatePlan");
+    const expectedOutputIndex = rendered.indexOf(`Expected output: ${packet.expectedOutput}`);
+    expect(createPlanIndex).toBeGreaterThan(workPacketIndex);
+    expect(expectedOutputIndex).toBeGreaterThan(createPlanIndex);
+    expect(rendered).not.toContain("Do not wrap the object in Markdown");
+  });
 });

@@ -1,6 +1,7 @@
 import yaml from "js-yaml";
 import type { AgentRole } from "../domain.js";
 import {
+  DEFAULT_GUIDANCE_ASSIGNMENTS,
   HarnessConfigSchema,
   type HarnessConfig,
   type KnowledgeScope,
@@ -13,6 +14,9 @@ export function modelForRole(config: HarnessConfig, role: AgentRole): string {
   return config.models.roles[role] ??
     (SMALL_ROLES.has(role) ? config.models.small : config.models.capable);
 }
+
+/** Re-export for callers that import defaults; schema is the source of truth. */
+export { DEFAULT_GUIDANCE_ASSIGNMENTS };
 
 export function defaultConfigYaml(): string {
   return `version: 2
@@ -128,7 +132,8 @@ knowledge:
     enabled: true
     maxResults: 6
     maxCharacters: 6000
-    # Complete, authoritative guidance map. Empty lists intentionally inject nothing.
+    # Complete, authoritative guidance map (mirrors DEFAULT_GUIDANCE_ASSIGNMENTS).
+    # Empty lists intentionally inject nothing.
     # Project rules/skills with the same name override General/; otherwise General/ is used.
     assignments:
       reflector:

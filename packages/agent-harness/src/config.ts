@@ -2,6 +2,7 @@
 export {
   CONFIG_NAMES,
   CONFIG_VERSION,
+  DEFAULT_GUIDANCE_ASSIGNMENTS,
   DEFAULT_IGNORED_ARTIFACT_PATTERNS,
   HarnessConfigSchema,
   KnowledgeScopeSchema,

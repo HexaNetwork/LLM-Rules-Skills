@@ -62,6 +62,20 @@ const GuidanceAssignmentsSchema = z.object({
   "config-fixer": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
 }).strict();
 
+/** Authoritative guidance map applied when `knowledge.guidance.assignments` is omitted. */
+export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsSchema> = {
+  reflector: { rules: [], skills: ["domain-modeling"] },
+  griller: { rules: [], skills: ["grill-me", "domain-modeling"] },
+  planner: { rules: [], skills: ["domain-modeling", "improve-codebase-architecture"] },
+  "prompt-builder": { rules: [], skills: [] },
+  "test-writer": { rules: [], skills: ["tdd"] },
+  implementer: { rules: [], skills: ["tdd"] },
+  reviewer: { rules: [], skills: ["code-review"] },
+  "message-writer": { rules: [], skills: [] },
+  fixer: { rules: [], skills: ["diagnose", "tdd"] },
+  "config-fixer": { rules: [], skills: [] },
+};
+
 export const KnowledgeSourceSchema = z
   .union([
     z.string().min(1),
@@ -219,7 +233,8 @@ export const HarnessConfigSchema = z.object({
           maxCharacters: z.number().int().positive().default(6_000),
           // When present, this complete map is authoritative. A listed name resolves
           // to active-project guidance first and General/ guidance second.
-          assignments: GuidanceAssignmentsSchema.optional(),
+          // Omitted assignments use DEFAULT_GUIDANCE_ASSIGNMENTS (not free lexical ranking).
+          assignments: GuidanceAssignmentsSchema.default(DEFAULT_GUIDANCE_ASSIGNMENTS),
         })
         .default({}),
       embeddings: z

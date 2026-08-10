@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CONFIG_VERSION,
+  DEFAULT_GUIDANCE_ASSIGNMENTS,
   HarnessConfigSchema,
   configurationHash,
   configurationPolicyDiff,
@@ -42,7 +43,11 @@ describe("token-conscious defaults", () => {
     expect(config.models.pricing).toEqual({});
     expect(config.workflow.maxProviderRetries).toBe(2);
     expect(config.knowledge.guidance).toMatchObject({ enabled: true, maxResults: 6, maxCharacters: 6_000 });
-    expect(config.knowledge.guidance.assignments).toBeUndefined();
+    expect(config.knowledge.guidance.assignments).toEqual(DEFAULT_GUIDANCE_ASSIGNMENTS);
+    expect(config.knowledge.guidance.assignments?.["test-writer"].skills).toEqual(["tdd"]);
+    expect(HarnessConfigSchema.parse({
+      knowledge: { guidance: { enabled: true } },
+    }).knowledge.guidance.assignments).toEqual(DEFAULT_GUIDANCE_ASSIGNMENTS);
     expect(config.knowledge.embeddings.enabled).toBe(false);
     expect(config.knowledge.embeddings.model).toBe("text-embedding-3-small");
     expect(config.knowledge.embeddings.minSimilarity).toBe(0.3);

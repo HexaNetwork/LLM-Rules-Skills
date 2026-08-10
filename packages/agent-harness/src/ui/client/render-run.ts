@@ -637,13 +637,11 @@ export const renderRunScript = `    function renderSidebar() {
       }
       html += '<div class="muted">TDD</div><div style="margin-top:4px">' + renderRunTddControl(s) + '</div></div>';
       html += renderInstallLogPanel();
-      html += '<div class="card"><div class="card-label">Recent activity</div><div class="timeline">' + (state.detail.events.slice(-10).reverse().map(renderEvent).join("") || '<div class="muted">No events yet.</div>') + '</div></div>';
       html += '</div>';
       $("tabBody").innerHTML = html;
       autoGrowReflectFields();
       if (thinkingSince && $("thinkingElapsed")) startElapsedTimer(thinkingSince);
     }
-    function renderEvent(event) { return '<div class="event"><div class="event-name">' + esc(event.type) + '</div><div class="event-time">' + esc(date(event.at)) + '</div></div>'; }
 
     function renderDecisions(s) {
       var resolutions = s.grillResolutions || [];

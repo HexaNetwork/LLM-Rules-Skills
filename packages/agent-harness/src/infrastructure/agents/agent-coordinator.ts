@@ -13,6 +13,7 @@ import {
   type RunPhase,
   type WorkPacket,
 } from "../../domain.js";
+import { discoverDomainArtifacts } from "../../domain/domain-artifacts.js";
 import { HarnessFailure, RunCancelledError } from "../../errors.js";
 import { LocalKnowledgeBase } from "../../knowledge.js";
 import { buildWorkPacket } from "../../packet.js";
@@ -150,6 +151,11 @@ export class AgentCoordinator {
       };
     }
 
+    const assignment = this.config.knowledge.guidance.assignments?.[input.role];
+    const domainArtifacts = assignment?.skills.includes("domain-modeling")
+      ? await discoverDomainArtifacts(this.workspaceRoot)
+      : undefined;
+
     const { packet, budgetAudit } = buildWorkPacket({
       invocationId,
       runId: input.runId,
@@ -167,6 +173,7 @@ export class AgentCoordinator {
         inputCharacters: this.config.workflow.inputCharacters,
         graphifyCharacters: this.config.workflow.graphifyCharacters,
       },
+      domainArtifacts,
     });
     const guidanceFingerprint = fingerprintGuidance(packet.guidance);
     const packetPath = `packets/${invocationId}.json`;

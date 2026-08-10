@@ -36,6 +36,7 @@ export type BuildWorkPacketInput = {
     inputCharacters: number;
     graphifyCharacters: number;
   };
+  domainArtifacts?: WorkPacket["domainArtifacts"];
 };
 
 /** Single authority for every byte that enters a work packet prompt. */
@@ -93,6 +94,7 @@ export function buildWorkPacket(input: BuildWorkPacketInput): {
     priorArtifacts: input.priorArtifacts,
     expectedOutput: input.expectedOutput,
     createdAt: input.createdAt,
+    ...(input.domainArtifacts ? { domainArtifacts: input.domainArtifacts } : {}),
   };
 
   return {

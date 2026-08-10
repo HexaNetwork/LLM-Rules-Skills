@@ -1,5 +1,7 @@
 import { z } from "zod";
+import type { DomainArtifacts } from "./domain/domain-artifacts.js";
 import { WorkspaceEvidenceSchema } from "./domain/workspace.js";
+
 
 export const CONTRACT_VERSION = "2" as const;
 
@@ -609,6 +611,8 @@ export type WorkPacket = {
   priorArtifacts: string[];
   expectedOutput: string;
   createdAt: string;
+  /** Present when the role's guidance assignment includes domain-modeling. */
+  domainArtifacts?: DomainArtifacts;
 };
 
 export function formatReflectRestatement(output: ReflectOutput): string {
@@ -679,6 +683,7 @@ export function createRunState(
   });
 }
 
+export * from "./domain/domain-artifacts.js";
 export * from "./domain/policies.js";
 export * from "./domain/transitions.js";
 export * from "./domain/workspace.js";

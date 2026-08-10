@@ -51,10 +51,6 @@ _Avoid_: Client, buyer, account
 - **Ordering ↔ Billing**: Shared types for `CustomerId` and `Money`
 ```
 
-The skill infers which structure applies:
+**Harness:** use `domainArtifacts` from the work packet (`glossaries`, optional `glossaryMap`). Do not search for glossary locations. If `glossaryMap` is set, read it to choose which glossary; if unclear, ask. Empty `glossaries` → create root `GLOSSARY.md` lazily when the first term is resolved.
 
-- If `GLOSSARY-MAP.md` exists, read it to find contexts
-- If only a root `GLOSSARY.md` exists, single context
-- If neither exists, create a root `GLOSSARY.md` lazily when the first term is resolved
-
-When multiple contexts exist, infer which one the current topic relates to. If unclear, ask.
+**Standalone (non-harness):** find or create root `GLOSSARY.md`; if `GLOSSARY-MAP.md` exists, follow it. When multiple contexts exist, infer which one the current topic relates to; if unclear, ask.

@@ -311,15 +311,24 @@ export class RunAdvancer {
         false,
       );
     }
-    if (configurationHash(this.ctx.config) !== state.configurationHash) {
+    const currentHash = configurationHash(this.ctx.config);
+    if (currentHash !== state.configurationHash) {
       let detail = "";
       try {
         const raw = await this.ctx.store.readJson(state.runId, "config.json");
         const frozen = normalizeFrozenRunConfig(raw);
         const diffs = configurationPolicyDiff(this.ctx.config, frozen);
-        detail = diffs.length
-          ? ` Differing hashed policy vs frozen snapshot: ${diffs.slice(0, 8).join(", ")}.`
-          : " Engine hashed policy matches the frozen snapshot; the run state's configurationHash stamp is stale.";
+        if (diffs.length === 0) {
+          // The policy that governs this run is still identical to its durable
+          // snapshot. A stale state stamp must not strand the run (in
+          // particular after a live test-path or ignored-artifact update).
+          return this.ctx.store.record(
+            { ...state, configurationHash: currentHash },
+            "run.config_restamped",
+            { previousHash: state.configurationHash },
+          );
+        }
+        detail = ` Differing hashed policy vs frozen snapshot: ${diffs.slice(0, 8).join(", ")}.`;
       } catch {
         // Frozen snapshot may be unreadable; the base message is still actionable.
       }

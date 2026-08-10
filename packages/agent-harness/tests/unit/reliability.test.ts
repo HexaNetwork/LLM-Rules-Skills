@@ -530,7 +530,7 @@ describe("failure classification", () => {
     await expect(engine.retry(state.runId)).resolves.toMatchObject({ phase: "reflecting" });
   });
 
-  it("records blockedKind config when ensureCompatibleConfiguration detects a hash mismatch", async () => {
+  it("re-stamps a stale configurationHash when the frozen policy still matches", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
     const backend = createFakeBackend({
@@ -554,10 +554,39 @@ describe("failure classification", () => {
     };
     await engine.store.writeJson(state.runId, "state.json", state);
     state = await engine.advance(state.runId);
-    expect(state.phase).toBe("blocked");
-    expect(state.blockedKind).toBe("config");
-    expect(state.blockedRetriable).toBe(false);
-    expect(state.failure).toMatch(/configurationHash stamp is stale|Differing hashed policy/i);
-    expect(state.failure).toMatch(/Test path patterns and ignored artifact patterns are live/i);
+    expect(state.phase).toBe("awaiting_input");
+    expect(state.configurationHash).toBe(configurationHash(config));
+    const events = await readFile(
+      path.join(root, ".agent-harness", "runs", state.runId, "events.jsonl"),
+      "utf8",
+    );
+    expect(events).toContain("run.config_restamped");
+  });
+
+  it("records blockedKind config when frozen hashed policy differs", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const backend = createFakeBackend({
+      reflector: () => ({
+        summary: "ok",
+        restatement: "Ship it",
+        goal: "Ship",
+        users: ["ops"],
+        inScope: ["a"],
+        outOfScope: [],
+        assumptions: [],
+        unknowns: [],
+      }),
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const state = await engine.start("hash drift");
+
+    engine.config.commands.test = "npm run changed-test";
+    const blocked = await engine.advance(state.runId);
+
+    expect(blocked.phase).toBe("blocked");
+    expect(blocked.blockedKind).toBe("config");
+    expect(blocked.blockedRetriable).toBe(false);
+    expect(blocked.failure).toMatch(/Differing hashed policy vs frozen snapshot: commands\.test/i);
   });
 });

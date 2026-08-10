@@ -209,7 +209,11 @@ export function renderDashboard(): string {
     .note-list { margin-top:14px; display:grid; gap:8px; }
     .note-item { border:1px solid var(--line-soft); border-radius:9px; padding:8px 11px; color:var(--muted); font-size:12.5px; }
     .note-item b { color:var(--text); }
-    .alert { border:1px solid rgba(255,115,115,.3); background:rgba(255,115,115,.07); border-radius:var(--radius); padding:18px; display:flex; justify-content:space-between; align-items:flex-start; gap:18px; }
+    .alert { border:1px solid rgba(255,115,115,.3); background:rgba(255,115,115,.07); border-radius:var(--radius); padding:18px; display:flex; justify-content:space-between; align-items:flex-start; gap:18px; min-width:0; }
+    .alert > :first-child { flex:1 1 auto; min-width:0; }
+    .alert > .btn, .alert > .alert-actions { flex:0 0 auto; }
+    .alert-actions { display:grid; gap:10px; align-content:start; }
+    .alert details, .alert pre { min-width:0; max-width:100%; }
     .alert strong { color:#ffb3b3; }
     .alert.warning { border-color:rgba(255,176,96,.35); background:rgba(255,176,96,.08); }
     .alert.warning strong { color:#ffd4a8; }

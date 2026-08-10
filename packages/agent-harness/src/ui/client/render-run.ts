@@ -527,9 +527,12 @@ export const renderRunScript = `    function renderSidebar() {
             '<button class="btn primary" data-action="raise_budget_retry">Raise ceiling and retry</button>' +
             '</div></div>';
         } else if (s.blockedRetriable === false) {
-          retryControls = '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Not retriable</strong><div class="muted" style="margin-top:3px">This block is classified as <code>' + esc(s.blockedKind || "unknown") + '</code>. Retrying without fixing the cause is unlikely to help.</div></div></div><button class="btn danger" data-action="retry" data-force="true">Retry anyway</button>';
+          retryControls = '<div class="alert warning" style="padding:10px 12px"><div><strong>Not retriable</strong><div class="muted" style="margin-top:3px">This block is classified as <code>' + esc(s.blockedKind || "unknown") + '</code>. Retrying without fixing the cause is unlikely to help.</div></div></div><button class="btn danger" data-action="retry" data-force="true">Retry anyway</button>';
         } else if (!isTreeDivergence) {
           retryControls = '<button class="btn danger" data-action="retry">Retry transition</button>';
+        }
+        if (retryControls) {
+          retryControls = '<div class="alert-actions">' + retryControls + '</div>';
         }
         var fixer = s.fixerRecovery;
         var fixerControls = '';

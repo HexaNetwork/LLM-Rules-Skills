@@ -427,6 +427,9 @@ describe("dashboard document", () => {
     expect(html).toContain('data-force="true"');
     expect(html).toContain("Retry anyway");
     expect(html).toContain("force: true");
+    // Expanding Raw failure detail must not reflow the side "Not retriable" actions.
+    expect(html).toContain(".alert > :first-child { flex:1 1 auto; min-width:0;");
+    expect(html).toContain('class="alert-actions"');
   });
 
   it("shows paused-run resume copy without step-budget yield messaging", () => {

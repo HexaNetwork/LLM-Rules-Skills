@@ -143,6 +143,8 @@ Reconciliation is a re-projection, not an append: one answer often collapses sev
 
 Operators can also add a **note** mid-interview ("don't touch the auth module") without waiting for a question to attach it to. Notes are consumed as authoritative input on the next griller turn, and can optionally seed a human-authored register entry.
 
+When the griller returns `ready_to_plan`, the run pauses on an explicit **grill-complete gate** (`awaiting_input` with `grillReady`). The dashboard (or `agent-harness confirm-grill`) lets the operator continue into planning or send feedback that reopens grilling with a new fog unknown. Planning does not start until that confirmation.
+
 An episode spans at most `workflow.maxGrillQuestionsPerEpisode` answered questions (five by default), then checkpoints and rolls to a new provider agent with the confirmed brief and resolutions so far. Staleness is measured once per batch from its shared `askedAt`: if a batch is submitted more than `workflow.staleAnswerMinutes` (30 by default) after it was asked, the harness discards the episode and continues with a cold packet containing only those questions and answers. Planning, implementation tasks, and review retain clean boundaries. If the Cursor checkpoint cannot be resumed, the backend creates a fresh agent and submits the complete packet instead.
 
 ## Scope-aware local retrieval
@@ -288,6 +290,24 @@ The harness executes shell commands in the repository root with the operator's f
 Mitigations available today: pin `workflow.tdd`, review planner output before execution, and run the harness in a container or VM when the repository or knowledge index may contain untrusted material.
 
 Intended fix (deferred — see [Command allowlisting for model-authored test targets](../../docs/roadmap.md#command-allowlisting-for-model-authored-test-targets)): allowlist `task.testCommand` against `config.commands.test` and `config.commands.gates[].command`, and model per-task targeting as a scoped `testFilter` argument interpolated into a config-owned template rather than as a free-form command string.
+
+## Testing
+
+From the monorepo root (or `packages/agent-harness`):
+
+```bash
+npm run test:unit          # Vitest unit suite
+npm run test:integration   # Vitest integration suite (real FS / HTTP / ScriptedBackend)
+npm run test:e2e:install   # once per machine: download Chromium for Playwright
+npm run test:e2e           # Playwright browser E2E against a real loopback UI
+npm run build              # required before acceptance tests that spawn dist/cli.js
+npm run test:acceptance    # CLI acceptance via createCli injection + compiled bin
+npm run test:all           # unit + integration + e2e + build + acceptance
+```
+
+E2E tests live in `tests/e2e/`. They do **not** launch the production CLI: each test builds a `ProjectFixture`, injects a `ScriptedBackend`, starts `startUiServer({ port: 0, openBrowser: false })`, and opens the authenticated dashboard URL. Failure artifacts land under Git-ignored `test-results/` (Playwright traces under `test-results/playwright/`).
+
+Acceptance tests inject backends through `createCli({ createBackend, runGraphifySetup, … })` — there is no production CLI flag or config key that selects a test backend. CI is defined in [`.github/workflows/agent-harness.yml`](../../.github/workflows/agent-harness.yml).
 
 ## Extension boundaries
 

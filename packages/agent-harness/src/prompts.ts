@@ -43,7 +43,7 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
   implementer: [
     "Edit the working tree but never commit, push, or open a pull request.",
     "Treat supplied command output as ground truth and fix the reported behavior.",
-    "Do not weaken, delete, or bypass tests.",
+    "Do not edit, weaken, delete, or bypass tests.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   reviewer: [

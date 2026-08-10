@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   HarnessConfigSchema,
   configurationHash,
@@ -77,7 +78,7 @@ export class RecoveryService {
           "The operator must approve before any repair is applied.",
           "Keep the recovery plan bounded: name every file it authorizes changing and every validation command it authorizes running. Do not propose broad repository discovery during application.",
         ],
-        expectedOutput: "{summary,steps:[{title,description}],risks:string[]}",
+        expectedOutput: "{summary,steps:[{title,description}],risks:string[],allowedPaths:string[],validationCommands:string[]}",
         schema: FixerPlanSchema,
         knowledgeQuery: `${state.failure}\n${guidance}`,
         signal: this.ctx.signalFor(runId),
@@ -110,6 +111,13 @@ export class RecoveryService {
       if (state.phase !== "blocked" || !state.blockedFrom || !recovery || recovery.status !== "proposed") {
         throw new Error(`Run ${runId} has no fixer plan awaiting approval`);
       }
+      if (recovery.plan.allowedPaths.length === 0) {
+        throw new HarnessFailure(
+          "Approved fixer plan has no allowedPaths; propose a bounded recovery plan before applying it",
+          "contract",
+          false,
+        );
+      }
       const resumePhase = state.blockedFrom;
       state = await this.ctx.store.record(state, "fixer.plan_approved", { summary: recovery.plan.summary });
       const result = await this.ctx.agents.invoke({
@@ -134,6 +142,19 @@ export class RecoveryService {
         signal: this.ctx.signalFor(runId),
       });
       const changedFiles = this.ctx.config.git.enabled ? await this.ctx.git.changedFiles() : result.changedFiles;
+      const allowedPaths = new Set(
+        recovery.plan.allowedPaths.map((candidate) => normalizeRecoveryPath(candidate, this.ctx.config.repositoryRoot)),
+      );
+      const unexpectedChanges = changedFiles.filter(
+        (candidate) => !allowedPaths.has(normalizeRecoveryPath(candidate, this.ctx.config.repositoryRoot)),
+      );
+      if (unexpectedChanges.length > 0) {
+        throw new HarnessFailure(
+          `Approved fixer changed paths outside its allowedPaths: ${unexpectedChanges.join(", ")}`,
+          "contract",
+          false,
+        );
+      }
       const appliedRecovery: FixerRecovery = {
         ...recovery,
         status: "applied",
@@ -595,4 +616,9 @@ export class RecoveryService {
    * Toggle TDD for the run default and/or a still-pending task.
    * Refuses once a task has entered writing_tests / implementing work.
    */
+}
+
+function normalizeRecoveryPath(candidate: string, repositoryRoot: string): string {
+  const resolved = path.isAbsolute(candidate) ? path.relative(repositoryRoot, candidate) : candidate;
+  return resolved.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
 }

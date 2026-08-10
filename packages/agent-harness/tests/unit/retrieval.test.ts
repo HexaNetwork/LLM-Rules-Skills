@@ -43,6 +43,61 @@ describe("decision knowledge query composition", () => {
 });
 
 describe("retrieval audit artifact", () => {
+  it("omits retrieval and selected guidance for bounded invocations", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      agent: { promptBuilder: false } as never,
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
+      },
+    });
+    const store = new RunStore(config);
+    await store.initialize();
+    const knowledge = new LocalKnowledgeBase(config);
+    await knowledge.refresh();
+    const runId = "retrieval-disabled-run";
+    await store.create(createRunState(runId, "Apply approved recovery", new Date().toISOString()));
+    const agents = new AgentCoordinator(
+      config,
+      createFakeBackend({
+        fixer: () => ({ summary: "Applied the bounded recovery.", changedFiles: [] }),
+      }),
+      store,
+      knowledge,
+    );
+
+    await agents.invoke({
+      runId,
+      role: "fixer",
+      objective: "Apply the approved recovery plan",
+      input: { approvedPlan: { summary: "Update agent-harness.config.yaml" } },
+      constraints: ["Do not search the repository broadly."],
+      expectedOutput: "{summary,changedFiles}",
+      schema: WorkerOutputSchema,
+      retrieval: false,
+      buildPrompt: false,
+    });
+
+    const files = await store.listFiles(runId, "packets");
+    const packetPath = files.find(
+      (file) => file.endsWith(".json") && !file.endsWith(".retrieval.json") && !file.endsWith(".guidance.json"),
+    );
+    const retrievalPath = files.find((file) => file.endsWith(".retrieval.json"));
+    const packet = (await store.readJson(runId, packetPath!)) as {
+      guidance: unknown[];
+      context: unknown[];
+    };
+    const retrieval = (await store.readJson(runId, retrievalPath!)) as {
+      retrieval: { skipped?: string; graphify: { skippedReason?: string } };
+    };
+
+    expect(packet.guidance).toEqual([]);
+    expect(packet.context).toEqual([]);
+    expect(retrieval.retrieval.skipped).toBe("retrieval-disabled");
+    expect(retrieval.retrieval.graphify.skippedReason).toBe("retrieval-disabled");
+  });
+
   it("persists packets/*.retrieval.json and avoids padding with below-floor junk", async () => {
     const root = await fixtureRoot();
     await writeFile(

@@ -255,6 +255,10 @@ export const FixerPlanSchema = z.object({
   summary: z.string().min(1),
   steps: z.array(z.object({ title: z.string().min(1), description: z.string().min(1) })).min(1),
   risks: z.array(z.string().min(1)).default([]),
+  // An approved recovery plan is also an execution boundary. Defaults preserve
+  // readability of old run state; old unscoped plans must be regenerated before apply.
+  allowedPaths: z.array(z.string().min(1)).default([]),
+  validationCommands: z.array(z.string().min(1)).default([]),
 });
 export type FixerPlan = z.infer<typeof FixerPlanSchema>;
 

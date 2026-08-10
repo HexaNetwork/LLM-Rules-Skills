@@ -1,4 +1,9 @@
-import { CONFIG_VERSION, configurationHash } from "../config.js";
+import {
+  CONFIG_VERSION,
+  configurationHash,
+  configurationPolicyDiff,
+  normalizeFrozenRunConfig,
+} from "../config.js";
 import { isTerminalPhase, type RunState } from "../domain.js";
 import { classifyFailure, HarnessFailure, RunCancelledError } from "../errors.js";
 import { reportedTotal } from "../agent.js";
@@ -307,8 +312,19 @@ export class RunAdvancer {
       );
     }
     if (configurationHash(this.ctx.config) !== state.configurationHash) {
+      let detail = "";
+      try {
+        const raw = await this.ctx.store.readJson(state.runId, "config.json");
+        const frozen = normalizeFrozenRunConfig(raw);
+        const diffs = configurationPolicyDiff(this.ctx.config, frozen);
+        detail = diffs.length
+          ? ` Differing hashed policy vs frozen snapshot: ${diffs.slice(0, 8).join(", ")}.`
+          : " Engine hashed policy matches the frozen snapshot; the run state's configurationHash stamp is stale.";
+      } catch {
+        // Frozen snapshot may be unreadable; the base message is still actionable.
+      }
       throw new HarnessFailure(
-        "Run configuration changed; resume with the persisted run config",
+        `Run configuration changed; resume with the persisted run config.${detail} Test path patterns and ignored artifact patterns are live and do not cause this block.`,
         "config",
         false,
       );

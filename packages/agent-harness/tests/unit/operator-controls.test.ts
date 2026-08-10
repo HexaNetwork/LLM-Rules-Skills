@@ -189,12 +189,27 @@ describe("operator controls", () => {
         },
       ],
     });
-    await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const frozenPatterns = ["tests/**"];
+    await store.writeJson(runId, "config.json", {
+      ...config,
+      workflow: { ...config.workflow, testPathPatterns: frozenPatterns, tdd: true },
+      configVersion: CONFIG_VERSION,
+    });
+    // Live engine config may already carry an overlay; rewriting frozen must not bake it in.
+    const liveEngineConfig = {
+      ...config,
+      workflow: { ...config.workflow, testPathPatterns: ["modules/**/src/test/**"], tdd: true },
+    };
+    const engine = new HarnessEngine(liveEngineConfig, { backend: createFakeBackend({}) });
 
     const updated = await engine.setTdd(runId, false);
     expect(updated.tasks.find((task) => task.id === "pending-task")?.tdd).toBe(false);
     expect(updated.tasks.find((task) => task.id === "active-task")?.tdd).toBe(true);
+    const rewritten = (await store.readJson(runId, "config.json")) as {
+      workflow: { tdd: boolean; testPathPatterns: string[] };
+    };
+    expect(rewritten.workflow.tdd).toBe(false);
+    expect(rewritten.workflow.testPathPatterns).toEqual(frozenPatterns);
 
     await expect(engine.setTdd(runId, false, "active-task")).rejects.toThrow(/Cannot change TDD/);
   });

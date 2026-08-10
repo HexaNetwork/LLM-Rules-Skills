@@ -167,10 +167,22 @@ describe("run usage accrual and cost ceiling", () => {
 
   it("rewrites frozen maxRunTokens on force-retry and re-stamps configurationHash", async () => {
     const root = await fixtureRoot();
+    const frozenPatterns = ["tests/**"];
     const config = fixtureConfig(root, {
-      workflow: { ...fixtureConfig(root).workflow, maxRunTokens: 100 },
+      workflow: {
+        ...fixtureConfig(root).workflow,
+        maxRunTokens: 100,
+        testPathPatterns: frozenPatterns,
+      },
     });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const liveConfig = {
+      ...config,
+      workflow: {
+        ...config.workflow,
+        testPathPatterns: ["modules/**/src/test/**"],
+      },
+    };
+    const engine = new HarnessEngine(liveConfig, { backend: createFakeBackend({}) });
     const hash = configurationHash(config);
     let state: RunState = {
       ...createRunState("raise-ceiling", "idea", new Date().toISOString(), hash, CONFIG_VERSION),
@@ -194,9 +206,10 @@ describe("run usage accrual and cost ceiling", () => {
     expect(state.blockedKind).toBeUndefined();
     expect(engine.config.workflow.maxRunTokens).toBe(500);
     const frozen = (await engine.store.readJson(state.runId, "config.json")) as {
-      workflow: { maxRunTokens: number };
+      workflow: { maxRunTokens: number; testPathPatterns?: string[] };
     };
     expect(frozen.workflow.maxRunTokens).toBe(500);
+    expect(frozen.workflow.testPathPatterns).toEqual(frozenPatterns);
     expect(state.configurationHash).toBe(configurationHash(engine.config));
   });
 

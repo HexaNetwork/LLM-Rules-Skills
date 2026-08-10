@@ -505,8 +505,14 @@ export class TaskExecutionService {
       const raw = (await this.ctx.store.readJson(state.runId, "config.json")) as Record<string, unknown>;
       const frozenVersion =
         typeof raw.configVersion === "number" ? raw.configVersion : state.configVersion;
+      const frozenWorkflow =
+        typeof raw.workflow === "object" && raw.workflow !== null && !Array.isArray(raw.workflow)
+          ? (raw.workflow as Record<string, unknown>)
+          : {};
+      // Persist intentional mutation onto the frozen snapshot — do not dump live overlays.
       await this.ctx.store.writeJson(state.runId, "config.json", {
-        ...this.ctx.config,
+        ...raw,
+        workflow: { ...frozenWorkflow, tdd: parsed.workflow.tdd },
         configVersion: frozenVersion,
       });
       const nextHash = configurationHash(this.ctx.config);

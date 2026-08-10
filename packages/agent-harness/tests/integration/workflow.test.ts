@@ -7,7 +7,12 @@ import {
   type AgentBackend,
   type AgentRequest,
 } from "../../src/agent.js";
-import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
+import {
+  CONFIG_VERSION,
+  configurationHash,
+  loadRunConfig,
+  writeProjectSettings,
+} from "../../src/config.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { confirmGrillAndAdvance, fixtureConfig, fixtureRoot } from "../helpers.js";
 
@@ -376,6 +381,97 @@ describe("durable idea-to-feature workflow", () => {
     expect(state.phase).toBe("blocked");
     expect(state.blockedFrom).toBe("reflecting");
     expect(state.blockedKind).toBe("provider");
+  });
+
+  it("continues after mid-run testPathPatterns-only settings change without a config block", async () => {
+    const root = await fixtureRoot();
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    await writeFile(
+      configPath,
+      [
+        "version: 2",
+        "repositoryRoot: .",
+        "commands:",
+        '  test: node -e "process.exit(0)"',
+        "workflow:",
+        "  testPathPatterns:",
+        "    - tests/**",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, testPathPatterns: ["tests/**"] } as never,
+      commands: { test: 'node -e "process.exit(0)"' },
+    });
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("mid-run test paths");
+    const stamped = state.configurationHash;
+
+    await writeProjectSettings(configPath, {
+      workflow: { testPathPatterns: ["modules/**/src/test/**"] },
+    });
+    const project = fixtureConfig(root, {
+      workflow: { tdd: false, testPathPatterns: ["modules/**/src/test/**"] } as never,
+      commands: { test: 'node -e "process.exit(0)"' },
+    });
+    const runConfig = await loadRunConfig(project, state.runId);
+    expect(configurationHash(runConfig)).toBe(stamped);
+    expect(runConfig.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
+
+    const resumed = new HarnessEngine(runConfig, { backend });
+    state = await resumed.advance(state.runId);
+    expect(state.blockedKind).not.toBe("config");
+    expect(state.phase).toBe("awaiting_input");
+    expect(resumed.config.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
+  });
+
+  it("continues after mid-run hashed commands.test change via frozen snapshot isolation", async () => {
+    const root = await fixtureRoot();
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    const originalTest = 'node -e "process.exit(0)"';
+    await writeFile(
+      configPath,
+      [
+        "version: 2",
+        "repositoryRoot: .",
+        "commands:",
+        `  test: ${originalTest}`,
+        "workflow:",
+        "  testPathPatterns:",
+        "    - tests/**",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, testPathPatterns: ["tests/**"] } as never,
+      commands: { test: originalTest },
+    });
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("mid-run hashed command");
+    const stamped = state.configurationHash;
+
+    await writeProjectSettings(configPath, {
+      commands: { test: "./gradlew test" },
+    });
+    const driftedProject = fixtureConfig(root, {
+      workflow: { tdd: false, testPathPatterns: ["tests/**"] } as never,
+      commands: { test: "./gradlew test" },
+    });
+    expect(configurationHash(driftedProject)).not.toBe(stamped);
+
+    const runConfig = await loadRunConfig(driftedProject, state.runId);
+    expect(configurationHash(runConfig)).toBe(stamped);
+    expect(runConfig.commands.test).toBe(originalTest);
+
+    const resumed = new HarnessEngine(runConfig, { backend });
+    state = await resumed.advance(state.runId);
+    expect(state.blockedKind).not.toBe("config");
+    expect(state.phase).toBe("awaiting_input");
+    expect(resumed.config.commands.test).toBe(originalTest);
   });
 
   it("migrates older configVersion runs and refuses same-version hash mismatches", async () => {

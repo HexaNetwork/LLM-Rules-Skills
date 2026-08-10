@@ -557,5 +557,7 @@ describe("failure classification", () => {
     expect(state.phase).toBe("blocked");
     expect(state.blockedKind).toBe("config");
     expect(state.blockedRetriable).toBe(false);
+    expect(state.failure).toMatch(/configurationHash stamp is stale|Differing hashed policy/i);
+    expect(state.failure).toMatch(/Test path patterns and ignored artifact patterns are live/i);
   });
 });

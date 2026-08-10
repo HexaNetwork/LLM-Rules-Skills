@@ -222,11 +222,18 @@ export async function handleRunsRoutes(
     const runId = decodeURIComponent(actionMatch[1]!);
     const body = await readJsonBody(request);
     const action = requiredString(body.action, "action", 40);
+    const stateForGate = action === "apply_fix" ? await ctx.store.load(runId).catch(() => null) : null;
+    const applyFixIsConfigOnly =
+      action === "apply_fix" &&
+      (Boolean(body.configPatch) ||
+        (stateForGate?.fixerRecovery?.role === "config-fixer" &&
+          stateForGate.fixerRecovery.status === "proposed"));
     if (
       action !== "cancel" &&
       action !== "note" &&
       action !== "stop" &&
       action !== "amend_config" &&
+      !applyFixIsConfigOnly &&
       !ctx.agentReadiness.ready
     ) {
       throw new HttpError(503, ctx.agentReadiness.message ?? "The configured agent backend is unavailable");
@@ -261,9 +268,37 @@ export async function handleRunsRoutes(
       const guidance = requiredString(body.guidance, "guidance", 20_000);
       ctx.jobs.enqueue(runId, action, () => engine.proposeFix(runId, guidance));
     } else if (action === "apply_fix") {
+      const persistProjectDefaults =
+        optionalBoolean(body.persistProjectDefaults, "persistProjectDefaults") ?? false;
+      const configPatch = body.configPatch
+        ? ProjectSettingsPatchSchema.parse(requiredRecord(body.configPatch, "configPatch"))
+        : undefined;
+      if (persistProjectDefaults && !ctx.configPath) {
+        throw new HttpError(400, "Cannot persist project defaults without a config file path");
+      }
       ctx.jobs.enqueue(runId, action, async () => {
-        await engine.applyApprovedFix(runId);
-        await engine.advance(runId);
+        let reportPaths: string[] = [];
+        const patchForPersist =
+          configPatch ??
+          (stateForGate?.fixerRecovery?.role === "config-fixer"
+            ? ProjectSettingsPatchSchema.parse(stateForGate.fixerRecovery.plan.configPatch)
+            : undefined);
+        if (persistProjectDefaults && ctx.configPath && patchForPersist) {
+          const updated = await writeProjectSettings(ctx.configPath, patchForPersist);
+          ctx.setProjectConfig(updated.config);
+          const relative = path
+            .relative(updated.config.repositoryRoot, ctx.configPath)
+            .replaceAll("\\", "/");
+          if (relative && !relative.startsWith("..")) reportPaths = [relative];
+        }
+        await engine.applyApprovedFix(runId, {
+          configPatch,
+          persistedProjectDefaults: persistProjectDefaults,
+          reportPaths,
+        });
+        // Reload frozen config so the resumed transition sees any amendment.
+        const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId);
+        await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
       });
     } else if (action === "retry") {
       const force = optionalBoolean(body.force, "force") ?? false;

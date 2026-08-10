@@ -262,16 +262,44 @@ export const FixerPlanSchema = z.object({
 });
 export type FixerPlan = z.infer<typeof FixerPlanSchema>;
 
-export const FixerRecoverySchema = z.object({
+/** Small settings-only recovery plan; approval applies through amendConfig. */
+export const ConfigFixerPlanSchema = z.object({
+  summary: z.string().min(1),
+  // Validated against ProjectSettingsPatchSchema at the recovery boundary.
+  configPatch: z.record(z.unknown()),
+});
+export type ConfigFixerPlan = z.infer<typeof ConfigFixerPlanSchema>;
+
+const FixerRecoveryBaseSchema = {
   guidance: z.string().min(1),
   failure: z.string().min(1),
-  plan: FixerPlanSchema,
   status: z.enum(["proposed", "applied"]),
   proposedAt: z.string(),
   appliedAt: z.string().optional(),
   result: z.string().optional(),
   changedFiles: z.array(z.string()).default([]),
-});
+};
+
+export const FixerRecoverySchema = z.preprocess(
+  (raw) => {
+    if (raw && typeof raw === "object" && !Array.isArray(raw) && !("role" in raw)) {
+      return { ...(raw as Record<string, unknown>), role: "fixer" };
+    }
+    return raw;
+  },
+  z.discriminatedUnion("role", [
+    z.object({
+      role: z.literal("fixer"),
+      plan: FixerPlanSchema,
+      ...FixerRecoveryBaseSchema,
+    }),
+    z.object({
+      role: z.literal("config-fixer"),
+      plan: ConfigFixerPlanSchema,
+      ...FixerRecoveryBaseSchema,
+    }),
+  ]),
+);
 export type FixerRecovery = z.infer<typeof FixerRecoverySchema>;
 
 export const RunStateSchema = z.object({
@@ -351,6 +379,7 @@ export const AgentRoleSchema = z.enum([
   "reviewer",
   "message-writer",
   "fixer",
+  "config-fixer",
 ]);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 

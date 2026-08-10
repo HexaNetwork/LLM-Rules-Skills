@@ -136,6 +136,7 @@ describe("token-conscious defaults", () => {
       reviewer: { rules: [], skills: ["code-review"] },
       "message-writer": { rules: [], skills: [] },
       fixer: { rules: [], skills: ["diagnose"] },
+      "config-fixer": { rules: [], skills: [] },
     };
     expect(HarnessConfigSchema.parse({
       knowledge: { guidance: { assignments: complete } },

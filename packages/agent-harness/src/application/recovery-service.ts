@@ -9,6 +9,7 @@ import {
   type PreflightCommitOrder,
 } from "../config.js";
 import {
+  ConfigFixerPlanSchema,
   FixerPlanSchema,
   WorkerOutputSchema,
   clearBlock,
@@ -27,6 +28,7 @@ import {
   CANCEL_LOCK_WAIT_MS,
   defaultPreflightCommitMessage,
   indexOfTaskForReportedPaths,
+  isConfigFixerCandidate,
   pendingInstallApprovals,
   preflightCommitDetail,
   unique,
@@ -63,54 +65,169 @@ export class RecoveryService {
       if (state.phase !== "blocked" || !state.failure || !state.blockedFrom) {
         throw new Error(`Run ${runId} is not blocked with a recoverable failure`);
       }
-      const plan = await this.ctx.agents.invoke({
-        runId,
-        role: "fixer",
-        objective: "Propose a minimal recovery plan for the blocked harness run; do not edit the working tree",
-        input: {
-          failure: state.failure,
-          blockedFrom: state.blockedFrom,
-          blockedKind: state.blockedKind,
-          operatorGuidance: guidance.trim(),
-        },
-        constraints: [
-          "Do not edit files during planning.",
-          "The operator must approve before any repair is applied.",
-          "Keep the recovery plan bounded: name every file it authorizes changing and every validation command it authorizes running. Do not propose broad repository discovery during application.",
-        ],
-        expectedOutput: "{summary,steps:[{title,description}],risks:string[],allowedPaths:string[],validationCommands:string[]}",
-        schema: FixerPlanSchema,
-        knowledgeQuery: `${state.failure}\n${guidance}`,
-        signal: this.ctx.signalFor(runId),
-      });
-      const fixerRecovery: FixerRecovery = {
-        guidance: guidance.trim(),
-        failure: state.failure,
-        plan,
-        status: "proposed",
-        proposedAt: new Date().toISOString(),
-        changedFiles: [],
-      };
-      const updated = await this.ctx.store.record({ ...state, fixerRecovery }, "fixer.plan_proposed", {
-        blockedFrom: state.blockedFrom,
-        blockedKind: state.blockedKind,
-        guidance: fixerRecovery.guidance,
-        summary: plan.summary,
-      });
-      await this.ctx.syncArtifacts(updated);
-      return updated;
+      if (isConfigFixerCandidate(state.blockedKind)) {
+        return this.proposeConfigFix(state, guidance.trim());
+      }
+      return this.proposeFileFix(state, guidance.trim());
     }));
   }
 
-  /** Apply an explicitly approved fixer plan, then clear the block for the normal workflow to resume. */
+  private async proposeConfigFix(state: RunState, guidance: string): Promise<RunState> {
+    const frozen = normalizeFrozenRunConfig(await this.ctx.store.readJson(state.runId, "config.json"));
+    const currentAmendableSettings = {
+      workflow: {
+        maxGrillQuestionsPerEpisode: frozen.workflow.maxGrillQuestionsPerEpisode,
+        staleAnswerMinutes: frozen.workflow.staleAnswerMinutes,
+        grillQuestionsPerBatch: frozen.workflow.grillQuestionsPerBatch,
+        testPathPatterns: frozen.workflow.testPathPatterns,
+      },
+      commands: { test: frozen.commands.test },
+      git: {
+        autoCommitPreflight: frozen.git.autoCommitPreflight,
+        preflightCommitOrder: frozen.git.preflightCommitOrder,
+        ignoredArtifactPatterns: frozen.git.ignoredArtifactPatterns,
+      },
+    };
+    const plan = await this.ctx.agents.invoke({
+      runId: state.runId,
+      role: "config-fixer",
+      objective: "Propose the smallest harness settings patch that unblocks this run",
+      input: {
+        failure: state.failure,
+        blockedFrom: state.blockedFrom,
+        blockedKind: state.blockedKind,
+        operatorGuidance: guidance,
+        currentAmendableSettings,
+      },
+      constraints: [
+        "Do not edit files.",
+        "Return only summary and configPatch.",
+        "configPatch may include workflow, commands, and/or git keys from ProjectSettingsPatch.",
+        "Prefer the smallest change that covers the reported failure.",
+      ],
+      expectedOutput: "{summary:string,configPatch:{workflow?,commands?,git?}}",
+      schema: ConfigFixerPlanSchema,
+      knowledgeQuery: `${state.failure}\n${guidance}`,
+      signal: this.ctx.signalFor(state.runId),
+    });
+    ProjectSettingsPatchSchema.parse(plan.configPatch);
+    const fixerRecovery: FixerRecovery = {
+      role: "config-fixer",
+      guidance,
+      failure: state.failure!,
+      plan,
+      status: "proposed",
+      proposedAt: new Date().toISOString(),
+      changedFiles: [],
+    };
+    const updated = await this.ctx.store.record({ ...state, fixerRecovery }, "fixer.plan_proposed", {
+      blockedFrom: state.blockedFrom,
+      blockedKind: state.blockedKind,
+      guidance,
+      summary: plan.summary,
+      role: "config-fixer",
+    });
+    await this.ctx.syncArtifacts(updated);
+    return updated;
+  }
 
-  async applyApprovedFix(runId: string): Promise<RunState> {
+  private async proposeFileFix(state: RunState, guidance: string): Promise<RunState> {
+    const plan = await this.ctx.agents.invoke({
+      runId: state.runId,
+      role: "fixer",
+      objective: "Propose a minimal recovery plan for the blocked harness run; do not edit the working tree",
+      input: {
+        failure: state.failure,
+        blockedFrom: state.blockedFrom,
+        blockedKind: state.blockedKind,
+        operatorGuidance: guidance,
+      },
+      constraints: [
+        "Do not edit files during planning.",
+        "The operator must approve before any repair is applied.",
+        "Keep the recovery plan bounded: name every file it authorizes changing and every validation command it authorizes running. Do not propose broad repository discovery during application.",
+      ],
+      expectedOutput: "{summary,steps:[{title,description}],risks:string[],allowedPaths:string[],validationCommands:string[]}",
+      schema: FixerPlanSchema,
+      knowledgeQuery: `${state.failure}\n${guidance}`,
+      signal: this.ctx.signalFor(state.runId),
+    });
+    const fixerRecovery: FixerRecovery = {
+      role: "fixer",
+      guidance,
+      failure: state.failure!,
+      plan,
+      status: "proposed",
+      proposedAt: new Date().toISOString(),
+      changedFiles: [],
+    };
+    const updated = await this.ctx.store.record({ ...state, fixerRecovery }, "fixer.plan_proposed", {
+      blockedFrom: state.blockedFrom,
+      blockedKind: state.blockedKind,
+      guidance,
+      summary: plan.summary,
+      role: "fixer",
+    });
+    await this.ctx.syncArtifacts(updated);
+    return updated;
+  }
+
+  /**
+   * Apply an explicitly approved fixer plan, then clear the block for the normal workflow to resume.
+   * Config-fixer plans apply through amendConfig (no second agent). File fixer plans invoke the fixer apply pass.
+   */
+  async applyApprovedFix(
+    runId: string,
+    options?: {
+      configPatch?: ProjectSettingsPatch;
+      persistedProjectDefaults?: boolean;
+      reportPaths?: string[];
+    },
+  ): Promise<RunState> {
     return this.ctx.store.withRepositoryLock({ runId, action: "applyApprovedFix" }, () => this.ctx.store.withLock(runId, async () => {
       let state = await this.ctx.store.load(runId);
       const recovery = state.fixerRecovery;
       if (state.phase !== "blocked" || !state.blockedFrom || !recovery || recovery.status !== "proposed") {
         throw new Error(`Run ${runId} has no fixer plan awaiting approval`);
       }
+      const resumePhase = state.blockedFrom;
+      state = await this.ctx.store.record(state, "fixer.plan_approved", {
+        summary: recovery.plan.summary,
+        role: recovery.role,
+      });
+
+      if (recovery.role === "config-fixer") {
+        const configPatch = ProjectSettingsPatchSchema.parse(
+          options?.configPatch ?? recovery.plan.configPatch,
+        );
+        state = await this.applyFrozenConfigAmendment(state, configPatch, {
+          persistedProjectDefaults: options?.persistedProjectDefaults,
+          reportPaths: options?.reportPaths,
+        });
+        const appliedRecovery: FixerRecovery = {
+          ...recovery,
+          plan: { summary: recovery.plan.summary, configPatch: configPatch as Record<string, unknown> },
+          status: "applied",
+          appliedAt: new Date().toISOString(),
+          result: `Applied harness settings patch: ${JSON.stringify(configPatch)}`,
+          changedFiles: unique(options?.reportPaths ?? []),
+        };
+        const updated = await this.ctx.store.record(
+          {
+            ...clearBlock(state, resumePhase),
+            fixerRecovery: appliedRecovery,
+          },
+          "fixer.applied",
+          {
+            summary: appliedRecovery.result,
+            changedFiles: appliedRecovery.changedFiles,
+            role: "config-fixer",
+          },
+        );
+        await this.ctx.syncArtifacts(updated);
+        return updated;
+      }
+
       if (recovery.plan.allowedPaths.length === 0) {
         throw new HarnessFailure(
           "Approved fixer plan has no allowedPaths; propose a bounded recovery plan before applying it",
@@ -118,8 +235,6 @@ export class RecoveryService {
           false,
         );
       }
-      const resumePhase = state.blockedFrom;
-      state = await this.ctx.store.record(state, "fixer.plan_approved", { summary: recovery.plan.summary });
       const result = await this.ctx.agents.invoke({
         runId,
         role: "fixer",
@@ -169,7 +284,7 @@ export class RecoveryService {
           treeFingerprint: this.ctx.config.git.enabled ? await this.ctx.git.treeFingerprint() : state.treeFingerprint,
         },
         "fixer.applied",
-        { summary: result.summary, changedFiles: appliedRecovery.changedFiles },
+        { summary: result.summary, changedFiles: appliedRecovery.changedFiles, role: "fixer" },
       );
       await this.ctx.syncArtifacts(updated);
       return updated;
@@ -266,63 +381,73 @@ export class RecoveryService {
   ): Promise<RunState> {
     return this.ctx.store.withRepositoryLock({ runId, action: "amendConfig" }, () =>
       this.ctx.store.withLock(runId, async () => {
-        let state = await this.ctx.store.load(runId);
+        const state = await this.ctx.store.load(runId);
         if (state.phase !== "blocked" || !state.blockedFrom) {
           throw new Error(`Run ${runId} must be blocked before its frozen config can be amended`);
         }
-        const parsedPatch = ProjectSettingsPatchSchema.parse(patch);
-        const raw = (await this.ctx.store.readJson(runId, "config.json")) as Record<string, unknown>;
-        const frozen = normalizeFrozenRunConfig(raw);
-        const amended = HarnessConfigSchema.parse({
-          ...frozen,
-          ...(parsedPatch.workflow
-            ? { workflow: { ...frozen.workflow, ...parsedPatch.workflow } }
-            : {}),
-          ...(parsedPatch.commands
-            ? { commands: { ...frozen.commands, ...parsedPatch.commands } }
-            : {}),
-          ...(parsedPatch.git ? { git: { ...frozen.git, ...parsedPatch.git } } : {}),
-        });
-        const changedPaths = configurationPolicyDiff(frozen, amended);
-        if (changedPaths.length === 0) {
-          throw new Error("The proposed config amendment does not change this run's policy");
-        }
-        const previousHash = state.configurationHash;
-        await this.ctx.store.writeJson(runId, "config.json", {
-          ...amended,
-          configVersion: state.configVersion,
-        });
-        const reportPaths = unique(
-          (options?.reportPaths ?? []).map((file) => file.replaceAll("\\", "/")),
-        );
-        if (reportPaths.length > 0) {
-          const targetIndex = indexOfTaskForReportedPaths(state);
-          if (targetIndex >= 0) {
-            state = {
-              ...state,
-              tasks: state.tasks.map((task, index) =>
-                index === targetIndex
-                  ? { ...task, changedFiles: unique([...task.changedFiles, ...reportPaths]) }
-                  : task,
-              ),
-            };
-          }
-        }
-        const nextHash = configurationHash(amended);
-        const updated = await this.ctx.store.record(
-          { ...state, configurationHash: nextHash },
-          "run.config_amended",
-          {
-            previousHash,
-            nextHash,
-            changedPaths,
-            persistedProjectDefaults: Boolean(options?.persistedProjectDefaults),
-            reportPaths,
-          },
-        );
+        const updated = await this.applyFrozenConfigAmendment(state, patch, options);
         await this.ctx.syncArtifacts(updated);
         return updated;
       }),
+    );
+  }
+
+  /** Caller must hold the run lock. Leaves the run blocked; does not sync artifacts. */
+  private async applyFrozenConfigAmendment(
+    state: RunState,
+    patch: ProjectSettingsPatch,
+    options?: { persistedProjectDefaults?: boolean; reportPaths?: string[] },
+  ): Promise<RunState> {
+    const parsedPatch = ProjectSettingsPatchSchema.parse(patch);
+    const raw = (await this.ctx.store.readJson(state.runId, "config.json")) as Record<string, unknown>;
+    const frozen = normalizeFrozenRunConfig(raw);
+    const amended = HarnessConfigSchema.parse({
+      ...frozen,
+      ...(parsedPatch.workflow
+        ? { workflow: { ...frozen.workflow, ...parsedPatch.workflow } }
+        : {}),
+      ...(parsedPatch.commands
+        ? { commands: { ...frozen.commands, ...parsedPatch.commands } }
+        : {}),
+      ...(parsedPatch.git ? { git: { ...frozen.git, ...parsedPatch.git } } : {}),
+    });
+    const changedPaths = configurationPolicyDiff(frozen, amended);
+    if (changedPaths.length === 0) {
+      throw new Error("The proposed config amendment does not change this run's policy");
+    }
+    const previousHash = state.configurationHash;
+    await this.ctx.store.writeJson(state.runId, "config.json", {
+      ...amended,
+      configVersion: state.configVersion,
+    });
+    let nextState = state;
+    const reportPaths = unique(
+      (options?.reportPaths ?? []).map((file) => file.replaceAll("\\", "/")),
+    );
+    if (reportPaths.length > 0) {
+      const targetIndex = indexOfTaskForReportedPaths(nextState);
+      if (targetIndex >= 0) {
+        nextState = {
+          ...nextState,
+          tasks: nextState.tasks.map((task, index) =>
+            index === targetIndex
+              ? { ...task, changedFiles: unique([...task.changedFiles, ...reportPaths]) }
+              : task,
+          ),
+        };
+      }
+    }
+    const nextHash = configurationHash(amended);
+    return this.ctx.store.record(
+      { ...nextState, configurationHash: nextHash },
+      "run.config_amended",
+      {
+        previousHash,
+        nextHash,
+        changedPaths,
+        persistedProjectDefaults: Boolean(options?.persistedProjectDefaults),
+        reportPaths,
+      },
     );
   }
 

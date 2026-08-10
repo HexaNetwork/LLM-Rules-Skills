@@ -211,6 +211,7 @@ knowledge:
       reviewer: { rules: [], skills: [code-review] }
       message-writer: { rules: [], skills: [] }
       fixer: { rules: [], skills: [diagnose, tdd] }
+      config-fixer: { rules: [], skills: [] }
 ```
 
 Policies such as `no-legacy-fallback-code` are deliberately opt-in. A project that wants the policy adds its name to the relevant role mappings; a project that needs compatibility behavior leaves it out or supplies a project-specific rule under another assigned name.

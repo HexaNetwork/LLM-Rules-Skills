@@ -54,7 +54,11 @@ function classifyByMessage(message: string): { kind: FailureKind; retriable: boo
   if (/CURSOR_API_KEY|agent backend (is )?unavailable|missing.*api.?key|timed out|aborted|Cursor run /i.test(message)) {
     return { kind: "provider", retriable: true };
   }
-  if (/run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness/i.test(message)) {
+  if (
+    /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths/i.test(
+      message,
+    )
+  ) {
     return { kind: "config", retriable: false };
   }
   if (/Task .+ failed:|could not satisfy|Validation error|schema/i.test(message)) {

@@ -263,7 +263,7 @@ describe("operator controls", () => {
       blockedFrom: "executing",
       blockedKind: "internal",
       blockedRetriable: false,
-      failure: "Test writer changed non-test paths: sample-app/tests/recovery.test.ts",
+      failure: "Implementer left the tree in a broken state",
     });
     await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
     let fixerCalls = 0;
@@ -272,27 +272,94 @@ describe("operator controls", () => {
         fixerCalls += 1;
         return fixerCalls === 1
           ? {
-            summary: "Classify the repository's test directory as a test path.",
-            steps: [{ title: "Update test paths", description: "Add the project test folder glob in agent-harness.config.yaml." }],
-            risks: ["The run should be retried after the configuration is corrected."],
-            allowedPaths: ["agent-harness.config.yaml"],
+            summary: "Repair the broken implementer output.",
+            steps: [{ title: "Restore files", description: "Revert the broken paths." }],
+            risks: ["The run should be retried after the repair."],
+            allowedPaths: ["src/app.ts"],
             validationCommands: [],
           }
-          : { summary: "Updated the recovery configuration.", changedFiles: ["agent-harness.config.yaml"] };
+          : { summary: "Restored the broken files.", changedFiles: ["src/app.ts"] };
       },
     });
     const engine = new HarnessEngine(config, { backend });
 
     await expect(engine.applyApprovedFix(runId)).rejects.toThrow(/no fixer plan awaiting approval/);
-    const proposed = await engine.proposeFix(runId, "Preserve the test and repair the test path configuration.");
+    const proposed = await engine.proposeFix(runId, "Repair the broken implementer output.");
     expect(proposed.phase).toBe("blocked");
-    expect(proposed.fixerRecovery).toMatchObject({ status: "proposed", changedFiles: [] });
+    expect(proposed.fixerRecovery).toMatchObject({ role: "fixer", status: "proposed", changedFiles: [] });
     const applied = await engine.applyApprovedFix(runId);
     expect(applied.phase).toBe("executing");
     expect(applied.failure).toBeUndefined();
     expect(applied.fixerRecovery).toMatchObject({
+      role: "fixer",
       status: "applied",
-      result: "Updated the recovery configuration.",
+      result: "Restored the broken files.",
     });
+  });
+
+  it("uses config-fixer to propose and apply a settings patch through amendConfig", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: true, testPathPatterns: ["tests/**"] } as never,
+      agent: { promptBuilder: false } as never,
+    });
+    const store = new RunStore(config);
+    await store.initialize();
+    const runId = "config-fixer-run";
+    const hash = configurationHash(config);
+    await store.create({
+      ...createRunState(runId, "idea", new Date().toISOString(), hash, CONFIG_VERSION),
+      phase: "blocked",
+      blockedFrom: "executing",
+      blockedKind: "config",
+      blockedRetriable: false,
+      failure: "Test writer changed non-test paths: sample-app/tests/recovery.test.ts",
+    });
+    await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
+    let configFixerCalls = 0;
+    let fixerCalls = 0;
+    const backend = createFakeBackend({
+      "config-fixer": () => {
+        configFixerCalls += 1;
+        return {
+          summary: "Widen test path patterns to include the written test.",
+          configPatch: { workflow: { testPathPatterns: ["tests/**", "sample-app/tests/**"] } },
+        };
+      },
+      fixer: () => {
+        fixerCalls += 1;
+        return { summary: "should not run", changedFiles: [] };
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+
+    const proposed = await engine.proposeFix(runId, "Preserve the test and widen patterns.");
+    expect(proposed.fixerRecovery).toMatchObject({
+      role: "config-fixer",
+      status: "proposed",
+      plan: {
+        summary: "Widen test path patterns to include the written test.",
+        configPatch: { workflow: { testPathPatterns: ["tests/**", "sample-app/tests/**"] } },
+      },
+    });
+    expect(configFixerCalls).toBe(1);
+    expect(fixerCalls).toBe(0);
+
+    const applied = await engine.applyApprovedFix(runId, {
+      configPatch: { workflow: { testPathPatterns: ["tests/**", "src/**/test/**"] } },
+    });
+    expect(applied.phase).toBe("executing");
+    expect(applied.failure).toBeUndefined();
+    expect(applied.fixerRecovery).toMatchObject({ role: "config-fixer", status: "applied" });
+    expect(fixerCalls).toBe(0);
+    expect(configFixerCalls).toBe(1);
+
+    const frozen = (await engine.store.readJson(runId, "config.json")) as {
+      workflow: { testPathPatterns: string[] };
+    };
+    expect(frozen.workflow.testPathPatterns).toEqual(["tests/**", "src/**/test/**"]);
+    const events = await engine.store.readText(runId, "events.jsonl");
+    expect(events).toContain("run.config_amended");
+    expect(events).toContain("fixer.applied");
   });
 });

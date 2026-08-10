@@ -96,7 +96,7 @@ export const renderRunScript = `    function renderSidebar() {
         provider: { title: "The agent backend failed transiently",
           hint: "Check credentials and provider health, then retry. Automatic provider retries were already exhausted for this step." },
         config: { title: "The run configuration cannot be resumed as-is",
-          hint: "Restore the original configuration, start a new run, or use Retry anyway only if you accept the drift." },
+          hint: "Draft a settings patch with the config fixer, restore the original configuration, or start a new run. Use Retry anyway only if you accept the drift." },
         budget: { title: "A run budget ceiling was reached",
           hint: "Raise the frozen run ceiling below, then retry. Retrying without raising the limit will hit the same block." },
         contract: { title: "The model could not satisfy the required contract",
@@ -395,10 +395,20 @@ export const renderRunScript = `    function renderSidebar() {
         }
         var fixer = s.fixerRecovery;
         var fixerControls = '';
-        if (fixer && fixer.status === 'proposed') {
+        var isConfigBlock = s.blockedKind === 'config';
+        if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
+          var patchJson = JSON.stringify(fixer.plan.configPatch || {}, null, 2);
+          fixerControls = '<strong>Proposed settings patch</strong><div class="muted" style="margin-top:5px">' + esc(fixer.plan.summary) + '</div>' +
+            '<div class="field" style="margin-top:10px"><label for="fixerConfigPatch">Settings patch (JSON)</label><textarea id="fixerConfigPatch" rows="8">' + esc(patchJson) + '</textarea></div>' +
+            '<label class="faint" style="display:flex;gap:7px;align-items:center"><input id="persistConfigAmendment" type="checkbox"> Also use this patch as the project default for future runs</label>' +
+            '<div class="field" style="margin-top:10px"><label for="fixerGuidance">Tweak the plan</label><textarea id="fixerGuidance" rows="2" placeholder="Optional revised instructions for the config fixer"></textarea></div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn" data-action="propose_fix" data-revise-fix="true">Revise patch</button><button class="btn primary" data-action="apply_fix">Approve patch and recover</button></div>';
+        } else if (fixer && fixer.status === 'proposed') {
           var fixerSteps = (fixer.plan.steps || []).map(function (step) { return '<li><strong>' + esc(step.title) + '</strong><div class="muted">' + esc(step.description) + '</div></li>'; }).join('');
           var fixerRisks = (fixer.plan.risks || []).length ? '<div class="faint" style="margin-top:8px">Risks: ' + esc(fixer.plan.risks.join(' · ')) + '</div>' : '';
           fixerControls = '<strong>Proposed fixer plan</strong><div class="muted" style="margin-top:5px">' + esc(fixer.plan.summary) + '</div><ol style="margin:8px 0 0;padding-left:20px">' + fixerSteps + '</ol>' + fixerRisks + '<div class="field" style="margin-top:10px"><label for="fixerGuidance">Tweak the plan</label><textarea id="fixerGuidance" rows="3" placeholder="Optional revised instructions for the fixer"></textarea></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-action="propose_fix" data-revise-fix="true">Revise plan</button><button class="btn primary" data-action="apply_fix">Approve, fix, and recover</button></div>';
+        } else if (isConfigBlock) {
+          fixerControls = '<strong>Fix harness configuration</strong><div class="muted" style="margin-top:5px">A focused config fixer will propose a settings patch for this blocked run. You can edit it before approval; it applies through amend configuration (no repo file edits).</div><div class="field" style="margin-top:10px"><label for="fixerGuidance">Recovery guidance</label><textarea id="fixerGuidance" rows="3" placeholder="For example: preserve the existing test and widen test path patterns to cover it"></textarea></div><button class="btn" data-action="propose_fix">Draft settings patch</button>';
         } else {
           fixerControls = '<strong>Fix with an agent</strong><div class="muted" style="margin-top:5px">Describe how you want this handled. The fixer will propose a plan first; it cannot edit until you approve it.</div><div class="field" style="margin-top:10px"><label for="fixerGuidance">Recovery guidance</label><textarea id="fixerGuidance" rows="3" placeholder="For example: preserve the existing test and update the configured test path patterns"></textarea></div><button class="btn" data-action="propose_fix">Draft recovery plan</button>';
         }

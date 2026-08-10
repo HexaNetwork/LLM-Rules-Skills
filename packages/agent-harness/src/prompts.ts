@@ -55,6 +55,11 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "When asked to apply an approved plan, edit only what is necessary to address that plan. Do not commit, push, open a pull request, weaken tests, or change scope.",
     "Treat the reported failure and the operator's guidance as authoritative. Report the files actually changed and validation performed.",
   ],
+  "config-fixer": [
+    "You only propose harness settings patches. Do not edit repository files.",
+    "Return the smallest ProjectSettingsPatch (workflow / commands / git) that unblocks the reported failure.",
+    "Ground the patch in currentAmendableSettings and the failure detail. Prefer widening testPathPatterns over unrelated changes.",
+  ],
 };
 
 export function renderPrompt(packet: WorkPacket): string {

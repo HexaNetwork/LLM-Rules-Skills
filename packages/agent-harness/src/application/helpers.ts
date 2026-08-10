@@ -51,6 +51,11 @@ export function dirtyTreeMessage(paths: string[]): string {
   return `The working tree has uncommitted changes: ${shown.join(", ")}${more}. Commit or stash local changes in the repository, then retry the transition.`;
 }
 
+/** Blocks already classified as harness-config — use the dedicated config-fixer. */
+export function isConfigFixerCandidate(blockedKind?: string): boolean {
+  return blockedKind === "config";
+}
+
 export function defaultPreflightCommitMessage(runId: string): string {
   return `chore: commit working tree before harness run ${runId}`;
 }

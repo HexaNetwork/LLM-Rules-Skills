@@ -58,6 +58,8 @@ const GuidanceAssignmentsSchema = z.object({
   reviewer: GuidanceAssignmentSchema,
   "message-writer": GuidanceAssignmentSchema,
   fixer: GuidanceAssignmentSchema,
+  // Default keeps older assignment maps valid when this role is introduced.
+  "config-fixer": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
 }).strict();
 
 export const KnowledgeSourceSchema = z

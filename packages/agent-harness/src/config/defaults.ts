@@ -7,7 +7,7 @@ import {
   type KnowledgeVisibility,
 } from "./schema.js";
 
-const SMALL_ROLES = new Set<AgentRole>(["prompt-builder", "message-writer"]);
+const SMALL_ROLES = new Set<AgentRole>(["prompt-builder", "message-writer", "config-fixer"]);
 
 export function modelForRole(config: HarnessConfig, role: AgentRole): string {
   return config.models.roles[role] ??
@@ -158,6 +158,9 @@ knowledge:
       fixer:
         rules: []
         skills: [diagnose, tdd]
+      config-fixer:
+        rules: []
+        skills: []
   # Optional semantic document retrieval. Vectors remain in the local index;
   # the API key is read from the named environment variable, never this file.
   embeddings:

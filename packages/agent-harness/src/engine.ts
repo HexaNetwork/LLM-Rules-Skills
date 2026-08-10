@@ -149,8 +149,15 @@ export class HarnessEngine {
     return this.recovery.proposeFix(runId, guidance);
   }
 
-  applyApprovedFix(runId: string): Promise<RunState> {
-    return this.recovery.applyApprovedFix(runId);
+  applyApprovedFix(
+    runId: string,
+    options?: {
+      configPatch?: ProjectSettingsPatch;
+      persistedProjectDefaults?: boolean;
+      reportPaths?: string[];
+    },
+  ): Promise<RunState> {
+    return this.recovery.applyApprovedFix(runId, options);
   }
 
   setTdd(runId: string, tdd: boolean, taskId?: string): Promise<RunState> {

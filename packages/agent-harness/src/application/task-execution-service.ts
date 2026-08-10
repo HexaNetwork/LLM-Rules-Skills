@@ -134,7 +134,11 @@ export class TaskExecutionService {
     const testPatterns = this.ctx.config.workflow.testPathPatterns;
     const illegal = observedPaths.filter((file) => !isTestPath(file, testPatterns));
     if (illegal.length > 0) {
-      throw new Error(`Test writer changed non-test paths: ${illegal.join(", ")}`);
+      throw new HarnessFailure(
+        `Test writer changed non-test paths: ${illegal.join(", ")}`,
+        "config",
+        false,
+      );
     }
     const evidence = await this.runTargetedTest(state.runId, task, "tdd:red");
     const attempts = { ...task.attempts, tests: task.attempts.tests + 1 };

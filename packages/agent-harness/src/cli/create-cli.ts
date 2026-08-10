@@ -313,6 +313,70 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     );
 
   program
+    .command("confirm-verification")
+    .description("Confirm or edit verification settings before planning")
+    .requiredOption("--run-id <id>", "run id")
+    .option("--keep-current", "keep the run's current test command and path patterns", false)
+    .option("--test-command <command>", "override commands.test for this run")
+    .option(
+      "--test-path-pattern <pattern>",
+      "add a workflow.testPathPatterns entry (repeatable)",
+      (value: string, previous: string[]) => [...previous, value],
+      [] as string[],
+    )
+    .option(
+      "--persist-project-defaults",
+      "also write the confirmed settings into the project config file",
+      false,
+    )
+    .option("--config <path>", "config path")
+    .option("--no-advance", "confirm without launching the planner")
+    .action(
+      async (options: {
+        runId: string;
+        keepCurrent: boolean;
+        testCommand?: string;
+        testPathPattern: string[];
+        persistProjectDefaults: boolean;
+        config?: string;
+        advance: boolean;
+      }) => {
+        const loaded = await loadConfig(options.config);
+        const config = await loadRunConfig(loaded.config, options.runId);
+        const engine = new HarnessEngine(config, { backend: dependencies.createBackend() });
+        const hasOverrides =
+          options.testCommand != null || options.testPathPattern.length > 0;
+        if (options.keepCurrent && hasOverrides) {
+          throw new Error("--keep-current cannot be combined with test command/pattern overrides");
+        }
+        const patch =
+          options.keepCurrent || !hasOverrides
+            ? undefined
+            : {
+                ...(options.testCommand != null
+                  ? { commands: { test: options.testCommand } }
+                  : {}),
+                ...(options.testPathPattern.length > 0
+                  ? { workflow: { testPathPatterns: options.testPathPattern } }
+                  : {}),
+              };
+        let state = await engine.confirmVerification(options.runId, {
+          keepCurrent: options.keepCurrent,
+          patch,
+          persistProjectDefaults: options.persistProjectDefaults,
+          configPath: loaded.path,
+        });
+        if (options.advance) {
+          const refreshed = await loadRunConfig(loaded.config, options.runId);
+          state = await new HarnessEngine(refreshed, {
+            backend: dependencies.createBackend(),
+          }).advance(options.runId);
+        }
+        printState(state);
+      },
+    );
+
+  program
     .command("retry")
     .description("Explicitly retry a bounded step after inspecting a blocked run")
     .requiredOption("--run-id <id>", "run id")
@@ -625,6 +689,15 @@ function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {
     );
     console.log(
       `Or reopen with: agent-harness confirm-grill --run-id ${state.runId} --feedback "…"`,
+    );
+  }
+  if (state.phase === "awaiting_input" && state.verificationReady) {
+    console.log(`Verification settings ready: ${state.verificationReady.summary}`);
+    console.log(
+      `Confirm with: agent-harness confirm-verification --run-id ${state.runId}`,
+    );
+    console.log(
+      `Or keep current: agent-harness confirm-verification --run-id ${state.runId} --keep-current`,
     );
   }
   const question = state.questions.find((item) => item.id === state.activeQuestionId);

@@ -65,7 +65,7 @@ The dashboard opens on an authenticated loopback URL and centralizes run creatio
 The lifecycle is:
 
 ```text
-idea → reflect (editable confirm) → grill-me → implementation tickets
+idea → reflect (editable confirm) → grill-me → verification settings → implementation tickets
      → [RED → GREEN] → command gates → review → commit → pull request
 ```
 
@@ -81,6 +81,8 @@ agent-harness start --idea @idea.md --tdd off
 agent-harness status --run-id <id> --json
 agent-harness answer --run-id <id> --question <id> --text "..."
 agent-harness continue --run-id <id>
+agent-harness confirm-grill --run-id <id> [--feedback "..."]
+agent-harness confirm-verification --run-id <id> [--keep-current] [--test-command "..."]
 agent-harness retry --run-id <id> [--force]
 agent-harness retry --run-id <id> --max-run-tokens <n> [--force]
 agent-harness retry --run-id <id> --max-run-cost-usd <n> [--force]
@@ -150,6 +152,8 @@ Reconciliation is a re-projection, not an append: one answer often collapses sev
 Operators can also add a **note** mid-interview ("don't touch the auth module") without waiting for a question to attach it to. Notes are consumed as authoritative input on the next griller turn, and can optionally seed a human-authored register entry.
 
 When the griller returns `ready_to_plan`, the run pauses on an explicit **grill-complete gate** (`awaiting_input` with `grillReady`). The dashboard (or `agent-harness confirm-grill`) lets the operator continue into planning or send feedback that reopens grilling with a new fog unknown. Planning does not start until that confirmation.
+
+After grill confirmation and before the planner runs, a **verification settings gate** appears (`awaiting_input` with `verificationReady`). A tools-off `project-profiler` proposes `commands.test` and `workflow.testPathPatterns` from repository evidence; the operator must confirm or edit (optionally also writing project defaults) via the dashboard or `agent-harness confirm-verification` before planning continues.
 
 An episode spans at most `workflow.maxGrillQuestionsPerEpisode` answered questions (five by default), then checkpoints and rolls to a new provider agent with the confirmed brief and resolutions so far. Staleness is measured once per batch from its shared `askedAt`: if a batch is submitted more than `workflow.staleAnswerMinutes` (30 by default) after it was asked, the harness discards the episode and continues with a cold packet containing only those questions and answers. Planning, implementation tasks, and review retain clean boundaries. If the Cursor checkpoint cannot be resumed, the backend creates a fresh agent and submits the complete packet instead.
 

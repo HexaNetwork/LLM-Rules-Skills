@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   answerCasualGrill,
   confirmReflectBrief,
+  confirmVerificationSettings,
   continueToPlanning,
   selectedRunId,
   startNewRun,
@@ -19,6 +20,7 @@ test("happy path: reflect → grill → plan → complete with artifacts", async
       await confirmReflectBrief(page, "Confirmed: casual greeting for the dashboard.");
       await answerCasualGrill(page);
       await continueToPlanning(page);
+      await confirmVerificationSettings(page);
       await waitForRunStatus(page, /completed/i);
 
       const runId = await selectedRunId(page);

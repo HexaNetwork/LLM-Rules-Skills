@@ -70,6 +70,14 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "The work packet is complete. Do not call tools, inspect files, or search the repository.",
     "Return exactly one raw JSON object with top-level summary and configPatch fields. Do not use Markdown headings or code fences.",
   ],
+  "project-profiler": [
+    "You only propose verification settings for this repository. Do not edit files.",
+    "Propose the smallest change to commands.test and/or workflow.testPathPatterns grounded in the evidence packet.",
+    "Prefer the existing currentSettings when they already match the evidence.",
+    "Never invent shell pipelines beyond a single test runner command.",
+    "The work packet is complete. Do not call tools, inspect files, or search the repository.",
+    "Return exactly one raw JSON object with top-level summary and configPatch fields. Do not use Markdown headings or code fences.",
+  ],
 };
 
 export function renderPrompt(packet: WorkPacket): string {

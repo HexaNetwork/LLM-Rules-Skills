@@ -1,5 +1,5 @@
 import type { HarnessConfig, PreflightCommitOrder } from "./config.js";
-import type { ReflectOutput, RunState } from "./domain.js";
+import type { ReflectOutput, RunState, VerificationSettingsPatch } from "./domain.js";
 import { isTestPath, reconcileUnknowns } from "./domain.js";
 import { ApplicationContext } from "./application/application-context.js";
 import type { HarnessDependencies } from "./application/dependencies.js";
@@ -110,6 +110,18 @@ export class HarnessEngine {
 
   confirmGrill(runId: string, options?: { feedback?: string }): Promise<RunState> {
     return this.interview.confirmGrill(runId, options);
+  }
+
+  confirmVerification(
+    runId: string,
+    options?: {
+      patch?: VerificationSettingsPatch;
+      keepCurrent?: boolean;
+      persistProjectDefaults?: boolean;
+      configPath?: string;
+    },
+  ): Promise<RunState> {
+    return this.planning.confirmVerification(runId, options);
   }
 
   retry(

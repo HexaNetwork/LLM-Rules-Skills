@@ -923,6 +923,11 @@ describe("durable idea-to-feature workflow", () => {
     expect(state.grillReady?.summary).toBeTruthy();
     state = await engine.confirmGrill(state.runId);
     state = await engine.advance(state.runId);
+    expect(state.verificationReady?.summary).toBeTruthy();
+    state = await engine.confirmVerification(state.runId, {
+      patch: state.verificationReady!.proposedPatch,
+    });
+    state = await engine.advance(state.runId);
     const task = state.tasks[0];
     expect(task?.evidence.some((entry) => entry.purpose === "guard:test-tamper")).toBe(true);
     expect(

@@ -60,6 +60,7 @@ const GuidanceAssignmentsSchema = z.object({
   fixer: GuidanceAssignmentSchema,
   // Default keeps older assignment maps valid when this role is introduced.
   "config-fixer": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
+  "project-profiler": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
 }).strict();
 
 /** Authoritative guidance map applied when `knowledge.guidance.assignments` is omitted. */
@@ -74,6 +75,7 @@ export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsSch
   "message-writer": { rules: [], skills: [] },
   fixer: { rules: [], skills: ["diagnose", "tdd"] },
   "config-fixer": { rules: [], skills: [] },
+  "project-profiler": { rules: [], skills: [] },
 };
 
 export const KnowledgeSourceSchema = z

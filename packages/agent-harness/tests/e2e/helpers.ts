@@ -254,6 +254,13 @@ export async function continueToPlanning(page: Page): Promise<void> {
   await page.getByRole("button", { name: /continue to planning/i }).click();
 }
 
+export async function confirmVerificationSettings(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: /confirm verification/i })).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.getByRole("button", { name: /confirm verification/i }).click();
+}
+
 export async function apiJson<T>(
   ui: UiServer,
   pathname: string,

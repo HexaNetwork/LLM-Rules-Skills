@@ -691,6 +691,13 @@ describe("central dashboard", () => {
       body: { action: "confirm_grill" },
     });
     expect(confirmed.status).toBe(202);
+    detail = await waitForPhase(ui, runId, "awaiting_input");
+    expect(detail.state.verificationReady?.summary).toBeTruthy();
+    const confirmedVerification = await request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: { action: "confirm_verification", keepCurrent: true },
+    });
+    expect(confirmedVerification.status).toBe(202);
     detail = await waitForPhase(ui, runId, "completed");
     expect(detail.state.tasks[0]?.status).toBe("done");
   });
@@ -943,6 +950,13 @@ describe("central dashboard", () => {
       body: { action: "confirm_grill" },
     });
     expect(confirmed.status).toBe(202);
+    detail = await waitForPhase(ui, runId, "awaiting_input");
+    expect(detail.state.verificationReady?.summary).toBeTruthy();
+    const confirmedVerification = await request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: { action: "confirm_verification", keepCurrent: true },
+    });
+    expect(confirmedVerification.status).toBe(202);
     detail = await waitForPhase(ui, runId, "completed");
 
     expect(detail.state.tasks[0]?.status).toBe("done");

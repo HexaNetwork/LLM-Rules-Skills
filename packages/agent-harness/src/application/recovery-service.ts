@@ -3,10 +3,8 @@ import type { InvokeInput } from "../agent.js";
 import {
   HarnessConfigSchema,
   configurationHash,
-  configurationPolicyDiff,
   normalizeFrozenRunConfig,
   ProjectSettingsPatchSchema,
-  type ProjectSettingsPatch,
   type PreflightCommitOrder,
 } from "../config.js";
 import {
@@ -24,6 +22,7 @@ import {
 import { classifyFailure, HarnessFailure, RunCancelledError } from "../errors.js";
 import { commandEvidence, runApprovedInstall } from "../commands.js";
 import type { ApplicationContext } from "./application-context.js";
+import { applyFrozenConfigRepair } from "./frozen-config-repair.js";
 import type { InterviewService } from "./interview-service.js";
 import {
   CANCEL_LOCK_WAIT_MS,
@@ -231,7 +230,7 @@ export class RecoveryService {
 
       if (recovery.role === "config-fixer") {
         const configPatch = ProjectSettingsPatchSchema.parse(recovery.plan.configPatch);
-        state = await this.applyFrozenConfigRepair(state, configPatch, {
+        state = await applyFrozenConfigRepair(this.ctx, state, configPatch, {
           persistedProjectDefaults: options?.persistedProjectDefaults,
           reportPaths: options?.reportPaths,
         });
@@ -403,70 +402,6 @@ export class RecoveryService {
       ...state,
       configurationHash: configurationHash(this.ctx.config),
     };
-  }
-
-  /** Caller must hold the run lock. Applies a validated config-fixer recommendation. */
-  private async applyFrozenConfigRepair(
-    state: RunState,
-    patch: ProjectSettingsPatch,
-    options?: { persistedProjectDefaults?: boolean; reportPaths?: string[] },
-  ): Promise<RunState> {
-    const parsedPatch = ProjectSettingsPatchSchema.parse(patch);
-    const raw = (await this.ctx.store.readJson(state.runId, "config.json")) as Record<string, unknown>;
-    const frozen = normalizeFrozenRunConfig(raw);
-    const repaired = HarnessConfigSchema.parse({
-      ...frozen,
-      ...(parsedPatch.workflow
-        ? { workflow: { ...frozen.workflow, ...parsedPatch.workflow } }
-        : {}),
-      ...(parsedPatch.commands
-        ? { commands: { ...frozen.commands, ...parsedPatch.commands } }
-        : {}),
-      ...(parsedPatch.git ? { git: { ...frozen.git, ...parsedPatch.git } } : {}),
-    });
-    const changedPaths = configurationPolicyDiff(frozen, repaired);
-    if (changedPaths.length === 0) {
-      throw new Error("The recommended configuration repair does not change this run's policy");
-    }
-    // Keep the in-process engine config aligned with the repaired snapshot so a
-    // same-engine advance (or test-writer legality check) sees the new policy.
-    this.ctx.config.workflow = repaired.workflow;
-    this.ctx.config.commands = repaired.commands;
-    this.ctx.config.git = repaired.git;
-    const previousHash = state.configurationHash;
-    await this.ctx.store.writeJson(state.runId, "config.json", {
-      ...repaired,
-      configVersion: state.configVersion,
-    });
-    let nextState = state;
-    const reportPaths = unique(
-      (options?.reportPaths ?? []).map((file) => file.replaceAll("\\", "/")),
-    );
-    if (reportPaths.length > 0) {
-      const targetIndex = indexOfTaskForReportedPaths(nextState);
-      if (targetIndex >= 0) {
-        nextState = {
-          ...nextState,
-          tasks: nextState.tasks.map((task, index) =>
-            index === targetIndex
-              ? { ...task, changedFiles: unique([...task.changedFiles, ...reportPaths]) }
-              : task,
-          ),
-        };
-      }
-    }
-    const nextHash = configurationHash(repaired);
-    return this.ctx.store.record(
-      { ...nextState, configurationHash: nextHash },
-      "run.config_repaired",
-      {
-        previousHash,
-        nextHash,
-        changedPaths,
-        persistedProjectDefaults: Boolean(options?.persistedProjectDefaults),
-        reportPaths,
-      },
-    );
   }
 
   /**

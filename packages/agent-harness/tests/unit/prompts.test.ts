@@ -66,6 +66,15 @@ describe("prompt rendering", () => {
     expect(rendered).toContain("Do not call tools, inspect files, or search the repository");
   });
 
+  it("requires project-profilers to propose verification settings without tools", () => {
+    const profilerPacket: WorkPacket = { ...packet, role: "project-profiler" };
+    const rendered = renderPrompt(profilerPacket);
+    expect(rendered).toContain("commands.test");
+    expect(rendered).toContain("workflow.testPathPatterns");
+    expect(rendered).toContain("Do not call tools, inspect files, or search the repository");
+    expect(rendered).toContain("Never invent shell pipelines");
+  });
+
   it("keeps reflect and grill expected-output contracts in prompts", () => {
     expect(REFLECT_EXPECTED_OUTPUT).toContain("restatement:string");
     expect(GRILL_EXPECTED_OUTPUT).toContain("needs_input");

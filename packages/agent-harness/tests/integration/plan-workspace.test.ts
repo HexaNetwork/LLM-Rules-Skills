@@ -158,5 +158,11 @@ async function reachPlanning(engine: HarnessEngine) {
   expect(state.grillReady?.summary).toBeTruthy();
   state = await engine.confirmGrill(state.runId);
   expect(state.phase).toBe("planning");
+  state = await engine.advance(state.runId);
+  expect(state.verificationReady?.summary).toBeTruthy();
+  state = await engine.confirmVerification(state.runId, {
+    patch: state.verificationReady!.proposedPatch,
+  });
+  expect(state.phase).toBe("planning");
   return state;
 }

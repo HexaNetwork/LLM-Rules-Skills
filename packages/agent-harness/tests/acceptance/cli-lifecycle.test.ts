@@ -161,6 +161,23 @@ describe("CLI acceptance lifecycle", () => {
       );
       expect(confirmed.code).toBe(0);
 
+      const verificationStatus = await runCli(
+        ["status", "--run-id", runId, "--config", configPath, "--json"],
+        deps,
+      );
+      const verificationState = JSON.parse(verificationStatus.stdout.join("\n")) as {
+        phase: string;
+        verificationReady?: { summary?: string };
+      };
+      expect(verificationState.phase).toBe("awaiting_input");
+      expect(verificationState.verificationReady?.summary).toBeTruthy();
+
+      const confirmedVerification = await runCli(
+        ["confirm-verification", "--run-id", runId, "--config", configPath],
+        deps,
+      );
+      expect(confirmedVerification.code).toBe(0);
+
       const continued = await runCli(
         ["continue", "--run-id", runId, "--config", configPath],
         deps,

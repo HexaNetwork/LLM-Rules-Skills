@@ -141,6 +141,7 @@ describe("token-conscious defaults", () => {
       "message-writer": { rules: [], skills: [] },
       fixer: { rules: [], skills: ["diagnose"] },
       "config-fixer": { rules: [], skills: [] },
+      "project-profiler": { rules: [], skills: [] },
     };
     expect(HarnessConfigSchema.parse({
       knowledge: { guidance: { assignments: complete } },

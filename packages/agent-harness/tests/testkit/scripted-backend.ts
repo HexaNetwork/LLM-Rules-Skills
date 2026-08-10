@@ -36,6 +36,33 @@ export function createScriptedBackend(steps: ScriptedStep[]): {
       }
       const step = queue.shift()!;
       if (step.role !== request.role) {
+        // Verification gate is inserted before planning; allow scripted suites to
+        // omit an explicit project-profiler step and keep-current by default.
+        if (request.role === "project-profiler") {
+          queue.unshift(step);
+          calls.push({
+            role: request.role,
+            input: sanitizeRequest(request),
+            objective: deriveObjective(request),
+            retrieval: {
+              cwd: request.cwd,
+              mode: request.mode,
+              providerSessionId: request.providerSessionId,
+              taskId: request.taskId,
+            },
+          });
+          const providerSessionId = request.providerSessionId ?? randomUUID();
+          return {
+            output: {
+              summary: "Keep current verification settings",
+              configPatch: {},
+            },
+            providerSessionId,
+            providerRunId: randomUUID(),
+            providerSessionReused: request.providerSessionId != null,
+            submittedPrompt: request.continuationPrompt ?? request.prompt,
+          };
+        }
         throw new Error(
           `ScriptedBackend: expected role "${step.role}" but received "${request.role}"`,
         );

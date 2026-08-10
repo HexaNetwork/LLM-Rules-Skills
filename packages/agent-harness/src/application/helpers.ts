@@ -22,6 +22,12 @@ export function pendingGrillReady(state: RunState): RunState["grillReady"] | und
   return state.grillReady;
 }
 
+export function pendingVerificationReady(
+  state: RunState,
+): RunState["verificationReady"] | undefined {
+  return state.verificationReady;
+}
+
 export function unique(values: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];

@@ -12,6 +12,7 @@ export const stateScript = `  (function () {
       reflectDrafts: {},
       noteText: "", noteAsUnknown: false,
       grillFeedbackText: "",
+      verificationDraft: {},
       elapsedTimer: null,
       cancelling: false,
       lastSoundPhase: null,

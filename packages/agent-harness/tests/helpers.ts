@@ -19,7 +19,25 @@ export async function confirmGrillAndAdvance(
   feedback?: string,
 ): Promise<RunState> {
   await engine.confirmGrill(runId, feedback ? { feedback } : {});
-  return engine.advance(runId);
+  let state = await engine.advance(runId);
+  if (state.verificationReady) {
+    state = await engine.confirmVerification(runId, {
+      patch: state.verificationReady.proposedPatch,
+    });
+    state = await engine.advance(runId);
+  }
+  return state;
+}
+
+/** Accept the verification gate and continue advancing. */
+export async function confirmVerificationAndAdvance(
+  engine: HarnessEngine,
+  runId: string,
+  options: Parameters<HarnessEngine["confirmVerification"]>[1] = {},
+): Promise<RunState> {
+  let state = await engine.confirmVerification(runId, options);
+  state = await engine.advance(runId);
+  return state;
 }
 
 /**

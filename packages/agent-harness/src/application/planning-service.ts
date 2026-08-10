@@ -1,8 +1,24 @@
-import { applyPlan, PlannerOutputSchema, type RunState } from "../domain.js";
+import path from "node:path";
+import {
+  ProjectSettingsPatchSchema,
+  writeProjectSettings,
+  type ProjectSettingsPatch,
+} from "../config.js";
+import {
+  applyPlan,
+  PlannerOutputSchema,
+  ProjectProfilerOutputSchema,
+  VerificationSettingsPatchSchema,
+  type RunState,
+  type VerificationSettingsPatch,
+  type VerificationSettingsSnapshot,
+} from "../domain.js";
 import { HarnessFailure } from "../errors.js";
 import { compactDomainSeed } from "../knowledge.js";
 import type { ApplicationContext } from "./application-context.js";
-import { pendingInstallApprovals } from "./helpers.js";
+import { applyFrozenConfigRepair } from "./frozen-config-repair.js";
+import { pendingInstallApprovals, pendingVerificationReady } from "./helpers.js";
+import { collectVerificationEvidence } from "./verification-evidence.js";
 
 export class PlanningService {
   constructor(private readonly ctx: ApplicationContext) {}
@@ -21,6 +37,23 @@ export class PlanningService {
         "plan.resumed",
         { tasks: state.tasks.length, pendingInstalls: pendingInstallApprovals(state).length },
       );
+    }
+
+    // Resume while the verification gate is already open: do not re-propose.
+    if (pendingVerificationReady(state)) {
+      return this.ctx.store.record(
+        {
+          ...state,
+          branchName: branchName ?? state.branchName,
+          phase: "awaiting_input",
+        },
+        "verification.resumed",
+        { summary: state.verificationReady!.summary },
+      );
+    }
+
+    if (!state.verificationConfirmedAt) {
+      return this.proposeVerification(state, branchName);
     }
 
     const output = await this.ctx.agents.invoke({
@@ -77,4 +110,239 @@ export class PlanningService {
 
     return this.ctx.store.persistTransition(state.runId, transition);
   }
+
+  /**
+   * Confirm or edit verification settings before the planner runs.
+   * Applies the patch to this run's frozen config; optionally writes project defaults.
+   */
+  async confirmVerification(
+    runId: string,
+    options: {
+      patch?: VerificationSettingsPatch;
+      keepCurrent?: boolean;
+      persistProjectDefaults?: boolean;
+      configPath?: string;
+    } = {},
+  ): Promise<RunState> {
+    return this.ctx.store.withRepositoryLock({ runId, action: "confirmVerification" }, () =>
+      this.ctx.store.withLock(runId, async () => {
+        let state = await this.ctx.store.load(runId);
+        const gate = pendingVerificationReady(state);
+        if (state.phase !== "awaiting_input" || !gate) {
+          throw new Error(`Run ${runId} is not awaiting verification confirmation`);
+        }
+
+        const keepCurrent = Boolean(options.keepCurrent);
+        const rawPatch = keepCurrent
+          ? {}
+          : (options.patch ?? gate.proposedPatch);
+        const patch = VerificationSettingsPatchSchema.parse(rawPatch);
+        // Reject unrelated keys that ProjectSettingsPatch would otherwise allow.
+        assertVerificationOnlyPatch(patch);
+
+        let reportPaths: string[] = [];
+        if (options.persistProjectDefaults) {
+          if (!options.configPath) {
+            throw new Error("Cannot persist project defaults without a config file path");
+          }
+          const projectPatch = toProjectSettingsPatch(patch, gate.currentSettings, keepCurrent);
+          const updated = await writeProjectSettings(options.configPath, projectPatch);
+          const relative = pathRelativeToRepo(updated.config.repositoryRoot, options.configPath);
+          if (relative) reportPaths = [relative];
+        }
+
+        const effectivePatch = keepCurrent
+          ? {}
+          : mergeVerificationPatch(gate.currentSettings, patch);
+        const hasChange = verificationPatchChangesSettings(gate.currentSettings, effectivePatch);
+        if (hasChange) {
+          state = await applyFrozenConfigRepair(
+            this.ctx,
+            state,
+            effectivePatch as ProjectSettingsPatch,
+            {
+              persistedProjectDefaults: Boolean(options.persistProjectDefaults),
+              reportPaths,
+              allowNoChange: false,
+            },
+          );
+        }
+
+        const now = new Date().toISOString();
+        state = await this.ctx.store.record(
+          {
+            ...state,
+            verificationReady: undefined,
+            verificationConfirmedAt: now,
+            phase: "planning",
+          },
+          "verification.confirmed",
+          {
+            keepCurrent,
+            persistProjectDefaults: Boolean(options.persistProjectDefaults),
+            patch: effectivePatch,
+            reportPaths,
+          },
+        );
+        await this.ctx.syncArtifacts(state);
+        return state;
+      }),
+    );
+  }
+
+  private async proposeVerification(
+    state: RunState,
+    branchName: string | undefined,
+  ): Promise<RunState> {
+    const currentSettings = currentVerificationSettings(this.ctx);
+    const evidence = await collectVerificationEvidence(
+      this.ctx.config.repositoryRoot,
+      currentSettings,
+    );
+    const output = await this.ctx.agents.invoke({
+      runId: state.runId,
+      role: "project-profiler",
+      objective:
+        "Propose the smallest verification settings patch (test command and test path patterns) for this repository",
+      input: {
+        idea: state.idea,
+        confirmedBrief: state.reflectBrief?.confirmed,
+        evidence,
+        currentSettings,
+      },
+      constraints: [
+        "The work packet contains every fact needed. Do not call tools, inspect files, or search the repository.",
+        "Return exactly one raw JSON object with top-level summary and configPatch fields; no Markdown or code fences.",
+        "configPatch may only include workflow.testPathPatterns and/or commands.test.",
+        "Prefer the existing currentSettings when they already match the evidence.",
+        "Propose a single test runner command — never invent shell pipelines.",
+      ],
+      expectedOutput:
+        '{"summary":"concise explanation","configPatch":{"workflow":{"testPathPatterns":[]},"commands":{"test":"…"}}}',
+      schema: ProjectProfilerOutputSchema,
+      retrieval: false,
+      buildPrompt: false,
+      allowTools: false,
+      signal: this.ctx.signalFor(state.runId),
+    });
+    VerificationSettingsPatchSchema.parse(output.configPatch);
+    assertVerificationOnlyPatch(output.configPatch);
+    const now = new Date().toISOString();
+    const updated = await this.ctx.store.record(
+      {
+        ...state,
+        branchName: branchName ?? state.branchName,
+        phase: "awaiting_input",
+        verificationReady: {
+          summary: output.summary,
+          proposedPatch: output.configPatch,
+          currentSettings,
+          evidence,
+          readyAt: now,
+        },
+      },
+      "verification.proposed",
+      { summary: output.summary },
+    );
+    await this.ctx.syncArtifacts(updated);
+    return updated;
+  }
+}
+
+function currentVerificationSettings(ctx: ApplicationContext): VerificationSettingsSnapshot {
+  return {
+    workflow: { testPathPatterns: [...ctx.config.workflow.testPathPatterns] },
+    commands: { test: ctx.config.commands.test },
+  };
+}
+
+function assertVerificationOnlyPatch(patch: VerificationSettingsPatch): void {
+  const keys = Object.keys(patch);
+  for (const key of keys) {
+    if (key !== "workflow" && key !== "commands") {
+      throw new Error(`Verification patch rejects unrelated key: ${key}`);
+    }
+  }
+  if (patch.workflow) {
+    for (const key of Object.keys(patch.workflow)) {
+      if (key !== "testPathPatterns") {
+        throw new Error(`Verification patch rejects unrelated workflow key: ${key}`);
+      }
+    }
+  }
+  if (patch.commands) {
+    for (const key of Object.keys(patch.commands)) {
+      if (key !== "test") {
+        throw new Error(`Verification patch rejects unrelated commands key: ${key}`);
+      }
+    }
+  }
+  // Extra safety: ProjectSettingsPatch allows grill/git keys; refuse them here.
+  ProjectSettingsPatchSchema.parse(patch);
+  const asRecord = patch as Record<string, unknown>;
+  if ("git" in asRecord) {
+    throw new Error("Verification patch rejects git keys");
+  }
+}
+
+function mergeVerificationPatch(
+  current: VerificationSettingsSnapshot,
+  patch: VerificationSettingsPatch,
+): VerificationSettingsPatch {
+  const next: VerificationSettingsPatch = {};
+  if (patch.commands?.test != null) {
+    next.commands = { test: patch.commands.test };
+  }
+  if (patch.workflow?.testPathPatterns != null) {
+    next.workflow = { testPathPatterns: patch.workflow.testPathPatterns };
+  }
+  // Empty patch means keep current (caller handles no-op).
+  if (!next.commands && !next.workflow) {
+    return {
+      commands: { test: current.commands.test },
+      workflow: { testPathPatterns: current.workflow.testPathPatterns },
+    };
+  }
+  return next;
+}
+
+function verificationPatchChangesSettings(
+  current: VerificationSettingsSnapshot,
+  patch: VerificationSettingsPatch,
+): boolean {
+  if (patch.commands?.test != null && patch.commands.test !== current.commands.test) {
+    return true;
+  }
+  if (patch.workflow?.testPathPatterns != null) {
+    const proposed = patch.workflow.testPathPatterns;
+    const existing = current.workflow.testPathPatterns;
+    if (
+      proposed.length !== existing.length ||
+      proposed.some((item, index) => item !== existing[index])
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function toProjectSettingsPatch(
+  patch: VerificationSettingsPatch,
+  current: VerificationSettingsSnapshot,
+  keepCurrent: boolean,
+): ProjectSettingsPatch {
+  if (keepCurrent) {
+    return {
+      commands: { test: current.commands.test },
+      workflow: { testPathPatterns: current.workflow.testPathPatterns },
+    };
+  }
+  const merged = mergeVerificationPatch(current, patch);
+  return ProjectSettingsPatchSchema.parse(merged);
+}
+
+function pathRelativeToRepo(repositoryRoot: string, configPath: string): string | undefined {
+  const relative = path.relative(repositoryRoot, configPath).replaceAll("\\", "/");
+  if (!relative || relative.startsWith("..")) return undefined;
+  return relative;
 }

@@ -328,6 +328,24 @@ export const renderRunScript = `    function renderSidebar() {
       return '<div class="card note-box"><div class="card-label">Add a constraint or note</div><form id="noteForm"><textarea id="noteText" placeholder="Add a constraint, correction, or context the griller should account for…">' + esc(state.noteText) + '</textarea><div class="note-row"><label><input type="checkbox" id="noteAsUnknown"' + (state.noteAsUnknown ? ' checked' : '') + '> Ask me about this</label><button class="btn small primary" type="submit">Add note</button></div></form>' + list + '</div>';
     }
 
+    function renderVerificationReady(gate) {
+      var current = gate.currentSettings || {};
+      var proposed = gate.proposedPatch || {};
+      var currentTest = (current.commands && current.commands.test) || "";
+      var currentPatterns = ((current.workflow && current.workflow.testPathPatterns) || []).join("\\n");
+      var proposedTest = (proposed.commands && proposed.commands.test != null)
+        ? proposed.commands.test
+        : currentTest;
+      var proposedPatterns = (proposed.workflow && proposed.workflow.testPathPatterns)
+        ? proposed.workflow.testPathPatterns.join("\\n")
+        : currentPatterns;
+      var draft = state.verificationDraft || {};
+      var testValue = draft.testCommand != null ? draft.testCommand : proposedTest;
+      var patternsValue = draft.testPathPatterns != null ? draft.testPathPatterns : proposedPatterns;
+      var persist = !!draft.persistProjectDefaults;
+      return '<div class="card question-card" id="verificationReadyCard"><div class="card-label">Confirm verification settings</div><p class="muted">Before planning, confirm how this run finds and runs tests. Edit the proposal or keep the current settings.</p><div class="resolution" style="margin:10px 0 12px"><strong>Summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div><div class="muted" style="margin-bottom:10px"><strong>Current</strong><div style="margin-top:4px">Test command: <code>' + esc(currentTest) + '</code></div><div style="margin-top:4px">Path patterns: <code>' + esc(currentPatterns.replace(/\\n/g, ", ") || "(none)") + '</code></div></div><form id="verificationReadyForm"><label class="muted" for="verificationTestCommand">Test command</label><input id="verificationTestCommand" type="text" value="' + attr(testValue) + '" style="width:100%;margin:4px 0 10px"><label class="muted" for="verificationTestPatterns">Test path patterns (one per line)</label><textarea id="verificationTestPatterns" rows="4" style="width:100%;margin:4px 0 10px">' + esc(patternsValue) + '</textarea><label style="display:flex;align-items:center;gap:8px;margin:8px 0 12px"><input type="checkbox" id="verificationPersistDefaults"' + (persist ? " checked" : "") + '> Also write these as project defaults</label><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="keepCurrentVerificationBtn">Keep current</button><button type="button" class="btn primary" id="confirmVerificationBtn">Confirm verification</button></div></form></div>';
+    }
+
     function renderInstallApproval(installs) {
       var rows = installs.map(function (item) {
         var selected = state.installSelections[item.id];
@@ -400,7 +418,9 @@ export const renderRunScript = `    function renderSidebar() {
       }
       if (s.phase === "awaiting_input") {
         var pendingInstalls = (s.proposedInstalls || []).filter(function (item) { return !item.decision; });
-        if (pendingInstalls.length) {
+        if (s.verificationReady) {
+          html += renderVerificationReady(s.verificationReady);
+        } else if (pendingInstalls.length) {
           html += renderInstallApproval(pendingInstalls);
         } else if (s.grillReady) {
           html += renderGrillReady(s.grillReady);

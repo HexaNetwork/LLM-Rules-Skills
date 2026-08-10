@@ -121,6 +121,10 @@ describe("dashboard document", () => {
     expect(html).toContain("confirm_grill");
     expect(html).toContain("Grilling complete — review before planning");
     expect(html).toContain("!s.grillReady");
+    expect(html).toContain("Confirm verification settings");
+    expect(html).toContain("confirm_verification");
+    expect(html).toContain("confirmVerificationBtn");
+    expect(html).toContain("Keep current");
   });
 
   it("preserves HITL editing state across background polling", () => {

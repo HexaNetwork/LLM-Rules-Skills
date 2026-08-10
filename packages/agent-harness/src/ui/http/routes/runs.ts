@@ -8,6 +8,7 @@ import {
   writeProjectSettings,
 } from "../../../config.js";
 import { HarnessEngine } from "../../../engine.js";
+import { VerificationSettingsPatchSchema } from "../../../domain.js";
 import { GitService, pathToIgnoredArtifactGlob } from "../../../git.js";
 import { prepareGraphifyForRun } from "../../../graphify.js";
 import type { UiAppContext } from "../context.js";
@@ -352,6 +353,28 @@ export async function handleRunsRoutes(
       ctx.jobs.enqueue(runId, action, async () => {
         await engine.confirmGrill(runId, { feedback });
         await engine.advance(runId);
+      });
+    } else if (action === "confirm_verification") {
+      const keepCurrent = optionalBoolean(body.keepCurrent, "keepCurrent") ?? false;
+      const persistProjectDefaults =
+        optionalBoolean(body.persistProjectDefaults, "persistProjectDefaults") ?? false;
+      if (persistProjectDefaults && !ctx.configPath) {
+        throw new HttpError(400, "Cannot persist project defaults without a config file path");
+      }
+      let patch: ReturnType<typeof VerificationSettingsPatchSchema.parse> | undefined;
+      if (!keepCurrent && body.patch != null) {
+        patch = VerificationSettingsPatchSchema.parse(body.patch);
+      }
+      ctx.jobs.enqueue(runId, action, async () => {
+        await engine.confirmVerification(runId, {
+          keepCurrent,
+          patch,
+          persistProjectDefaults,
+          configPath: ctx.configPath,
+        });
+        // Reload frozen config so the planner sees updated commands.test / patterns.
+        const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId);
+        await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
       });
     } else if (action === "set_tdd") {
       const tdd = optionalBoolean(body.tdd, "tdd");

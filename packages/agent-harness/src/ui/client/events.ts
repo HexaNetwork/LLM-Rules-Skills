@@ -39,7 +39,7 @@ export const eventsScript = `    async function waitForJob(runId) {
         var result = await waitForJob(state.selected);
         await bootstrap(true);
         if (action === 'answer') scrollMainToTop();
-        if (action === 'resolve_installs' || action === 'confirm_grill') scrollMainToTop();
+        if (action === 'resolve_installs' || action === 'confirm_grill' || action === 'confirm_verification') scrollMainToTop();
         state.pinScrollTop = false;
         if (!result.ok) {
           playTone('error');
@@ -47,13 +47,19 @@ export const eventsScript = `    async function waitForJob(runId) {
           return;
         }
         var landedGrillReady = !!(state.detail && state.detail.state && state.detail.state.grillReady);
+        var landedVerification = !!(state.detail && state.detail.state && state.detail.state.verificationReady);
         var doneMsg = action === 'answer'
           ? (landedGrillReady ? 'Grilling complete — review before planning' : 'Answer recorded')
           : (action === 'ignore_artifacts' ? 'Ignored artifacts and continued'
           : (action === 'resolve_installs' ? 'Install decisions applied'
           : (action === 'confirm_grill'
-            ? (extra && extra.feedback ? 'Feedback sent — grilling resumed' : 'Continuing to planning')
-            : (action === 'set_tdd' ? 'TDD updated' : 'Action completed'))));
+            ? (extra && extra.feedback
+              ? 'Feedback sent — grilling resumed'
+              : (landedVerification
+                ? 'Confirm verification settings before planning'
+                : 'Continuing to planning'))
+            : (action === 'confirm_verification' ? 'Verification confirmed — planning'
+            : (action === 'set_tdd' ? 'TDD updated' : 'Action completed')))));
         toast(doneMsg);
       } catch (error) {
         state.pinScrollTop = false;
@@ -263,6 +269,34 @@ export const eventsScript = `    async function waitForJob(runId) {
         state.grillFeedbackText = '';
         runAction('confirm_grill', { feedback: grillFeedback });
       }
+      if (target.id === 'confirmVerificationBtn' || target.id === 'keepCurrentVerificationBtn') {
+        var keepCurrent = target.id === 'keepCurrentVerificationBtn';
+        var gate = state.detail && state.detail.state && state.detail.state.verificationReady;
+        var draft = state.verificationDraft || {};
+        var current = (gate && gate.currentSettings) || {};
+        var proposed = (gate && gate.proposedPatch) || {};
+        var fallbackTest = (proposed.commands && proposed.commands.test != null)
+          ? proposed.commands.test
+          : ((current.commands && current.commands.test) || '');
+        var fallbackPatterns = (proposed.workflow && proposed.workflow.testPathPatterns)
+          ? proposed.workflow.testPathPatterns
+          : ((current.workflow && current.workflow.testPathPatterns) || []);
+        var testCommand = (draft.testCommand != null ? draft.testCommand : fallbackTest).trim();
+        var patternsRaw = draft.testPathPatterns != null
+          ? draft.testPathPatterns
+          : fallbackPatterns.join('\\n');
+        var testPathPatterns = String(patternsRaw).split(/\\r?\\n/).map(function (line) { return line.trim(); }).filter(Boolean);
+        var persistProjectDefaults = !!draft.persistProjectDefaults;
+        var body = { keepCurrent: keepCurrent, persistProjectDefaults: persistProjectDefaults };
+        if (!keepCurrent) {
+          body.patch = {
+            commands: testCommand ? { test: testCommand } : undefined,
+            workflow: testPathPatterns.length ? { testPathPatterns: testPathPatterns } : undefined
+          };
+        }
+        state.verificationDraft = {};
+        runAction('confirm_verification', body);
+      }
       if (target.id === 'soundMuteBtn') {
         setSoundsMuted(!soundsMuted());
       }
@@ -341,9 +375,21 @@ export const eventsScript = `    async function waitForJob(runId) {
       }
       if (event.target.id === 'noteText') state.noteText = event.target.value;
       if (event.target.id === 'grillFeedbackText') state.grillFeedbackText = event.target.value;
+      if (event.target.id === 'verificationTestCommand') {
+        state.verificationDraft = state.verificationDraft || {};
+        state.verificationDraft.testCommand = event.target.value;
+      }
+      if (event.target.id === 'verificationTestPatterns') {
+        state.verificationDraft = state.verificationDraft || {};
+        state.verificationDraft.testPathPatterns = event.target.value;
+      }
     });
     document.addEventListener('change', function (event) {
       if (event.target.id === 'noteAsUnknown') state.noteAsUnknown = event.target.checked;
+      if (event.target.id === 'verificationPersistDefaults') {
+        state.verificationDraft = state.verificationDraft || {};
+        state.verificationDraft.persistProjectDefaults = !!event.target.checked;
+      }
       if (event.target.dataset && event.target.dataset.installId) {
         state.installSelections[event.target.dataset.installId] = event.target.value;
       }

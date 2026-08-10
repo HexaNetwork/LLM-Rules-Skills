@@ -8,7 +8,12 @@ import {
   type KnowledgeVisibility,
 } from "./schema.js";
 
-const SMALL_ROLES = new Set<AgentRole>(["prompt-builder", "message-writer", "config-fixer"]);
+const SMALL_ROLES = new Set<AgentRole>([
+  "prompt-builder",
+  "message-writer",
+  "config-fixer",
+  "project-profiler",
+]);
 
 export function modelForRole(config: HarnessConfig, role: AgentRole): string {
   return config.models.roles[role] ??
@@ -162,6 +167,9 @@ knowledge:
         rules: []
         skills: [diagnose, tdd]
       config-fixer:
+        rules: []
+        skills: []
+      project-profiler:
         rules: []
         skills: []
   # Optional semantic document retrieval. Vectors remain in the local index;

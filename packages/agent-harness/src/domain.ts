@@ -144,6 +144,63 @@ export const GrillReadyGateSchema = z.object({
 });
 export type GrillReadyGate = z.infer<typeof GrillReadyGateSchema>;
 
+/** Verification-only settings patch (commands.test + workflow.testPathPatterns). */
+export const VerificationSettingsPatchSchema = z
+  .object({
+    workflow: z
+      .object({
+        testPathPatterns: z.array(z.string().min(1)).max(500).optional(),
+      })
+      .strict()
+      .optional(),
+    commands: z
+      .object({
+        test: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type VerificationSettingsPatch = z.infer<typeof VerificationSettingsPatchSchema>;
+
+export const VerificationSettingsSnapshotSchema = z.object({
+  workflow: z.object({
+    testPathPatterns: z.array(z.string().min(1)),
+  }),
+  commands: z.object({
+    test: z.string().min(1),
+  }),
+});
+export type VerificationSettingsSnapshot = z.infer<typeof VerificationSettingsSnapshotSchema>;
+
+export const VerificationEvidenceSchema = z.object({
+  manifests: z.array(
+    z.object({
+      path: z.string().min(1),
+      present: z.boolean(),
+      excerpt: z.string().optional(),
+    }),
+  ),
+  currentSettings: VerificationSettingsSnapshotSchema,
+});
+export type VerificationEvidence = z.infer<typeof VerificationEvidenceSchema>;
+
+/** Operator gate after project-profiler proposes verification settings; absent when not pending. */
+export const VerificationReadyGateSchema = z.object({
+  summary: z.string().min(1),
+  proposedPatch: VerificationSettingsPatchSchema,
+  currentSettings: VerificationSettingsSnapshotSchema,
+  evidence: VerificationEvidenceSchema.optional(),
+  readyAt: z.string(),
+});
+export type VerificationReadyGate = z.infer<typeof VerificationReadyGateSchema>;
+
+export const ProjectProfilerOutputSchema = z.object({
+  summary: z.string().min(1),
+  configPatch: VerificationSettingsPatchSchema,
+});
+export type ProjectProfilerOutput = z.infer<typeof ProjectProfilerOutputSchema>;
+
 export const CommandEvidenceSchema = z.object({
   purpose: z.string(),
   command: z.string(),
@@ -334,6 +391,10 @@ export const RunStateSchema = z.object({
   grillEpisode: GrillEpisodeSchema.optional(),
   // Set when grilling finished; cleared by confirmGrill (continue or reopen).
   grillReady: GrillReadyGateSchema.optional(),
+  // Set when project-profiler proposes verification settings; cleared on confirm.
+  verificationReady: VerificationReadyGateSchema.optional(),
+  // Set once the operator confirms verification; skips re-proposal on resume.
+  verificationConfirmedAt: z.string().optional(),
   // Distinguishes a yielded run from one paused on human input.
   yieldedAt: z.string().optional(),
   // Finish the active task, then halt before starting the next frontier task.
@@ -380,6 +441,7 @@ export const AgentRoleSchema = z.enum([
   "message-writer",
   "fixer",
   "config-fixer",
+  "project-profiler",
 ]);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 

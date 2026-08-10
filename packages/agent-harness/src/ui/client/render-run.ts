@@ -96,7 +96,7 @@ export const renderRunScript = `    function renderSidebar() {
         provider: { title: "The agent backend failed transiently",
           hint: "Check credentials and provider health, then retry. Automatic provider retries were already exhausted for this step." },
         config: { title: "The run configuration cannot be resumed as-is",
-          hint: "Draft a recommended repair, restore the original configuration, or start a new run. Use Retry anyway only if you accept the drift." },
+          hint: "Review the recommended repair below, restore the original configuration, or start a new run. Use Retry anyway only if you accept the drift." },
         budget: { title: "A run budget ceiling was reached",
           hint: "Raise the frozen run ceiling below, then retry. Retrying without raising the limit will hit the same block." },
         contract: { title: "The model could not satisfy the required contract",
@@ -195,17 +195,90 @@ export const renderRunScript = `    function renderSidebar() {
         '</div>';
     }
 
+    function sessionTotalTokens(usage) {
+      if (!usage) return 0;
+      if (usage.totalTokens != null) return Number(usage.totalTokens || 0);
+      return Number(usage.inputTokens || 0) + Number(usage.outputTokens || 0);
+    }
+
+    function aggregateSessionUsage(sessions, key) {
+      var map = {};
+      (sessions || []).forEach(function (session) {
+        var label = String(session[key] || "unknown");
+        var usage = session.usage || {};
+        if (!map[label]) {
+          map[label] = { label: label, sessions: 0, input: 0, output: 0, thinking: 0, cached: 0, total: 0 };
+        }
+        var row = map[label];
+        row.sessions += 1;
+        row.input += Number(usage.inputTokens || 0);
+        row.output += Number(usage.outputTokens || 0);
+        row.thinking += Number(usage.reasoningTokens || 0);
+        row.cached += Number(usage.cacheReadTokens || 0);
+        row.total += sessionTotalTokens(usage);
+      });
+      return Object.keys(map).map(function (name) { return map[name]; }).sort(function (a, b) {
+        return b.total - a.total || a.label.localeCompare(b.label);
+      });
+    }
+
+    function renderUsageBreakdownTable(rows, labelHeader, runTotal) {
+      if (!rows.length) {
+        return '<div class="muted" style="margin-top:4px">No session usage recorded yet.</div>';
+      }
+      var body = rows.map(function (row) {
+        var share = runTotal > 0 ? Math.round((row.total / runTotal) * 1000) / 10 : 0;
+        return '<tr>' +
+          '<td><code>' + esc(row.label) + '</code></td>' +
+          '<td class="num">' + number(row.sessions) + '</td>' +
+          '<td class="num">' + number(row.input) + '</td>' +
+          '<td class="num">' + number(row.output) + '</td>' +
+          '<td class="num">' + number(row.thinking) + '</td>' +
+          '<td class="num">' + number(row.cached) + '</td>' +
+          '<td class="num"><strong>' + number(row.total) + '</strong></td>' +
+          '<td class="num faint">' + share + '%</td>' +
+          '</tr>';
+      }).join("");
+      return '<div class="usage-table-wrap"><table class="usage-table">' +
+        '<thead><tr>' +
+        '<th>' + esc(labelHeader) + '</th><th class="num">Sessions</th><th class="num">Input</th><th class="num">Output</th><th class="num">Thinking</th><th class="num">Cached</th><th class="num">Total</th><th class="num">Share</th>' +
+        '</tr></thead><tbody>' + body + '</tbody></table></div>';
+    }
+
+    function renderUsageBreakdown(sessions, runTotal) {
+      var active = state.usageTab === "role" ? "role" : "model";
+      var rows = active === "role"
+        ? aggregateSessionUsage(sessions, "role")
+        : aggregateSessionUsage(sessions, "model");
+      var labelHeader = active === "role" ? "Agent type" : "Model";
+      var tabs = [
+        { id: "model", label: "By model" },
+        { id: "role", label: "By agent type" }
+      ].map(function (tab) {
+        return '<button type="button" class="usage-mini-tab' + (active === tab.id ? ' active' : '') + '" data-usage-tab="' + tab.id + '">' + esc(tab.label) + '</button>';
+      }).join("");
+      return '<details class="usage-breakdown" data-details-key="usage-breakdown">' +
+        '<summary>Breakdown by model &amp; agent</summary>' +
+        '<div class="usage-mini-tabs" role="tablist">' + tabs + '</div>' +
+        renderUsageBreakdownTable(rows, labelHeader, runTotal) +
+        '</details>';
+    }
+
     function renderUsageBudgetCard(s) {
       var usage = s.usage || {};
       var ceilings = (state.detail && state.detail.ceilings) || {};
+      var sessions = (state.detail && state.detail.sessions) || [];
       var maxTokens = Number(ceilings.maxRunTokens || 0);
       var maxCost = Number(ceilings.maxRunCostUsd || 0);
-      if (!maxTokens && !maxCost && !usage.totalTokens) return "";
+      if (!maxTokens && !maxCost && !usage.totalTokens && !sessions.length) return "";
       var usedTokens = Number(usage.totalTokens || 0);
+      if (!usedTokens && sessions.length) {
+        usedTokens = sessions.reduce(function (sum, session) { return sum + sessionTotalTokens(session.usage); }, 0);
+      }
       var usedCost = Number(usage.costUsd || 0);
       var tokenPct = maxTokens > 0 ? Math.min(100, Math.round((usedTokens / maxTokens) * 100)) : 0;
       var costPct = maxCost > 0 ? Math.min(100, Math.round((usedCost / maxCost) * 100)) : 0;
-      var html = '<div class="card"><div class="card-label">Usage</div>';
+      var html = '<div class="card usage-card"><div class="card-label">Usage</div>';
       html += '<div class="metric">' + number(usedTokens) + '<span class="faint"> tokens</span></div>';
       html += '<div class="muted">' + esc(formatCostUsd(usage)) + (usage.costIsLowerBound ? ' · unpriced models omitted from cost' : '') + '</div>';
       if (maxTokens > 0) {
@@ -213,6 +286,9 @@ export const renderRunScript = `    function renderSidebar() {
       }
       if (maxCost > 0) {
         html += renderBudgetMeter("Cost budget", formatCostUsd(usage), "$" + String(maxCost), costPct);
+      }
+      if (sessions.length || usedTokens) {
+        html += renderUsageBreakdown(sessions, usedTokens);
       }
       html += '</div>';
       return html;
@@ -416,12 +492,12 @@ export const renderRunScript = `    function renderSidebar() {
         if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
           var repairDetails = formatConfigRepair(fixer.plan.configPatch || {});
           var persistButton = canEditSettings
-            ? '<button class="btn" data-action="apply_fix" data-persist-project-defaults="true">Apply for this and future runs</button>'
+            ? '<button class="btn" data-action="apply_fix" data-persist-project-defaults="true" title="Update this run frozen config and write the same patch into agent-harness.config.yaml for future runs">Apply to run + project defaults</button>'
             : '';
           fixerControls = '<strong>Recommended configuration repair</strong><div class="muted" style="margin-top:5px">' + esc(fixer.plan.summary) + '</div>' +
             repairDetails +
             '<div class="field" style="margin-top:10px"><label for="fixerGuidance">Tweak the plan</label><textarea id="fixerGuidance" rows="2" placeholder="Optional revised instructions for the config fixer"></textarea></div>' +
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn" data-action="propose_fix" data-revise-fix="true">Revise recommendation</button><button class="btn primary" data-action="apply_fix">Apply and resume</button>' + persistButton + '</div>';
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn" data-action="propose_fix" data-revise-fix="true">Revise recommendation</button><button class="btn primary" data-action="apply_fix" title="Update only this run frozen config.json, then resume">Apply to this run only</button>' + persistButton + '</div>';
         } else if (fixer && fixer.status === 'proposed') {
           var fixerSteps = (fixer.plan.steps || []).map(function (step) { return '<li><strong>' + esc(step.title) + '</strong><div class="muted">' + esc(step.description) + '</div></li>'; }).join('');
           var fixerRisks = (fixer.plan.risks || []).length ? '<div class="faint" style="margin-top:8px">Risks: ' + esc(fixer.plan.risks.join(' · ')) + '</div>' : '';

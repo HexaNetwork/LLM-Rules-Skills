@@ -124,6 +124,22 @@ export function renderDashboard(): string {
     .budget-meter-head strong { color:var(--text); font-weight:650; }
     .budget-meter .progress { margin-top:0; }
     .budget-meter-foot { margin-top:7px; color:var(--faint); font-size:12px; }
+    .usage-breakdown { margin-top:16px; }
+    .usage-breakdown > summary { list-style:none; font-size:12px; font-weight:650; color:var(--muted); }
+    .usage-breakdown > summary::-webkit-details-marker { display:none; }
+    .usage-breakdown > summary::before { content:"▸"; display:inline-block; width:1em; color:var(--faint); transition:transform .12s ease; }
+    .usage-breakdown[open] > summary::before { transform:rotate(90deg); }
+    .usage-mini-tabs { display:flex; gap:6px; margin:12px 0 10px; flex-wrap:wrap; }
+    .usage-mini-tab { border:1px solid var(--line); background:var(--surface-2); color:var(--muted); border-radius:8px; padding:6px 10px; font-size:12px; font-weight:650; cursor:pointer; }
+    .usage-mini-tab:hover { color:var(--text); }
+    .usage-mini-tab.active { color:var(--text); border-color:rgba(199,243,107,.35); background:rgba(199,243,107,.08); }
+    .usage-table-wrap { overflow:auto; border:1px solid var(--line-soft); border-radius:10px; background:#0e1115; }
+    .usage-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+    .usage-table th, .usage-table td { padding:8px 10px; border-bottom:1px solid var(--line-soft); vertical-align:top; }
+    .usage-table th { color:var(--faint); font-size:10px; font-weight:750; text-transform:uppercase; letter-spacing:.08em; text-align:left; white-space:nowrap; }
+    .usage-table td.num, .usage-table th.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .usage-table tbody tr:last-child td { border-bottom:0; }
+    .usage-table code { color:var(--text); font:12px/1.4 "SFMono-Regular",Consolas,monospace; }
     .question-card { border-color:rgba(255,157,92,.28); background:linear-gradient(145deg,rgba(255,157,92,.09),var(--surface)); }
     .question { font-size:20px; letter-spacing:-.02em; margin:8px 0 6px; max-width:850px; }
     .question-context { color:var(--muted); max-width:850px; margin:0 0 16px; }
@@ -252,10 +268,6 @@ export function renderDashboard(): string {
     .knowledge-results { display:grid; gap:11px; margin-top:18px; }
     .score { color:var(--lime); font:11px monospace; }
     .empty { text-align:center; color:var(--muted); border:1px dashed var(--line); border-radius:var(--radius); padding:50px 20px; }
-    .loading { height:2px; position:fixed; top:0; left:0; right:0; z-index:30; overflow:hidden; opacity:0; transition:.2s; }
-    .loading.show { opacity:1; }
-    .loading:after { content:""; display:block; height:100%; width:32%; background:var(--lime); animation:load 1.1s infinite ease-in-out; }
-    @keyframes load { from { transform:translateX(-120%); } to { transform:translateX(430%); } }
     dialog { color:var(--text); width:min(680px,calc(100vw - 28px)); border:1px solid var(--line); border-radius:20px; background:#12161b; padding:0; box-shadow:var(--shadow); }
     dialog::backdrop { background:rgba(0,0,0,.68); backdrop-filter:blur(5px); }
     .dialog-head { display:flex; justify-content:space-between; align-items:center; padding:20px 22px; border-bottom:1px solid var(--line-soft); }
@@ -319,7 +331,6 @@ export function renderDashboard(): string {
   </style>
 </head>
 <body>
-  <div class="loading" id="loading"></div>
   <div class="noise"></div>
   <div class="shell">
     <aside class="sidebar">

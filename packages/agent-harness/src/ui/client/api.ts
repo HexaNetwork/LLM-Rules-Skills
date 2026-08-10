@@ -1,22 +1,19 @@
 /** Browser JS fragment inlined by renderDashboard (Phase 4). */
-export const apiScript = `    async function api(path, options, silent) {
-      if (!silent) loading(true);
-      try {
-        var init = options || {};
-        // The server also accepts an HttpOnly session cookie set when the
-        // tokenized URL was first opened, so a refresh that lost sessionStorage
-        // still authenticates. Send the header only when we actually have one.
-        init.credentials = "same-origin";
-        init.headers = Object.assign(token ? {"X-Harness-Token":token} : {}, init.headers || {});
-        if (init.body && typeof init.body !== "string") {
-          init.headers["Content-Type"] = "application/json";
-          init.body = JSON.stringify(init.body);
-        }
-        var response = await fetch(path, init);
-        var body = await response.json();
-        if (!response.ok) throw new Error(body.error || ("Request failed: " + response.status));
-        return body;
-      } finally { if (!silent) loading(false); }
+export const apiScript = `    async function api(path, options) {
+      var init = options || {};
+      // The server also accepts an HttpOnly session cookie set when the
+      // tokenized URL was first opened, so a refresh that lost sessionStorage
+      // still authenticates. Send the header only when we actually have one.
+      init.credentials = "same-origin";
+      init.headers = Object.assign(token ? {"X-Harness-Token":token} : {}, init.headers || {});
+      if (init.body && typeof init.body !== "string") {
+        init.headers["Content-Type"] = "application/json";
+        init.body = JSON.stringify(init.body);
+      }
+      var response = await fetch(path, init);
+      var body = await response.json();
+      if (!response.ok) throw new Error(body.error || ("Request failed: " + response.status));
+      return body;
     }
 
     async function bootstrap(keepSelection) {

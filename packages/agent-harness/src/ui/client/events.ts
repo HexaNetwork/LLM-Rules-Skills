@@ -36,10 +36,7 @@ export const eventsScript = `    async function waitForJob(runId) {
         // waiting so the thinking strip at the top is visible while it works.
         if (action === 'answer') scrollMainToTop();
         if (action === 'resolve_installs' || action === 'confirm_grill') scrollMainToTop();
-        loading(true);
-        var result;
-        try { result = await waitForJob(state.selected); }
-        finally { loading(false); }
+        var result = await waitForJob(state.selected);
         await bootstrap(true);
         if (action === 'answer') scrollMainToTop();
         if (action === 'resolve_installs' || action === 'confirm_grill') scrollMainToTop();
@@ -225,8 +222,8 @@ export const eventsScript = `    async function waitForJob(runId) {
         } else if (target.dataset.action === 'apply_fix') {
           var persistProjectDefaults = target.dataset.persistProjectDefaults === 'true';
           var reviewFixer = persistProjectDefaults
-            ? 'Apply this recommended repair to this run and make it the default for future runs?'
-            : 'Apply this recommended repair and resume the run?';
+            ? 'Update this run frozen config and write the same repair into agent-harness.config.yaml for future runs, then resume?'
+            : 'Update only this run frozen config and resume? Project settings stay unchanged.';
           if (!confirm(reviewFixer)) return;
           var body = { persistProjectDefaults: persistProjectDefaults };
           runAction('apply_fix', body);

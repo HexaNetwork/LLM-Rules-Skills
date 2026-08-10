@@ -420,10 +420,18 @@ describe("dashboard document", () => {
     expect(html).toContain("function renderUsageRow(s)");
     expect(html).toContain("function renderUsageBudgetCard(s)");
     expect(html).toContain("function renderBudgetMeter(label, usedLabel, limitLabel, pct)");
+    expect(html).toContain("function renderUsageBreakdown(sessions, runTotal)");
+    expect(html).toContain("function aggregateSessionUsage(sessions, key)");
     expect(html).toContain("total tokens");
     expect(html).toContain("Token budget");
     expect(html).toContain("Cost budget");
     expect(html).toContain("budget-meter");
+    expect(html).toContain("By model");
+    expect(html).toContain("By agent type");
+    expect(html).toContain(">Thinking</th>");
+    expect(html).toContain("reasoningTokens");
+    expect(html).toContain("data-usage-tab");
+    expect(html).toContain("usageTab");
     expect(html).toContain("maxRunTokens");
     expect(html).toContain("Raise ceiling and retry");
     expect(html).toContain("raise_budget_retry");

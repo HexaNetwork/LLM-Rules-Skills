@@ -7,7 +7,7 @@ export const stateScript = `  (function () {
     if (params.has("token")) history.replaceState(null, "", location.pathname);
     var state = {
       bootstrap: null, runs: [], unreadableRuns: [], selected: null, detail: null, signature: "", scrolls: null,
-      tab: "overview", view: "runs", busy: 0, filter: "", answerDrafts: {}, settings: null,
+      tab: "overview", usageTab: "model", view: "runs", filter: "", answerDrafts: {}, settings: null,
       selectedOptions: {}, parked: {}, clarifications: {}, batchFeedback: "",
       reflectDrafts: {},
       noteText: "", noteAsUnknown: false,
@@ -249,4 +249,4 @@ export const stateScript = `  (function () {
       node.hidden = !message;
       node.className = "form-feedback" + (error ? " error" : "");
     }
-    function loading(on) { state.busy += on ? 1 : -1; state.busy = Math.max(0,state.busy); $("loading").classList.toggle("show", state.busy > 0); }`;
+`;

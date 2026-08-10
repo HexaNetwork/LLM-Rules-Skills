@@ -68,7 +68,11 @@ export class RecoveryService {
           blockedKind: state.blockedKind,
           operatorGuidance: guidance.trim(),
         },
-        constraints: ["Do not edit files during planning.", "The operator must approve before any repair is applied."],
+        constraints: [
+          "Do not edit files during planning.",
+          "The operator must approve before any repair is applied.",
+          "Keep the recovery plan bounded: name every file it authorizes changing and every validation command it authorizes running. Do not propose broad repository discovery during application.",
+        ],
         expectedOutput: "{summary,steps:[{title,description}],risks:string[]}",
         schema: FixerPlanSchema,
         knowledgeQuery: `${state.failure}\n${guidance}`,
@@ -114,10 +118,15 @@ export class RecoveryService {
           operatorGuidance: recovery.guidance,
           approvedPlan: recovery.plan,
         },
-        constraints: ["This plan is approved by the operator.", "Do not commit, push, or open a pull request."],
+        constraints: [
+          "This plan is approved by the operator.",
+          "Do not commit, push, or open a pull request.",
+          "This is bounded apply mode: do not retrieve project guidance or search the repository broadly. Read or write only paths explicitly named by the approved plan, and run only validation commands explicitly named by it. If the plan does not provide enough information, make no changes and report the blocker.",
+        ],
         expectedOutput: "{summary,changedFiles:string[]}",
         schema: WorkerOutputSchema,
-        knowledgeQuery: `${recovery.failure}\n${recovery.guidance}\n${recovery.plan.summary}`,
+        retrieval: false,
+        buildPrompt: false,
         signal: this.ctx.signalFor(runId),
       });
       const changedFiles = this.ctx.config.git.enabled ? await this.ctx.git.changedFiles() : result.changedFiles;

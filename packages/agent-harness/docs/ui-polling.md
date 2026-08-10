@@ -112,6 +112,7 @@ DOM (`#content` / `#tabBody`), give it a stable key:
 | Task acceptance criteria | `data-details-key="<taskId>-criteria"` | Tasks tab |
 | Task evidence group | `data-details-key="<taskId>-evidence"` | Tasks tab |
 | Resolved open-unknowns | `data-details-key="fog-resolved"` | Overview card |
+| Raw failure detail | `data-details-key="raw-failure"` | Blocked overview (non dirty-tree / non tree-divergence) |
 | Session live steps | `data-details-key="session-steps"` / `data-scroll-key="session-steps"` | Session inspector |
 
 Dialogs (artifact viewer, session inspector, settings, new run) are outside the
@@ -137,6 +138,8 @@ consistent with overview/task keys.
   from `runSignature` so unchanged polls hide step updates.
 - **Scroll jumps only while a job runs** → capture/restore missing a new
   `[data-scroll-key]` region.
+- **Open `<details>` snap shut on poll** → a disclosure inside poll-rewritten
+  DOM is missing `data-details-key` (see the key table above).
 - **Stale UI after finishing an answer edit** → signature advanced during an
   editor-skipped poll (invariant 2).
 - **Draft answer wiped** → `answerDrafts` / `selectedOptions` / `parked` not

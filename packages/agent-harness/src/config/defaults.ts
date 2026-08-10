@@ -29,6 +29,8 @@ models:
 agent:
   provider: cursor
   timeoutMs: 1200000
+  # Circuit breaker per provider invocation; 0 disables it.
+  maxToolCalls: 30
   promptBuilder: false
   schemaRepairAttempts: 1
 

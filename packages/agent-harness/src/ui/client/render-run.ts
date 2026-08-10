@@ -316,7 +316,7 @@ export const renderRunScript = `    function renderSidebar() {
         var isDirtyTree = !isTreeDivergence && (remediation.id === "dirty-tree" || /dirty working tree|uncommitted changes|working tree is not clean/i.test(failureText));
         var failureDetail = (isDirtyTree || isTreeDivergence)
           ? '<pre style="margin-top:8px">' + esc(s.failure || "") + '</pre>'
-          : '<details><summary>Raw failure detail</summary><pre>' + esc(s.failure || "The current transition could not complete.") + '</pre></details>';
+          : '<details data-details-key="raw-failure"><summary>Raw failure detail</summary><pre>' + esc(s.failure || "The current transition could not complete.") + '</pre></details>';
         var commitControls = "";
         if (isDirtyTree) {
           var settingsValues = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.settings && state.bootstrap.project.settings.values) || {};

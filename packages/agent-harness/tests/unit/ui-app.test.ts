@@ -395,6 +395,8 @@ describe("dashboard document", () => {
     expect(html).toContain("run configuration changed");
     expect(html).toContain("Test path patterns and ignored artifact patterns are live and do not cause this block");
     expect(html).toContain("<summary>Raw failure detail</summary>");
+    // Silent polls rewrite #content; without a stable key, open chrome snaps shut.
+    expect(html).toContain('data-details-key="raw-failure"');
     expect(html).toContain('data-force="true"');
     expect(html).toContain("Retry anyway");
     expect(html).toContain("force: true");

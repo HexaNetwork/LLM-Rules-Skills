@@ -132,7 +132,7 @@ export const renderRunScript = `    function renderSidebar() {
           hint: "Run Graphify's setup for this repository so graphify-out/graph.json exists, then retry." },
         { test: /run configuration changed|configurationHash|resume with the persisted run config/i,
           title: "The run configuration changed since this run started",
-          hint: "A hashed run setting drifted from this run's frozen snapshot. Restore that frozen policy, or start a new run. Test path patterns and ignored artifact patterns are live and do not cause this block." }
+          hint: "A hashed run setting drifted from this run's frozen snapshot. Restore that frozen policy, draft a configuration repair, or start a new run." }
       ];
       for (var i = 0; i < patterns.length; i++) {
         if (patterns[i].test.test(text)) return patterns[i];
@@ -412,7 +412,7 @@ export const renderRunScript = `    function renderSidebar() {
         }
         var fixer = s.fixerRecovery;
         var fixerControls = '';
-        var isConfigBlock = s.blockedKind === 'config';
+        var isConfigBlock = s.blockedKind === 'config' || /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths/i.test(String(s.failure || ''));
         if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
           var repairDetails = formatConfigRepair(fixer.plan.configPatch || {});
           var persistButton = canEditSettings

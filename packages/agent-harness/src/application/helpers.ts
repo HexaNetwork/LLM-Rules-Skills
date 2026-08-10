@@ -1,5 +1,6 @@
 import type { PreflightCommitOrder } from "../config.js";
 import type { BuildTask, ProposedInstall, RunState } from "../domain.js";
+import { CONFIG_FAILURE_PATTERN } from "../errors.js";
 
 export type PreflightCommitResult = {
   committedBranch?: string;
@@ -51,9 +52,24 @@ export function dirtyTreeMessage(paths: string[]): string {
   return `The working tree has uncommitted changes: ${shown.join(", ")}${more}. Commit or stash local changes in the repository, then retry the transition.`;
 }
 
-/** Blocks already classified as harness-config — use the dedicated config-fixer. */
-export function isConfigFixerCandidate(blockedKind?: string): boolean {
-  return blockedKind === "config";
+export type RepairRoute = "config-fixer" | "fixer";
+
+/**
+ * Deterministic recovery router: config-shaped failures always go to config-fixer
+ * even when blockedKind is missing, stale, or misclassified as internal.
+ */
+export function repairRoute(input: {
+  failure?: string;
+  blockedKind?: string;
+}): RepairRoute {
+  if (input.blockedKind === "config") return "config-fixer";
+  if (input.failure && CONFIG_FAILURE_PATTERN.test(input.failure)) return "config-fixer";
+  return "fixer";
+}
+
+/** True when recovery should use the config-fixer (frozen snapshot patch), not a file fixer. */
+export function isConfigFixerCandidate(blockedKind?: string, failure?: string): boolean {
+  return repairRoute({ blockedKind, failure }) === "config-fixer";
 }
 
 export function defaultPreflightCommitMessage(runId: string): string {

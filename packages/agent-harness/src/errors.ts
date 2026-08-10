@@ -6,6 +6,10 @@ export type FailureKind =
   | "contract" // model could not satisfy the schema after repair attempts
   | "internal"; // harness bug
 
+/** Failures that must be repaired via config-fixer (frozen run snapshot), not a file fixer. */
+export const CONFIG_FAILURE_PATTERN =
+  /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths/i;
+
 export class HarnessFailure extends Error {
   readonly kind: FailureKind;
   readonly retriable: boolean;
@@ -54,11 +58,7 @@ function classifyByMessage(message: string): { kind: FailureKind; retriable: boo
   if (/CURSOR_API_KEY|agent backend (is )?unavailable|missing.*api.?key|timed out|aborted|Cursor run /i.test(message)) {
     return { kind: "provider", retriable: true };
   }
-  if (
-    /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths/i.test(
-      message,
-    )
-  ) {
+  if (CONFIG_FAILURE_PATTERN.test(message)) {
     return { kind: "config", retriable: false };
   }
   if (/Task .+ failed:|could not satisfy|Validation error|schema/i.test(message)) {

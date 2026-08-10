@@ -32,6 +32,7 @@ import {
   isConfigFixerCandidate,
   pendingInstallApprovals,
   preflightCommitDetail,
+  repairRoute,
   unique,
   type CancelResult,
   type PreflightCommitResult,
@@ -82,7 +83,7 @@ export class RecoveryService {
       if (state.phase !== "blocked" || !state.failure || !state.blockedFrom) {
         throw new Error(`Run ${runId} is not blocked with a recoverable failure`);
       }
-      if (isConfigFixerCandidate(state.blockedKind)) {
+      if (isConfigFixerCandidate(state.blockedKind, state.failure)) {
         return this.proposeConfigFix(state, guidance.trim());
       }
       return this.proposeFileFix(state, guidance.trim());
@@ -214,6 +215,15 @@ export class RecoveryService {
         throw new Error(`Run ${runId} has no fixer plan awaiting approval`);
       }
       const resumePhase = state.blockedFrom;
+      const route = repairRoute({
+        failure: recovery.failure ?? state.failure,
+        blockedKind: state.blockedKind,
+      });
+      if (recovery.role === "fixer" && route === "config-fixer") {
+        throw new Error(
+          "This failure requires a config-fixer repair that updates the frozen run config; draft a recommended configuration repair instead of a file fixer plan",
+        );
+      }
       state = await this.ctx.store.record(state, "fixer.plan_approved", {
         summary: recovery.plan.summary,
         role: recovery.role,
@@ -418,6 +428,11 @@ export class RecoveryService {
     if (changedPaths.length === 0) {
       throw new Error("The recommended configuration repair does not change this run's policy");
     }
+    // Keep the in-process engine config aligned with the repaired snapshot so a
+    // same-engine advance (or test-writer legality check) sees the new policy.
+    this.ctx.config.workflow = repaired.workflow;
+    this.ctx.config.commands = repaired.commands;
+    this.ctx.config.git = repaired.git;
     const previousHash = state.configurationHash;
     await this.ctx.store.writeJson(state.runId, "config.json", {
       ...repaired,

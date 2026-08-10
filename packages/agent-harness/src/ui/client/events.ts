@@ -213,7 +213,11 @@ export const eventsScript = `    async function waitForJob(runId) {
           var guidance = fixerInput ? fixerInput.value.trim() : '';
           if (!guidance && target.dataset.reviseFix !== 'true') {
             var blockedKind = state.detail && state.detail.state ? state.detail.state.blockedKind : undefined;
-            if (blockedKind === 'config') guidance = 'Propose the smallest recommended repair that unblocks this harness configuration failure.';
+            var failureText = state.detail && state.detail.state ? String(state.detail.state.failure || '') : '';
+            var configRepair =
+              blockedKind === 'config' ||
+              /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths/i.test(failureText);
+            if (configRepair) guidance = 'Propose the smallest recommended repair that unblocks this harness configuration failure.';
             else { toast('Describe the recovery you want before asking the fixer to plan it', true); return; }
           }
           if (!guidance && state.detail && state.detail.state && state.detail.state.fixerRecovery) guidance = state.detail.state.fixerRecovery.guidance;

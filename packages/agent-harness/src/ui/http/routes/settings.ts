@@ -94,7 +94,7 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     category: "Testing",
     label: "Test file path patterns",
     description:
-      "One repository-relative glob per line. The test writer may only edit files matching these patterns. Live for in-progress runs — use this to unblock “Test writer changed non-test paths” without restoring frozen config.",
+      "One repository-relative glob per line. The test writer may only edit files matching these patterns. Changing this affects new runs; blocked runs need a reviewed configuration repair.",
     type: "string-list",
     maximumItems: 500,
     maximumItemLength: 1_000,

@@ -239,8 +239,7 @@ export class RunAdvancer {
         const diffs = configurationPolicyDiff(this.ctx.config, frozen);
         if (diffs.length === 0) {
           // The policy that governs this run is still identical to its durable
-          // snapshot. A stale state stamp must not strand the run (in
-          // particular after a live test-path or ignored-artifact update).
+          // snapshot. A stale state stamp must not strand the run.
           return this.ctx.store.record(
             { ...state, configurationHash: currentHash },
             "run.config_restamped",
@@ -252,7 +251,7 @@ export class RunAdvancer {
         // Frozen snapshot may be unreadable; the base message is still actionable.
       }
       throw new HarnessFailure(
-        `Run configuration changed; resume with the persisted run config.${detail} Test path patterns and ignored artifact patterns are live and do not cause this block.`,
+        `Run configuration changed; resume with the persisted run config.${detail}`,
         "config",
         false,
       );

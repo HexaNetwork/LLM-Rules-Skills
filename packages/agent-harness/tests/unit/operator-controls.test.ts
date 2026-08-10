@@ -324,4 +324,104 @@ describe("operator controls", () => {
     expect(events).toContain("run.config_repaired");
     expect(events).toContain("fixer.applied");
   });
+
+  it("routes Test writer non-test-path failures to config-fixer even when blockedKind is internal", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: true, testPathPatterns: ["tests/**"] } as never,
+      agent: { promptBuilder: false } as never,
+    });
+    const store = new RunStore(config);
+    await store.initialize();
+    const runId = "misclassified-config";
+    const hash = configurationHash(config);
+    await store.create({
+      ...createRunState(runId, "idea", new Date().toISOString(), hash, CONFIG_VERSION),
+      phase: "blocked",
+      blockedFrom: "executing",
+      blockedKind: "internal",
+      blockedRetriable: false,
+      failure:
+        "Test writer changed non-test paths: civcraft/src/main/test/com/avrgaming/civcraft/civilization/town/BuildFootprintTest.java",
+    });
+    await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
+    let configFixerCalls = 0;
+    let fixerCalls = 0;
+    const backend = createFakeBackend({
+      "config-fixer": () => {
+        configFixerCalls += 1;
+        return {
+          summary: "Recognize CivCraft nested test roots.",
+          configPatch: {
+            workflow: {
+              testPathPatterns: ["tests/**", "**/src/main/test/**"],
+            },
+          },
+        };
+      },
+      fixer: () => {
+        fixerCalls += 1;
+        return {
+          summary: "should not run",
+          steps: [{ title: "noop", description: "noop" }],
+          risks: [],
+          allowedPaths: ["agent-harness.config.yaml"],
+          validationCommands: [],
+        };
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+
+    const proposed = await engine.proposeFix(runId, "Recognize the nested test directory.");
+    expect(proposed.fixerRecovery?.role).toBe("config-fixer");
+    expect(configFixerCalls).toBe(1);
+    expect(fixerCalls).toBe(0);
+
+    const applied = await engine.applyApprovedFix(runId);
+    expect(applied.phase).toBe("executing");
+    expect(engine.config.workflow.testPathPatterns).toEqual(["tests/**", "**/src/main/test/**"]);
+    const frozen = (await engine.store.readJson(runId, "config.json")) as {
+      workflow: { testPathPatterns: string[] };
+    };
+    expect(frozen.workflow.testPathPatterns).toEqual(["tests/**", "**/src/main/test/**"]);
+  });
+
+  it("rejects applying a file-fixer plan against a config-shaped failure", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: true, testPathPatterns: ["tests/**"] } as never,
+      agent: { promptBuilder: false } as never,
+    });
+    const store = new RunStore(config);
+    await store.initialize();
+    const runId = "wrong-fixer-role";
+    const hash = configurationHash(config);
+    await store.create({
+      ...createRunState(runId, "idea", new Date().toISOString(), hash, CONFIG_VERSION),
+      phase: "blocked",
+      blockedFrom: "executing",
+      blockedKind: "internal",
+      blockedRetriable: false,
+      failure: "Test writer changed non-test paths: app/src/main/test/ThingTest.java",
+      fixerRecovery: {
+        role: "fixer",
+        guidance: "fix the yaml",
+        failure: "Test writer changed non-test paths: app/src/main/test/ThingTest.java",
+        plan: {
+          summary: "Edit project yaml only",
+          steps: [{ title: "Edit yaml", description: "Add a pattern" }],
+          risks: [],
+          allowedPaths: ["agent-harness.config.yaml"],
+          validationCommands: [],
+        },
+        status: "proposed",
+        proposedAt: new Date().toISOString(),
+        changedFiles: [],
+      },
+    });
+    await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
+    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+
+    await expect(engine.applyApprovedFix(runId)).rejects.toThrow(/config-fixer repair that updates the frozen run config/);
+  });
 });

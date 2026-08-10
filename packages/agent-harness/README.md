@@ -44,6 +44,12 @@ during deployment with `--install-graphify`, or later with the following
 command. The prerequisite switches explicitly allow installation of `uv` when
 neither `uv` nor `pipx` is available.
 
+Init, deploy, and `graphify scripts|install` also ensure a project
+`.graphifyignore` so Graphify does not map the deployed `agent-harness/` package
+or underscore-prefixed scratch `.txt` dumps (for example changelog `git show`
+extracts). Edit that file for project-specific excludes; missing defaults are
+appended on the next harness Graphify prepare step.
+
 ```powershell
 agent-harness graphify install --project "/path/to/your-project"
 agent-harness graphify install --project "/path/to/your-project" --install-prerequisite

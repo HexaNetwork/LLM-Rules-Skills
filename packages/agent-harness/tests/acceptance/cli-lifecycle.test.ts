@@ -36,6 +36,10 @@ describe("CLI acceptance lifecycle", () => {
       await access(configPath);
       const gitignore = await readFile(path.join(fixture!.root, ".gitignore"), "utf8");
       expect(gitignore).toContain(".agent-harness/");
+      expect(gitignore).toContain("graphify-out/");
+      const graphifyignore = await readFile(path.join(fixture!.root, ".graphifyignore"), "utf8");
+      expect(graphifyignore).toContain("agent-harness/");
+      expect(graphifyignore).toContain("**/_*.txt");
       await access(path.join(fixture!.root, ".agent-harness"));
     });
   });

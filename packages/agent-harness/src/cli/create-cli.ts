@@ -90,6 +90,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       await mkdir(path.join(project, ".agent-harness"), { recursive: true });
       await ensureIgnored(path.join(project, ".gitignore"), ".agent-harness/");
       await ensureIgnored(path.join(project, ".gitignore"), "graphify-out/");
+      await ensureGraphifyIgnore(project);
       await writeGraphifySetupScripts(project, false);
       console.log(`Wrote ${target}`);
       logGuidanceSeed(guidance);
@@ -155,6 +156,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       await mkdir(path.join(project, ".agent-harness"), { recursive: true });
       await ensureIgnored(path.join(project, ".gitignore"), ".agent-harness/");
       await ensureIgnored(path.join(project, ".gitignore"), "graphify-out/");
+      await ensureGraphifyIgnore(project);
       const graphifyScripts = await writeGraphifySetupScripts(project, options.resetGraphifyScripts);
       console.log(`Deployed harness config to ${target}`);
       console.log(
@@ -183,6 +185,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         : [];
       await warnIfDeployedFilesUntracked(project, [
         target,
+        path.join(project, ".graphifyignore"),
         path.join(graphifyScripts, "setup-graphify.ps1"),
         path.join(graphifyScripts, "setup-graphify.sh"),
         ...seededGuidanceFiles,
@@ -202,8 +205,10 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       const project = path.resolve(options.project);
       const info = await stat(project);
       if (!info.isDirectory()) throw new Error(`${project} is not a directory`);
+      await ensureGraphifyIgnore(project);
       const directory = await writeGraphifySetupScripts(project, options.reset);
       console.log(`${options.reset ? "Reset" : "Prepared"} Graphify setup scripts in ${directory}`);
+      console.log(`Graphify ignore defaults ensured in ${path.join(project, ".graphifyignore")}`);
     });
 
   graphify
@@ -671,6 +676,34 @@ async function ensureIgnored(filePath: string, entry: string): Promise<void> {
   await writeFile(filePath, `${current}${separator}${entry}\n`, "utf8");
 }
 
+/**
+ * Graphify merges .gitignore + .graphifyignore. Deployed harness files live under
+ * committed `agent-harness/` (not gitignored), so they must be excluded here or
+ * they pollute the structural graph. Underscore-prefixed .txt dumps are local
+ * scratch extracts, not architecture docs.
+ */
+const GRAPHIFY_IGNORE_DEFAULTS = ["agent-harness/", "**/_*.txt"] as const;
+
+async function ensureGraphifyIgnore(project: string): Promise<void> {
+  const filePath = path.join(project, ".graphifyignore");
+  if (!(await exists(filePath))) {
+    await writeFile(
+      filePath,
+      [
+        "# Defaults from agent-harness for Graphify structural mapping.",
+        "# Edit freely; init/deploy/scripts append missing defaults only.",
+        ...GRAPHIFY_IGNORE_DEFAULTS,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    return;
+  }
+  for (const entry of GRAPHIFY_IGNORE_DEFAULTS) {
+    await ensureIgnored(filePath, entry);
+  }
+}
+
 const execFileAsync = promisify(execFile);
 
 /**
@@ -757,6 +790,7 @@ async function writeGraphifySetupScripts(project: string, reset: boolean): Promi
 }
 
 async function runGraphifySetupScript(project: string, installPrerequisite: boolean): Promise<void> {
+  await ensureGraphifyIgnore(project);
   const scripts = await writeGraphifySetupScripts(project, false);
   const isWindows = process.platform === "win32";
   const executable = isWindows ? "powershell.exe" : "bash";

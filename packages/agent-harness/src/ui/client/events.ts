@@ -32,10 +32,15 @@ export const eventsScript = `    async function waitForJob(runId) {
           await bootstrap(true);
           return;
         }
+        if (state.detail && response && response.job) {
+          state.detail.job = response.job;
+          renderRun();
+        }
         // Reflect confirm / grill batch can queue a long agent job; scroll before
         // waiting so the thinking strip at the top is visible while it works.
         if (action === 'answer') scrollMainToTop();
         if (action === 'resolve_installs' || action === 'confirm_grill') scrollMainToTop();
+        if (action === 'commit_preflight' || action === 'accept_tree' || action === 'retry') scrollMainToTop();
         var result = await waitForJob(state.selected);
         await bootstrap(true);
         if (action === 'answer') scrollMainToTop();
@@ -50,7 +55,7 @@ export const eventsScript = `    async function waitForJob(runId) {
         var landedVerification = !!(state.detail && state.detail.state && state.detail.state.verificationReady);
         var doneMsg = action === 'answer'
           ? (landedGrillReady ? 'Grilling complete — review before planning' : 'Answer recorded')
-          : (action === 'ignore_artifacts' ? 'Ignored artifacts and continued'
+            : (action === 'ignore_artifacts' ? 'Ignored artifacts and continued'
           : (action === 'resolve_installs' ? 'Install decisions applied'
           : (action === 'confirm_grill'
             ? (extra && extra.feedback
@@ -59,7 +64,10 @@ export const eventsScript = `    async function waitForJob(runId) {
                 ? 'Confirm verification settings before planning'
                 : 'Continuing to planning'))
             : (action === 'confirm_verification' ? 'Verification confirmed — planning'
-            : (action === 'set_tdd' ? 'TDD updated' : 'Action completed')))));
+            : (action === 'set_tdd' ? 'TDD updated'
+            : (action === 'commit_preflight' ? 'Working tree committed — continuing'
+            : (action === 'accept_tree' ? 'Current tree accepted — continuing'
+            : (action === 'retry' ? 'Retry started' : 'Action completed'))))))));
         toast(doneMsg);
       } catch (error) {
         state.pinScrollTop = false;

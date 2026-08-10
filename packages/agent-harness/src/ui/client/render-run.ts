@@ -76,7 +76,7 @@ export const renderRunScript = `    function renderSidebar() {
           ? '<span class="badge running"><i class="dot running"></i>Stopping after task…</span>'
           : '<button class="btn small" data-action="stop" title="Finish the current task, then halt">Stop after task</button>';
       }
-      if (s.phase === "blocked") {
+      if (s.phase === "blocked" && !state.detail.job) {
         out += s.blockedRetriable === false
           ? '<button class="btn small primary" data-action="retry" data-force="true">Retry anyway</button>'
           : '<button class="btn small primary" data-action="retry">Retry</button>';
@@ -412,7 +412,13 @@ export const renderRunScript = `    function renderSidebar() {
           ? "Waiting for the current transition to start"
           : jobAction === "index knowledge and reflect"
             ? "Indexing knowledge before the reflector starts"
-            : "An agent or deterministic command is working";
+            : jobAction === "commit_preflight"
+              ? "Committing the working tree and retrying"
+              : jobAction === "accept_tree"
+                ? "Accepting the current tree and continuing"
+                : jobAction === "retry"
+                  ? "Retrying the blocked transition"
+                  : "An agent or deterministic command is working";
         if (jobDetail) thinkingDetail = jobDetail;
         if (activityText) thinkingDetail = activityText;
         if (s.phase === "grilling" && unknowns.length && !activityText) thinkingDetail += " · " + openUnknownCount + " open unknown(s) remain";
@@ -439,7 +445,7 @@ export const renderRunScript = `    function renderSidebar() {
       } else if (!state.detail.job && !["completed","cancelled","awaiting_input","blocked"].includes(s.phase) && !s.stopAfterTask) {
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">Dashboard work does not continue automatically after a restart. Resume queues the next transition and refreshes the document index first.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }
-      if (s.phase === "blocked") {
+      if (s.phase === "blocked" && !state.detail.job) {
         var remediation = blockedRemediation(s);
         var failureText = String(s.failure || "");
         var isTreeDivergence = /Working tree diverged|Diverging paths/i.test(failureText);
@@ -457,8 +463,7 @@ export const renderRunScript = `    function renderSidebar() {
           var baseBranch = gitInfo ? gitInfo.baseBranch : null;
           var onBaseBranch = !!(currentBranch && baseBranch && currentBranch === baseBranch);
           var orderLabel = function (order) {
-            if (order === "commit-then-branch") return currentBranch ? "Commit onto " + currentBranch : "Commit onto the current branch";
-            return "Commit onto the run branch";
+            return order === "commit-then-branch" ? "Commit then branch" : "Branch then commit";
           };
           var defaultBtnClass = defaultOrder === "commit-then-branch" && onBaseBranch ? "btn danger" : "btn primary";
           var otherBtnClass = otherOrder === "commit-then-branch" && onBaseBranch ? "btn danger" : "btn";

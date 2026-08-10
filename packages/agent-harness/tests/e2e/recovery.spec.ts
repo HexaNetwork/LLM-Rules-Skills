@@ -31,7 +31,7 @@ test("recovery: dirty git start → commit preflight via UI → workflow continu
       await expect(page.getByText(/dirty|working tree|uncommitted/i).first()).toBeVisible();
 
       await page
-        .getByRole("button", { name: /commit onto the run branch and retry/i })
+        .getByRole("button", { name: /branch then commit and retry/i })
         .click();
 
       await waitForRunStatus(page, /awaiting input|reflect/i);

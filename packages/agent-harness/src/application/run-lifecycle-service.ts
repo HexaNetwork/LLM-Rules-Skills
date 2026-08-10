@@ -57,13 +57,19 @@ export class RunLifecycleService {
               {
                 ...state,
                 branchName: commit.runBranch ?? state.branchName,
-                treeFingerprint: await this.ctx.git.treeFingerprint(),
               },
               "run.preflight_committed",
               preflightCommitDetail(order, commit, true),
             );
           }
           state = await this.ensureRunBranchReady(state);
+          if (dirty.length > 0 && this.ctx.config.git.autoCommitPreflight) {
+            state = await this.ctx.store.record(
+              { ...state, treeFingerprint: await this.ctx.git.treeFingerprint() },
+              "run.tree_fingerprint",
+              {},
+            );
+          }
         }
         if (prepareGraphify && this.ctx.config.knowledge.graphify.enabled) {
           if (this.ctx.graphifySetupRunner) {

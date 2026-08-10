@@ -319,6 +319,7 @@ export async function handleRunsRoutes(
       const maxRunTokens = optionalNonNegativeNumber(body.maxRunTokens, "maxRunTokens");
       const maxRunCostUsd = optionalNonNegativeNumber(body.maxRunCostUsd, "maxRunCostUsd");
       ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Retrying the blocked transition");
         await engine.retry(runId, { force, maxRunTokens, maxRunCostUsd });
         await engine.advance(runId);
       });
@@ -326,12 +327,16 @@ export async function handleRunsRoutes(
       const order = optionalEnum(body.order, "order", PREFLIGHT_COMMIT_ORDER_VALUES);
       const message = optionalString(body.message, "message", 500);
       ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Committing the working tree");
         await engine.commitPreflight(runId, { order, message });
+        ctx.jobs.setDetail(runId, "Resuming the run");
         await engine.advance(runId);
       });
     } else if (action === "accept_tree") {
       ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Accepting the current tree");
         await engine.acceptTree(runId);
+        ctx.jobs.setDetail(runId, "Resuming the run");
         await engine.advance(runId);
       });
     } else if (action === "ignore_artifacts") {

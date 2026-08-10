@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
+import { GitService } from "../../src/git.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 import {
   createProjectFixture,
@@ -82,6 +83,54 @@ describe("commitPreflight", () => {
     const committed = events.find((event) => event.type === "run.preflight_committed");
     expect(committed!.detail.branch).toBe("main");
     expect(events.some((event) => event.type === "run.branch_ready")).toBe(true);
+  });
+
+  it("commit-then-branch from a non-base branch restamps fingerprint so advance does not false-block", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await git(root, "switch", "-c", "feature/operator");
+    await writeFile(path.join(root, "surprise.txt"), "from-feature\n", "utf8");
+
+    const config = fixtureConfig(root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: { tdd: false } as never,
+    });
+    const engine = new HarnessEngine(config, {
+      backend: createFakeBackend({
+        reflector: () => ({
+          proposedTitle: "Add a feature",
+          summary: "Restated feature",
+          restatement: "Add the feature from the dirty tree.",
+          goal: "Ship the feature",
+          users: ["operators"],
+          inScope: ["feature"],
+          outOfScope: [],
+          assumptions: [],
+          unknowns: [],
+        }),
+      }),
+    });
+    const blocked = await engine.start("Add a feature", "run-from-feature");
+    expect(blocked.phase).toBe("blocked");
+
+    const resumed = await engine.commitPreflight("run-from-feature", { order: "commit-then-branch" });
+    expect(resumed.phase).toBe("new");
+    expect(resumed.treeFingerprint).toBeTruthy();
+
+    expect((await git(root, "log", "feature/operator", "-1", "--format=%s")).trim()).toMatch(
+      /working tree|run-from-feature/i,
+    );
+    expect((await git(root, "branch", "--show-current")).trim()).toBe("harness/run-from-feature");
+    expect((await git(root, "rev-parse", "HEAD")).trim()).toBe(
+      (await git(root, "rev-parse", "main")).trim(),
+    );
+
+    const gitService = new GitService(config);
+    expect(resumed.treeFingerprint).toBe(await gitService.treeFingerprint());
+
+    const advanced = await engine.advance("run-from-feature");
+    expect(advanced.phase).not.toBe("blocked");
+    expect(String(advanced.failure || "")).not.toMatch(/Working tree diverged/i);
   });
 
   it("is safe to call on a run blocked from 'planning'", async () => {

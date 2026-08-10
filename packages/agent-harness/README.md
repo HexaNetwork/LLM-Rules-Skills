@@ -308,7 +308,7 @@ A dirty tree at `start()` blocks by default (`blockedFrom: "new"`), with the off
 Both paths honor `git.preflightCommitOrder`, which is user-selectable, not fixed:
 
 - `branch-then-commit` (default): creates `git.branchPrefix/<runId>` from **current HEAD** — not `config.git.baseBranch` — then commits onto it. This is a deliberate deviation from the branching rule above: it exists so the dirty tree rides onto the run branch instead of the operator's checked-out branch, and it is recorded on the `run.preflight_committed` audit event (`detail.deviation`).
-- `commit-then-branch`: commits on whatever branch is currently checked out; `start()` / the preflight action then creates the run branch from `config.git.baseBranch` before indexing and interview. The dashboard names that branch on the button so you're not guessing, and shows a caution when it's the same as `config.git.baseBranch`, since that means the commit lands directly on it.
+- `commit-then-branch`: commits on whatever branch is currently checked out; `start()` / the preflight action then creates the run branch from `config.git.baseBranch` before indexing and interview. The dashboard shows a caution when that checkout is the same as `config.git.baseBranch`, since that means the commit lands directly on it. The tree fingerprint is stamped **after** that branch cut so a baseBranch hop cannot false-block the following `advance()` on divergence.
 
 Either way the commit message defaults to `chore: commit working tree before harness run <runId>`, and the audit event records the order, resulting sha, branch, and the exact list of committed files — the harness state directory (`.agent-harness/`) is never included.
 

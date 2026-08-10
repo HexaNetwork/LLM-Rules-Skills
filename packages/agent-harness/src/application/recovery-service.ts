@@ -474,26 +474,31 @@ export class RecoveryService {
         const order = options?.order ?? this.ctx.config.git.preflightCommitOrder;
         const message = options?.message ?? defaultPreflightCommitMessage(runId);
         const commit = await this.runPreflightCommit(runId, order, message);
+        // Fingerprint after ensureRunBranch: that hop can move HEAD.
+        let branchName = commit.runBranch ?? state.branchName;
+        let cutRunBranch = false;
+        if (order === "commit-then-branch" && this.ctx.config.git.enabled) {
+          const ensured = await this.ctx.git.ensureRunBranch(runId);
+          if (ensured) {
+            cutRunBranch = ensured !== branchName;
+            branchName = ensured;
+          }
+        }
         state = await this.ctx.store.record(
           {
             ...clearBlock(state, state.blockedFrom),
-            branchName: commit.runBranch ?? state.branchName,
+            branchName,
             treeFingerprint: await this.ctx.git.treeFingerprint(),
           },
           "run.preflight_committed",
           preflightCommitDetail(order, commit, false),
         );
-        // commit-then-branch only cleaned the tree; cut the run branch now so
-        // reflect/grill/index do not keep running on the operator's checkout.
-        if (order === "commit-then-branch" && this.ctx.config.git.enabled) {
-          const branchName = await this.ctx.git.ensureRunBranch(runId);
-          if (branchName && state.branchName !== branchName) {
-            state = await this.ctx.store.record(
-              { ...state, branchName },
-              "run.branch_ready",
-              { branch: branchName, baseBranch: this.ctx.config.git.baseBranch },
-            );
-          }
+        if (cutRunBranch && branchName) {
+          state = await this.ctx.store.record(
+            state,
+            "run.branch_ready",
+            { branch: branchName, baseBranch: this.ctx.config.git.baseBranch },
+          );
         }
         return state;
       }),

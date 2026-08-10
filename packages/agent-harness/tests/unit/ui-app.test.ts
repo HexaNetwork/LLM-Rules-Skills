@@ -459,12 +459,10 @@ describe("dashboard document", () => {
     expect(html).toContain("costIsLowerBound");
   });
 
-  it("names the actual checked-out branch on the commit-then-branch preflight button, with a generic fallback", () => {
+  it("labels preflight commit orders as Branch then commit / Commit then branch", () => {
     const html = renderDashboard();
 
-    expect(html).toContain("var gitInfo = state.detail.git;");
-    expect(html).toContain('currentBranch ? "Commit onto " + currentBranch : "Commit onto the current branch"');
-    expect(html).toContain('return "Commit onto the run branch";');
+    expect(html).toContain('order === "commit-then-branch" ? "Commit then branch" : "Branch then commit"');
   });
 
   it("offers Accept current tree and continue for working-tree divergence blocks", () => {
@@ -474,6 +472,15 @@ describe("dashboard document", () => {
     expect(html).toContain('data-action="accept_tree"');
     expect(html).toContain("Accept current tree and continue");
     expect(html).toContain("Working tree diverged|Diverging paths");
+  });
+
+  it("hides the blocked error card while a recovery job is in flight", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain('if (s.phase === "blocked" && !state.detail.job)');
+    expect(html).toContain('jobAction === "commit_preflight"');
+    expect(html).toContain("Committing the working tree and retrying");
+    expect(html).toContain("state.detail.job = response.job");
   });
 
   it("offers Ignore buttons for diverging/unreported paths and lists ignored artifacts in settings", () => {

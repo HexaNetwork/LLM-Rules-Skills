@@ -1,7 +1,6 @@
 /** Browser JS fragment inlined by renderDashboard (Phase 4). */
 export const eventsScript = `    async function waitForJob(runId) {
-      var deadline = Date.now() + 120000;
-      while (Date.now() < deadline) {
+      while (true) {
         var detail = await api('/api/runs/' + encodeURIComponent(runId), undefined, true);
         if (detail.unchanged) {
           await new Promise(function (resolve) { setTimeout(resolve, 150); });
@@ -13,7 +12,6 @@ export const eventsScript = `    async function waitForJob(runId) {
         if (job.status === 'failed') return { ok: false, error: job.error || 'Action failed' };
         await new Promise(function (resolve) { setTimeout(resolve, 150); });
       }
-      return { ok: false, error: 'Timed out waiting for the action to finish' };
     }
 
     async function runAction(action, extra) {

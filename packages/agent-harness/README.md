@@ -9,56 +9,15 @@ Requires **Node.js 20.3+** (`AbortSignal.any` for cancellable agent timeouts).
 ```bash
 npm install
 npm run build
-npx agent-harness init
+npx agent-harness project add --repository "/path/to/your-project"
 npx agent-harness ui
 ```
 
-To deploy the harness into another project from this checkout, use the portable
-command below. It writes a project-local config, creates and Git-ignores local
-state, detects common documentation roots, and can build the first Ollama index:
-
-```powershell
-node ./packages/agent-harness/dist/cli.js deploy `
-  --project "/path/to/your-project" --ollama --refresh
-```
-
-Pass `--sources README.md,docs` to override detection. New deployments enable
-Graphify structural code retrieval; it is prepared before the first agent step
-of a new run and rebuilt after each verified harness task commit. Use the
-advanced `--no-graphify` opt-out for document-only projects.
-Source code is normally left to Graphify's structural traversal; add source
-paths explicitly only when you want code chunks in document retrieval. Existing
-configs are protected unless `--force` is supplied.
-
-Graphify setup is also portable and editable. Deployment creates these files in
-the target project without overwriting a team customization:
-
-```text
-agent-harness/scripts/setup-graphify.ps1  # Windows
-agent-harness/scripts/setup-graphify.sh   # Linux/macOS
-```
-
-They install the official `graphifyy` package with `uv` (or `pipx`), verify the
-`graphify` command, and build/update `graphify-out/graph.json`. Run the setup
-during deployment with `--install-graphify`, or later with the following
-command. The prerequisite switches explicitly allow installation of `uv` when
-neither `uv` nor `pipx` is available.
-
-Init, deploy, and `graphify scripts|install` also ensure a project
-`.graphifyignore` so Graphify does not map the deployed `agent-harness/` package
-or underscore-prefixed scratch `.txt` dumps (for example changelog `git show`
-extracts). Edit that file for project-specific excludes; missing defaults are
-appended on the next harness Graphify prepare step.
-
-```powershell
-agent-harness graphify install --project "/path/to/your-project"
-agent-harness graphify install --project "/path/to/your-project" --install-prerequisite
-agent-harness graphify scripts --project "/path/to/your-project" --reset
-```
-
-On Linux/macOS, edit and run `agent-harness/scripts/setup-graphify.sh` directly
-or use the same CLI. Reset is always explicit, so a customized package mirror,
-version pin, proxy, or bootstrap policy is preserved by ordinary deployments.
+`project add` registers the repository in harness home (guidance lives there too).
+Install Graphify with `uv tool install graphifyy` when you want structural code
+retrieval; the harness builds `graphify-out/graph.json` before new runs and after
+verified task commits. `init` / `deploy` write a repo-local config when needed.
+Use `--no-graphify` on deploy for document-only projects.
 
 The dashboard opens on an authenticated loopback URL and centralizes run creation, human questions, progress, test evidence, session handoffs, artifacts, retries, cancellation, and local knowledge search. Set `CURSOR_API_KEY` for real agent runs. The generated config pins models, commands, retry budgets, TDD policy, git publication, and local knowledge sources.
 
@@ -251,16 +210,16 @@ knowledge:
 Sources are currently constrained to the configured repository root, so shared global guidance should be available beneath each project root (for example as a submodule or synced folder). A remotely deployed multi-user RAG service must additionally authenticate callers and enforce the same scope filter server-side; the local CLI has no user identity model.
 
 Graphify complements document matches with structural repository traversal. New
-harness configs enable it by default. Before the first agent step of each new
-run (CLI and UI), the harness verifies both the `graphify` command and
-`graphify-out/graph.json`; if either is missing, it runs that project's editable
-setup script to install and build the graph. After each verified harness task
-commit that includes a source-file path, it runs `graphify update` so the next
-task receives fresh structural context. Default Graphify roles are planner,
-test-writer, implementer, and reviewer (not reflector/griller). Project-specific
+harness configs enable it by default. Install Graphify yourself
+(`uv tool install graphifyy`). Before the first agent step of each new run
+(CLI and UI), the harness verifies the `graphify` command and builds
+`graphify-out/graph.json` with `graphify update` when the graph is missing.
+After each verified harness task commit that includes a source-file path, it
+runs `graphify update` again so the next task receives fresh structural
+context. Default Graphify roles are planner, test-writer, implementer, and
+reviewer (not reflector/griller). Project-specific
 `knowledge.graphify.stopwords` merge over the built-in English and harness-meta
-lists. Use `agent-harness graphify install --project .` after code changes made
-outside the harness, or enable `knowledge.graphify.updateOnRefresh` if a
+lists. Enable `knowledge.graphify.updateOnRefresh` if a
 document-refresh-triggered rebuild is specifically desired. Graphify is invoked
 with an argument array rather than a shell, reads only
 `graphify-out/graph.json`, and fails softly during later retrieval. Set
@@ -354,7 +313,7 @@ npm run test:all           # unit + integration + e2e + build + acceptance
 
 E2E tests live in `tests/e2e/`. They do **not** launch the production CLI: each test builds a `ProjectFixture`, injects a `ScriptedBackend`, starts `startUiServer({ port: 0, openBrowser: false })`, and opens the authenticated dashboard URL. Failure artifacts land under Git-ignored `test-results/` (Playwright traces under `test-results/playwright/`).
 
-Acceptance tests inject backends through `createCli({ createBackend, runGraphifySetup, … })` — there is no production CLI flag or config key that selects a test backend. CI is defined in [`.github/workflows/agent-harness.yml`](../../.github/workflows/agent-harness.yml).
+Acceptance tests inject backends through `createCli({ createBackend, … })` — there is no production CLI flag or config key that selects a test backend. CI is defined in [`.github/workflows/agent-harness.yml`](../../.github/workflows/agent-harness.yml).
 
 ## Extension boundaries
 

@@ -12,7 +12,6 @@ import {
   GraphifyRepositoryLookup,
   runGraphify,
   type GraphifyRunner,
-  type GraphifySetupRunner,
 } from "../graphify.js";
 import type { LocalKnowledgeBase } from "../knowledge.js";
 import { LocalKnowledgeBase as LocalKnowledgeBaseImpl } from "../knowledge.js";
@@ -51,7 +50,6 @@ export type ApplicationDependencies = {
   clock: Clock;
   sleep(ms: number): Promise<void>;
   graphifyRunner: GraphifyRunner;
-  graphifySetupRunner?: GraphifySetupRunner;
   projectContext?: ProjectContext;
 };
 
@@ -63,7 +61,6 @@ export type HarnessDependencies = {
   knowledge?: LocalKnowledgeBase;
   git?: GitService;
   graphifyRunner?: GraphifyRunner;
-  graphifySetupRunner?: GraphifySetupRunner;
   /** Test seam for provider-retry backoff; defaults to real wall-clock sleep. */
   sleep?: (ms: number) => Promise<void>;
   clock?: Clock;
@@ -105,7 +102,6 @@ export function createApplicationDependencies(
     clock: dependencies.clock ?? systemClock,
     sleep: dependencies.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     graphifyRunner,
-    graphifySetupRunner: dependencies.graphifySetupRunner,
     projectContext: dependencies.projectContext,
   };
 }

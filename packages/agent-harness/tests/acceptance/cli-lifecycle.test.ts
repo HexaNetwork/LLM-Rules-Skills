@@ -28,7 +28,7 @@ describe("CLI acceptance lifecycle", () => {
     process.chdir(fixture.root);
 
     await withDiagnosticArtifacts({ testName: "acceptance-init", fixture }, async () => {
-      const result = await runCli(["init", "--no-seed-guidance"]);
+      const result = await runCli(["init"]);
       expect(result.code).toBe(0);
       expect(result.stdout.join("\n")).toMatch(/Wrote .*agent-harness\.config\.yaml/);
 
@@ -41,6 +41,8 @@ describe("CLI acceptance lifecycle", () => {
       expect(graphifyignore).toContain("agent-harness/");
       expect(graphifyignore).toContain("**/_*.txt");
       await access(path.join(fixture!.root, ".agent-harness"));
+      await expect(access(path.join(fixture!.root, "agent-harness", "scripts"))).rejects.toThrow();
+      await expect(access(path.join(fixture!.root, "agent-harness", "guidance"))).rejects.toThrow();
     });
   });
 
@@ -314,21 +316,4 @@ describe("CLI acceptance lifecycle", () => {
     });
   });
 
-  it("graphify install uses the injected setup seam and never installs packages", async () => {
-    fixture = await createProjectFixture();
-    const calls: Array<{ project: string; installPrerequisite: boolean }> = [];
-    previousCwd = process.cwd();
-    process.chdir(fixture.root);
-
-    await withDiagnosticArtifacts({ testName: "acceptance-graphify-seam", fixture }, async () => {
-      const result = await runCli(["graphify", "install", "--project", fixture!.root], {
-        runGraphifySetup: async (project, installPrerequisite) => {
-          calls.push({ project, installPrerequisite });
-        },
-      });
-      expect(result.code).toBe(0);
-      expect(calls).toEqual([{ project: fixture!.root, installPrerequisite: false }]);
-      expect(result.stdout.join("\n")).not.toMatch(/npm install|pip install|uv tool/i);
-    });
-  });
 });

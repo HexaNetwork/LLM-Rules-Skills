@@ -54,21 +54,7 @@ export class RunLifecycleService {
         this.ctx.bindWorkspace(workspace);
       }
       if (prepareGraphify && this.ctx.config.knowledge.graphify.enabled) {
-        if (this.ctx.graphifySetupRunner) {
-          await prepareGraphifyForRun(
-            this.ctx.config,
-            this.ctx.graphifyRunner,
-            this.ctx.graphifySetupRunner,
-            this.ctx.paths,
-          );
-        } else {
-          await prepareGraphifyForRun(
-            this.ctx.config,
-            this.ctx.graphifyRunner,
-            undefined,
-            this.ctx.paths,
-          );
-        }
+        await prepareGraphifyForRun(this.ctx.config, this.ctx.graphifyRunner, this.ctx.paths);
       }
       if (refreshKnowledge) {
         await this.ctx.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>

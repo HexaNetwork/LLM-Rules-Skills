@@ -59,7 +59,7 @@ describe("CLI acceptance errors and package entry", () => {
     previousCwd = process.cwd();
     process.chdir(fixture.root);
 
-    const result = await spawnNode(distCli, ["init", "--no-seed-guidance"]);
+    const result = await spawnNode(distCli, ["init"]);
     expect(result.code).toBe(0);
     expect(result.stdout).toMatch(/Wrote .*agent-harness\.config\.yaml/);
     await access(path.join(fixture.root, "agent-harness.config.yaml"));

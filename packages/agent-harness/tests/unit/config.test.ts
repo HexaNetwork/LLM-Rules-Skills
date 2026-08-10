@@ -97,19 +97,17 @@ describe("token-conscious defaults", () => {
     expect(defaultConfigYaml()).toContain("enabled: false");
     expect(defaultConfigYaml()).toContain("testPathPatterns:");
     expect(defaultConfigYaml()).toContain("sourceExtensions:");
-    expect(defaultConfigYaml()).toContain("agent-harness/guidance/General");
     expect(defaultConfigYaml()).toContain("assignments:");
-    expect(defaultConfigYaml()).toContain("scope: global");
+    expect(defaultConfigYaml()).toContain("scope: project");
+    expect(defaultConfigYaml()).not.toContain("agent-harness/guidance/General");
     const deployed = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({
       sources: [
-        { path: "agent-harness/guidance/General", scope: "global" },
         "README.md",
         "src",
       ],
       ollama: true,
     })));
     expect(deployed.knowledge.sources).toEqual([
-      expect.objectContaining({ path: "agent-harness/guidance/General", scope: "global" }),
       expect.objectContaining({ path: "README.md", scope: "project" }),
       expect.objectContaining({ path: "src", scope: "project" }),
     ]);

@@ -14,20 +14,11 @@ let body = src
   .replaceAll('from "./config.js"', 'from "../config.js"')
   .replaceAll('from "./engine.js"', 'from "../engine.js"')
   .replaceAll('from "./git.js"', 'from "../git.js"')
-  .replaceAll('from "./guidance-seed.js"', 'from "../guidance-seed.js"')
   .replaceAll('from "./knowledge.js"', 'from "../knowledge.js"')
   .replaceAll('from "./ui/server.js"', 'from "../ui/server.js"')
   .replaceAll("createCursorBackend()", "dependencies.createBackend()")
   .replaceAll('createCursorBackend("unused")', 'dependencies.createBackend("unused")')
-  .replaceAll("await startUiServer({", "await dependencies.startUiServer({")
-  .replaceAll(
-    "await runGraphifySetupScript(project, options.installGraphifyPrerequisite);",
-    "await dependencies.runGraphifySetup(project, options.installGraphifyPrerequisite);",
-  )
-  .replaceAll(
-    "await runGraphifySetupScript(project, options.installPrerequisite);",
-    "await dependencies.runGraphifySetup(project, options.installPrerequisite);",
-  );
+  .replaceAll("await startUiServer({", "await dependencies.startUiServer({");
 
 body = body.replace(
   /\r?\nprogram\.parseAsync\(process\.argv\)\.catch\(\(error: unknown\) => \{[\s\S]*\}\);\s*$/,
@@ -53,7 +44,6 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { createCursorBackend, type AgentBackend } from "../agent.js";
 import {
@@ -65,26 +55,18 @@ import {
 } from "../config.js";
 import { HarnessEngine } from "../engine.js";
 import { GitService } from "../git.js";
-import {
-  seedGlobalGuidance,
-  withGlobalGuidanceSource,
-  type GuidanceSeedResult,
-} from "../guidance-seed.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { startUiServer, type UiServer } from "../ui/server.js";
 
 export type CliDependencies = {
   createBackend: (apiKey?: string) => AgentBackend;
   startUiServer: (options: Parameters<typeof startUiServer>[0]) => Promise<UiServer>;
-  runGraphifySetup: (project: string, installPrerequisite: boolean) => Promise<void>;
 };
 
 export function productionCliDependencies(): CliDependencies {
   return {
     createBackend: (apiKey) => createCursorBackend(apiKey),
     startUiServer,
-    runGraphifySetup: (project, installPrerequisite) =>
-      runGraphifySetupScript(project, installPrerequisite),
   };
 }
 

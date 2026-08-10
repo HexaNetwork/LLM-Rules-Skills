@@ -23,9 +23,6 @@ export async function runCli(
 ): Promise<CliRunResult> {
   const deps: CliDependencies = {
     ...productionCliDependencies(),
-    runGraphifySetup: async () => {
-      throw new Error("Graphify setup must be faked in acceptance tests");
-    },
     ...dependencies,
   };
   const stdout: string[] = [];

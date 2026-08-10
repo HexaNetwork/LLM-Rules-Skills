@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { createCursorBackend, type AgentBackend } from "../agent.js";
 import {
@@ -24,26 +23,18 @@ import { formatBytes, reportProjectStorage } from "../application/storage-report
 import { openRunHarness } from "../application/run-engine-factory.js";
 import { HarnessEngine } from "../engine.js";
 import { GitService } from "../git.js";
-import {
-  seedGlobalGuidance,
-  withGlobalGuidanceSource,
-  type GuidanceSeedResult,
-} from "../guidance-seed.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { startUiServer, type UiServer } from "../ui/server.js";
 
 export type CliDependencies = {
   createBackend: (apiKey?: string) => AgentBackend;
   startUiServer: (options: Parameters<typeof startUiServer>[0]) => Promise<UiServer>;
-  runGraphifySetup: (project: string, installPrerequisite: boolean) => Promise<void>;
 };
 
 export function productionCliDependencies(): CliDependencies {
   return {
     createBackend: (apiKey) => createCursorBackend(apiKey),
     startUiServer,
-    runGraphifySetup: (project, installPrerequisite) =>
-      runGraphifySetupScript(project, installPrerequisite),
   };
 }
 
@@ -60,54 +51,18 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .command("init")
     .description("Create a v2 harness config and local artifact directory")
     .option("--force", "replace an existing config", false)
-    .option("--no-seed-guidance", "skip seeding package General/ rules and skills")
-    .action(async (options: { force: boolean; seedGuidance: boolean }) => {
+    .action(async (options: { force: boolean }) => {
       const project = process.cwd();
       const target = path.join(project, "agent-harness.config.yaml");
       if (!options.force && (await exists(target))) {
         throw new Error(`${target} already exists; use --force to replace it`);
       }
-      const guidance = await seedGlobalGuidance(project, { enabled: options.seedGuidance });
-      if (guidance.sourcePath === "agent-harness/guidance/General" || !guidance.sourcePath) {
-        // Keep the commented default template when the seeded path matches it (or seed was skipped).
-        let yaml = defaultConfigYaml();
-        if (!guidance.sourcePath) {
-          yaml = deploymentConfigYaml({
-            sources: [
-              { path: "README.md", scope: "project" },
-              { path: "docs", scope: "project" },
-            ],
-          });
-        }
-        await writeFile(target, yaml, "utf8");
-      } else {
-        // Reusing an existing root General/ — point sources at that path instead.
-        await writeFile(
-          target,
-          deploymentConfigYaml({
-            sources: withGlobalGuidanceSource(
-              [
-                { path: "README.md", scope: "project", visibility: "private" },
-                { path: "docs", scope: "project", visibility: "private" },
-              ],
-              guidance.sourcePath,
-            ),
-          }),
-          "utf8",
-        );
-      }
+      await writeFile(target, defaultConfigYaml(), "utf8");
       await mkdir(path.join(project, ".agent-harness"), { recursive: true });
       await ensureIgnored(path.join(project, ".gitignore"), ".agent-harness/");
       await ensureIgnored(path.join(project, ".gitignore"), "graphify-out/");
       await ensureGraphifyIgnore(project);
-      await writeGraphifySetupScripts(project, false);
       console.log(`Wrote ${target}`);
-      logGuidanceSeed(guidance);
-      if (guidance.sourcePath) {
-        const { config } = await loadConfig(target);
-        const changed = await new LocalKnowledgeBase(config).refresh();
-        console.log(`Indexed ${changed} changed document(s) after guidance seed`);
-      }
     });
 
   program
@@ -119,11 +74,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .option("--ollama", "configure local Ollama semantic retrieval", false)
     .option("--model <name>", "Ollama embedding model", "qwen3-embedding")
     .option("--no-graphify", "advanced: disable structural code retrieval")
-    .option("--install-graphify", "run the editable project-local Graphify setup script", false)
-    .option("--install-graphify-prerequisite", "allow the setup script to install uv if needed", false)
-    .option("--reset-graphify-scripts", "replace customized Graphify setup scripts with harness defaults", false)
     .option("--refresh", "build the first knowledge index", false)
-    .option("--no-seed-guidance", "skip seeding package General/ rules and skills")
     .action(async (options: {
       project: string;
       force: boolean;
@@ -131,11 +82,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       ollama: boolean;
       model: string;
       graphify: boolean;
-      installGraphify: boolean;
-      installGraphifyPrerequisite: boolean;
-      resetGraphifyScripts: boolean;
       refresh: boolean;
-      seedGuidance: boolean;
     }) => {
       const project = path.resolve(options.project);
       const info = await stat(project);
@@ -144,18 +91,14 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       if (!options.force && (await exists(target))) {
         throw new Error(`${target} already exists; use --force to replace it`);
       }
-      const guidance = await seedGlobalGuidance(project, { enabled: options.seedGuidance });
       const projectSources = options.sources
         ? options.sources.split(",").map((source) => source.trim()).filter(Boolean)
         : await discoverDeploymentSources(project);
-      const sources = withGlobalGuidanceSource(
-        projectSources.map((sourcePath) => ({
-          path: sourcePath,
-          scope: "project" as const,
-          visibility: "private" as const,
-        })),
-        guidance.sourcePath,
-      );
+      const sources = projectSources.map((sourcePath) => ({
+        path: sourcePath,
+        scope: "project" as const,
+        visibility: "private" as const,
+      }));
       await writeFile(target, deploymentConfigYaml({
         sources,
         ollama: options.ollama,
@@ -166,71 +109,26 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       await ensureIgnored(path.join(project, ".gitignore"), ".agent-harness/");
       await ensureIgnored(path.join(project, ".gitignore"), "graphify-out/");
       await ensureGraphifyIgnore(project);
-      const graphifyScripts = await writeGraphifySetupScripts(project, options.resetGraphifyScripts);
       console.log(`Deployed harness config to ${target}`);
       console.log(
         `Knowledge sources: ${sources.map((source) => `${source.path} (${source.scope})`).join(", ") || "none"}`,
       );
-      logGuidanceSeed(guidance);
       if (options.ollama) console.log(`Semantic retrieval: Ollama / ${options.model}`);
       console.log(
         options.graphify
-          ? "Repository structure: Graphify (prepared before new runs and rebuilt after task commits)"
+          ? "Repository structure: Graphify (requires `graphify` on PATH; graph built before new runs and after task commits)"
           : "Repository structure: Graphify disabled (--no-graphify)",
       );
-      console.log(`Editable Graphify setup scripts: ${graphifyScripts}`);
-      if (options.installGraphify) {
-        await dependencies.runGraphifySetup(project, options.installGraphifyPrerequisite);
-      }
-      // Seeded guidance should be searchable on the first run; --refresh also covers project docs.
-      if (options.refresh || guidance.sourcePath) {
+      if (options.refresh) {
         const { config } = await loadConfig(target);
         const changed = await new LocalKnowledgeBase(config).refresh();
         console.log(`Indexed ${changed} changed document(s)`);
       }
       await warnIfNotGitRepository(project);
-      const seededGuidanceFiles = guidance.copied
-        ? [path.join(project, "agent-harness", "guidance", "General")]
-        : [];
       await warnIfDeployedFilesUntracked(project, [
         target,
         path.join(project, ".graphifyignore"),
-        path.join(graphifyScripts, "setup-graphify.ps1"),
-        path.join(graphifyScripts, "setup-graphify.sh"),
-        ...seededGuidanceFiles,
       ]);
-    });
-
-  const graphify = program
-    .command("graphify")
-    .description("Manage the editable project-local Graphify setup scripts");
-
-  graphify
-    .command("scripts")
-    .description("create missing setup scripts, or reset customized scripts to harness defaults")
-    .requiredOption("--project <path>", "target project directory")
-    .option("--reset", "replace customized scripts with harness defaults", false)
-    .action(async (options: { project: string; reset: boolean }) => {
-      const project = path.resolve(options.project);
-      const info = await stat(project);
-      if (!info.isDirectory()) throw new Error(`${project} is not a directory`);
-      await ensureGraphifyIgnore(project);
-      const directory = await writeGraphifySetupScripts(project, options.reset);
-      console.log(`${options.reset ? "Reset" : "Prepared"} Graphify setup scripts in ${directory}`);
-      console.log(`Graphify ignore defaults ensured in ${path.join(project, ".graphifyignore")}`);
-    });
-
-  graphify
-    .command("install")
-    .description("run the project's editable Graphify setup script")
-    .requiredOption("--project <path>", "target project directory")
-    .option("--install-prerequisite", "allow the script to install uv if needed", false)
-    .action(async (options: { project: string; installPrerequisite: boolean }) => {
-      const project = path.resolve(options.project);
-      const info = await stat(project);
-      if (!info.isDirectory()) throw new Error(`${project} is not a directory`);
-      await writeGraphifySetupScripts(project, false);
-      await dependencies.runGraphifySetup(project, options.installPrerequisite);
     });
 
   const projectCmd = program
@@ -1170,18 +1068,6 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-function logGuidanceSeed(guidance: GuidanceSeedResult): void {
-  if (!guidance.sourcePath) {
-    console.log("Global guidance: skipped (--no-seed-guidance)");
-    return;
-  }
-  if (guidance.copied) {
-    console.log(`Global guidance: seeded ${guidance.sourcePath} (scope: global)`);
-    return;
-  }
-  console.log(`Global guidance: reusing ${guidance.sourcePath} (scope: global)`);
-}
-
 async function ensureIgnored(filePath: string, entry: string): Promise<void> {
   const current = (await exists(filePath)) ? await readFile(filePath, "utf8") : "";
   if (current.split(/\r?\n/).includes(entry)) return;
@@ -1190,10 +1076,8 @@ async function ensureIgnored(filePath: string, entry: string): Promise<void> {
 }
 
 /**
- * Graphify merges .gitignore + .graphifyignore. Deployed harness files live under
- * committed `agent-harness/` (not gitignored), so they must be excluded here or
- * they pollute the structural graph. Underscore-prefixed .txt dumps are local
- * scratch extracts, not architecture docs.
+ * Graphify merges .gitignore + .graphifyignore. Exclude harness package trees and
+ * underscore-prefixed .txt scratch dumps from the structural graph.
  */
 const GRAPHIFY_IGNORE_DEFAULTS = ["agent-harness/", "**/_*.txt"] as const;
 
@@ -1204,7 +1088,7 @@ async function ensureGraphifyIgnore(project: string): Promise<void> {
       filePath,
       [
         "# Defaults from agent-harness for Graphify structural mapping.",
-        "# Edit freely; init/deploy/scripts append missing defaults only.",
+        "# Edit freely; init/deploy append missing defaults only.",
         ...GRAPHIFY_IGNORE_DEFAULTS,
         "",
       ].join("\n"),
@@ -1233,8 +1117,8 @@ async function warnIfNotGitRepository(project: string): Promise<void> {
 }
 
 /**
- * Deploy leaves committable files (config + scripts, see writeGraphifySetupScripts)
- * untracked; a run refuses to start on a dirty tree, so surface that now, not later.
+ * Deploy leaves committable config/ignore files untracked; a run refuses to start
+ * on a dirty tree, so surface that now, not later.
  */
 async function warnIfDeployedFilesUntracked(project: string, absolutePaths: string[]): Promise<void> {
   if (!(await isGitRepository(project))) return;
@@ -1277,52 +1161,6 @@ async function gitUntrackedPaths(project: string, relativePaths: string[]): Prom
   } catch {
     return [];
   }
-}
-
-const GRAPHIFY_SETUP_FILENAMES = ["setup-graphify.ps1", "setup-graphify.sh"] as const;
-
-/**
- * Setup scripts deliberately live in the deployed project, not hidden harness
- * state. Teams can review and customize them; reset is explicit and never
- * overwrites a local edit during ordinary deployment.
- */
-async function writeGraphifySetupScripts(project: string, reset: boolean): Promise<string> {
-  const destination = path.join(project, "agent-harness", "scripts");
-  const templateDirectory = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../../templates/graphify",
-  );
-  await mkdir(destination, { recursive: true });
-  for (const filename of GRAPHIFY_SETUP_FILENAMES) {
-    const target = path.join(destination, filename);
-    if (!reset && (await exists(target))) continue;
-    const template = await readFile(path.join(templateDirectory, filename), "utf8");
-    await writeFile(target, template, "utf8");
-  }
-  return destination;
-}
-
-async function runGraphifySetupScript(project: string, installPrerequisite: boolean): Promise<void> {
-  await ensureGraphifyIgnore(project);
-  const scripts = await writeGraphifySetupScripts(project, false);
-  const isWindows = process.platform === "win32";
-  const executable = isWindows ? "powershell.exe" : "bash";
-  const scriptPath = path.join(scripts, isWindows ? "setup-graphify.ps1" : "setup-graphify.sh");
-  const args = isWindows
-    ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-ProjectRoot", project]
-    : [scriptPath, "--project-root", project];
-  if (installPrerequisite) {
-    args.push(isWindows ? "-InstallUv" : "--install-uv");
-  }
-  console.log(`Running ${scriptPath}`);
-  await new Promise<void>((resolve, reject) => {
-    execFile(executable, args, { cwd: project, windowsHide: true }, (error, stdout, stderr) => {
-      if (stdout) process.stdout.write(stdout);
-      if (stderr) process.stderr.write(stderr);
-      if (error) reject(error);
-      else resolve();
-    });
-  });
 }
 
 function positiveInteger(value: string, name: string): number {

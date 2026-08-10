@@ -162,14 +162,13 @@ export async function handleRunsRoutes(
         const graphifyReady = await prepareGraphifyForRun(
           opened.config,
           undefined,
-          undefined,
           opened.paths,
         );
         if (graphifyReady.enabled) {
           ctx.jobs.setDetail(
             runId,
             graphifyReady.setupRan
-              ? "Graphify installed and the repository graph is ready"
+              ? "Repository graph built and ready"
               : "Graphify repository graph is ready",
           );
         }

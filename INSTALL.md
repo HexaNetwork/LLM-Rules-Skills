@@ -101,11 +101,20 @@ Persist for your Windows user (new terminals pick it up):
 
 Restart any running harness/`ui` process after changing the key. The install wizard can set the User env variable for you — it never writes the key to `.env`.
 
-## 4. Deploy into a project folder
+## 4. Register a project
 
-`deploy` installs config into the target project. It does **not** open a browser or start the dashboard — that is a separate `ui` step below.
+```powershell
+node "C:\path\to\LLM-Rules-Skills\packages\agent-harness\dist\cli.js" project add `
+  --repository "C:\path\to\your-project"
+```
 
-Works from any working directory (use absolute paths):
+This seeds shared guidance under harness home and does not write guidance or setup scripts into the target. For structural code retrieval:
+
+```powershell
+uv tool install graphifyy
+```
+
+Or write a repo-local config with `deploy` (does **not** open the dashboard — that is a separate `ui` step):
 
 ```powershell
 node "C:\path\to\LLM-Rules-Skills\packages\agent-harness\dist\cli.js" deploy `
@@ -113,24 +122,7 @@ node "C:\path\to\LLM-Rules-Skills\packages\agent-harness\dist\cli.js" deploy `
   --ollama --refresh
 ```
 
-Success looks like console lines such as `Deployed harness config to ...` and `Indexed N changed document(s)`, then the command exits. Check that the target project now has `agent-harness.config.yaml` and `.agent-harness/`.
-
-What this does:
-
-- writes `agent-harness.config.yaml` in the target project
-- creates `.agent-harness/` and adds it to `.gitignore`
-- detects common doc roots (override with `--sources README.md,docs`)
-- optionally configures Ollama embeddings and builds the first knowledge index (`--ollama --refresh`)
-
-Useful flags:
-
-| Flag | Purpose |
-| --- | --- |
-| `--force` | replace an existing config |
-| `--sources a,b` | override knowledge source paths |
-| `--install-graphify` | run Graphify setup in the target project |
-| `--install-graphify-prerequisite` | allow installing `uv` if needed |
-| `--no-graphify` | document-only; skip structural code retrieval |
+Useful deploy flags: `--force`, `--sources a,b`, `--no-graphify`.
 
 ## 5. Start the dashboard
 

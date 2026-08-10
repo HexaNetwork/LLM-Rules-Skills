@@ -797,16 +797,10 @@ describe("durable idea-to-feature workflow", () => {
     const engine = new HarnessEngine(config, {
       backend: createFakeBackend({}),
       graphifyRunner: runner,
-      graphifySetupRunner: async () => ({
-        exitCode: 1,
-        stdout: "",
-        stderr: "setup failed: no python",
-        timedOut: false,
-      }),
     });
     const state = await engine.start("Needs graph");
     expect(state.phase).toBe("blocked");
-    expect(state.failure).toMatch(/Graphify/i);
+    expect(state.failure).toMatch(/Graphify|graphifyy/i);
   });
 
   it("routes implementers that touch recorded test files back to repair", async () => {

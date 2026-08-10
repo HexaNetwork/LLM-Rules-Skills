@@ -6,7 +6,7 @@ import { loadRunWorkspace, type HarnessConfig } from "../config.js";
 import type { BuildTask, RunState } from "../domain.js";
 import { HarnessFailure } from "../errors.js";
 import type { GitService } from "../git.js";
-import type { GraphifyRunner, GraphifySetupRunner } from "../graphify.js";
+import type { GraphifyRunner } from "../graphify.js";
 import type { LocalKnowledgeBase } from "../knowledge.js";
 import type { RunStore } from "../store.js";
 import type { TrackerPort } from "../tracker.js";
@@ -44,7 +44,6 @@ export class ApplicationContext {
   readonly agents: AgentCoordinator;
   readonly deps: ApplicationDependencies;
   readonly graphifyRunner: GraphifyRunner;
-  readonly graphifySetupRunner?: GraphifySetupRunner;
   readonly sleep: (ms: number) => Promise<void>;
   readonly cancellation: RunCancellationRegistry;
   readonly projectContext?: ProjectContext;
@@ -64,7 +63,6 @@ export class ApplicationContext {
     this.git = this.deps.git;
     this.agents = this.deps.agents;
     this.graphifyRunner = this.deps.graphifyRunner;
-    this.graphifySetupRunner = this.deps.graphifySetupRunner;
     this.sleep = this.deps.sleep;
     this.projectContext = this.deps.projectContext;
     this.cancellation = cancellation;

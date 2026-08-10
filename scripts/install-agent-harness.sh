@@ -395,19 +395,11 @@ fi
 
 # ── 6. Optional: Graphify ─────────────────────────────────────────────────
 stage "Optional — Graphify"
-say "Graphify adds structural code retrieval. Default deploy enables it;"
-say "you can skip with --no-graphify or install tooling now."
+say "Graphify adds structural code retrieval. Install it yourself when enabled:"
+say "  uv tool install graphifyy"
+say "Default deploy enables Graphify; skip with --no-graphify for document-only projects."
 USE_GRAPHIFY=1
-INSTALL_GRAPHIFY=0
-INSTALL_UV=0
-if confirm "Enable Graphify for this project?"; then
-  if confirm "Run Graphify setup during deploy (--install-graphify)?"; then
-    INSTALL_GRAPHIFY=1
-    if confirm "Allow installing uv if missing (--install-graphify-prerequisite)?"; then
-      INSTALL_UV=1
-    fi
-  fi
-else
+if ! confirm "Enable Graphify for this project?"; then
   USE_GRAPHIFY=0
 fi
 
@@ -417,9 +409,6 @@ DEPLOY_ARGS=(deploy --project "$PROJECT_PATH" --refresh)
 [[ "$USE_OLLAMA" -eq 1 ]] && DEPLOY_ARGS+=(--ollama)
 if [[ "$USE_GRAPHIFY" -eq 0 ]]; then
   DEPLOY_ARGS+=(--no-graphify)
-else
-  [[ "$INSTALL_GRAPHIFY" -eq 1 ]] && DEPLOY_ARGS+=(--install-graphify)
-  [[ "$INSTALL_UV" -eq 1 ]] && DEPLOY_ARGS+=(--install-graphify-prerequisite)
 fi
 if [[ -f "$PROJECT_PATH/agent-harness.config.yaml" ]]; then
   warn "agent-harness.config.yaml already exists in the target project."

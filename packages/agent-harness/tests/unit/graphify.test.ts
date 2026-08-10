@@ -142,22 +142,17 @@ describe("rankGraphifyExcerpt", () => {
 });
 
 describe("GraphifyRepositoryLookup", () => {
-  it("runs the project-local setup only when a new run lacks a usable graph", async () => {
+  it("builds the graph with graphify update when the command exists but the graph is missing", async () => {
     const root = await fixtureRoot();
     const graphPath = path.join(root, "graphify-out", "graph.json");
-    const scriptPath = path.join(
-      root,
-      "agent-harness",
-      "scripts",
-      process.platform === "win32" ? "setup-graphify.ps1" : "setup-graphify.sh",
-    );
-    await mkdir(path.dirname(scriptPath), { recursive: true });
-    await writeFile(scriptPath, "# setup\n", "utf8");
-    const runner = vi.fn<GraphifyRunner>().mockResolvedValue(result("graphify 0.9.1\n"));
-    const setup = vi.fn(async () => {
-      await mkdir(path.dirname(graphPath), { recursive: true });
-      await writeFile(graphPath, "{}\n", "utf8");
-      return result("ready\n");
+    const runner = vi.fn<GraphifyRunner>(async (_executable, args) => {
+      if (args[0] === "--version") return result("graphify 0.9.1\n");
+      if (args[0] === "update") {
+        await mkdir(path.dirname(graphPath), { recursive: true });
+        await writeFile(graphPath, "{}\n", "utf8");
+        return result("Updated graph\n");
+      }
+      return { exitCode: 1, stdout: "", stderr: "unexpected", timedOut: false };
     });
     const config = fixtureConfig(root, {
       knowledge: {
@@ -166,17 +161,38 @@ describe("GraphifyRepositoryLookup", () => {
       },
     });
 
-    await expect(prepareGraphifyForRun(config, runner, setup)).resolves.toMatchObject({
+    await expect(prepareGraphifyForRun(config, runner)).resolves.toMatchObject({
       enabled: true,
       graphReady: true,
       setupRan: true,
     });
-    expect(setup).toHaveBeenCalledOnce();
+    expect(runner).toHaveBeenCalledWith(
+      "graphify",
+      ["update", root],
+      expect.objectContaining({ cwd: root }),
+    );
 
-    await expect(prepareGraphifyForRun(config, runner, setup)).resolves.toMatchObject({
+    await expect(prepareGraphifyForRun(config, runner)).resolves.toMatchObject({
       setupRan: false,
     });
-    expect(setup).toHaveBeenCalledOnce();
+  });
+
+  it("fails clearly when graphify is enabled but not installed", async () => {
+    const root = await fixtureRoot();
+    const runner = vi.fn<GraphifyRunner>().mockResolvedValue({
+      exitCode: 1,
+      stdout: "",
+      stderr: "not found",
+      timedOut: false,
+    });
+    const config = fixtureConfig(root, {
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true },
+      },
+    });
+
+    await expect(prepareGraphifyForRun(config, runner)).rejects.toThrow(/uv tool install graphifyy/i);
   });
 
   it("updates and queries the repository graph with argument-safe process calls", async () => {

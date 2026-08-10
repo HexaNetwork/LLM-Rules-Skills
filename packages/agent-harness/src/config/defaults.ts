@@ -122,9 +122,7 @@ knowledge:
   # Optional shared directory used by several project configs.
   # sharedIndexDirectory: ../shared-rag-index
   sources:
-    # Seeded by init/deploy from package templates (use --no-seed-guidance to skip).
-    - path: agent-harness/guidance/General
-      scope: global
+    # Global guidance is seeded under harness home by project add, not into the repo.
     - path: README.md
       scope: project
     - path: docs

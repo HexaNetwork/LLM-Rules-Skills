@@ -361,19 +361,11 @@ if (Confirm-Yes "Configure Ollama embeddings during deploy?") {
 
 # -- 6. Optional: Graphify -------------------------------------------------
 Write-Stage "Optional - Graphify"
-Write-Say "Graphify adds structural code retrieval. Default deploy enables it;"
-Write-Say "you can skip with --no-graphify or install tooling now."
+Write-Say "Graphify adds structural code retrieval. Install it yourself when enabled:"
+Write-Say "  uv tool install graphifyy"
+Write-Say "Default deploy enables Graphify; skip with --no-graphify for document-only projects."
 $UseGraphify = $true
-$InstallGraphify = $false
-$InstallUv = $false
-if (Confirm-Yes "Enable Graphify for this project?") {
-  if (Confirm-Yes 'Run Graphify setup during deploy (--install-graphify)?') {
-    $InstallGraphify = $true
-    if (Confirm-Yes 'Allow installing uv if missing (--install-graphify-prerequisite)?') {
-      $InstallUv = $true
-    }
-  }
-} else {
+if (-not (Confirm-Yes "Enable Graphify for this project?")) {
   $UseGraphify = $false
 }
 
@@ -384,9 +376,6 @@ $DeployArgs.AddRange([string[]]@("deploy", "--project", $ProjectPath, "--refresh
 if ($UseOllama) { $DeployArgs.Add("--ollama") | Out-Null }
 if (-not $UseGraphify) {
   $DeployArgs.Add("--no-graphify") | Out-Null
-} else {
-  if ($InstallGraphify) { $DeployArgs.Add("--install-graphify") | Out-Null }
-  if ($InstallUv) { $DeployArgs.Add("--install-graphify-prerequisite") | Out-Null }
 }
 
 $RunDeploy = $true

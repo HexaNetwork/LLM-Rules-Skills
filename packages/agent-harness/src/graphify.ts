@@ -374,15 +374,11 @@ export type GraphifyRunner = (
   options: { cwd: string; timeoutMs: number },
 ) => Promise<GraphifyCommandResult>;
 
-export type GraphifySetupRunner = (
-  scriptPath: string,
-  repositoryRoot: string,
-) => Promise<GraphifyCommandResult>;
-
 export type GraphifyPreparation = {
   enabled: boolean;
   installed: boolean;
   graphReady: boolean;
+  /** True when this call built or refreshed graphify-out/graph.json. */
   setupRan: boolean;
 };
 
@@ -608,13 +604,13 @@ export const runGraphify: GraphifyRunner = (executable, args, options) =>
   });
 
 /**
- * A new agent run needs a usable command and a graph for its target project.
- * The setup script is project-local and deliberately editable by the team.
+ * A new agent run needs a usable `graphify` command and graphify-out/graph.json.
+ * Install Graphify yourself (`uv tool install graphifyy`); the harness only builds
+ * the graph when the command is already available.
  */
 export async function prepareGraphifyForRun(
   config: HarnessConfig,
   runner: GraphifyRunner = runGraphify,
-  setupRunner: GraphifySetupRunner = runGraphifySetup,
   paths: HarnessPaths = resolveHarnessPaths(config),
 ): Promise<GraphifyPreparation> {
   const settings = config.knowledge.graphify;
@@ -634,67 +630,26 @@ export async function prepareGraphifyForRun(
   if (version.exitCode === 0 && !version.timedOut && graphReady) {
     return { enabled: true, installed: true, graphReady: true, setupRan: false };
   }
-
-  const scriptPath = path.join(
-    workspaceRoot,
-    "agent-harness",
-    "scripts",
-    process.platform === "win32" ? "setup-graphify.ps1" : "setup-graphify.sh",
-  );
-  if (!(await exists(scriptPath))) {
+  if (version.exitCode !== 0 || version.timedOut) {
     throw new Error(
-      `Graphify is required before starting a new run, but ${path.relative(workspaceRoot, scriptPath)} is missing. Run \`agent-harness graphify scripts --project .\` first.`,
+      `Graphify is enabled but \`${settings.command}\` is unavailable. Install it with \`uv tool install graphifyy\` (or pipx), then retry.`,
     );
   }
-  const setup = await setupRunner(scriptPath, workspaceRoot);
-  if (setup.exitCode !== 0 || setup.timedOut) {
-    throw new Error(`Graphify setup failed: ${failureDetail(setup)}`);
+
+  const update = await runner(settings.command, ["update", workspaceRoot], {
+    cwd: workspaceRoot,
+    timeoutMs: settings.updateTimeoutMs,
+  });
+  if (update.exitCode !== 0 || update.timedOut) {
+    throw new Error(`Graphify graph update failed: ${failureDetail(update)}`);
   }
-  const [afterSetup, graphAfterSetup] = await Promise.all([
-    runner(settings.command, ["--version"], {
-      cwd: workspaceRoot,
-      timeoutMs: settings.queryTimeoutMs,
-    }),
-    exists(graphPath),
-  ]);
-  if (afterSetup.exitCode !== 0 || afterSetup.timedOut || !graphAfterSetup) {
-    throw new Error("Graphify setup completed but the graphify command or graphify-out/graph.json is still unavailable.");
+  if (!(await exists(graphPath))) {
+    throw new Error(
+      `Graphify update completed but ${GRAPH_PATH} is still missing under ${workspaceRoot}.`,
+    );
   }
   return { enabled: true, installed: true, graphReady: true, setupRan: true };
 }
-
-const runGraphifySetup: GraphifySetupRunner = (scriptPath, repositoryRoot) =>
-  new Promise((resolve) => {
-    const isWindows = process.platform === "win32";
-    const executable = isWindows ? "powershell.exe" : "bash";
-    const args = isWindows
-      ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-ProjectRoot", repositoryRoot]
-      : [scriptPath, "--project-root", repositoryRoot];
-    execFile(
-      executable,
-      args,
-      {
-        cwd: repositoryRoot,
-        timeout: 10 * 60 * 1000,
-        maxBuffer: OUTPUT_LIMIT,
-        windowsHide: true,
-      },
-      (error, stdout, stderr) => {
-        const commandError = error as (Error & { code?: string | number; killed?: boolean }) | null;
-        resolve({
-          exitCode:
-            commandError == null
-              ? 0
-              : typeof commandError.code === "number"
-                ? commandError.code
-                : 1,
-          stdout,
-          stderr: stderr || commandError?.message || "",
-          timedOut: commandError?.killed === true,
-        });
-      },
-    );
-  });
 
 function failureDetail(result: GraphifyCommandResult): string {
   if (result.timedOut) return "timed out";

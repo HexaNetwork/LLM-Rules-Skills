@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createFakeBackend, reportedTotal } from "../../src/agent.js";
+import { createFakeBackend, reportedTotal, type AgentBackend } from "../../src/agent.js";
 import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
@@ -30,6 +30,67 @@ describe("reportedTotal", () => {
 });
 
 describe("run usage accrual and cost ceiling", () => {
+  it("accrues config-fixer recovery usage immediately and invokes it without retrieval or tools", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      agent: { ...fixtureConfig(root).agent, promptBuilder: true },
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        guidance: {
+          ...fixtureConfig(root).knowledge.guidance,
+          enabled: true,
+          assignments: undefined,
+        },
+      },
+    });
+    let observedRequest: Parameters<AgentBackend["run"]>[0] | undefined;
+    const backend: AgentBackend = {
+      async run(request) {
+        observedRequest = request;
+        return {
+          output: {
+            summary: "Recognize the nested test directory.",
+            configPatch: { workflow: { testPathPatterns: ["tests/**", "**/src/main/test/**"] } },
+          },
+          providerSessionId: "config-fixer-agent",
+          providerRunId: "config-fixer-run",
+          inputTokens: 100,
+          outputTokens: 20,
+          cacheReadTokens: 60,
+          totalTokens: 120,
+        };
+      },
+    };
+    const engine = new HarnessEngine(config, { backend });
+    const hash = configurationHash(config);
+    const runId = "config-fixer-usage";
+    const state: RunState = {
+      ...createRunState(runId, "idea", new Date().toISOString(), hash, CONFIG_VERSION),
+      phase: "blocked",
+      blockedFrom: "executing",
+      blockedKind: "config",
+      blockedRetriable: false,
+      failure: "Test writer changed non-test paths: app/src/main/test/ThingTest.java",
+    };
+    await engine.store.initialize();
+    await engine.store.create(state);
+    await engine.store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
+
+    const proposed = await engine.proposeFix(runId, "Keep the test and repair the path pattern.");
+
+    expect(proposed.usage).toMatchObject({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 60,
+      totalTokens: 120,
+      invocations: 1,
+      sessionsRead: 1,
+    });
+    expect(observedRequest?.allowTools).toBe(false);
+    expect(observedRequest?.prompt).not.toContain("SELECTED GUIDANCE");
+    expect(observedRequest?.prompt).toContain("Return exactly one raw JSON object");
+  });
+
   it("blocks with blockedKind budget before the next step when maxRunTokens is exceeded", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {

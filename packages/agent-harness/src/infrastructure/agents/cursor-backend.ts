@@ -122,6 +122,7 @@ export function createCursorBackend(
         ? request.continuationPrompt ?? request.prompt
         : request.prompt;
       let run: CursorRun | undefined;
+      let forbiddenToolCall: string | undefined;
       const cancel = (): void => {
         if (run?.cancel) void run.cancel().catch(() => undefined);
       };
@@ -142,6 +143,11 @@ export function createCursorBackend(
             }
             request.onStep?.(summarizeAgentStep(step));
             if (step.type !== "toolCall") return;
+            if (request.allowTools === false) {
+              forbiddenToolCall = step.message?.type ?? "unknown";
+              cancel();
+              return;
+            }
             const planBody = createPlanBodyFromTool(step.message);
             if (planBody) createPlanBodies.push(planBody);
           },
@@ -186,6 +192,12 @@ export function createCursorBackend(
           totalTokens: reportedTotal(response.usage),
           reasoningTokens: response.usage?.reasoningTokens,
         };
+        if (forbiddenToolCall) {
+          throw new AgentBackendRunError(
+            `${request.role} attempted prohibited tool call: ${forbiddenToolCall}`,
+            result,
+          );
+        }
         if (response.status === "error" || response.status === "cancelled") {
           throw new AgentBackendRunError(
             `Cursor run ${run.id} ${response.status}`,

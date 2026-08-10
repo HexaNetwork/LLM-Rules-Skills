@@ -58,6 +58,14 @@ describe("prompt rendering", () => {
     expect(renderPrompt(packet)).not.toContain("CreatePlan");
   });
 
+  it("requires config-fixers to return one raw JSON object without tools", () => {
+    const configFixerPacket: WorkPacket = { ...packet, role: "config-fixer" };
+    const rendered = renderPrompt(configFixerPacket);
+    expect(rendered).toContain("Return exactly one raw JSON object");
+    expect(rendered).toContain("Do not wrap the object in Markdown");
+    expect(rendered).toContain("Do not call tools, inspect files, or search the repository");
+  });
+
   it("keeps reflect and grill expected-output contracts in prompts", () => {
     expect(REFLECT_EXPECTED_OUTPUT).toContain("restatement:string");
     expect(GRILL_EXPECTED_OUTPUT).toContain("needs_input");

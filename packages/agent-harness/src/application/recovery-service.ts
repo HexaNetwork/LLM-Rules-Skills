@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { InvokeInput } from "../agent.js";
 import {
   HarnessConfigSchema,
   configurationHash,
@@ -35,6 +36,7 @@ import {
   type CancelResult,
   type PreflightCommitResult,
 } from "./helpers.js";
+import { accrueRunUsage } from "./usage-ledger.js";
 
 const terminal = isTerminalPhase;
 
@@ -43,6 +45,21 @@ export class RecoveryService {
     private readonly ctx: ApplicationContext,
     private readonly interview: InterviewService,
   ) {}
+
+  private async invokeWithUsage<T>(
+    state: RunState,
+    input: InvokeInput<T>,
+  ): Promise<{ value: T; state: RunState }> {
+    try {
+      const value = await this.ctx.agents.invoke(input);
+      return { value, state: await accrueRunUsage(this.ctx, state) };
+    } catch (error) {
+      // Failed and schema-repair sessions are durable usage too. Persist their
+      // aggregate before surfacing the recovery failure to the caller.
+      await accrueRunUsage(this.ctx, state).catch(() => undefined);
+      throw error;
+    }
+  }
 
   async completeCancellation(state: RunState): Promise<RunState> {
     if (terminal(state.phase)) {
@@ -88,7 +105,7 @@ export class RecoveryService {
         ignoredArtifactPatterns: frozen.git.ignoredArtifactPatterns,
       },
     };
-    const plan = await this.ctx.agents.invoke({
+    const invoked = await this.invokeWithUsage(state, {
       runId: state.runId,
       role: "config-fixer",
       objective: "Propose the smallest harness settings patch that unblocks this run",
@@ -100,16 +117,20 @@ export class RecoveryService {
         currentRepairableSettings,
       },
       constraints: [
-        "Do not edit files.",
-        "Return only summary and configPatch.",
+        "The work packet contains every fact needed. Do not call tools, inspect files, or search the repository.",
+        "Return exactly one raw JSON object with top-level summary and configPatch fields; no Markdown or code fences.",
         "configPatch may include workflow, commands, and/or git keys from ProjectSettingsPatch.",
         "Prefer the smallest change that covers the reported failure.",
       ],
-      expectedOutput: "{summary:string,configPatch:{workflow?,commands?,git?}}",
+      expectedOutput: '{"summary":"concise explanation","configPatch":{"workflow":{},"commands":{},"git":{}}}',
       schema: ConfigFixerPlanSchema,
-      knowledgeQuery: `${state.failure}\n${guidance}`,
+      retrieval: false,
+      buildPrompt: false,
+      allowTools: false,
       signal: this.ctx.signalFor(state.runId),
     });
+    state = invoked.state;
+    const plan = invoked.value;
     ProjectSettingsPatchSchema.parse(plan.configPatch);
     const fixerRecovery: FixerRecovery = {
       role: "config-fixer",
@@ -132,7 +153,7 @@ export class RecoveryService {
   }
 
   private async proposeFileFix(state: RunState, guidance: string): Promise<RunState> {
-    const plan = await this.ctx.agents.invoke({
+    const invoked = await this.invokeWithUsage(state, {
       runId: state.runId,
       role: "fixer",
       objective: "Propose a minimal recovery plan for the blocked harness run; do not edit the working tree",
@@ -152,6 +173,8 @@ export class RecoveryService {
       knowledgeQuery: `${state.failure}\n${guidance}`,
       signal: this.ctx.signalFor(state.runId),
     });
+    state = invoked.state;
+    const plan = invoked.value;
     const fixerRecovery: FixerRecovery = {
       role: "fixer",
       guidance,
@@ -236,7 +259,7 @@ export class RecoveryService {
           false,
         );
       }
-      const result = await this.ctx.agents.invoke({
+      const invoked = await this.invokeWithUsage(state, {
         runId,
         role: "fixer",
         objective: "Apply the operator-approved recovery plan, validate the repair where practical, and do not commit",
@@ -257,6 +280,8 @@ export class RecoveryService {
         buildPrompt: false,
         signal: this.ctx.signalFor(runId),
       });
+      state = invoked.state;
+      const result = invoked.value;
       const changedFiles = this.ctx.config.git.enabled ? await this.ctx.git.changedFiles() : result.changedFiles;
       const allowedPaths = new Set(
         recovery.plan.allowedPaths.map((candidate) => normalizeRecoveryPath(candidate, this.ctx.config.repositoryRoot)),

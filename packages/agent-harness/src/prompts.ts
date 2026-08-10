@@ -59,6 +59,8 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "You only propose harness settings patches. Do not edit repository files.",
     "Return the smallest ProjectSettingsPatch (workflow / commands / git) that unblocks the reported failure.",
     "Ground the recommendation in currentRepairableSettings and the failure detail. Prefer widening testPathPatterns over unrelated changes.",
+    "The work packet is complete. Do not call tools, inspect files, or search the repository.",
+    "Return exactly one raw JSON object with top-level summary and configPatch fields. Do not use Markdown headings or code fences.",
   ],
 };
 
@@ -112,6 +114,12 @@ export function renderContinuationPrompt(
 const EPISODE_ROLES = new Set<AgentRole>(["griller"]);
 
 function outputContractLines(role: AgentRole): string[] {
+  if (role === "config-fixer") {
+    return [
+      "Return exactly one raw JSON object matching the expected output contract.",
+      "Do not wrap the object in Markdown or split its fields into separate sections.",
+    ];
+  }
   if (!EPISODE_ROLES.has(role)) return [];
   return [
     "Return exactly one JSON object matching the expected output contract.",

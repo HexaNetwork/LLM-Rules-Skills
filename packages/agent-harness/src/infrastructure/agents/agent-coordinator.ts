@@ -201,6 +201,7 @@ export class AgentCoordinator {
           : undefined,
         retainProviderSession: episode.retainProviderSession,
         mode: episode.mode,
+        allowTools: input.allowTools,
         signal: input.signal,
       },
     );
@@ -219,6 +220,7 @@ export class AgentCoordinator {
       continuationPrompt?: string;
       retainProviderSession?: boolean;
       mode?: "agent" | "plan";
+      allowTools?: boolean;
       signal?: AbortSignal;
     } = {},
   ): Promise<AgentInvocation<T>> {
@@ -271,6 +273,7 @@ export class AgentCoordinator {
                 providerSessionId,
                 retainProviderSession: options.retainProviderSession || retainForRepair,
                 mode: options.mode,
+                allowTools: options.allowTools,
                 cwd: this.config.repositoryRoot,
                 signal,
                 taskId,

@@ -9,6 +9,29 @@ type MockAgent = {
 
 const disposeById = new Map<string, ReturnType<typeof vi.fn>>();
 let createSeq = 0;
+let emitToolCall = false;
+
+function mockRun(agentId: string, options?: Record<string, unknown>) {
+  let cancelled = false;
+  return {
+    id: `run-${agentId}`,
+    cancel: vi.fn(async () => {
+      cancelled = true;
+    }),
+    wait: async () => {
+      if (emitToolCall) {
+        const onStep = options?.onStep as ((event: unknown) => void) | undefined;
+        onStep?.({ step: { type: "toolCall", message: { type: "read", args: {} } } });
+      }
+      return {
+        id: `run-${agentId}`,
+        status: cancelled ? "cancelled" : "finished",
+        result: "{}",
+        usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+      };
+    },
+  };
+}
 
 vi.mock("@cursor/sdk", () => ({
   Agent: {
@@ -19,14 +42,7 @@ vi.mock("@cursor/sdk", () => ({
       disposeById.set(agentId, dispose);
       const agent: MockAgent = {
         agentId,
-        send: vi.fn(async () => ({
-          id: `run-${agentId}`,
-          wait: async () => ({
-            id: `run-${agentId}`,
-            status: "finished",
-            result: "{}",
-          }),
-        })),
+        send: vi.fn(async (_prompt: string, options?: Record<string, unknown>) => mockRun(agentId, options)),
         [Symbol.asyncDispose]: dispose,
       };
       return agent;
@@ -36,14 +52,7 @@ vi.mock("@cursor/sdk", () => ({
       disposeById.set(agentId, dispose);
       return {
         agentId,
-        send: vi.fn(async () => ({
-          id: `run-${agentId}`,
-          wait: async () => ({
-            id: `run-${agentId}`,
-            status: "finished",
-            result: "{}",
-          }),
-        })),
+        send: vi.fn(async (_prompt: string, options?: Record<string, unknown>) => mockRun(agentId, options)),
         [Symbol.asyncDispose]: dispose,
       };
     }),
@@ -67,6 +76,7 @@ function request(overrides: Partial<AgentRequest> = {}): AgentRequest {
 describe("retained provider agent eviction", () => {
   beforeEach(() => {
     createSeq = 0;
+    emitToolCall = false;
     disposeById.clear();
     vi.clearAllMocks();
   });
@@ -103,5 +113,14 @@ describe("retained provider agent eviction", () => {
     expect(second.providerSessionId).toBe("agent-2");
     expect(firstDispose).toHaveBeenCalled();
     expect(disposeById.get("agent-2")).not.toHaveBeenCalled();
+  });
+
+  it("cancels and rejects a prohibited tool call", async () => {
+    emitToolCall = true;
+    const backend = createCursorBackend("test-key");
+
+    await expect(
+      backend.run(request({ role: "config-fixer", allowTools: false, retainProviderSession: false })),
+    ).rejects.toThrow("config-fixer attempted prohibited tool call: read");
   });
 });

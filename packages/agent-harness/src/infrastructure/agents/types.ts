@@ -24,6 +24,8 @@ export type AgentRequest = {
   providerSessionId?: string;
   retainProviderSession?: boolean;
   mode?: "agent" | "plan";
+  /** When false, the backend aborts the run as soon as a tool call is observed. */
+  allowTools?: boolean;
   cwd: string;
   signal: AbortSignal;
   /** Redacted live step ticker; never includes raw tool args. */
@@ -84,6 +86,8 @@ type InvokeBase<T> = {
   knowledgeFallbackQuery?: string;
   buildPrompt?: boolean;
   previousGuidanceFingerprint?: string;
+  /** Deny provider tool calls for constrained, packet-complete roles. */
+  allowTools?: boolean;
   /** Out-of-band cancellation from the harness engine. */
   signal?: AbortSignal;
 };

@@ -4,7 +4,7 @@ export const renderRunScript = `    function renderSidebar() {
       var scrollTop = runList ? runList.scrollTop : 0;
       var needle = state.filter.toLowerCase();
       var runs = state.runs.filter(function (run) { return !needle || ((run.title || "") + " " + run.idea + " " + (run.destination || "") + " " + run.runId).toLowerCase().includes(needle); });
-      runList.innerHTML = runs.length ? runs.map(function (run) {
+      var html = runs.length ? runs.map(function (run) {
         var phase = effectivePhase(run);
         var title = shortTitle(run.title || run.idea || run.destination || run.runId, 62);
         var progress = run.taskProgress && run.taskProgress.total ? run.taskProgress.completed + "/" + run.taskProgress.total : phaseLabel(phase);
@@ -13,8 +13,13 @@ export const renderRunScript = `    function renderSidebar() {
       // Unreadable runs are listed, not hidden: a run silently missing from this
       // list is indistinguishable from a run the harness lost.
       (state.unreadableRuns || []).forEach(function (failure) {
-        runList.innerHTML += '<div class="run-item" style="cursor:default" title="' + attr(failure.error) + '"><div class="run-title"><i class="dot blocked"></i><span>' + esc(shortTitle(failure.runId, 62)) + '</span></div><div class="run-meta"><span>unreadable state.json</span></div></div>';
+        html += '<div class="run-item" style="cursor:default" title="' + attr(failure.error) + '"><div class="run-title"><i class="dot blocked"></i><span>' + esc(shortTitle(failure.runId, 62)) + '</span></div><div class="run-meta"><span>unreadable state.json</span></div></div>';
       });
+      // Skip the rewrite when nothing changed — innerHTML churn vs scrollTop
+      // restore is what trips Chrome's scroll-anchoring warning.
+      if (state.sidebarHtml === html) return;
+      state.sidebarHtml = html;
+      runList.innerHTML = html;
       runList.scrollTop = scrollTop;
     }
 

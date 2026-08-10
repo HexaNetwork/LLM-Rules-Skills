@@ -30,7 +30,7 @@ export function renderDashboard(): string {
       --radius: 16px;
     }
     * { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); overflow-anchor: none; }
     body { font: 14px/1.5 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     button, textarea, input, select { font: inherit; }
     button { color: inherit; }
@@ -57,7 +57,10 @@ export function renderDashboard(): string {
     .search { width:100%; border:1px solid var(--line-soft); border-radius:10px; color:var(--text); background:#0b0d10; padding:9px 11px; outline:none; }
     .search:focus { border-color:var(--lime-2); box-shadow:0 0 0 3px rgba(199,243,107,.08); }
     .section-label { padding: 8px 20px; color:var(--faint); font-size:10px; letter-spacing:.13em; text-transform:uppercase; font-weight:800; }
-    .run-list { overflow:auto; flex:1; padding:0 9px 20px; }
+    /* Polling rewrites this list and restores scrollTop by hand; Chrome's
+       scroll anchoring fights that restore with micro-adjustments and warns. */
+    .run-list { overflow:auto; overflow-anchor:none; flex:1; padding:0 9px 20px; }
+    [data-scroll-key] { overflow-anchor: none; }
     .run-item { width:100%; text-align:left; border:1px solid transparent; background:transparent; padding:11px 12px; border-radius:11px; cursor:pointer; margin:2px 0; }
     .run-item:hover { background:var(--surface); }
     .run-item.active { background:var(--surface-2); border-color:var(--line); }

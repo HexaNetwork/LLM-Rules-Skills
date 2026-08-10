@@ -168,6 +168,9 @@ describe("dashboard document", () => {
 
     // Invariant 5: sidebar list scroll survives poll-driven rewrites.
     expect(html).toContain("runList.scrollTop = scrollTop");
+    expect(html).toContain("if (state.sidebarHtml === html) return;");
+    expect(html).toContain("overflow-anchor:none");
+    expect(html).toContain("[data-scroll-key] { overflow-anchor: none; }");
 
     // Invariant 6: knowledge view is not replaced by run polling.
     expect(html).toContain("if (state.view === 'runs' && state.selected) loadRun(state.selected,false,true,true)");

@@ -7,6 +7,7 @@ export const stateScript = `  (function () {
     if (params.has("token")) history.replaceState(null, "", location.pathname);
     var state = {
       bootstrap: null, runs: [], unreadableRuns: [], selected: null, detail: null, signature: "", scrolls: null,
+      sidebarHtml: "",
       tab: "overview", usageTab: "model", view: "runs", filter: "", answerDrafts: {}, settings: null,
       selectedOptions: {}, parked: {}, clarifications: {}, batchFeedback: "",
       reflectDrafts: {},

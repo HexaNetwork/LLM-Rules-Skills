@@ -74,8 +74,12 @@ now tracks `state.signature` (the last *rendered* signature) instead.
    After `renderRun()`, `restoreScrolls()` reapplies them.
 
 5. **Sidebar list scroll survives every poll.**
-   `renderSidebar()` always restores `#runList.scrollTop` after rewriting items
+   `renderSidebar()` restores `#runList.scrollTop` after rewriting items
    (including relative "ago" labels that change without a run-detail change).
+   It skips the rewrite when the built HTML matches `state.sidebarHtml`, and
+   `#runList` / `[data-scroll-key]` / `html, body` use `overflow-anchor: none`
+   so Chrome scroll anchoring does not fight the manual restore (and spam the
+   console with "Scroll anchoring was disabled…" warnings).
 
 6. **Knowledge view is not clobbered by run polling.**
    The interval refreshes bootstrap/sidebar data, then loads a run only when

@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend, stepPersistenceLimits } from "../../src/agent.js";
-import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
+import { CONFIG_VERSION, configurationHash, loadRunConfig } from "../../src/config.js";
 import { createRunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
@@ -72,7 +72,17 @@ describe("central dashboard", () => {
       settings: { editable: boolean; definitions: unknown[]; values: Record<string, number> };
     };
     expect(initialBody.settings.editable).toBe(true);
-    expect(initialBody.settings.definitions).toHaveLength(7);
+    expect(initialBody.settings.definitions).toHaveLength(8);
+    const byKey = Object.fromEntries(
+      (initialBody.settings.definitions as Array<{ key: string; appliesTo: string }>).map((d) => [
+        d.key,
+        d.appliesTo,
+      ]),
+    );
+    expect(byKey["workflow.testPathPatterns"]).toBe("live");
+    expect(byKey["git.ignoredArtifactPatterns"]).toBe("live");
+    expect(byKey["commands.test"]).toBe("new_runs");
+    expect(byKey["workflow.maxGrillQuestionsPerEpisode"]).toBe("new_runs");
     expect(initialBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(5);
     expect(initialBody.settings.values["workflow.staleAnswerMinutes"]).toBe(30);
     expect(initialBody.settings.values["workflow.grillQuestionsPerBatch"]).toBe(3);
@@ -126,10 +136,15 @@ describe("central dashboard", () => {
     });
     expect(updated.status).toBe(200);
     const updatedBody = (await updated.json()) as {
-      appliesTo: string;
-      settings: { values: Record<string, number> };
+      settings: {
+        values: Record<string, number>;
+        definitions: Array<{ key: string; appliesTo: string }>;
+      };
     };
-    expect(updatedBody.appliesTo).toBe("new_runs");
+    expect(updatedBody).not.toHaveProperty("appliesTo");
+    expect(
+      updatedBody.settings.definitions.find((d) => d.key === "workflow.testPathPatterns")?.appliesTo,
+    ).toBe("live");
     expect(updatedBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(10);
     expect(updatedBody.settings.values["workflow.staleAnswerMinutes"]).toBe(45);
     expect(updatedBody.settings.values["workflow.testPathPatterns"]).toEqual([
@@ -178,6 +193,70 @@ describe("central dashboard", () => {
       },
     });
     expect(invalidOrder.status).toBe(400);
+  });
+
+  it("continues a run after mid-run testPathPatterns-only settings PUT without a config block", async () => {
+    const root = await fixtureRoot();
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    await writeFile(
+      configPath,
+      [
+        "version: 2",
+        "repositoryRoot: .",
+        "commands:",
+        '  test: node -e "process.exit(0)"',
+        "workflow:",
+        "  maxGrillQuestionsPerEpisode: 5",
+        "  staleAnswerMinutes: 30",
+        "  testPathPatterns:",
+        "    - tests/**",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false, testPathPatterns: ["tests/**"] } as never,
+    });
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("settings continue", "settings-continue");
+    const stamped = started.configurationHash;
+
+    ui = await startUiServer({
+      config,
+      backend,
+      configPath,
+      port: 0,
+      token: "ui-test",
+    });
+
+    const settingsPut = await request(ui, "/api/settings", {
+      method: "PUT",
+      body: {
+        values: {
+          "workflow.maxGrillQuestionsPerEpisode": 5,
+          "workflow.staleAnswerMinutes": 30,
+          "workflow.testPathPatterns": ["modules/**/src/test/**"],
+          "commands.test": 'node -e "process.exit(0)"',
+        },
+      },
+    });
+    expect(settingsPut.status).toBe(200);
+
+    const continueRes = await request(ui, `/api/runs/${started.runId}/actions`, {
+      method: "POST",
+      body: { action: "continue" },
+    });
+    expect(continueRes.status).toBe(202);
+    const detail = await waitForPhase(ui, started.runId, "awaiting_input");
+    expect((detail.state as { blockedKind?: string }).blockedKind).not.toBe("config");
+
+    const project = fixtureConfig(root, {
+      workflow: { tdd: false, testPathPatterns: ["modules/**/src/test/**"] } as never,
+    });
+    const runConfig = await loadRunConfig(project, started.runId);
+    expect(configurationHash(runConfig)).toBe(stamped);
+    expect(runConfig.workflow.testPathPatterns).toEqual(["modules/**/src/test/**"]);
   });
 
   it("reports unchanged for a matching ?since= signature and a fresh payload after a transition", async () => {

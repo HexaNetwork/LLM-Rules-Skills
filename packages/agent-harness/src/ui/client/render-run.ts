@@ -132,7 +132,7 @@ export const renderRunScript = `    function renderSidebar() {
           hint: "Run Graphify's setup for this repository so graphify-out/graph.json exists, then retry." },
         { test: /run configuration changed|configurationHash|resume with the persisted run config/i,
           title: "The run configuration changed since this run started",
-          hint: "Project settings or config changed after this run began. Restore the original configuration, or start a new run to pick up the change." }
+          hint: "A hashed run setting drifted from this run's frozen snapshot. Restore that frozen policy, or start a new run. Test path patterns and ignored artifact patterns are live and do not cause this block." }
       ];
       for (var i = 0; i < patterns.length; i++) {
         if (patterns[i].test.test(text)) return patterns[i];

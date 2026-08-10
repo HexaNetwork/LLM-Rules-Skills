@@ -90,7 +90,13 @@ describe("dashboard document", () => {
     expect(html).toContain("copy-path-btn");
     expect(html).toContain("bootstrap.project.root");
     expect(html).toContain("data-setting-key");
-    expect(html).toContain("Ignored build artifacts are live project policy");
+    expect(html).toContain("Most settings freeze for in-progress runs");
+    expect(html).toContain("Test path patterns and ignored artifact patterns apply immediately");
+    expect(html).toContain("test paths and ignored artifacts are live recovery policies");
+    expect(html).toContain("Applies immediately to in-progress runs");
+    expect(html).toContain("Applies to new runs");
+    expect(html).toContain("Settings saved");
+    expect(html).not.toContain("Settings saved for new runs");
     expect(html).toContain('id="settingsScope"');
     expect(html).toContain('settingsScope").textContent = persistence');
     expect(html).toContain("Thinking…");
@@ -387,6 +393,7 @@ describe("dashboard document", () => {
     expect(html).toContain("CURSOR_API_KEY");
     expect(html).toContain("graphify-out");
     expect(html).toContain("run configuration changed");
+    expect(html).toContain("Test path patterns and ignored artifact patterns are live and do not cause this block");
     expect(html).toContain("<summary>Raw failure detail</summary>");
     expect(html).toContain('data-force="true"');
     expect(html).toContain("Retry anyway");

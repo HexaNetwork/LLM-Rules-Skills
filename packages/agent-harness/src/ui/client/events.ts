@@ -395,7 +395,7 @@ export const eventsScript = `    async function waitForJob(runId) {
         state.settings = data.settings;
         if (state.bootstrap) state.bootstrap.project.settings = data.settings;
         $("settingsDialog").close();
-        toast('Settings saved for new runs');
+        toast('Settings saved');
       } catch (error) { toast(error.message,true); }
     });
     document.addEventListener('submit', async function (event) {

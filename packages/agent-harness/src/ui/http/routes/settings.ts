@@ -15,43 +15,33 @@ import {
   requiredRecord,
 } from "../request.js";
 
-type IntegerSettingDefinition = {
+/** Whether a setting overlays in-progress runs (`live`) or only freezes into new runs. */
+export type SettingAppliesTo = "live" | "new_runs";
+
+type SettingDefinitionBase = {
   key: string;
   category: string;
   label: string;
   description: string;
+  appliesTo: SettingAppliesTo;
+};
+type IntegerSettingDefinition = SettingDefinitionBase & {
   type: "integer";
   minimum: number;
   maximum: number;
 };
-type BooleanSettingDefinition = {
-  key: string;
-  category: string;
-  label: string;
-  description: string;
+type BooleanSettingDefinition = SettingDefinitionBase & {
   type: "boolean";
 };
-type EnumSettingDefinition = {
-  key: string;
-  category: string;
-  label: string;
-  description: string;
+type EnumSettingDefinition = SettingDefinitionBase & {
   type: "enum";
   options: Array<{ value: string; label: string }>;
 };
-type StringSettingDefinition = {
-  key: string;
-  category: string;
-  label: string;
-  description: string;
+type StringSettingDefinition = SettingDefinitionBase & {
   type: "string";
   maximum: number;
 };
-type StringListSettingDefinition = {
-  key: string;
-  category: string;
-  label: string;
-  description: string;
+type StringListSettingDefinition = SettingDefinitionBase & {
   type: "string-list";
   maximumItems: number;
   maximumItemLength: number;
@@ -75,6 +65,7 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     type: "integer",
     minimum: 1,
     maximum: 50,
+    appliesTo: "new_runs",
   },
   {
     key: "workflow.staleAnswerMinutes",
@@ -85,6 +76,7 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     type: "integer",
     minimum: 1,
     maximum: 1440,
+    appliesTo: "new_runs",
   },
   {
     key: "workflow.grillQuestionsPerBatch",
@@ -95,16 +87,18 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     type: "integer",
     minimum: 1,
     maximum: 6,
+    appliesTo: "new_runs",
   },
   {
     key: "workflow.testPathPatterns",
     category: "Testing",
     label: "Test file path patterns",
     description:
-      "One repository-relative glob per line. The test writer may only edit files matching these patterns.",
+      "One repository-relative glob per line. The test writer may only edit files matching these patterns. Live for in-progress runs — use this to unblock “Test writer changed non-test paths” without restoring frozen config.",
     type: "string-list",
     maximumItems: 500,
     maximumItemLength: 1_000,
+    appliesTo: "live",
   },
   {
     key: "commands.test",
@@ -114,6 +108,7 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
       "Repository-owned command used when a task has no narrower test command. Configure this for your test runner.",
     type: "string",
     maximum: 10_000,
+    appliesTo: "new_runs",
   },
   {
     key: "git.autoCommitPreflight",
@@ -122,6 +117,7 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     description:
       "When on, start() commits a dirty working tree itself instead of blocking. Off by default; the blocked-run card always offers this as an explicit action either way.",
     type: "boolean",
+    appliesTo: "new_runs",
   },
   {
     key: "git.preflightCommitOrder",
@@ -134,13 +130,24 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
       { value: "branch-then-commit", label: "Commit onto the run branch" },
       { value: "commit-then-branch", label: "Commit onto the current branch" },
     ],
+    appliesTo: "new_runs",
+  },
+  {
+    key: "git.ignoredArtifactPatterns",
+    category: "Git",
+    label: "Ignored build artifacts",
+    description:
+      "Harness-local globs skipped for dirty-tree and unreported-path checks. Live for in-progress runs. Does not edit .gitignore.",
+    type: "string-list",
+    maximumItems: 500,
+    maximumItemLength: 1_000,
+    appliesTo: "live",
   },
 ];
 
 export function projectSettings(config: HarnessConfig, configPath?: string): Record<string, unknown> {
   return {
     editable: configPath != null,
-    appliesTo: "new_runs",
     definitions: PROJECT_SETTING_DEFINITIONS,
     values: {
       "workflow.maxGrillQuestionsPerEpisode": config.workflow.maxGrillQuestionsPerEpisode,
@@ -302,7 +309,6 @@ export async function handleSettingsRoutes(
     ctx.setProjectConfig(updated.config);
     json(response, 200, {
       settings: projectSettings(updated.config, ctx.configPath),
-      appliesTo: "new_runs",
     });
     return true;
   }

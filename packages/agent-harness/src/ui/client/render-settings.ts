@@ -4,6 +4,7 @@ export const renderSettingsScript = `    function renderSettings(settings) {
       var values = settings.values || {};
       var categories = [];
       definitions.forEach(function (definition) {
+        if (definition.key === 'git.ignoredArtifactPatterns') return;
         var category = definition.category || "General";
         var group = categories.find(function (candidate) { return candidate.name === category; });
         if (!group) { group = { name:category, definitions:[] }; categories.push(group); }
@@ -30,12 +31,13 @@ export const renderSettingsScript = `    function renderSettings(settings) {
           } else {
             input = '<input id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="integer" type="number" value="' + attr(values[definition.key]) + '" min="' + attr(definition.minimum) + '" max="' + attr(definition.maximum) + '" step="1" required' + (settings.editable ? '' : ' disabled') + '>';
           }
-          return '<label class="setting-row" for="' + attr(id) + '"><span><strong>' + esc(definition.label) + '</strong><span class="faint">' + esc(definition.description) + '</span></span>' + input + '</label>';
+          var applies = definition.appliesTo === 'live' ? 'Applies immediately to in-progress runs' : 'Applies to new runs';
+          return '<label class="setting-row" for="' + attr(id) + '"><span><strong>' + esc(definition.label) + '</strong><span class="faint">' + esc(definition.description) + '</span><span class="faint" style="display:block;margin-top:4px">' + esc(applies) + '</span></span>' + input + '</label>';
         }).join('');
         return '<section class="settings-group"><h3>' + esc(category.name) + '</h3>' + rows + '</section>';
       }).join('');
       var persistence = settings.editable
-        ? 'Most changes apply to new runs. Ignored build artifacts are live project policy and also apply to in-progress runs.'
+        ? 'Most settings freeze for in-progress runs. Test path patterns and ignored artifact patterns apply immediately.'
         : 'This dashboard was started without a config file path, so settings are read-only.';
       var grillLayout = getGrillOptionsLayout();
       var displayGroup = '<section class="settings-group"><h3>Display</h3>' +
@@ -55,9 +57,9 @@ export const renderSettingsScript = `    function renderSettings(settings) {
           }).join('')
         : '<div class="muted">No ignored artifact patterns yet.</div>';
       var artifactGroup = '<section class="settings-group" id="ignoredArtifactsGroup"><h3>Ignored build artifacts</h3>' +
-        '<p class="faint" style="margin:0 0 8px">Harness-local globs skipped for dirty-tree and unreported-path checks. Does not edit .gitignore.</p>' +
+        '<p class="faint" style="margin:0 0 8px">Harness-local globs skipped for dirty-tree and unreported-path checks. Live for in-progress runs. Does not edit .gitignore.</p>' +
         '<div id="ignoredArtifactsList" style="display:grid;gap:8px">' + artifactRows + '</div></section>';
-      $("settingsBody").innerHTML = '<p class="settings-intro">Tune token use and workflow behavior from one place. More settings can be added to this menu as the harness grows.</p>' + fields + artifactGroup + displayGroup;
+      $("settingsBody").innerHTML = '<p class="settings-intro">Tune workflow behavior from one place. Most settings apply to new runs; test paths and ignored artifacts are live recovery policies.</p>' + fields + artifactGroup + displayGroup;
       $("settingsScope").textContent = persistence;
       $("saveSettingsBtn").disabled = !settings.editable;
       var layoutSelect = $("grill-options-layout");

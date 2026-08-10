@@ -53,6 +53,13 @@ export const renderRunScript = `    function renderSidebar() {
       // out-of-band and must not wait for the job badge to clear.
       if (phase === "queued" || phase === "running") {
         var busy = '<span class="badge ' + phase + '"><i class="dot ' + phase + '"></i>' + phase + '</span>';
+        // Stop is also out-of-band: allow requesting a graceful halt while a job
+        // is in flight (mid-task), not only when the header is idle.
+        if (s.phase === "executing" && !s.stoppedAfterTaskAt) {
+          busy += s.stopAfterTask
+            ? '<span class="badge running"><i class="dot running"></i>Stopping after task…</span>'
+            : '<button class="btn small" data-action="stop" title="Finish the current task, then halt">Stop after task</button>';
+        }
         if (!["completed","cancelled"].includes(s.phase)) {
           busy += '<button class="btn small danger" data-action="cancel" data-testid="cancel-run">Cancel</button>';
         }

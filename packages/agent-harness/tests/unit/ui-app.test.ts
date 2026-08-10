@@ -30,7 +30,10 @@ describe("dashboard document", () => {
     const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
     expect(script).toMatch(/phase === "queued" \|\| phase === "running"/);
     expect(script).toMatch(
-      /phase === "queued" \|\| phase === "running"[\s\S]{0,400}data-testid="cancel-run"/,
+      /phase === "queued" \|\| phase === "running"[\s\S]{0,800}data-action="stop"/,
+    );
+    expect(script).toMatch(
+      /phase === "queued" \|\| phase === "running"[\s\S]{0,800}data-testid="cancel-run"/,
     );
   });
 

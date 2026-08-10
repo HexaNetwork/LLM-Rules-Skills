@@ -1,0 +1,170 @@
+name: agent-harness
+
+on:
+  push:
+    paths:
+      - "packages/agent-harness/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/agent-harness.yml"
+  pull_request:
+    paths:
+      - "packages/agent-harness/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/agent-harness.yml"
+  workflow_dispatch:
+  schedule:
+    # Optional provider-contract slot (manual/secret-gated job below).
+    - cron: "0 6 * * 1"
+
+defaults:
+  run:
+    working-directory: packages/agent-harness
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install
+        working-directory: .
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Unit tests
+        run: npm run test:unit
+      # Coverage reporting/thresholds are intentionally deferred until the
+      # separated suites are stable; add vitest coverage + ratchet next.
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install
+        working-directory: .
+        run: npm ci
+      - name: Integration tests
+        run: npm run test:integration
+        env:
+          VITEST_MAX_WORKERS: "2"
+      - name: Upload diagnostic artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-harness-integration-diagnostics
+          path: |
+            packages/agent-harness/test-results/**
+          if-no-files-found: ignore
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install
+        working-directory: .
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: E2E tests
+        run: npm run test:e2e
+        env:
+          CI: "true"
+      - name: Upload Playwright + diagnostic artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-harness-e2e-artifacts
+          path: |
+            packages/agent-harness/test-results/**
+            packages/agent-harness/playwright-report/**
+          if-no-files-found: ignore
+
+  acceptance:
+    name: acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install
+        working-directory: .
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Acceptance tests
+        run: npm run test:acceptance
+      - name: Upload diagnostic artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-harness-acceptance-diagnostics
+          path: |
+            packages/agent-harness/test-results/**
+          if-no-files-found: ignore
+
+  provider-contract:
+    name: provider-contract
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: provider-contract
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install
+        working-directory: .
+        run: npm ci
+      - name: Provider adapter contract (secret-gated)
+        if: ${{ secrets.CURSOR_API_KEY != '' }}
+        working-directory: packages/agent-harness
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          PROVIDER_CONTRACT: "1"
+          # Hard caps — this job validates the Cursor adapter only.
+          PROVIDER_CONTRACT_MAX_COST_USD: "0.50"
+          PROVIDER_CONTRACT_TIMEOUT_MS: "120000"
+        run: |
+          echo "Provider-contract job is reserved for an isolated Cursor adapter probe."
+          echo "No product workflow correctness is asserted here."
+          if [ ! -f tests/provider-contract/cursor-adapter.test.ts ]; then
+            echo "No provider-contract suite checked in yet; skipping probe."
+            exit 0
+          fi
+          npx vitest run --config vitest.acceptance.config.ts tests/provider-contract/cursor-adapter.test.ts
+      - name: Skip when secret missing
+        if: ${{ secrets.CURSOR_API_KEY == '' }}
+        run: |
+          echo "CURSOR_API_KEY secret not configured; provider-contract skipped."
+          exit 0

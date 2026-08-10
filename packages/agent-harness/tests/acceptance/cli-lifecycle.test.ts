@@ -1,0 +1,307 @@
+import path from "node:path";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, it } from "vitest";
+import { createScriptedBackend } from "../testkit/scripted-backend.js";
+import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
+import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
+import {
+  ACCEPTANCE_GRILL_QUESTION,
+  ACCEPTANCE_REFLECT,
+  runCli,
+  writeAcceptanceConfig,
+} from "./helpers.js";
+
+describe("CLI acceptance lifecycle", () => {
+  let fixture: ProjectFixture | undefined;
+  let previousCwd: string | undefined;
+
+  afterEach(async () => {
+    if (previousCwd) process.chdir(previousCwd);
+    previousCwd = undefined;
+    await fixture?.cleanup();
+    fixture = undefined;
+  });
+
+  it("init writes a valid config and ignores harness state", async () => {
+    fixture = await createProjectFixture();
+    previousCwd = process.cwd();
+    process.chdir(fixture.root);
+
+    await withDiagnosticArtifacts({ testName: "acceptance-init", fixture }, async () => {
+      const result = await runCli(["init", "--no-seed-guidance"]);
+      expect(result.code).toBe(0);
+      expect(result.stdout.join("\n")).toMatch(/Wrote .*agent-harness\.config\.yaml/);
+
+      const configPath = path.join(fixture!.root, "agent-harness.config.yaml");
+      await access(configPath);
+      const gitignore = await readFile(path.join(fixture!.root, ".gitignore"), "utf8");
+      expect(gitignore).toContain(".agent-harness/");
+      await access(path.join(fixture!.root, ".agent-harness"));
+    });
+  });
+
+  it("start → status --json → answer → continue → confirm-grill completes a scripted workflow", async () => {
+    fixture = await createProjectFixture({
+      config: {
+        agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
+        workflow: { tdd: false, maxStepsPerRun: 40, generateCommitMessages: false },
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
+      },
+    });
+    const configPath = await writeAcceptanceConfig(fixture);
+    const scripted = createScriptedBackend([
+      { role: "reflector", output: ACCEPTANCE_REFLECT },
+      {
+        role: "griller",
+        output: {
+          status: "needs_input",
+          summary: "Need tone",
+          questions: [ACCEPTANCE_GRILL_QUESTION],
+        },
+      },
+      {
+        role: "griller",
+        output: {
+          status: "ready_to_plan",
+          summary: "Tone decided",
+          resolutions: [
+            {
+              id: "tone",
+              question: ACCEPTANCE_GRILL_QUESTION.prompt,
+              answer: "Casual",
+              summary: "Use a casual greeting",
+            },
+          ],
+        },
+      },
+      {
+        role: "planner",
+        output: {
+          summary: "One task",
+          tasks: [
+            {
+              id: "greet",
+              title: "Ship greeting",
+              description: "Render greeting",
+              acceptanceCriteria: ["Works"],
+              blockedBy: [],
+              tdd: false,
+              testCommand: 'node -e "process.exit(0)"',
+            },
+          ],
+        },
+      },
+      { role: "implementer", output: { summary: "Built", changedFiles: ["src/greet.ts"] } },
+      { role: "reviewer", output: { approved: true, summary: "ok", findings: [] } },
+    ]);
+
+    await withDiagnosticArtifacts({ testName: "acceptance-lifecycle", fixture }, async () => {
+      const deps = { createBackend: () => scripted.backend };
+      const runId = "acceptance-lifecycle-run";
+
+      const started = await runCli(
+        ["start", "--idea", "Add a greeting feature", "--config", configPath, "--run-id", runId, "--tdd", "off"],
+        deps,
+      );
+      expect(started.code).toBe(0);
+      expect(started.stdout.join("\n")).toMatch(/awaiting_input/);
+
+      const status = await runCli(["status", "--run-id", runId, "--config", configPath, "--json"], deps);
+      expect(status.code).toBe(0);
+      const state = JSON.parse(status.stdout.join("\n")) as {
+        phase: string;
+        activeQuestionId?: string;
+        questions: Array<{ id: string; purpose?: string }>;
+      };
+      expect(state.phase).toBe("awaiting_input");
+      const reflectId = state.activeQuestionId!;
+      expect(state.questions.find((q) => q.id === reflectId)?.purpose).toBe("reflect");
+
+      const answeredReflect = await runCli(
+        [
+          "answer",
+          "--run-id",
+          runId,
+          "--config",
+          configPath,
+          "--question",
+          reflectId,
+          "--text",
+          "Confirmed brief: casual greeting.",
+        ],
+        deps,
+      );
+      expect(answeredReflect.code).toBe(0);
+
+      const grillStatus = await runCli(
+        ["status", "--run-id", runId, "--config", configPath, "--json"],
+        deps,
+      );
+      const grillState = JSON.parse(grillStatus.stdout.join("\n")) as {
+        activeQuestionId?: string;
+        questions: Array<{ id: string; purpose?: string }>;
+      };
+      const grillId = grillState.activeQuestionId!;
+      expect(grillState.questions.find((q) => q.id === grillId)?.purpose).toBe("grill");
+
+      const answeredGrill = await runCli(
+        ["answer", "--run-id", runId, "--config", configPath, "--question", grillId, "--text", "Casual"],
+        deps,
+      );
+      expect(answeredGrill.code).toBe(0);
+      expect(answeredGrill.stdout.join("\n")).toMatch(/Grilling complete|confirm-grill/i);
+
+      const confirmed = await runCli(
+        ["confirm-grill", "--run-id", runId, "--config", configPath],
+        deps,
+      );
+      expect(confirmed.code).toBe(0);
+
+      const continued = await runCli(
+        ["continue", "--run-id", runId, "--config", configPath, "--steps", "20"],
+        deps,
+      );
+      expect(continued.code).toBe(0);
+
+      const finalStatus = await runCli(
+        ["status", "--run-id", runId, "--config", configPath, "--json"],
+        deps,
+      );
+      const finalState = JSON.parse(finalStatus.stdout.join("\n")) as {
+        phase: string;
+        tasks: Array<{ status: string }>;
+      };
+      expect(finalState.phase).toBe("completed");
+      expect(finalState.tasks[0]?.status).toBe("done");
+      scripted.assertExhausted();
+    });
+  });
+
+  it("cancel, unlock --repo, and retry work against real fixture files", async () => {
+    fixture = await createProjectFixture({
+      config: {
+        agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 },
+        workflow: { tdd: false, maxStepsPerRun: 10 },
+        git: { enabled: true, autoCommitPreflight: false },
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
+      },
+    });
+    await fixture.initGit();
+    await fixture.write("surprise.txt", "dirty\n");
+    const configPath = await writeAcceptanceConfig(fixture, {
+      git: { enabled: true, autoCommitPreflight: false },
+    });
+
+    let release!: () => void;
+    let reflecting!: () => void;
+    const startedReflect = new Promise<void>((resolve) => {
+      reflecting = resolve;
+    });
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const scripted = createScriptedBackend([
+      // Consumed by retry --commit-dirty after the dirty-tree block.
+      { role: "reflector", output: ACCEPTANCE_REFLECT },
+      // Held so cancel can race an in-flight advance.
+      { role: "reflector", waitFor: hold, output: ACCEPTANCE_REFLECT },
+    ]);
+    let reflectCalls = 0;
+    const originalRun = scripted.backend.run.bind(scripted.backend);
+    scripted.backend.run = async (request) => {
+      if (request.role === "reflector") {
+        reflectCalls += 1;
+        if (reflectCalls >= 2) reflecting();
+      }
+      return originalRun(request);
+    };
+
+    await withDiagnosticArtifacts({ testName: "acceptance-cancel-unlock-retry", fixture }, async () => {
+      const deps = { createBackend: () => scripted.backend };
+
+      // Dirty-tree start blocks before agents; retry --commit-dirty unblocks via real git files.
+      const blockedId = "acceptance-retry-run";
+      const blockedStart = await runCli(
+        [
+          "start",
+          "--idea",
+          "Retry after dirty tree",
+          "--config",
+          configPath,
+          "--run-id",
+          blockedId,
+          "--tdd",
+          "off",
+        ],
+        deps,
+      );
+      expect(blockedStart.code).toBe(0);
+      expect(blockedStart.stdout.join("\n")).toMatch(/blocked/i);
+
+      const retried = await runCli(
+        ["retry", "--run-id", blockedId, "--config", configPath, "--commit-dirty", "branch-then-commit"],
+        deps,
+      );
+      expect(retried.code).toBe(0);
+      expect(retried.stdout.join("\n")).toMatch(/awaiting_input|Run /);
+
+      // Cancel while a later advance is in flight.
+      const runId = "acceptance-cancel-run";
+      // Tree is clean after preflight; start a fresh run and hold the reflector.
+      const startPromise = runCli(
+        ["start", "--idea", "Cancel me", "--config", configPath, "--run-id", runId, "--tdd", "off"],
+        deps,
+      );
+      await startedReflect;
+
+      const cancelled = await runCli(["cancel", "--run-id", runId, "--config", configPath], deps);
+      expect(cancelled.code).toBe(0);
+      expect(cancelled.stdout.join("\n")).toMatch(/cancel/i);
+      release();
+      await startPromise;
+
+      const status = await runCli(["status", "--run-id", runId, "--config", configPath, "--json"], deps);
+      expect(JSON.parse(status.stdout.join("\n")).phase).toBe("cancelled");
+
+      // Plant an abandoned repository lock and clear it via unlock --repo.
+      const lockPath = path.join(fixture!.root, ".agent-harness", "repo.lock");
+      await mkdir(path.dirname(lockPath), { recursive: true });
+      await writeFile(
+        lockPath,
+        `${JSON.stringify({
+          pid: 9_999_992,
+          hostname: "gone",
+          at: new Date(0).toISOString(),
+          runId: "dead",
+          action: "advance",
+        })}\n`,
+        "utf8",
+      );
+      const unlocked = await runCli(
+        ["unlock", "--run-id", runId, "--repo", "--config", configPath],
+        deps,
+      );
+      expect(unlocked.code).toBe(0);
+      expect(unlocked.stdout.join("\n")).toMatch(/repository lock|No run lock|Removed/i);
+      await expect(access(lockPath)).rejects.toThrow();
+    });
+  });
+
+  it("graphify install uses the injected setup seam and never installs packages", async () => {
+    fixture = await createProjectFixture();
+    const calls: Array<{ project: string; installPrerequisite: boolean }> = [];
+    previousCwd = process.cwd();
+    process.chdir(fixture.root);
+
+    await withDiagnosticArtifacts({ testName: "acceptance-graphify-seam", fixture }, async () => {
+      const result = await runCli(["graphify", "install", "--project", fixture!.root], {
+        runGraphifySetup: async (project, installPrerequisite) => {
+          calls.push({ project, installPrerequisite });
+        },
+      });
+      expect(result.code).toBe(0);
+      expect(calls).toEqual([{ project: fixture!.root, installPrerequisite: false }]);
+      expect(result.stdout.join("\n")).not.toMatch(/npm install|pip install|uv tool/i);
+    });
+  });
+});

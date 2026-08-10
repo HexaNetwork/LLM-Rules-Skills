@@ -132,9 +132,9 @@ function pathKey(p) {
   return process.platform === "win32" ? n.toLowerCase() : n;
 }
 
-function configExists(projectPath) {
+function projectExists(projectPath) {
   try {
-    return fs.existsSync(path.join(projectPath, "agent-harness.config.yaml"));
+    return fs.existsSync(projectPath) && fs.statSync(projectPath).isDirectory();
   } catch {
     return false;
   }
@@ -171,7 +171,7 @@ function listValid() {
     const p = resolvePath(item.path);
     const key = pathKey(p);
     if (seen.has(key)) continue;
-    if (!configExists(p)) continue;
+    if (!projectExists(p)) continue;
     seen.add(key);
     out.push(p);
   }
@@ -185,7 +185,7 @@ function getLastProject() {
     return;
   }
   const p = resolvePath(settings.lastProject);
-  process.stdout.write(configExists(p) ? p : "");
+  process.stdout.write(projectExists(p) ? p : "");
 }
 
 switch (op) {

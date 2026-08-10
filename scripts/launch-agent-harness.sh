@@ -33,12 +33,12 @@ usage() {
 Usage: bash scripts/launch-agent-harness.sh [project-path] [--no-pull] [--no-build]
 
   Pulls latest LLM-Rules-Skills, rebuilds the harness CLI, then starts `ui`
-  against a project that already has agent-harness.config.yaml.
+  against a registered project (config lives in harness home).
 
   Project path (first match wins):
     1. positional argument
     2. AGENT_HARNESS_PROJECT
-    3. current working directory (if it contains agent-harness.config.yaml)
+    3. current working directory
     4. interactive picker from remembered projects (user settings.json)
     5. prompt for a path
 
@@ -68,14 +68,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$PROJECT_PATH" && -f "$(pwd)/agent-harness.config.yaml" ]]; then
-  PROJECT_PATH="$(pwd)"
+if [[ -z "$PROJECT_PATH" ]]; then
+  cwd="$(pwd)"
+  while IFS= read -r candidate; do
+    [[ -z "$candidate" ]] && continue
+    if [[ "$(cd "$candidate" 2>/dev/null && pwd)" == "$(cd "$cwd" 2>/dev/null && pwd)" ]]; then
+      PROJECT_PATH="$cwd"
+      break
+    fi
+  done < <(ah_list_remembered_projects 2>/dev/null || true)
 fi
 PROJECT_PATH="${PROJECT_PATH/#\~/$HOME}"
 
 if [[ -z "$PROJECT_PATH" ]]; then
   if ! PROJECT_PATH="$(ah_select_project_interactive)"; then
-    echo "No target project. Pass a path, set AGENT_HARNESS_PROJECT, or cd into a deployed project." >&2
+    echo "No target project. Pass a path, set AGENT_HARNESS_PROJECT, or pick a registered project." >&2
     exit 1
   fi
 fi
@@ -85,8 +92,8 @@ if [[ -d "$PROJECT_PATH" ]]; then
   PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 fi
 
-if [[ ! -f "$PROJECT_PATH/agent-harness.config.yaml" ]]; then
-  echo "Missing agent-harness.config.yaml in: $PROJECT_PATH" >&2
+if [[ ! -d "$PROJECT_PATH" ]]; then
+  echo "Project directory not found: $PROJECT_PATH" >&2
   echo "Run the install wizard first: bash scripts/install-agent-harness.sh" >&2
   exit 1
 fi
@@ -137,7 +144,7 @@ if [[ ! -f "$CLI" ]]; then
   exit 1
 fi
 
-UI_ARGS=(ui --port "$UI_PORT")
+UI_ARGS=(ui --repository "$PROJECT_PATH" --port "$UI_PORT")
 if [[ "$UI_OPEN" -eq 0 ]]; then
   UI_ARGS+=(--no-open)
 fi

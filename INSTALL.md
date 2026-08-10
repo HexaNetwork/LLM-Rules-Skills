@@ -1,6 +1,6 @@
 # Agent Harness — Installation
 
-Install Node, build this checkout, then deploy the harness into a target project folder.
+Install Node, build this checkout, then register a target project in harness home.
 
 **Interactive wizard (recommended on Windows):** double-click or run from this checkout:
 
@@ -8,7 +8,7 @@ Install Node, build this checkout, then deploy the harness into a target project
 scripts\Install-AgentHarness.cmd
 ```
 
-That opens PowerShell with `-ExecutionPolicy Bypass` and runs `scripts\install-agent-harness.ps1`. It walks through Node, build, Cursor API key (stored as a Windows User environment variable — not `.env`), deploy options, and the dashboard.
+That opens PowerShell with `-ExecutionPolicy Bypass` and runs `scripts\install-agent-harness.ps1`. It walks through Node, build, Cursor API key (stored as a Windows User environment variable — not `.env`), `project add` registration, and the dashboard.
 
 Alternatives:
 
@@ -83,7 +83,7 @@ npm install
 npm run build
 ```
 
-This creates `packages/agent-harness/dist/cli.js`. If that file is missing, deploy will fail with `MODULE_NOT_FOUND`.
+This creates `packages/agent-harness/dist/cli.js`. If that file is missing, registration will fail with `MODULE_NOT_FOUND`.
 
 ## 3. Set the Cursor API key
 
@@ -183,17 +183,17 @@ Schema (defaults apply when keys are missing; first write creates the file with 
 
 1. Explicit `-Project` / positional path
 2. `AGENT_HARNESS_PROJECT` (scripting override only)
-3. Current directory if it already has `agent-harness.config.yaml`
-4. Interactive picker from remembered projects that still have that config (default highlight = `lastProject`); option to type a new path
+3. Current directory
+4. Interactive picker from remembered projects that still exist (default highlight = `lastProject`); option to type a new path
 5. If the list is empty, prompt for a path
 
-**Launch / UI knobs:** explicit launcher flags → values from `settings.json` → built-in defaults (`pull`/`build` on, port `8787`, open browser on). The launcher passes `--port` and `--no-open` to `agent-harness ui` from `ui.*` settings. A successful install wizard deploy seeds the remembered project list.
+**Launch / UI knobs:** explicit launcher flags → values from `settings.json` → built-in defaults (`pull`/`build` on, port `8787`, open browser on). The launcher passes `--repository`, `--port`, and `--no-open` to `agent-harness ui` from `ui.*` settings. A successful install wizard registration seeds the remembered project list.
 
-**Manual:** from the **target project** (the folder with `agent-harness.config.yaml`):
+**Manual:** against a registered repository:
 
 ```powershell
-cd "C:\path\to\your-project"
-node "C:\path\to\LLM-Rules-Skills\packages\agent-harness\dist\cli.js" ui
+node "C:\path\to\LLM-Rules-Skills\packages\agent-harness\dist\cli.js" ui `
+  --repository "C:\path\to\your-project"
 ```
 
 The process prints a loopback URL with a one-time access token, for example:
@@ -204,16 +204,13 @@ Open that exact URL. The token is generated at startup and is only valid for tha
 
 ## 6. Optional: Graphify and Ollama
 
-Graphify (structural code retrieval), after deploy:
+Graphify (structural code retrieval):
 
 ```powershell
-node "C:\path\to\LLM-Rules-Skills\packages\agent-harness\dist\cli.js" graphify install `
-  --project "C:\path\to\your-project"
+uv tool install graphifyy
 ```
 
-Add `--install-prerequisite` if neither `uv` nor `pipx` is installed.
-
-Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`setup-local-embeddings.ps1` / `.sh`).
+Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`setup-local-embeddings.ps1` / `.sh`). Enable embeddings in the harness-home project config when ready.
 
 ## Troubleshooting
 
@@ -224,8 +221,8 @@ Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`se
 | `npm.ps1 cannot be loaded` / ExecutionPolicy | Use `scripts\Install-AgentHarness.cmd`, or `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or `npm.cmd` |
 | Dashboard access denied / `Invalid or missing dashboard token` | Close the tab, copy the **full** URL printed by the current `ui` process (including `?token=...`), and open that. Restarting `ui` invalidates the old token; an old tab or a bookmark without `?token=` will fail on Start reflect. |
 | Agent backend / missing API key | Set `CURSOR_API_KEY` in the same environment that runs the harness, then restart `ui` |
-| Config already exists | Redeploy with `--force`, or edit the existing `agent-harness.config.yaml` |
-| `not a git repository` / `git status failed (128)` on Start reflect | The target folder is not a git repo but `git.enabled` is true (deploy default). The install wizard auto-inits git and commits after deploy; for a manual deploy, either `git init` + initial commit, or set `git.enabled: false` in `agent-harness.config.yaml` |
+| Leftover `agent-harness.config.yaml` / `.agent-harness/` in the target | Safe leftovers from older installs. Delete them, or run `agent-harness migrate-home` |
+| `not a git repository` / `git status failed (128)` on Start reflect | The target folder is not a git repo but `git.enabled` is true. The install wizard auto-inits git and commits after registration; otherwise `git init` + initial commit, or set `git.enabled: false` in the harness-home project config |
 
 ## More detail
 

@@ -209,7 +209,7 @@ function Remember-AgentHarnessProject {
 function Get-AgentHarnessRememberedProjects {
   <#
   .SYNOPSIS
-    Remembered project paths that still have agent-harness.config.yaml.
+    Remembered project paths that still exist on disk.
   #>
   $settings = Get-AgentHarnessSettings
   $valid = [System.Collections.Generic.List[string]]::new()
@@ -220,8 +220,7 @@ function Get-AgentHarnessRememberedProjects {
     } catch {
       continue
     }
-    $config = Join-Path $p "agent-harness.config.yaml"
-    if (Test-Path -LiteralPath $config) {
+    if (Test-Path -LiteralPath $p) {
       $dup = $false
       foreach ($existing in $valid) {
         if ([string]::Equals($existing, $p, [StringComparison]::OrdinalIgnoreCase)) {
@@ -248,14 +247,13 @@ function Select-AgentHarnessProjectInteractive {
   if (-not [string]::IsNullOrWhiteSpace([string]$settings.lastProject)) {
     try {
       $candidate = Resolve-AgentHarnessProjectPath -Path ([string]$settings.lastProject)
-      $cfg = Join-Path $candidate "agent-harness.config.yaml"
-      if (Test-Path -LiteralPath $cfg) { $defaultPath = $candidate }
+      if (Test-Path -LiteralPath $candidate) { $defaultPath = $candidate }
     } catch { }
   }
 
   if ($projects.Count -eq 0) {
     Write-Host "No target project specified (-Project / AGENT_HARNESS_PROJECT)."
-    Write-Host -NoNewline "Absolute path to the deployed project: "
+    Write-Host -NoNewline "Absolute path to the registered project: "
     $typed = Read-Host
     if ([string]::IsNullOrWhiteSpace($typed)) { return $null }
     return (Resolve-AgentHarnessProjectPath -Path $typed)

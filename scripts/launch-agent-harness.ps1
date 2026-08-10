@@ -24,23 +24,28 @@ $ErrorActionPreference = "Stop"
 $HarnessRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Cli = Join-Path $HarnessRoot "packages\agent-harness\dist\cli.js"
 
-# Project resolution: -Project / env > cwd with config > interactive picker
-if ([string]::IsNullOrWhiteSpace($Project) -and (Test-Path -LiteralPath (Join-Path (Get-Location) "agent-harness.config.yaml"))) {
-  $Project = (Get-Location).Path
+# Project resolution: -Project / env > remembered cwd > interactive picker
+if ([string]::IsNullOrWhiteSpace($Project)) {
+  $cwd = (Get-Location).Path
+  foreach ($candidate in @(Get-AgentHarnessRememberedProjects)) {
+    if ([string]::Equals($candidate, $cwd, [StringComparison]::OrdinalIgnoreCase)) {
+      $Project = $cwd
+      break
+    }
+  }
 }
 
 if ([string]::IsNullOrWhiteSpace($Project)) {
   $Project = Select-AgentHarnessProjectInteractive
   if ([string]::IsNullOrWhiteSpace($Project)) {
-    Write-Host "No target project. Pass -Project, set AGENT_HARNESS_PROJECT, or cd into a deployed project." -ForegroundColor Red
+    Write-Host "No target project. Pass -Project, set AGENT_HARNESS_PROJECT, or pick a registered project." -ForegroundColor Red
     exit 1
   }
 }
 
 $Project = Resolve-AgentHarnessProjectPath -Path $Project
-$config = Join-Path $Project "agent-harness.config.yaml"
-if (-not (Test-Path -LiteralPath $config)) {
-  Write-Host "Missing agent-harness.config.yaml in: $Project" -ForegroundColor Red
+if (-not (Test-Path -LiteralPath $Project)) {
+  Write-Host "Project directory not found: $Project" -ForegroundColor Red
   Write-Host "Run the install wizard first: scripts\Install-AgentHarness.cmd" -ForegroundColor Red
   exit 1
 }
@@ -97,6 +102,8 @@ if (-not (Test-Path -LiteralPath $Cli)) {
 
 $uiArgs = [System.Collections.Generic.List[string]]::new()
 $uiArgs.Add("ui") | Out-Null
+$uiArgs.Add("--repository") | Out-Null
+$uiArgs.Add($Project) | Out-Null
 $uiArgs.Add("--port") | Out-Null
 $uiArgs.Add("$($uiDefaults.port)") | Out-Null
 if (-not [bool]$uiDefaults.openBrowser) {

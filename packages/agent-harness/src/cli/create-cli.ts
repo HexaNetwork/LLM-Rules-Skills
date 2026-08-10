@@ -746,10 +746,25 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .command("ui")
     .description("Open the centralized loopback dashboard")
     .option("--config <path>", "config path")
+    .option("--project <project-key>", "external project key")
+    .option("--repository <path>", "registered repository path")
+    .option("--home <path>", "harness home override")
     .option("--port <number>", "loopback port", "8787")
     .option("--no-open", "do not open the browser automatically")
-    .action(async (options: { config?: string; port: string; open: boolean }) => {
-      const loaded = await loadConfig(options.config);
+    .action(async (options: {
+      config?: string;
+      project?: string;
+      repository?: string;
+      home?: string;
+      port: string;
+      open: boolean;
+    }) => {
+      const loaded = await resolvedProjectConfig({
+        config: options.config,
+        project: options.project,
+        repository: options.repository,
+        home: options.home,
+      });
       const ui = await dependencies.startUiServer({
         config: loaded.config,
         configPath: loaded.path,

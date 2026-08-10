@@ -4,8 +4,8 @@
   Interactive installation wizard for the Agent Harness (Windows).
 
 .DESCRIPTION
-  Walks through Node check, build, CURSOR_API_KEY (Windows User env - never .env),
-  target project, optional Ollama/Graphify, deploy, and optional dashboard start.
+  Lean walkthrough: Node check, build, CURSOR_API_KEY (Windows User env - never .env),
+  target project registration (project add), and optional dashboard start.
 
 .EXAMPLE
   .\scripts\install-agent-harness.ps1
@@ -24,40 +24,21 @@ $ErrorActionPreference = "Stop"
 # Wizard helpers
 # ---------------------------------------------------------------------------
 
-$script:TOTAL_STAGES = 8
+$script:TOTAL_STAGES = 5
 $script:STAGE_INDEX = 0
 $script:SKIPPED = [System.Collections.Generic.List[string]]::new()
 $script:WRITTEN_USER_ENV = [System.Collections.Generic.List[string]]::new()
 
-function Test-IsInteractiveHost {
-  try {
-    return [bool]$Host.UI.RawUI -and -not [Console]::IsOutputRedirected
-  } catch {
-    return $false
-  }
-}
-
-function Clear-WizardScreen {
-  if (-not (Test-IsInteractiveHost)) { return }
-  try { Clear-Host } catch { }
-}
-
 function Write-Banner {
   param([string]$Title)
-  Clear-WizardScreen
   Write-Host ""
   Write-Host ("  " + $Title) -ForegroundColor Cyan
   Write-Host ("  $($script:TOTAL_STAGES) stages") -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "  You drive the browser; this wizard tells you exactly what to do and" -ForegroundColor DarkGray
-  Write-Host "  captures the values you copy back. Stop any time with Ctrl-C and re-run" -ForegroundColor DarkGray
-  Write-Host "  later - it remembers values already saved." -ForegroundColor DarkGray
-  Invoke-Pause "Ready to start?"
 }
 
 function Write-Stage {
   param([string]$Name)
-  Clear-WizardScreen
   $script:STAGE_INDEX++
   Write-Host ""
   Write-Host ("> Stage $($script:STAGE_INDEX)/$($script:TOTAL_STAGES) - $Name") -ForegroundColor Cyan
@@ -150,6 +131,13 @@ process.stdout.write((M>20||(M===20&&m>=3))?'ok':'bad');
   }
 }
 
+function Test-HarnessCheckout {
+  param([string]$Path)
+  if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+  return (Test-Path -LiteralPath (Join-Path $Path "package.json")) -and
+    (Test-Path -LiteralPath (Join-Path $Path "packages\agent-harness"))
+}
+
 function Get-WindowsUserEnv {
   param([string]$Name)
   return [Environment]::GetEnvironmentVariable($Name, "User")
@@ -166,7 +154,6 @@ function Set-WindowsUserEnv {
 }
 
 function Write-Finish {
-  Clear-WizardScreen
   Write-Host ""
   Write-Host "  OK Setup complete" -ForegroundColor Green
   if ($script:WRITTEN_USER_ENV.Count -gt 0) {
@@ -198,7 +185,7 @@ if (Test-NodeOk) {
   $nodeVer = (& node -v 2>$null)
   $npmVer = (& npm.cmd -v 2>$null)
   if (-not $npmVer) { $npmVer = "?" }
-  Write-Note "Found $nodeVer and npm $npmVer"
+  Write-Ok "Found $nodeVer and npm $npmVer"
 } else {
   Write-WarnLine "Node.js 20.3+ is missing or too old."
   Write-Step "Install with WinGet (recommended), or use the Node download page."
@@ -213,27 +200,26 @@ if (Test-NodeOk) {
     exit 1
   }
 }
-Write-Note "If PowerShell blocks npm.ps1 (ExecutionPolicy), run once:"
-Write-Note "  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned"
-Write-Note "Or use npm.cmd / Command Prompt instead."
-Invoke-Pause "Continue to build the harness checkout?"
 
 # -- 2. Build this checkout ------------------------------------------------
 Write-Stage "Build this checkout"
-Write-Say "We'll install dependencies and build packages/agent-harness."
-$HarnessRoot = Read-Ask "Path to the LLM-Rules-Skills checkout:" $DefaultHarnessRoot
-if ([string]::IsNullOrWhiteSpace($HarnessRoot)) {
-  $HarnessRoot = $DefaultHarnessRoot
-}
-$HarnessRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($HarnessRoot)
-if (-not (Test-Path -LiteralPath (Join-Path $HarnessRoot "package.json")) -or
-    -not (Test-Path -LiteralPath (Join-Path $HarnessRoot "packages\agent-harness"))) {
-  Write-WarnLine "That path does not look like this repo (missing package.json or packages/agent-harness)."
-  exit 1
+$HarnessRoot = $DefaultHarnessRoot
+# Skip asking when the script's parent checkout is already valid (includes LLM-Rules-Skills).
+if (Test-HarnessCheckout $HarnessRoot) {
+  Write-Note "Using checkout: $HarnessRoot"
+} else {
+  $HarnessRoot = Read-Ask "Path to the LLM-Rules-Skills checkout:" $DefaultHarnessRoot
+  if ([string]::IsNullOrWhiteSpace($HarnessRoot)) {
+    $HarnessRoot = $DefaultHarnessRoot
+  }
+  $HarnessRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($HarnessRoot)
+  if (-not (Test-HarnessCheckout $HarnessRoot)) {
+    Write-WarnLine "That path does not look like this repo (missing package.json or packages/agent-harness)."
+    exit 1
+  }
 }
 $Cli = Join-Path $HarnessRoot $CliRel
-Write-Say "Running npm install and npm run build in:"
-Write-Note $HarnessRoot
+Write-Say "Running npm install and npm run build..."
 Push-Location -LiteralPath $HarnessRoot
 try {
   & npm.cmd install
@@ -254,30 +240,25 @@ if (-not (Test-Path -LiteralPath $Cli)) {
   exit 1
 }
 Write-Ok "built $Cli"
-Invoke-Pause "Continue to the Cursor API key?"
 
 # -- 3. Cursor API key (Windows User env - never .env) ---------------------
 Write-Stage "Cursor API key"
-Write-Say "Real agent runs need CURSOR_API_KEY. We store it as a Windows User"
-Write-Say "environment variable (not in .env / not in the repo)."
+Write-Say "Real agent runs need CURSOR_API_KEY (Windows User env, not .env)."
 $ExistingKey = $env:CURSOR_API_KEY
 if ([string]::IsNullOrWhiteSpace($ExistingKey)) {
   $ExistingKey = Get-WindowsUserEnv "CURSOR_API_KEY"
 }
-$KeepKey = $false
 $CursorApiKey = $null
 if (-not [string]::IsNullOrWhiteSpace($ExistingKey)) {
-  Write-Note "A CURSOR_API_KEY is already available in this environment (or User env)."
-  if (Confirm-Yes "Keep the existing key?") {
-    $CursorApiKey = $ExistingKey
-    $KeepKey = $true
+  Write-Ok "Using existing CURSOR_API_KEY"
+  $CursorApiKey = $ExistingKey
+  if (Confirm-Yes "Replace it with a new key?") {
+    $CursorApiKey = $null
   }
 }
-if (-not $KeepKey) {
+if ([string]::IsNullOrWhiteSpace($CursorApiKey)) {
   Open-Url "https://cursor.com/dashboard/api"
-  Write-Step "Sign in to the Cursor Dashboard if prompted."
-  Write-Step "Open API Keys (Dashboard -> API Keys)."
-  Write-Step "Create a user API key, then copy it immediately (it may not be shown again)."
+  Write-Step "Create a user API key, then paste it here."
   $CursorApiKey = Read-AskSecret "Paste the Cursor API key:"
   if ([string]::IsNullOrWhiteSpace($CursorApiKey)) {
     Write-WarnLine "No key pasted - agent runs will fail until CURSOR_API_KEY is set."
@@ -286,19 +267,16 @@ if (-not $KeepKey) {
 }
 if (-not [string]::IsNullOrWhiteSpace($CursorApiKey)) {
   $env:CURSOR_API_KEY = $CursorApiKey
-  if (Confirm-Yes "Persist CURSOR_API_KEY to your Windows User environment?") {
+  $userKey = Get-WindowsUserEnv "CURSOR_API_KEY"
+  if ($userKey -ne $CursorApiKey) {
     Set-WindowsUserEnv -Name "CURSOR_API_KEY" -Value $CursorApiKey
     Write-Note "New terminals pick it up automatically. Restart any running harness/ui after changes."
-  } else {
-    Write-Note "Key exported for this wizard session only."
-    $script:SKIPPED.Add("persist CURSOR_API_KEY to Windows User env") | Out-Null
   }
 }
-Invoke-Pause "Continue to choose the target project?"
 
-# -- 4. Target project -----------------------------------------------------
+# -- 4. Target project + register ------------------------------------------
 Write-Stage "Target project"
-Write-Say "Deploy writes agent-harness.config.yaml and .agent-harness/ into a project folder."
+Write-Say "Registers the repo in harness home (config stays outside the project)."
 $ProjectPath = Read-Ask "Absolute path to the target project:"
 if ([string]::IsNullOrWhiteSpace($ProjectPath)) {
   Write-WarnLine "A project path is required."
@@ -313,7 +291,13 @@ if (-not (Test-Path -LiteralPath $ProjectPath)) {
   }
 }
 Write-Note "Project: $ProjectPath"
-# Deploy defaults to git.enabled: true; Start reflect needs a real git repo.
+$configPath = Join-Path $ProjectPath "agent-harness.config.yaml"
+$statePath = Join-Path $ProjectPath ".agent-harness"
+if ((Test-Path -LiteralPath $configPath) -or (Test-Path -LiteralPath $statePath)) {
+  Write-WarnLine "Found leftover repo-local harness files (agent-harness.config.yaml and/or .agent-harness/)."
+  Write-Note "Registration does not need them. Delete them after a successful project add, or run: agent-harness migrate-home"
+}
+
 $script:InitializedGitRepo = $false
 $GitCmd = Get-Command git -ErrorAction SilentlyContinue
 $GitDir = Join-Path $ProjectPath ".git"
@@ -321,7 +305,7 @@ if (Test-Path -LiteralPath $GitDir) {
   Write-Note "Git repository already present."
 } elseif (-not $GitCmd) {
   Write-WarnLine "git is not on PATH - cannot initialize a repository."
-  Write-Note "Install git, or set git.enabled: false in agent-harness.config.yaml after deploy."
+  Write-Note "Install git, or set git.enabled: false in the harness-home project config."
   $script:SKIPPED.Add("git repository (git not installed)") | Out-Null
 } else {
   Write-Say "No .git found - initializing a git repository (required for harness runs)."
@@ -332,139 +316,77 @@ if (Test-Path -LiteralPath $GitDir) {
       & git init
     }
     if ($LASTEXITCODE -ne 0) {
-      Write-WarnLine "git init failed - fix manually or set git.enabled: false after deploy."
+      Write-WarnLine "git init failed - fix manually or set git.enabled: false in harness-home config."
       $script:SKIPPED.Add("git init in target project") | Out-Null
     } else {
       $script:InitializedGitRepo = $true
-      Write-Ok "initialized git repository (will commit after deploy so the tree is clean)"
+      Write-Ok "initialized git repository"
     }
   } finally {
     Pop-Location
   }
 }
-Invoke-Pause "Continue to optional Ollama embeddings?"
 
-# -- 5. Optional: Ollama ---------------------------------------------------
-Write-Stage "Optional - Ollama embeddings"
-Write-Say "Ollama provides local embeddings (no cloud API key). Deploy can wire it with --ollama."
-$UseOllama = $false
-if (Confirm-Yes "Configure Ollama embeddings during deploy?") {
-  $UseOllama = $true
-  Write-Step "Install Ollama if needed (Windows: winget install Ollama.Ollama, or the download page)."
-  if (Confirm-Yes "Open the Ollama download page?") {
-    Open-Url "https://ollama.com/download"
-  }
-  Write-Note "Optional helper after install:"
-  Write-Note ("  " + (Join-Path $HarnessRoot "packages\agent-harness\scripts\setup-local-embeddings.ps1") + " -InstallOllama")
-  Invoke-Pause "Press Enter once Ollama is installed (or skip and install later)"
+Write-Say "Registering project..."
+& node $Cli project add --repository $ProjectPath
+if ($LASTEXITCODE -ne 0) {
+  Write-WarnLine "project add reported an error (exit $LASTEXITCODE)."
+  Write-Note "If the repository is already registered, that is fine - continue."
+  $script:SKIPPED.Add("project add (non-zero exit; may already be registered)") | Out-Null
+} else {
+  Write-Ok "project registered in harness home"
 }
-
-# -- 6. Optional: Graphify -------------------------------------------------
-Write-Stage "Optional - Graphify"
-Write-Say "Graphify adds structural code retrieval. Install it yourself when enabled:"
-Write-Say "  uv tool install graphifyy"
-Write-Say "Default deploy enables Graphify; skip with --no-graphify for document-only projects."
-$UseGraphify = $true
-if (-not (Confirm-Yes "Enable Graphify for this project?")) {
-  $UseGraphify = $false
+try {
+  [void](Remember-AgentHarnessProject -Path $ProjectPath)
+  Write-Note ("remembered project in " + (Get-AgentHarnessSettingsPath))
+} catch {
+  Write-WarnLine ("could not write user settings: " + $_.Exception.Message)
 }
-
-# -- 7. Deploy -------------------------------------------------------------
-Write-Stage "Deploy into the project"
-$DeployArgs = [System.Collections.Generic.List[string]]::new()
-$DeployArgs.AddRange([string[]]@("deploy", "--project", $ProjectPath, "--refresh"))
-if ($UseOllama) { $DeployArgs.Add("--ollama") | Out-Null }
-if (-not $UseGraphify) {
-  $DeployArgs.Add("--no-graphify") | Out-Null
-}
-
-$RunDeploy = $true
-$configPath = Join-Path $ProjectPath "agent-harness.config.yaml"
-if (Test-Path -LiteralPath $configPath) {
-  Write-WarnLine "agent-harness.config.yaml already exists in the target project."
-  if (Confirm-Yes "Replace it with --force?") {
-    $DeployArgs.Add("--force") | Out-Null
-  } else {
-    Write-WarnLine "Deploy aborted - existing config left unchanged."
-    $script:SKIPPED.Add('deploy (config already exists; re-run with --force if needed)') | Out-Null
-    Invoke-Pause "Continue to dashboard instructions?"
-    $RunDeploy = $false
-  }
-}
-if ($RunDeploy) {
-  Write-Say "About to run:"
-  Write-Note ('node "' + $Cli + '" ' + ($DeployArgs -join " "))
-  if (-not (Confirm-Yes "Run deploy now?")) {
-    Write-WarnLine "Skipped deploy."
-    $script:SKIPPED.Add("deploy") | Out-Null
-    $RunDeploy = $false
-  }
-}
-if ($RunDeploy) {
-  & node $Cli @DeployArgs
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "deploy failed (exit $LASTEXITCODE)" -ForegroundColor Red
-    exit 1
-  }
-  Write-Ok "deploy finished"
-  # Seed user settings (AppData) so the launcher remembers this project.
+if ($script:InitializedGitRepo) {
+  Push-Location -LiteralPath $ProjectPath
   try {
-    [void](Remember-AgentHarnessProject -Path $ProjectPath)
-    Write-Note ("remembered project in " + (Get-AgentHarnessSettingsPath))
-  } catch {
-    Write-WarnLine ("could not write user settings: " + $_.Exception.Message)
-  }
-  if ($script:InitializedGitRepo) {
-    Push-Location -LiteralPath $ProjectPath
-    try {
-      # Local identity only if unset — avoids failing commit on machines without global git config.
-      $email = (& git config --get user.email 2>$null)
-      $name = (& git config --get user.name 2>$null)
-      if ([string]::IsNullOrWhiteSpace($email)) {
-        & git config user.email "agent-harness@localhost"
-      }
-      if ([string]::IsNullOrWhiteSpace($name)) {
-        & git config user.name "Agent Harness"
-      }
-      & git add -A
-      $porcelain = (& git status --porcelain 2>$null)
-      if (-not [string]::IsNullOrWhiteSpace($porcelain)) {
-        & git commit -m "chore: initial commit (agent-harness install)"
-        if ($LASTEXITCODE -ne 0) {
-          Write-WarnLine "initial git commit failed - commit manually before Start reflect."
-          $script:SKIPPED.Add("initial git commit") | Out-Null
-        } else {
-          & git branch -M main 2>$null
-          Write-Ok "created initial commit on main (working tree clean for Start reflect)"
-        }
-      } else {
-        Write-Note "nothing to commit after deploy"
-      }
-    } finally {
-      Pop-Location
+    $email = (& git config --get user.email 2>$null)
+    $name = (& git config --get user.name 2>$null)
+    if ([string]::IsNullOrWhiteSpace($email)) {
+      & git config user.email "agent-harness@localhost"
     }
+    if ([string]::IsNullOrWhiteSpace($name)) {
+      & git config user.name "Agent Harness"
+    }
+    & git add -A
+    $porcelain = (& git status --porcelain 2>$null)
+    if (-not [string]::IsNullOrWhiteSpace($porcelain)) {
+      & git commit -m "chore: initial commit"
+      if ($LASTEXITCODE -ne 0) {
+        Write-WarnLine "initial git commit failed - commit manually before Start reflect."
+        $script:SKIPPED.Add("initial git commit") | Out-Null
+      } else {
+        & git branch -M main 2>$null
+        Write-Ok "created initial commit on main"
+      }
+    } else {
+      Write-Note "nothing to commit after registration"
+    }
+  } finally {
+    Pop-Location
   }
 }
-Invoke-Pause "Continue to dashboard startup?"
 
-# -- 8. Start dashboard ----------------------------------------------------
+Write-Note "Optional later: Ollama embeddings, and Graphify via: uv tool install graphifyy"
+
+# -- 5. Start dashboard ----------------------------------------------------
 Write-Stage "Start dashboard"
 Write-Say "The dashboard prints a loopback URL with a one-time access token."
-Write-Say "Open that exact URL (token is only valid for that ui process)."
-Write-Note ('cd "' + $ProjectPath + '"')
-Write-Note ('node "' + $Cli + '" ui')
-Write-Note "CURSOR_API_KEY must be set in the same environment that runs ui."
+Write-Note ('node "' + $Cli + '" ui --repository "' + $ProjectPath + '"')
 if ([string]::IsNullOrWhiteSpace($env:CURSOR_API_KEY)) {
   Write-WarnLine "CURSOR_API_KEY is not set in this shell - set it before starting ui."
 }
 
 Write-Finish
 
-Write-Host "  Next: start the dashboard from the target project."
-Write-Host ""
 if ((Test-Path -LiteralPath $Cli) -and (Test-Path -LiteralPath $ProjectPath) -and
     (Confirm-Yes "Start the dashboard now in this terminal?")) {
   Set-Location -LiteralPath $ProjectPath
-  & node $Cli ui
+  & node $Cli ui --repository $ProjectPath
   exit $LASTEXITCODE
 }

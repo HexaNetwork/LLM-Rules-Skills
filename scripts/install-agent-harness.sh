@@ -38,21 +38,14 @@ _clear() {
   if command -v tput >/dev/null 2>&1; then tput clear; else printf '\033[2J\033[3J\033[H'; fi
 }
 
-# banner "Title" — opening frame: what this wizard does.
+# banner "Title" — opening frame (no Enter gate).
 banner() {
-  _clear
   printf '\n%s%s  %s%s\n' "$BOLD" "$BLUE" "$1" "$RESET"
   printf '%s  %s stages%s\n\n' "$DIM" "$TOTAL_STAGES" "$RESET"
-  printf '%s  You drive the browser; this wizard tells you exactly what to do and\n' "$DIM"
-  printf '  captures the values you copy back. Stop any time with Ctrl-C and re-run\n'
-  printf '  later — it remembers values already saved.%s\n' "$RESET"
-  pause "Ready to start?"
 }
 
-# stage "Name" — clear the screen, then announce a stage and show progress.
-# Clearing keeps only the current step on screen.
+# stage "Name" — announce a stage and show progress (no screen clear / Enter gate).
 stage() {
-  _clear
   _STAGE_INDEX=$((_STAGE_INDEX + 1))
   printf '\n%s%s▸ Stage %s/%s · %s%s\n' \
     "$BOLD" "$BLUE" "$_STAGE_INDEX" "$TOTAL_STAGES" "$1" "$RESET"
@@ -169,9 +162,8 @@ set_var() {
   warn "skipped GitHub variable $name — gh not ready; set it later"
 }
 
-# finish — clear, then a closing summary of everything configured.
+# finish — closing summary of everything configured.
 finish() {
-  _clear
   printf '\n%s%s  ✓ Setup complete%s\n' "$BOLD" "$GREEN" "$RESET"
   (( ${#WRITTEN_ENV[@]} ))    && note "wrote ${#WRITTEN_ENV[@]} value(s) to $ENV_FILE: ${WRITTEN_ENV[*]}"
   (( ${#WRITTEN_SECRET[@]} )) && note "set ${#WRITTEN_SECRET[@]} GitHub secret(s): ${WRITTEN_SECRET[*]}"
@@ -187,7 +179,7 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=8
+TOTAL_STAGES=5
 
 # Prefer paths relative to this script (repo root = parent of scripts/).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -207,6 +199,11 @@ _is_windows() {
 _node_ok() {
   command -v node >/dev/null 2>&1 || return 1
   node -e "const [M,m]=process.versions.node.split('.').map(Number); process.exit(M>20||(M===20&&m>=3)?0:1)" 2>/dev/null
+}
+
+_harness_checkout_ok() {
+  local path="$1"
+  [[ -n "$path" && -f "$path/package.json" && -d "$path/packages/agent-harness" ]]
 }
 
 _read_windows_user_env() {
@@ -241,7 +238,7 @@ banner "Agent Harness — installation"
 stage "Node prerequisites"
 say "The harness CLI needs Node.js 20.3+ and npm."
 if _node_ok; then
-  note "Found $(node -v) and npm $(npm -v 2>/dev/null || echo '?')"
+  printf '  %s✓ Found%s %s and npm %s\n' "$GREEN" "$RESET" "$(node -v)" "$(npm -v 2>/dev/null || echo '?')"
 else
   warn "Node.js 20.3+ is missing or too old."
   if _is_windows; then
@@ -261,61 +258,52 @@ else
     exit 1
   fi
 fi
-if _is_windows; then
-  note "If PowerShell blocks npm.ps1 (ExecutionPolicy), run once:"
-  note "  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned"
-  note "Or use npm.cmd / Command Prompt instead."
-fi
-pause "Continue to build the harness checkout?"
 
 # ── 2. Build this checkout ────────────────────────────────────────────────
 stage "Build this checkout"
-say "We'll install dependencies and build packages/agent-harness."
 HARNESS_ROOT="${HARNESS_ROOT:-$DEFAULT_HARNESS_ROOT}"
-ask HARNESS_ROOT "Path to the LLM-Rules-Skills checkout:"
-[[ -z "$HARNESS_ROOT" ]] && HARNESS_ROOT="$DEFAULT_HARNESS_ROOT"
-# Expand ~ if the human typed it.
-HARNESS_ROOT="${HARNESS_ROOT/#\~/$HOME}"
-if [[ ! -f "$HARNESS_ROOT/package.json" ]] || [[ ! -d "$HARNESS_ROOT/packages/agent-harness" ]]; then
-  warn "That path does not look like this repo (missing package.json or packages/agent-harness)."
-  exit 1
+# Skip asking when the script's parent checkout is already valid (includes LLM-Rules-Skills).
+if _harness_checkout_ok "$HARNESS_ROOT"; then
+  note "Using checkout: $HARNESS_ROOT"
+else
+  ask HARNESS_ROOT "Path to the LLM-Rules-Skills checkout:"
+  [[ -z "$HARNESS_ROOT" ]] && HARNESS_ROOT="$DEFAULT_HARNESS_ROOT"
+  HARNESS_ROOT="${HARNESS_ROOT/#\~/$HOME}"
+  if ! _harness_checkout_ok "$HARNESS_ROOT"; then
+    warn "That path does not look like this repo (missing package.json or packages/agent-harness)."
+    exit 1
+  fi
 fi
 CLI="$HARNESS_ROOT/$CLI_REL"
-say "Running npm install && npm run build in:"
-note "$HARNESS_ROOT"
+say "Running npm install && npm run build..."
 (
   cd "$HARNESS_ROOT"
   npm install
   npm run build
 )
 if [[ ! -f "$CLI" ]]; then
-  warn "Build finished but $CLI is missing — deploy will fail."
+  warn "Build finished but $CLI is missing — registration will fail."
   exit 1
 fi
 printf '  %s✓ built%s %s\n' "$GREEN" "$RESET" "$CLI"
-pause "Continue to the Cursor API key?"
 
 # ── 3. Cursor API key (Windows User env — never .env) ─────────────────────
 stage "Cursor API key"
-say "Real agent runs need CURSOR_API_KEY. We store it as a Windows User"
-say "environment variable (not in .env / not in the repo)."
+say "Real agent runs need CURSOR_API_KEY (User env on Windows, not .env)."
 EXISTING_KEY="${CURSOR_API_KEY:-}"
 if [[ -z "$EXISTING_KEY" ]] && _is_windows; then
   EXISTING_KEY="$(_read_windows_user_env CURSOR_API_KEY || true)"
 fi
-KEEP_KEY=0
 if [[ -n "$EXISTING_KEY" ]]; then
-  note "A CURSOR_API_KEY is already available in this environment (or User env)."
-  if confirm "Keep the existing key?"; then
-    CURSOR_API_KEY="$EXISTING_KEY"
-    KEEP_KEY=1
+  printf '  %s✓ Using existing CURSOR_API_KEY%s\n' "$GREEN" "$RESET"
+  CURSOR_API_KEY="$EXISTING_KEY"
+  if confirm "Replace it with a new key?"; then
+    CURSOR_API_KEY=""
   fi
 fi
-if [[ "$KEEP_KEY" -eq 0 ]]; then
+if [[ -z "${CURSOR_API_KEY:-}" ]]; then
   open_url "https://cursor.com/dashboard/api"
-  step "Sign in to the Cursor Dashboard if prompted."
-  step "Open API Keys (Dashboard → API Keys)."
-  step "Create a user API key, then copy it immediately (it may not be shown again)."
+  step "Create a user API key, then paste it here."
   ask_secret CURSOR_API_KEY "Paste the Cursor API key:"
   if [[ -z "${CURSOR_API_KEY:-}" ]]; then
     warn "No key pasted — agent runs will fail until CURSOR_API_KEY is set."
@@ -325,12 +313,10 @@ fi
 if [[ -n "${CURSOR_API_KEY:-}" ]]; then
   export CURSOR_API_KEY
   if _is_windows; then
-    if confirm "Persist CURSOR_API_KEY to your Windows User environment?"; then
+    USER_KEY="$(_read_windows_user_env CURSOR_API_KEY || true)"
+    if [[ "$USER_KEY" != "$CURSOR_API_KEY" ]]; then
       _set_windows_user_env CURSOR_API_KEY "$CURSOR_API_KEY"
       note "New terminals pick it up automatically. Restart any running harness/ui after changes."
-    else
-      note "Key exported for this wizard session only."
-      SKIPPED+=("persist CURSOR_API_KEY to Windows User env")
     fi
   else
     note "Non-Windows: export CURSOR_API_KEY in your shell profile for persistence."
@@ -338,11 +324,10 @@ if [[ -n "${CURSOR_API_KEY:-}" ]]; then
     SKIPPED+=("persist CURSOR_API_KEY in your shell profile")
   fi
 fi
-pause "Continue to choose the target project?"
 
-# ── 4. Target project ─────────────────────────────────────────────────────
+# ── 4. Target project + register ──────────────────────────────────────────
 stage "Target project"
-say "Deploy writes agent-harness.config.yaml and .agent-harness/ into a project folder."
+say "Registers the repo in harness home (config stays outside the project)."
 ask PROJECT_PATH "Absolute path to the target project:"
 PROJECT_PATH="${PROJECT_PATH/#\~/$HOME}"
 if [[ -z "$PROJECT_PATH" ]]; then
@@ -357,126 +342,76 @@ if [[ ! -d "$PROJECT_PATH" ]]; then
   fi
 fi
 note "Project: $PROJECT_PATH"
-# Deploy defaults to git.enabled: true; Start reflect needs a real git repo.
+if [[ -f "$PROJECT_PATH/agent-harness.config.yaml" || -e "$PROJECT_PATH/.agent-harness" ]]; then
+  warn "Found leftover repo-local harness files (agent-harness.config.yaml and/or .agent-harness/)."
+  note "Registration does not need them. Delete them after a successful project add, or run: agent-harness migrate-home"
+fi
 INITIALIZED_GIT_REPO=0
 if [[ -e "$PROJECT_PATH/.git" ]]; then
   note "Git repository already present."
 elif ! command -v git >/dev/null 2>&1; then
   warn "git is not on PATH — cannot initialize a repository."
-  note "Install git, or set git.enabled: false in agent-harness.config.yaml after deploy."
+  note "Install git, or set git.enabled: false in the harness-home project config."
   SKIPPED+=("git repository (git not installed)")
 else
   say "No .git found — initializing a git repository (required for harness runs)."
   if (cd "$PROJECT_PATH" && { git init -b main 2>/dev/null || git init; }); then
     INITIALIZED_GIT_REPO=1
-    printf '  %s✓ initialized git repository%s (will commit after deploy so the tree is clean)\n' "$GREEN" "$RESET"
+    printf '  %s✓ initialized git repository%s\n' "$GREEN" "$RESET"
   else
-    warn "git init failed — fix manually or set git.enabled: false after deploy."
+    warn "git init failed — fix manually or set git.enabled: false in harness-home config."
     SKIPPED+=("git init in target project")
   fi
 fi
-pause "Continue to optional Ollama embeddings?"
 
-# ── 5. Optional: Ollama ───────────────────────────────────────────────────
-stage "Optional — Ollama embeddings"
-say "Ollama provides local embeddings (no cloud API key). Deploy can wire it with --ollama."
-USE_OLLAMA=0
-if confirm "Configure Ollama embeddings during deploy?"; then
-  USE_OLLAMA=1
-  step "Install Ollama if needed (Windows: winget install Ollama.Ollama, or the download page)."
-  if confirm "Open the Ollama download page?"; then
-    open_url "https://ollama.com/download"
+say "Registering project..."
+if node "$CLI" project add --repository "$PROJECT_PATH"; then
+  printf '  %s✓ project registered in harness home%s\n' "$GREEN" "$RESET"
+else
+  warn "project add reported an error (exit $?)."
+  note "If the repository is already registered, that is fine — continue."
+  SKIPPED+=("project add (non-zero exit; may already be registered)")
+fi
+if remembered="$(ah_remember_project "$PROJECT_PATH" 2>/dev/null)"; then
+  note "remembered project in $(ah_settings_path)"
+else
+  warn "could not write user settings at $(ah_settings_path)"
+fi
+unset remembered
+if [[ "$INITIALIZED_GIT_REPO" -eq 1 ]]; then
+  if ! git -C "$PROJECT_PATH" config --get user.email >/dev/null 2>&1; then
+    git -C "$PROJECT_PATH" config user.email "agent-harness@localhost"
   fi
-  note "Optional helper after install:"
-  note "  $HARNESS_ROOT/packages/agent-harness/scripts/setup-local-embeddings.ps1 -InstallOllama"
-  note "  $HARNESS_ROOT/packages/agent-harness/scripts/setup-local-embeddings.sh"
-  pause "Press Enter once Ollama is installed (or skip and install later)"
-fi
-
-# ── 6. Optional: Graphify ─────────────────────────────────────────────────
-stage "Optional — Graphify"
-say "Graphify adds structural code retrieval. Install it yourself when enabled:"
-say "  uv tool install graphifyy"
-say "Default deploy enables Graphify; skip with --no-graphify for document-only projects."
-USE_GRAPHIFY=1
-if ! confirm "Enable Graphify for this project?"; then
-  USE_GRAPHIFY=0
-fi
-
-# ── 7. Deploy ─────────────────────────────────────────────────────────────
-stage "Deploy into the project"
-DEPLOY_ARGS=(deploy --project "$PROJECT_PATH" --refresh)
-[[ "$USE_OLLAMA" -eq 1 ]] && DEPLOY_ARGS+=(--ollama)
-if [[ "$USE_GRAPHIFY" -eq 0 ]]; then
-  DEPLOY_ARGS+=(--no-graphify)
-fi
-if [[ -f "$PROJECT_PATH/agent-harness.config.yaml" ]]; then
-  warn "agent-harness.config.yaml already exists in the target project."
-  if confirm "Replace it with --force?"; then
-    DEPLOY_ARGS+=(--force)
-  else
-    warn "Deploy aborted — existing config left unchanged."
-    SKIPPED+=("deploy (config already exists; re-run with --force if needed)")
-    pause "Continue to dashboard instructions?"
-    # Jump past deploy run
-    DEPLOY_ARGS=()
+  if ! git -C "$PROJECT_PATH" config --get user.name >/dev/null 2>&1; then
+    git -C "$PROJECT_PATH" config user.name "Agent Harness"
   fi
-fi
-if (( ${#DEPLOY_ARGS[@]} )); then
-  say "About to run:"
-  note "node \"$CLI\" ${DEPLOY_ARGS[*]}"
-  confirm "Run deploy now?" || { warn "Skipped deploy."; SKIPPED+=("deploy"); DEPLOY_ARGS=(); }
-fi
-if (( ${#DEPLOY_ARGS[@]} )); then
-  node "$CLI" "${DEPLOY_ARGS[@]}"
-  printf '  %s✓ deploy finished%s\n' "$GREEN" "$RESET"
-  # Seed user settings (AppData / XDG) so the launcher remembers this project.
-  if remembered="$(ah_remember_project "$PROJECT_PATH" 2>/dev/null)"; then
-    note "remembered project in $(ah_settings_path)"
-  else
-    warn "could not write user settings at $(ah_settings_path)"
-  fi
-  unset remembered
-  if [[ "$INITIALIZED_GIT_REPO" -eq 1 ]]; then
-    # Local identity only if unset — avoids failing commit on machines without global git config.
-    if ! git -C "$PROJECT_PATH" config --get user.email >/dev/null 2>&1; then
-      git -C "$PROJECT_PATH" config user.email "agent-harness@localhost"
-    fi
-    if ! git -C "$PROJECT_PATH" config --get user.name >/dev/null 2>&1; then
-      git -C "$PROJECT_PATH" config user.name "Agent Harness"
-    fi
-    git -C "$PROJECT_PATH" add -A
-    if [[ -n "$(git -C "$PROJECT_PATH" status --porcelain 2>/dev/null || true)" ]]; then
-      if git -C "$PROJECT_PATH" commit -m "chore: initial commit (agent-harness install)"; then
-        git -C "$PROJECT_PATH" branch -M main 2>/dev/null || true
-        printf '  %s✓ created initial commit on main%s (working tree clean for Start reflect)\n' "$GREEN" "$RESET"
-      else
-        warn "initial git commit failed — commit manually before Start reflect."
-        SKIPPED+=("initial git commit")
-      fi
+  git -C "$PROJECT_PATH" add -A
+  if [[ -n "$(git -C "$PROJECT_PATH" status --porcelain 2>/dev/null || true)" ]]; then
+    if git -C "$PROJECT_PATH" commit -m "chore: initial commit"; then
+      git -C "$PROJECT_PATH" branch -M main 2>/dev/null || true
+      printf '  %s✓ created initial commit on main%s\n' "$GREEN" "$RESET"
     else
-      note "nothing to commit after deploy"
+      warn "initial git commit failed — commit manually before Start reflect."
+      SKIPPED+=("initial git commit")
     fi
+  else
+    note "nothing to commit after registration"
   fi
 fi
-pause "Continue to dashboard startup?"
+note "Optional later: Ollama embeddings, and Graphify via: uv tool install graphifyy"
 
-# ── 8. Start dashboard ────────────────────────────────────────────────────
+# ── 5. Start dashboard ────────────────────────────────────────────────────
 stage "Start dashboard"
 say "The dashboard prints a loopback URL with a one-time access token."
-say "Open that exact URL (token is only valid for that ui process)."
-note "cd \"$PROJECT_PATH\""
-note "node \"$CLI\" ui"
-note "CURSOR_API_KEY must be set in the same environment that runs ui."
+note "node \"$CLI\" ui --repository \"$PROJECT_PATH\""
 if [[ -z "${CURSOR_API_KEY:-}" ]]; then
   warn "CURSOR_API_KEY is not set in this shell — set it before starting ui."
 fi
 
 finish
 
-printf '  Next: start the dashboard from the target project.\n\n'
 if [[ -f "$CLI" && -d "$PROJECT_PATH" ]] && confirm "Start the dashboard now in this terminal?"; then
   cd "$PROJECT_PATH"
   export CURSOR_API_KEY="${CURSOR_API_KEY:-}"
-  exec node "$CLI" ui
+  exec node "$CLI" ui --repository "$PROJECT_PATH"
 fi

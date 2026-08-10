@@ -545,11 +545,11 @@ export const renderRunScript = `    function renderSidebar() {
         }
         html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + acceptTreeControls + ignoreArtifactControls + '</div>' + retryControls + '</div><div class="resolution">' + fixerControls + '</div></div>';
       }
-      if (["grilling","awaiting_input","planning"].includes(s.phase)) {
-        html += renderFogCard(s);
-      }
       if (["grilling","awaiting_input"].includes(s.phase) && !s.grillReady) {
         html += renderNoteBox(s);
+      }
+      if (["grilling","awaiting_input","planning"].includes(s.phase)) {
+        html += renderFogCard(s);
       }
       var repoRoot = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.root) || "";
       var repoCopyBtn = repoRoot

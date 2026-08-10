@@ -174,6 +174,39 @@ describe("reviewTask packet", () => {
 });
 
 describe("harness-owned git", () => {
+  it("heals CRLF phantom dirty paths and preserves real content edits", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "eol.txt"), "line one\nline two\n", "utf8");
+    await git(root, "add", "--", "src/eol.txt");
+    await git(root, "commit", "-m", "add eol fixture");
+    await git(root, "config", "core.autocrlf", "true");
+
+    // Same text with CRLF — porcelain dirty, empty diff vs HEAD after filters.
+    await writeFile(path.join(root, "src", "eol.txt"), "line one\r\nline two\r\n", "utf8");
+    const porcelainBefore = (await git(root, "status", "--porcelain", "--", "src/eol.txt")).trim();
+    expect(porcelainBefore).toMatch(/eol\.txt/);
+    let diffEmpty = false;
+    try {
+      await exec("git", ["diff", "HEAD", "--quiet", "--", "src/eol.txt"], {
+        cwd: root,
+        windowsHide: true,
+      });
+      diffEmpty = true;
+    } catch {
+      diffEmpty = false;
+    }
+    expect(diffEmpty).toBe(true);
+
+    const service = new GitService(fixtureConfig(root, { git: { enabled: true } as never }));
+    expect(await service.changedFiles()).toEqual([]);
+    expect((await git(root, "status", "--porcelain", "--", "src/eol.txt")).trim()).toBe("");
+
+    await writeFile(path.join(root, "src", "eol.txt"), "line one\nline two changed\n", "utf8");
+    expect(await service.changedFiles()).toEqual(["src/eol.txt"]);
+  });
+
   it("creates the run branch, commits only reported paths, and writes the task trailer", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);

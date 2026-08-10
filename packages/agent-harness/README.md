@@ -300,7 +300,9 @@ New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI
 
 ### Preflight commit
 
-A dirty tree at `start()` blocks by default (`blockedFrom: "new"`), with the offending paths in the failure message. Resolving it by committing is available two ways:
+A dirty tree at `start()` blocks by default (`blockedFrom: "new"`), with the offending paths in the failure message. Before that check (and any other porcelain-based dirty/fingerprint read), the harness silently restores tracked paths that are dirty in `git status` but unchanged versus `HEAD` — typical Windows/`core.autocrlf` line-ending or stale-stat phantoms. Real content edits are left alone and still block.
+
+Resolving a real dirty tree by committing is available two ways:
 
 - **Explicit action (default path):** on a blocked run, the dashboard's "Commit changes and retry" control (or `agent-harness retry --run-id <id> --commit-dirty [order]`) commits the tree and clears the block. The offending paths stay visible next to the control so you see what gets swept in before clicking.
 - **`git.autoCommitPreflight: true`:** `start()` commits a dirty tree itself instead of blocking. Off by default.

@@ -146,7 +146,31 @@ export class GitService {
     return createHash("sha256").update(`${head}\0${filteredPorcelain}`).digest("hex");
   }
 
+  /**
+   * Porcelain after state-dir / artifact filters, with Windows/autocrlf phantoms healed.
+   * Phantoms = tracked in-place mods that are dirty in status but empty vs HEAD.
+   */
   private async porcelainStatus(): Promise<{ paths: string[]; filteredPorcelain: string }> {
+    let snapshot = await this.readFilteredPorcelain();
+    const phantoms = await this.findPhantomDirtyPaths(snapshot.entries);
+    if (phantoms.length > 0) {
+      await this.git(
+        ["restore", "--source=HEAD", "--staged", "--worktree", "--", ...phantoms],
+        true,
+      );
+      snapshot = await this.readFilteredPorcelain();
+    }
+    return {
+      paths: snapshot.paths,
+      filteredPorcelain: snapshot.filteredPorcelain,
+    };
+  }
+
+  private async readFilteredPorcelain(): Promise<{
+    paths: string[];
+    filteredPorcelain: string;
+    entries: PorcelainEntry[];
+  }> {
     const result = await this.git(["status", "--porcelain=v1", "--untracked-files=all", "-z"]);
     const statePrefix = normalize(
       pathRelative(this.config.repositoryRoot, pathResolve(this.config.repositoryRoot, this.config.stateDirectory)),
@@ -155,6 +179,7 @@ export class GitService {
     const records = result.stdout.split("\0").filter(Boolean);
     const paths: string[] = [];
     const kept: string[] = [];
+    const entries: PorcelainEntry[] = [];
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index]!;
       const status = record.slice(0, 2);
@@ -179,12 +204,36 @@ export class GitService {
       if (second) kept.push(second);
       paths.push(filePath);
       if (renamePath) paths.push(renamePath);
+      entries.push({ status, path: filePath, renamePath });
     }
     const filteredPorcelain = kept.length > 0 ? `${kept.join("\0")}\0` : "";
     return {
       paths: [...new Set(paths)].sort(),
       filteredPorcelain,
+      entries,
     };
+  }
+
+  /**
+   * Paths that look dirty in porcelain but have no content/mode change vs HEAD
+   * (common with core.autocrlf / stale stat cache on Windows).
+   */
+  private async findPhantomDirtyPaths(entries: PorcelainEntry[]): Promise<string[]> {
+    const phantoms: string[] = [];
+    for (const entry of entries) {
+      if (entry.renamePath != null || /[RC]/.test(entry.status)) continue;
+      if (/D/.test(entry.status)) continue;
+      if (entry.status === "??" || entry.status === "!!") continue;
+
+      const tracked = await this.git(["ls-files", "--error-unmatch", "--", entry.path], true);
+      if (tracked.exitCode !== 0) continue;
+
+      const diff = await this.git(["diff", "HEAD", "--quiet", "--", entry.path], true);
+      if (diff.exitCode === 0) {
+        phantoms.push(entry.path);
+      }
+    }
+    return phantoms;
   }
 
   /** Cuts/switches to the run branch from current HEAD, skipping the baseBranch hop and dirty-tree guard. */
@@ -303,6 +352,12 @@ export class GitService {
     }
   }
 }
+
+type PorcelainEntry = {
+  status: string;
+  path: string;
+  renamePath?: string;
+};
 
 type ProgramResult = { exitCode: number; stdout: string; stderr: string };
 

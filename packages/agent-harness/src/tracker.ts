@@ -52,12 +52,6 @@ function renderBrief(state: RunState): string {
 
 **Status:** ${brief.confirmed ? "confirmed" : "draft"}
 
-## Idea
-
-${state.idea}
-
-## Restatement
-
 ${body}
 `;
 }

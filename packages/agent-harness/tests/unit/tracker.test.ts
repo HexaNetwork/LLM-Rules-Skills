@@ -47,6 +47,8 @@ describe("local tracker", () => {
     const grill = await readFile(path.join(store.runDirectory(state.runId), "grill.md"), "utf8");
     expect(brief).toContain("Confirmed billing brief");
     expect(brief).toContain("confirmed");
+    expect(brief).not.toContain("## Idea");
+    expect(brief).not.toContain("Ship billing");
     expect(grill).toContain("Which provider?");
     expect(grill).toContain("Stripe");
   });

@@ -66,7 +66,6 @@ export class PlanningService {
       objective:
         "Turn the confirmed brief and grill resolutions into dependency-ordered tracer-bullet implementation tickets",
       input: {
-        idea: state.idea,
         confirmedBrief: state.reflectBrief?.confirmed,
         resolutions: state.grillResolutions,
         defaultTdd: this.ctx.config.workflow.tdd,
@@ -76,16 +75,18 @@ export class PlanningService {
         "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,tdd?,testCommand?}],proposedInstalls?:[{id,manager,packages,reason,command?}]}",
       schema: PlannerOutputSchema,
       knowledgeQuery: [
-        state.reflectBrief?.confirmed ?? state.idea,
+        state.reflectBrief?.confirmed,
         compactDomainSeed(
-          state.idea,
           state.reflectBrief?.confirmed,
           ...state.grillResolutions.flatMap((item) => [item.question, item.answer, item.summary]),
         ),
       ]
         .filter(Boolean)
         .join(" "),
-      knowledgeFallbackQuery: compactDomainSeed(state.idea, state.reflectBrief?.confirmed),
+      knowledgeFallbackQuery: compactDomainSeed(
+        state.reflectBrief?.confirmed,
+        ...state.grillResolutions.flatMap((item) => [item.question, item.answer, item.summary]),
+      ),
       signal: this.ctx.signalFor(state.runId),
     });
     const now = new Date().toISOString();
@@ -210,7 +211,6 @@ export class PlanningService {
       objective:
         "Propose the smallest verification settings patch (test command and test path patterns) for this repository",
       input: {
-        idea: state.idea,
         confirmedBrief: state.reflectBrief?.confirmed,
         evidence,
         currentSettings,
@@ -219,7 +219,7 @@ export class PlanningService {
         ? [
             "Evidence is thin, empty, or ambiguous. You may list and read repository files to choose verification settings.",
             "Do not create, edit, or delete project files — only inspect and propose settings.",
-            "When the repository has no build manifests, infer a single stack from the confirmed brief/idea and explain that inference in summary.",
+            "When the repository has no build manifests, infer a single stack from the confirmed brief and explain that inference in summary.",
             "Return exactly one raw JSON object with top-level summary and configPatch fields; no Markdown or code fences.",
             "configPatch may only include workflow.testPathPatterns and/or commands.test.",
             "Propose a single test runner command — never invent shell pipelines.",

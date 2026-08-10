@@ -111,7 +111,10 @@ describe("verification gate integration", () => {
 
     const profilerCall = scripted.calls.find((call) => call.role === "project-profiler");
     expect(profilerCall).toBeTruthy();
-    expect(JSON.stringify(profilerCall?.input)).toContain("package.json");
+    const profilerPayload = JSON.stringify(profilerCall?.input);
+    expect(profilerPayload).toContain("package.json");
+    expect(profilerPayload).toContain("confirmedBrief");
+    expect(profilerPayload).not.toMatch(/"idea"\s*:/);
 
     state = await engine.confirmVerification(state.runId, {
       patch: state.verificationReady!.proposedPatch,
@@ -133,7 +136,10 @@ describe("verification gate integration", () => {
     state = await engine.advance(state.runId);
     const plannerCall = scripted.calls.find((call) => call.role === "planner");
     expect(plannerCall).toBeTruthy();
-    expect(JSON.stringify(plannerCall?.input)).toContain("npm run test:unit");
+    const plannerPayload = JSON.stringify(plannerCall?.input);
+    expect(plannerPayload).toContain("npm run test:unit");
+    expect(plannerPayload).toContain("confirmedBrief");
+    expect(plannerPayload).not.toMatch(/"idea"\s*:/);
     // After confirmGrillAndAdvance-style flow the helper would finish planning;
     // here we stop once the planner saw the updated default.
     expect(state.tasks[0]?.id).toBe("greet");

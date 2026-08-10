@@ -420,7 +420,7 @@ export class InterviewService {
       knowledgeQuery: [brief, ...answeredQuestions.map((q) => `${q.prompt} ${q.answer ?? ""}`)]
         .filter(Boolean)
         .join(" "),
-      knowledgeFallbackQuery: compactDomainSeed(state.idea, brief),
+      knowledgeFallbackQuery: compactDomainSeed(brief),
       forceFresh: Boolean(coldStart),
       signal: this.ctx.signalFor(state.runId),
     });

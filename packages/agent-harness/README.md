@@ -122,6 +122,7 @@ Each run lives under `.agent-harness/runs/<runId>/`:
 | `state.json` | Authoritative state-machine checkpoint |
 | `config.json` | Frozen run configuration |
 | `events.jsonl` | Append-only transition history |
+| `idea.md` | Original operator idea (audit trail) |
 | `brief.md` | Confirmed (or draft) feature restatement |
 | `grill.md` | Locked grill resolutions |
 | `unknowns.md` | Open-unknowns register grouped by status |
@@ -138,6 +139,8 @@ The map is an index, not a duplicate source of truth. Full decisions live in the
 ## Reflect, grill, and human questions
 
 New runs start with a **reflector** that restates the idea. The dashboard renders that draft as a section-wise editor (goal, users, in/out of scope, assumptions, unknowns); confirming stores the edited brief and starts grilling. Runs created before structured reflect output fall back to the raw markdown editor.
+
+After confirm, **griller** and **planner** (including project-profiler) treat `reflectBrief.confirmed` as authoritative. The raw idea is reflect-only input and remains on disk as `idea.md` for audit; it is not re-injected into grill/plan work packets or `brief.md`.
 
 The **griller** asks 1–`workflow.grillQuestionsPerBatch` decision-ready HITL questions per turn (context, 2–4 options, recommendation each). The batch size is a **ceiling, not a target**: only mutually independent questions — where one answer would not change how another is phrased — may share a turn, so a genuinely forking decision is still asked alone. The dashboard collects the whole batch and submits it in one transition, so three independent decisions cost one model round-trip instead of three.
 

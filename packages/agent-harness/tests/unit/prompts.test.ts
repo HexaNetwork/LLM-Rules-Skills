@@ -73,6 +73,8 @@ describe("prompt rendering", () => {
     expect(rendered).toContain("workflow.testPathPatterns");
     expect(rendered).toContain("Prefer the evidence packet when it is strong");
     expect(rendered).toContain("empty/greenfield");
+    expect(rendered).toContain("confirmed brief");
+    expect(rendered).not.toContain("brief/idea");
     expect(rendered).toContain("Never invent shell pipelines");
     expect(rendered).toContain("Do not edit files");
   });

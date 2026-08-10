@@ -1,3 +1,9 @@
+import {
+  buildAgentActivity,
+  parseInvocationRecord,
+  type AgentActivity,
+  type InvocationRecord,
+} from "../../application/agent-activity.js";
 import type { RunState, WorkPacket } from "../../domain.js";
 import { renderPrompt, renderPromptBuilderPrompt } from "../../prompts.js";
 import type { RunStore } from "../../store.js";
@@ -82,31 +88,48 @@ export async function readEvents(store: RunStore, runId: string): Promise<unknow
   }
 }
 
-export async function readSessionSummaries(store: RunStore, runId: string): Promise<unknown[]> {
+export async function readInvocationRecords(
+  store: RunStore,
+  runId: string,
+): Promise<InvocationRecord[]> {
   // sessions/ also holds <id>.steps.jsonl (NDJSON); only *.json are session records.
   const files = (await store.listFiles(runId, "sessions")).filter((file) => file.endsWith(".json"));
-  const sessions = await Promise.all(
+  const records = await Promise.all(
     files.map(async (file) => {
       const value = (await store.readJson(runId, file)) as Record<string, unknown>;
-      return {
-        path: file,
-        sessionId: value.sessionId,
-        role: value.role,
-        model: value.model,
-        status: value.status,
-        attempt: value.attempt,
-        startedAt: value.startedAt,
-        endedAt: value.endedAt,
-        providerSessionId: value.providerSessionId,
-        providerRunId: value.providerRunId,
-        providerSessionReused: value.providerSessionReused,
-        usage: value.usage,
-        handoff: value.handoff,
-        error: value.error,
-      };
+      return parseInvocationRecord(file, value);
     }),
   );
+  return records.filter((record): record is InvocationRecord => record != null);
+}
+
+export async function readSessionSummaries(store: RunStore, runId: string): Promise<unknown[]> {
+  const records = await readInvocationRecords(store, runId);
+  const sessions = records.map((record) => ({
+    path: record.path,
+    sessionId: record.sessionId,
+    role: record.role,
+    model: record.model,
+    status: record.status,
+    attempt: record.attempt,
+    startedAt: record.startedAt,
+    endedAt: record.endedAt,
+    providerSessionId: record.providerSessionId,
+    providerSessionReused: record.providerSessionReused,
+    usage: record.usage,
+    handoff: record.handoff,
+    error: record.error,
+    taskId: record.taskId,
+    phase: record.phase,
+    taskStep: record.taskStep,
+    invocationKind: record.invocationKind,
+    trigger: record.trigger,
+  }));
   return sessions.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+}
+
+export async function readAgentActivity(store: RunStore, runId: string): Promise<AgentActivity> {
+  return buildAgentActivity(await readInvocationRecords(store, runId));
 }
 
 export async function readSessionDetail(

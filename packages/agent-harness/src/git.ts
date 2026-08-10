@@ -272,6 +272,7 @@ export class GitService {
     taskId: string,
     message: MessageOutput,
     reportedPaths: string[],
+    options: { redCheckpointShas?: string[] } = {},
   ): Promise<string | undefined> {
     if (!this.config.git.enabled) return undefined;
     if (await this.isTaskCommitted(taskId)) {
@@ -294,9 +295,176 @@ export class GitService {
     }
     await this.stagePaths(changed);
     const subject = sanitizeSubject(message.subject);
-    const body = [message.body.trim(), `Harness-Task: ${taskId}`].filter(Boolean).join("\n\n");
+    const trailers = [`Harness-Task: ${taskId}`];
+    if (options.redCheckpointShas && options.redCheckpointShas.length > 0) {
+      trailers.push(`Harness-Red-Checkpoints: ${options.redCheckpointShas.join(",")}`);
+    }
+    const body = [message.body.trim(), ...trailers].filter(Boolean).join("\n\n");
     await this.git(["commit", "-m", subject, "-m", body]);
     return (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+  }
+
+  /**
+   * Commit only verified RED test paths with checkpoint trailers (never Harness-Task).
+   * Idempotent when a checkpoint for the task is already at HEAD.
+   */
+  async commitRedCheckpoint(args: {
+    taskId: string;
+    taskTitle: string;
+    testPaths: string[];
+  }): Promise<{ sha: string; baseSha: string; paths: string[] } | undefined> {
+    if (!this.config.git.enabled) return undefined;
+    const existing = await this.findRedCheckpoint(args.taskId);
+    if (existing && (await this.isHead(existing.sha))) {
+      return existing;
+    }
+    const baseSha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+    const paths = [...new Set(args.testPaths.map(normalize))].filter(Boolean);
+    if (paths.length === 0) {
+      throw new HarnessFailure(
+        `RED checkpoint for ${args.taskId} requires at least one test path`,
+        "workspace",
+        true,
+      );
+    }
+    const dirty = new Set(await this.changedFiles());
+    const missing = paths.filter((file) => !dirty.has(file));
+    if (missing.length > 0) {
+      throw new HarnessFailure(
+        `RED checkpoint paths are not dirty: ${missing.join(", ")}`,
+        "workspace",
+        true,
+      );
+    }
+    await this.stagePaths(paths);
+    const subject = sanitizeSubject(`test: establish RED for ${args.taskTitle}`);
+    const body = [`Harness-Checkpoint: red`, `Harness-Checkpoint-Task: ${args.taskId}`].join("\n");
+    await this.git(["commit", "-m", subject, "-m", body]);
+    const sha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+    return { sha, baseSha, paths };
+  }
+
+  /** Locate the newest RED checkpoint commit for a task (crash-recovery attach). */
+  async findRedCheckpoint(
+    taskId: string,
+  ): Promise<{ sha: string; baseSha: string; paths: string[] } | undefined> {
+    if (!this.config.git.enabled) return undefined;
+    const result = await this.git(["log", "-40", "--format=%H%x00%B%x00"], true);
+    if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
+    const records = result.stdout.split("\0").map((part) => part.trim()).filter(Boolean);
+    for (let index = 0; index + 1 < records.length; index += 2) {
+      const sha = records[index]!;
+      const body = records[index + 1]!;
+      if (!body.includes("Harness-Checkpoint: red")) continue;
+      if (!body.includes(`Harness-Checkpoint-Task: ${taskId}`)) continue;
+      const parent = await this.git(["rev-parse", `${sha}^`], true);
+      const baseSha = parent.exitCode === 0 ? parent.stdout.trim() : sha;
+      const files = await this.git(["diff-tree", "--no-commit-id", "--name-only", "-r", sha], true);
+      const paths =
+        files.exitCode === 0
+          ? files.stdout
+              .split(/\r?\n/)
+              .map((line) => normalize(line.trim()))
+              .filter(Boolean)
+          : [];
+      return { sha, baseSha, paths };
+    }
+    return undefined;
+  }
+
+  /** Restore exact paths from a commit without touching other dirty production files. */
+  async restorePathsFromSha(sha: string, paths: string[]): Promise<string[]> {
+    if (!this.config.git.enabled || paths.length === 0) return [];
+    const normalized = [...new Set(paths.map(normalize))].filter(Boolean);
+    await this.git(["restore", `--source=${sha}`, "--worktree", "--staged", "--", ...normalized]);
+    return normalized;
+  }
+
+  /**
+   * Paths among `paths` whose working-tree contents differ from `sha`.
+   * Uses `git diff --name-only` so porcelain alone is not the integrity signal.
+   */
+  async pathsChangedVersusSha(sha: string, paths: string[]): Promise<string[]> {
+    if (!this.config.git.enabled || paths.length === 0) return [];
+    const normalized = [...new Set(paths.map(normalize))].filter(Boolean);
+    const result = await this.git(
+      ["diff", "--name-only", sha, "--", ...normalized],
+      true,
+    );
+    if (result.exitCode !== 0) return normalized;
+    const changed = new Set(
+      result.stdout
+        .split(/\r?\n/)
+        .map((line) => normalize(line.trim()))
+        .filter(Boolean),
+    );
+    // Untracked paths won't appear in diff against sha; treat dirty untracked as changed.
+    const dirty = new Set(await this.changedFiles());
+    return normalized.filter((file) => changed.has(file) || dirty.has(file));
+  }
+
+  /**
+   * Squash RED checkpoint commit(s) plus current dirty production changes into one task commit.
+   * Only rewrites the unpushed harness-owned run branch after verifying HEAD/branch.
+   */
+  async squashCheckpointsIntoTaskCommit(args: {
+    taskId: string;
+    message: MessageOutput;
+    reportedPaths: string[];
+    redCheckpointShas: string[];
+    expectedBranch?: string;
+  }): Promise<string | undefined> {
+    if (!this.config.git.enabled) return undefined;
+    if (await this.isTaskCommitted(args.taskId)) {
+      return (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+    }
+    if (args.expectedBranch) {
+      const current = await this.currentBranch();
+      if (current !== args.expectedBranch) {
+        throw new HarnessFailure(
+          `Refusing to squash checkpoints: expected branch ${args.expectedBranch}, on ${current ?? "detached"}`,
+          "workspace",
+          true,
+        );
+      }
+    }
+    const upstream = await this.git(["rev-parse", "--abbrev-ref", "@{upstream}"], true);
+    if (upstream.exitCode === 0 && upstream.stdout.trim()) {
+      const ahead = await this.git(["rev-list", "--count", "@{upstream}..HEAD"], true);
+      const behind = await this.git(["rev-list", "--count", "HEAD..@{upstream}"], true);
+      if (behind.exitCode === 0 && Number(behind.stdout.trim()) > 0) {
+        throw new HarnessFailure(
+          "Refusing to squash checkpoints: branch has remote commits not present locally",
+          "workspace",
+          true,
+        );
+      }
+      // Soft-reset through checkpoints only when we still own all local commits.
+      void ahead;
+    }
+
+    const oldestCheckpoint = args.redCheckpointShas[0];
+    if (!oldestCheckpoint) {
+      return this.commitTask(args.taskId, args.message, args.reportedPaths, {
+        redCheckpointShas: args.redCheckpointShas,
+      });
+    }
+    const base = await this.git(["rev-parse", `${oldestCheckpoint}^`], true);
+    if (base.exitCode !== 0) {
+      return this.commitTask(args.taskId, args.message, args.reportedPaths, {
+        redCheckpointShas: args.redCheckpointShas,
+      });
+    }
+    // Soft reset to the pre-checkpoint base, then create one atomic task commit.
+    await this.git(["reset", "--soft", base.stdout.trim()]);
+    return this.commitTask(args.taskId, args.message, args.reportedPaths, {
+      redCheckpointShas: args.redCheckpointShas,
+    });
+  }
+
+  private async isHead(sha: string): Promise<boolean> {
+    const head = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+    return head === sha;
   }
 
   /**

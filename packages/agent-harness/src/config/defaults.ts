@@ -46,6 +46,10 @@ workflow:
   # Hard spend ceilings (0 = unlimited); enforced between steps, never mid-step.
   maxRunTokens: 0
   maxRunCostUsd: 0
+  # Per-invocation / per-task ceilings (0 = unlimited); surfaced as circuit breakers.
+  maxInvocationTokens: 0
+  maxTaskTokens: 0
+  maxContextTurns: 0
   # Transient provider failures retry in-place (backoff 1s/4s/16s).
   maxProviderRetries: 2
   maxTestAttempts: 2

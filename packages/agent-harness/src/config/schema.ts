@@ -131,6 +131,11 @@ export const HarnessConfigSchema = z.object({
       // Hard spend ceilings enforced between steps; 0 = unlimited.
       maxRunTokens: z.number().int().nonnegative().default(0),
       maxRunCostUsd: z.number().nonnegative().default(0),
+      // Per-invocation / per-task token ceilings (0 = unlimited). Circuit-breaker only.
+      maxInvocationTokens: z.number().int().nonnegative().default(0),
+      maxTaskTokens: z.number().int().nonnegative().default(0),
+      // Release a reused provider context after this many turns (0 = unlimited).
+      maxContextTurns: z.number().int().nonnegative().default(0),
       // Automatic in-place retries for transient provider failures inside advance().
       maxProviderRetries: z.number().int().min(0).max(5).default(2),
       maxTestAttempts: z.number().int().positive().max(10).default(2),

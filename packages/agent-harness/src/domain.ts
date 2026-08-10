@@ -293,10 +293,27 @@ export const BuildTaskSchema = z.object({
   evidence: z.array(CommandEvidenceSchema).default([]),
   // Test files written by the test-writer; implementer edits to these are blocked.
   testPaths: z.array(z.string()).default([]),
+  // Paths committed into the authoritative RED checkpoint (may equal testPaths).
+  redCheckpointPaths: z.array(z.string()).default([]),
   changedFiles: z.array(z.string()).default([]),
   reviewSummary: z.string().optional(),
   commitSha: z.string().optional(),
+  // Production tree SHA immediately before the RED checkpoint commit.
+  redBaseSha: z.string().optional(),
+  // Authoritative failing-test checkpoint commit SHA.
+  redCheckpointSha: z.string().optional(),
+  redCheckpointNumber: z.number().int().nonnegative().optional(),
+  // Prior RED checkpoint SHAs retained for provenance / final squash trailers.
+  redCheckpointHistory: z.array(z.string()).default([]),
   failure: z.string().optional(),
+  // Last failed-transition fingerprint; identical evidence blocks another model call.
+  evidenceFingerprint: z.string().optional(),
+  seenEvidenceFingerprints: z.array(z.string()).default([]),
+  // Role-transition edges already taken for a fingerprint (prevents ping-pong).
+  seenRepairEdges: z.array(z.string()).default([]),
+  // Accepted test-repair fingerprints (at most one per implementation failure by default).
+  acceptedTestRepairFingerprints: z.array(z.string()).default([]),
+  integrityViolationCount: z.number().int().nonnegative().default(0),
   // In-process implementer episode; provider handles are not durable across processes.
   implementerSession: z
     .object({
@@ -307,6 +324,16 @@ export const BuildTaskSchema = z.object({
     .optional(),
 });
 export type BuildTask = z.infer<typeof BuildTaskSchema>;
+
+/** Defaults for newly introduced task-tracking fields (safe for manual test fixtures). */
+export const BUILD_TASK_TRACKING_DEFAULTS = {
+  redCheckpointPaths: [] as string[],
+  redCheckpointHistory: [] as string[],
+  seenEvidenceFingerprints: [] as string[],
+  seenRepairEdges: [] as string[],
+  acceptedTestRepairFingerprints: [] as string[],
+  integrityViolationCount: 0,
+};
 
 export const RunPhaseSchema = z.enum([
   "new",

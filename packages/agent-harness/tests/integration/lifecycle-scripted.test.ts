@@ -157,6 +157,8 @@ describe("Phase 5 scripted full lifecycle", () => {
         expect(state.tasks[0]?.status).toBe("done");
         expect(state.tasks[0]?.evidence.some((item) => item.purpose === "tdd:red")).toBe(true);
         expect(state.tasks[0]?.evidence.some((item) => item.passed)).toBe(true);
+        expect(state.tasks[0]?.redCheckpointSha).toMatch(/^[a-f0-9]{40}$/);
+        expect(state.tasks[0]?.redBaseSha).toMatch(/^[a-f0-9]{40}$/);
         expect(state.branchName).toMatch(/^harness\//);
 
         const runDir = path.join(fixture!.root, ".agent-harness", "runs", state.runId);
@@ -173,15 +175,26 @@ describe("Phase 5 scripted full lifecycle", () => {
         );
         expect(sessions.some((name) => name)).toBe(true);
         expect(sessions.length).toBeGreaterThanOrEqual(5);
+        const sampleSession = JSON.parse(
+          await readFile(path.join(runDir, "sessions", sessions[0]!), "utf8"),
+        ) as { invocationKind?: string; trigger?: { summary?: string } };
+        expect(sampleSession.invocationKind).toBeTruthy();
+        expect(sampleSession.trigger?.summary).toBeTruthy();
 
         const brief = await readFile(path.join(runDir, "brief.md"), "utf8");
         expect(brief).toContain("Confirmed brief");
 
         const log = await fixture!.git("log", "-1", "--format=%B");
         expect(log).toContain("Harness-Task: greet");
+        expect(log).toContain(`Harness-Red-Checkpoints: ${state.tasks[0]!.redCheckpointSha}`);
         expect(await fixture!.git("show", "--pretty=", "--name-only", "HEAD")).toContain(
           "src/greet.ts",
         );
+        // Published history is one atomic task commit (checkpoint squashed away).
+        const commits = (
+          await fixture!.git("rev-list", "--count", `main..${state.branchName}`)
+        ).trim();
+        expect(Number(commits)).toBe(1);
 
         scripted.assertExhausted();
         expect(scripted.calls.map((call) => call.role)).toEqual([

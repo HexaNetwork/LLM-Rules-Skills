@@ -107,7 +107,7 @@ The dependency-free browser UI is a read/write client of the same persisted stat
 
 Answering a batch is keyboard-driven: `1`–`4` pick an option for the focused question and advance, arrows move between questions, and `Escape` skips one. These fire only when the question container itself holds focus, so typing a digit in the free-text box is never swallowed. "Accept all recommendations" fills every unanswered question with its recommended option but never submits on its own.
 
-Blocked runs key remediation on `blockedKind` (dirty tree, missing agent credential, missing Graphify graph, changed configuration, workspace divergence, provider, budget) with the raw failure kept in a collapsed section. Token/cost ceilings surface a raise-and-retry control. While an agent step is in flight, the header shows live activity from `activity.json` (role, model, elapsed, last step summary). The run header also shows accrued usage (`total tokens · cached · cost`) against any configured ceiling.
+Blocked runs key remediation on `blockedKind` (dirty tree, missing agent credential, missing Graphify graph, changed configuration, workspace divergence, provider, budget) with the raw failure kept in a collapsed section. Token/cost ceilings surface a raise-and-retry control. While an agent step is in flight, the header shows live activity from `activity.json` (role, model, elapsed, last step summary). The **Agent activity** tab groups invocations by provider context (with turn badges and an invocation inspector). The run header also shows accrued usage (`total tokens · cached · cost`) against any configured ceiling.
 
 Background polling (~1.8s while the tab is visible) must not feel like a page reload. The server returns a cheap change `signature`, and an unchanged poll short-circuits before any payload is serialized. Focused HITL editors — and half-filled batch cards with no control currently focused — block silent rewrites, and scroll / `<details>` chrome is restored when a silent poll does rewrite the DOM. The full checklist lives in [docs/ui-polling.md](./docs/ui-polling.md).
 
@@ -129,8 +129,8 @@ Each run lives under `.agent-harness/runs/<runId>/`:
 | `issues/*.md` | Legacy decision artifacts if present |
 | `tasks/*.md` | Tracer-bullet implementation tickets and evidence |
 | `packets/*.json` | Complete handoff supplied to one model invocation |
-| `sessions/*.json` | Role, model, provider session/run IDs, context mode, exact submitted prompt, outcome, available usage, and handoff summary |
-| `sessions/<id>.steps.jsonl` | Bounded, redacted per-step agent activity for one session (no raw tool args) |
+| `sessions/*.json` | Invocation records: role, model, provider context IDs, causal metadata (`invocationKind`, `trigger`), exact submitted prompt, outcome, usage, and handoff summary |
+| `sessions/<id>.steps.jsonl` | Bounded, redacted per-step agent activity for one invocation (no raw tool args) |
 | `activity.json` | Live in-flight step snapshot; cleared when the invocation settles |
 | `cancel.request` | Out-of-band cancel marker; written by `cancel`, consumed by the advancing process |
 

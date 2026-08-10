@@ -815,7 +815,6 @@ describe("durable idea-to-feature workflow", () => {
         gates: [],
       },
     });
-    let red = true;
     const backend = createFakeBackend({
       reflector: () => REFLECT_OUTPUT,
       griller: () => ({
@@ -865,7 +864,6 @@ describe("durable idea-to-feature workflow", () => {
       "utf8",
     );
     expect(events).toContain("task.implementation_test_tamper");
-    void red;
   });
 
   it("guards test-path tamper even when targeted tests fail", async () => {

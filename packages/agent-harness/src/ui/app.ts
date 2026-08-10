@@ -247,8 +247,18 @@ export function renderDashboard(): string {
     .event:last-child:after { display:none; }
     .event-name { font-weight:650; }
     .event-time { color:var(--faint); font-size:11px; margin-top:2px; }
-    .session-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }
-    .session { border:1px solid var(--line-soft); background:var(--surface); border-radius:13px; padding:15px; min-width:0; overflow-wrap:anywhere; }
+    .activity-timeline { display:grid; gap:12px; }
+    .activity-context { border:1px solid var(--line-soft); background:var(--surface); border-radius:13px; padding:0; min-width:0; overflow:hidden; }
+    .activity-context-head { display:block; width:100%; text-align:left; background:transparent; border:0; color:inherit; padding:15px; cursor:pointer; }
+    .activity-context-head:hover { background:var(--surface-2); }
+    .activity-invocations { border-top:1px solid var(--line-soft); display:grid; gap:0; }
+    .activity-invocation { padding:12px 15px; border-top:1px solid var(--line-soft); }
+    .activity-invocation:first-child { border-top:0; }
+    .activity-invocation.warn { background:rgba(255,180,80,.06); }
+    .activity-invocation-main { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    .context-badge { display:inline-flex; align-items:center; font-size:10px; font-weight:800; letter-spacing:.06em; border-radius:999px; padding:3px 8px; border:1px solid var(--line); }
+    .context-badge.new { color:var(--lime); border-color:rgba(170,220,120,.35); }
+    .context-badge.reused { color:#9ecbff; border-color:rgba(120,170,255,.35); }
     .session-role { color:var(--purple); font-weight:750; }
     .session-model { color:var(--faint); font-size:11px; margin-top:3px; overflow-wrap:anywhere; }
     dialog.session-dialog { width:min(1280px,calc(100vw - 30px)); max-width:none; height:min(900px,calc(100vh - 30px)); max-height:none; }
@@ -393,7 +403,7 @@ export function renderDashboard(): string {
     <div class="markdown-view"><pre id="artifactContent"></pre></div>
   </dialog>
   <dialog id="sessionDialog" class="session-dialog">
-    <div class="dialog-head"><div class="session-title-wrap"><h2 id="sessionTitle">Session inspector</h2><div class="faint" id="sessionSubtitle"></div></div><button type="button" class="btn ghost icon-btn" data-close="sessionDialog">×</button></div>
+    <div class="dialog-head"><div class="session-title-wrap"><h2 id="sessionTitle">Invocation inspector</h2><div class="faint" id="sessionSubtitle"></div></div><button type="button" class="btn ghost icon-btn" data-close="sessionDialog">×</button></div>
     <div class="session-inspector" id="sessionInspector"></div>
   </dialog>
   <dialog id="settingsDialog">

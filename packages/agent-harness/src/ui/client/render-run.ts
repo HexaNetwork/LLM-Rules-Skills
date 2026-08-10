@@ -38,17 +38,24 @@ export const renderRunScript = `    function renderSidebar() {
       var title = shortTitle(proposedTitle || s.idea, 96);
       $("crumbTitle").textContent = title;
       $("topActions").innerHTML = actionButtons(s, phase);
-      var tabs = ["overview","decisions","tasks","sessions","artifacts"];
+      var tabs = [
+        { id: "overview", label: "Overview" },
+        { id: "decisions", label: "Decisions" },
+        { id: "tasks", label: "Tasks" },
+        { id: "activity", label: "Agent activity" },
+        { id: "artifacts", label: "Artifacts" },
+      ];
+      if (state.tab === "sessions") state.tab = "activity";
       var fullIdea = String(s.idea || "");
       var subtitle = title !== fullIdea ? '<div class="subtitle">' + esc(fullIdea) + '</div>' : '';
       var html = '<div class="title-row"><div><div class="eyebrow">Run ' + esc(s.runId.slice(0,8)) + '</div><h1>' + esc(title) + '</h1>' + subtitle + '</div><span class="badge ' + attr(phase) + '" data-testid="run-status"><i class="dot ' + attr(phase) + '"></i>' + esc(phaseLabel(phase)) + '</span></div>';
       html += renderUsageRow(s);
-      html += '<nav class="tabs">' + tabs.map(function (tab) { return '<button class="tab ' + (state.tab === tab ? "active" : "") + '" data-tab="' + tab + '">' + tab[0].toUpperCase() + tab.slice(1) + '</button>'; }).join("") + '</nav><div id="tabBody"></div>';
+      html += '<nav class="tabs">' + tabs.map(function (tab) { return '<button class="tab ' + (state.tab === tab.id ? "active" : "") + '" data-tab="' + tab.id + '">' + esc(tab.label) + '</button>'; }).join("") + '</nav><div id="tabBody"></div>';
       $("content").innerHTML = html;
       if (state.tab === "overview") renderOverview(s, summary, phase);
       else if (state.tab === "decisions") renderDecisions(s);
       else if (state.tab === "tasks") renderTasks(s);
-      else if (state.tab === "sessions") renderSessions();
+      else if (state.tab === "activity") renderAgentActivity();
       else renderArtifacts();
     }
 
@@ -584,7 +591,10 @@ export const renderRunScript = `    function renderSidebar() {
         : '';
       html += '<div class="card third"><div class="card-label">Build progress</div><div class="metric">' + taskDone + '<span class="faint"> / ' + taskTotal + '</span></div><div class="muted">implementation tasks done</div><div class="progress"><i style="width:' + percent + '%"></i></div><div class="muted repo-label">Repository' + repoCopyBtn + '</div><div style="margin-top:4px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div></div>';
       html += '<div class="card third"><div class="card-label">Grill resolutions</div><div class="metric">' + grillTotal + '</div><div class="muted">' + (unknowns.length ? (openUnknownCount + ' open unknown(s) · ' + unknowns.length + ' in register') : 'decisions locked in') + '</div></div>';
-      html += '<div class="card third"><div class="card-label">Sessions</div><div class="metric">' + state.detail.sessions.length + '</div><div class="muted">model sessions</div><div class="faint" style="margin-top:12px">Updated ' + esc(ago(s.updatedAt)) + '</div></div>';
+      var activityTotals = (state.detail.agentActivity && state.detail.agentActivity.totals) || {};
+      var contextCount = activityTotals.providerContexts != null ? activityTotals.providerContexts : ((state.detail.sessions || []).length);
+      var invocationCount = activityTotals.invocations != null ? activityTotals.invocations : ((state.detail.sessions || []).length);
+      html += '<div class="card third"><div class="card-label">Agent activity</div><div class="metric">' + contextCount + '<span class="faint"> / ' + invocationCount + '</span></div><div class="muted">provider contexts · invocations</div><div class="faint" style="margin-top:12px">Updated ' + esc(ago(s.updatedAt)) + '</div></div>';
       html += renderUsageBudgetCard(s);
       var brief = s.reflectBrief;
       var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");
@@ -622,13 +632,81 @@ export const renderRunScript = `    function renderSidebar() {
       $("tabBody").innerHTML = html;
     }
 
-    function renderSessions() {
-      var sessions = state.detail.sessions;
-      $("tabBody").innerHTML = sessions.length ? '<div class="session-grid">' + sessions.map(function (session) {
-        var usage = session.usage && (session.usage.inputTokens || session.usage.outputTokens) ? (String(session.usage.inputTokens || 0) + ' in' + (session.usage.cacheReadTokens ? ' (' + number(session.usage.cacheReadTokens) + ' cached)' : '') + ' · ' + String(session.usage.outputTokens || 0) + ' out') : 'usage unavailable';
-        var summary = session.handoff && session.handoff.summary ? session.handoff.summary : (session.error || 'Session record');
-        var contextMode = session.providerSessionReused === true ? ' · continued' : (session.providerSessionReused === false ? ' · fresh' : '');
-        return '<article class="session"><div class="item-head"><span class="session-role">' + esc(session.role) + '</span><span class="badge ' + attr(session.status === "completed" ? "completed" : session.status) + '">' + esc(session.status) + '</span></div><div class="session-model">' + esc(session.model) + ' · ' + esc(usage) + esc(contextMode) + '</div><p class="muted">' + esc(summary) + '</p><button class="btn small" data-session="' + attr(session.path) + '">Inspect session</button></article>';
-      }).join("") + '</div>' : '<div class="empty">No model sessions have launched yet.</div>';
+    function formatTokenCount(value) {
+      var n = Number(value || 0);
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(2).replace(/\\.0+$/, '').replace(/(\\.[0-9]*?)0+$/, '$1') + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\\.0$/, '') + 'K';
+      return String(n);
+    }
+
+    function invocationUsageWarning(invocation, contextUsage) {
+      var total = Number((invocation.usage && invocation.usage.totalTokens) || 0);
+      var ceiling = state.detail && state.detail.ceilings && state.detail.ceilings.maxInvocationTokens;
+      if (ceiling && total > ceiling) return true;
+      var contextTotal = Number((contextUsage && contextUsage.totalTokens) || 0);
+      if (contextTotal > 0 && total > contextTotal * 0.6 && total >= 100000) return true;
+      return false;
+    }
+
+    function renderAgentActivity() {
+      var activity = state.detail.agentActivity;
+      var contexts = (activity && activity.providerContexts) || [];
+      if (!contexts.length) {
+        $("tabBody").innerHTML = '<div class="empty">No provider contexts have launched yet.</div>';
+        return;
+      }
+      if (!state.expandedContexts) state.expandedContexts = {};
+      var html = '<div class="activity-timeline" data-testid="agent-activity">';
+      contexts.forEach(function (context, contextIndex) {
+        var key = context.id || ('ctx-' + contextIndex);
+        var expanded = !!state.expandedContexts[key];
+        var usage = context.usage || {};
+        var tokenLabel = formatTokenCount(usage.totalTokens || ((usage.inputTokens || 0) + (usage.outputTokens || 0)));
+        var durationMs = 0;
+        if (context.startedAt && context.endedAt) durationMs = Math.max(0, Date.parse(context.endedAt) - Date.parse(context.startedAt));
+        else if (context.startedAt) durationMs = Math.max(0, Date.now() - Date.parse(context.startedAt));
+        var durationLabel = durationMs ? ((durationMs / 1000).toFixed(1) + 's') : '—';
+        var taskTitle = '';
+        (context.invocations || []).some(function (inv) {
+          if (!inv.taskId || !state.detail.state || !state.detail.state.tasks) return false;
+          var task = state.detail.state.tasks.find(function (item) { return item.id === inv.taskId; });
+          if (task) { taskTitle = task.title; return true; }
+          return false;
+        });
+        html += '<article class="activity-context' + (expanded ? ' open' : '') + '" data-context-key="' + attr(key) + '">';
+        html += '<button type="button" class="activity-context-head" data-toggle-context="' + attr(key) + '">';
+        html += '<div class="item-head"><div><div class="session-role">' + esc(context.role || 'unknown') + (taskTitle ? ' · ' + esc(taskTitle) : '') + '</div>';
+        html += '<div class="session-model">' + esc(context.model || 'unknown') + '</div>';
+        html += '<div class="muted">1 provider context · ' + esc(String(context.invocationCount || 0)) + ' invocations</div></div>';
+        html += '<span class="badge ' + attr(context.status === 'completed' ? 'completed' : context.status) + '">' + esc(context.status || 'unknown') + '</span></div>';
+        html += '<div class="muted" style="margin-top:8px">' + esc(durationLabel) + ' · ' + esc(tokenLabel) + ' tokens</div>';
+        html += '</button>';
+        if (expanded) {
+          html += '<div class="activity-invocations">';
+          (context.invocations || []).forEach(function (invocation) {
+            var turn = invocation.contextTurn || 1;
+            var badge = invocation.providerSessionReused === true || turn > 1 ? 'REUSED CONTEXT' : 'NEW CONTEXT';
+            var kind = invocation.invocationKind || 'invocation';
+            var trigger = invocation.triggerSummary || (invocation.trigger && invocation.trigger.summary) || 'Reason unavailable for historical invocation';
+            var warn = invocationUsageWarning(invocation, usage);
+            var tokens = formatTokenCount((invocation.usage && invocation.usage.totalTokens) || 0);
+            var time = invocation.startedAt ? date(invocation.startedAt).slice(11, 16) : '—';
+            html += '<div class="activity-invocation' + (warn ? ' warn' : '') + '">';
+            html += '<div class="activity-invocation-main"><span class="faint">' + esc(time) + '</span>';
+            html += '<strong>Turn ' + esc(String(turn)) + '</strong>';
+            html += '<span class="context-badge ' + (badge === 'NEW CONTEXT' ? 'new' : 'reused') + '">' + badge + '</span>';
+            html += '<span>' + esc(kind) + '</span>';
+            html += '<span class="faint">' + esc(tokens) + (warn ? ' ⚠' : '') + '</span></div>';
+            html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
+            if (invocation.error) html += '<div class="fail" style="margin-top:4px">' + esc(invocation.error) + '</div>';
+            html += '<button class="btn small" data-session="' + attr(invocation.path) + '" data-context-turn="' + attr(String(turn)) + '" data-context-total="' + attr(String(context.invocationCount || 0)) + '" data-context-badge="' + attr(badge) + '">Inspect invocation</button>';
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+        html += '</article>';
+      });
+      html += '</div>';
+      $("tabBody").innerHTML = html;
     }
 `;

@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { AgentRole } from "../../domain.js";
+import type { InvocationKind, InvocationTrigger } from "../../application/agent-activity.js";
+import type { AgentRole, RunPhase } from "../../domain.js";
 import { HarnessFailure } from "../../errors.js";
 
 export type AgentStepEvent = {
@@ -90,6 +91,14 @@ type InvokeBase<T> = {
   allowTools?: boolean;
   /** Out-of-band cancellation from the harness engine. */
   signal?: AbortSignal;
+  /** Harness-authored causal metadata for Agent activity (models never supply this). */
+  causal?: {
+    taskId?: string;
+    phase?: RunPhase;
+    taskStep?: string;
+    invocationKind?: InvocationKind;
+    trigger?: InvocationTrigger;
+  };
 };
 
 /** Retrieval-disabled calls must not invent a JSON-blob knowledge query. */

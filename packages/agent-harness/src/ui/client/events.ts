@@ -108,7 +108,7 @@ export const eventsScript = `    async function waitForJob(runId) {
       return '<details class="session-section"' + (open ? ' open' : '') + '><summary>' + esc(title) + (detail ? '<small>' + esc(detail) + '</small>' : '') + '</summary><pre class="' + attr(extraClass || '') + '">' + esc(pretty(value)) + '</pre></details>';
     }
 
-    async function openSession(file) {
+    async function openSession(file, metaHints) {
       try {
         var data = await api('/api/runs/' + encodeURIComponent(state.selected) + '/session?path=' + encodeURIComponent(file));
         var session = data.session || {}, usage = session.usage || {};
@@ -116,10 +116,16 @@ export const eventsScript = `    async function waitForJob(runId) {
         var ended = session.endedAt ? new Date(session.endedAt) : null;
         var duration = started && ended ? Math.max(0,ended.getTime()-started.getTime()) : null;
         var prompt = data.inputPrompt || "Input unavailable for this historical session.";
+        var hints = metaHints || {};
+        var contextBadge = hints.contextBadge || (session.providerSessionReused === true ? 'REUSED CONTEXT' : (session.providerSessionReused === false ? 'NEW CONTEXT' : 'UNKNOWN CONTEXT'));
+        var turnLabel = hints.contextTurn && hints.contextTotal
+          ? (String(session.role || 'agent') + ' · turn ' + hints.contextTurn + ' of ' + hints.contextTotal)
+          : (session.role || 'Invocation');
         var meta = '';
+        meta += '<div class="context-badge ' + (contextBadge === 'NEW CONTEXT' ? 'new' : 'reused') + '" style="grid-column:1/-1">' + esc(contextBadge) + '</div>';
         meta += sessionStat('Status', session.status || 'unknown');
         meta += sessionStat('Model', session.model || 'unknown');
-        meta += sessionStat('Attempt', String(Number(session.attempt || 0) + 1));
+        meta += sessionStat('Schema attempt', String(Number(session.attempt || 0) + 1));
         meta += sessionStat('Duration', duration == null ? '—' : (duration / 1000).toFixed(1) + 's');
         meta += sessionStat('Input tokens', number(usage.inputTokens));
         meta += sessionStat('Output tokens', number(usage.outputTokens));
@@ -130,9 +136,10 @@ export const eventsScript = `    async function waitForJob(runId) {
         meta += sessionStat('Started', session.startedAt || '—');
         meta += sessionStat('Ended', session.endedAt || '—');
         meta += sessionStat('Invocation ID', session.invocationId || '—');
-        meta += sessionStat('Provider session', session.providerSessionId || '—');
+        meta += sessionStat('Provider context', session.providerSessionId || '—');
         meta += sessionStat('Provider run', session.providerRunId || '—');
-        meta += sessionStat('Context mode', session.providerSessionReused === true ? 'continued episode' : (session.providerSessionReused === false ? 'fresh provider context' : 'unknown'));
+        meta += sessionStat('Invocation kind', session.invocationKind || '—');
+        meta += sessionStat('Trigger', (session.trigger && session.trigger.summary) || 'Reason unavailable for historical invocation');
         var artifacts = Array.isArray(data.relatedArtifacts) && data.relatedArtifacts.length ? '<div class="related-artifacts">' + data.relatedArtifacts.map(function (artifact) { return '<code>' + esc(artifact) + '</code>'; }).join('') + '</div>' : '';
         var packet = data.packet || {};
         var context = Array.isArray(packet.context) ? packet.context : [];
@@ -168,7 +175,7 @@ export const eventsScript = `    async function waitForJob(runId) {
         }
         html += sessionSection('Raw session record', '', session, false);
         if (artifacts) html += '<details class="session-section"><summary>Related artifacts</summary>' + artifacts + '</details>';
-        $("sessionTitle").textContent = String(session.role || 'Session') + ' session';
+        $("sessionTitle").textContent = turnLabel;
         $("sessionSubtitle").textContent = String(session.sessionId || file);
         $("sessionInspector").innerHTML = html;
         $("sessionDialog").showModal();
@@ -334,7 +341,20 @@ export const eventsScript = `    async function waitForJob(runId) {
         setSoundsMuted(!soundsMuted());
       }
       if (target.dataset.artifact) openArtifact(target.dataset.artifact);
-      if (target.dataset.session) openSession(target.dataset.session);
+      if (target.dataset.toggleContext) {
+        if (!state.expandedContexts) state.expandedContexts = {};
+        var contextKey = target.dataset.toggleContext;
+        state.expandedContexts[contextKey] = !state.expandedContexts[contextKey];
+        renderRun();
+        return;
+      }
+      if (target.dataset.session) {
+        openSession(target.dataset.session, {
+          contextTurn: target.dataset.contextTurn,
+          contextTotal: target.dataset.contextTotal,
+          contextBadge: target.dataset.contextBadge,
+        });
+      }
       if (target.id === 'settingsBtn') openSettings();
       if (target.dataset.removeArtifactIndex != null) {
         event.preventDefault();

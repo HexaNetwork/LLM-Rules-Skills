@@ -28,6 +28,7 @@ import {
   allowedArtifact,
   listArtifacts,
   readActivity,
+  readAgentActivity,
   readEvents,
   readInstallLog,
   readSessionDetail,
@@ -200,9 +201,10 @@ export async function handleRunsRoutes(
       json(response, 200, { unchanged: true, signature });
       return true;
     }
-    const [events, sessions, artifacts, runConfig, installLog] = await Promise.all([
+    const [events, sessions, agentActivity, artifacts, runConfig, installLog] = await Promise.all([
       readEvents(ctx.store, runId),
       readSessionSummaries(ctx.store, runId),
+      readAgentActivity(ctx.store, runId),
       listArtifacts(ctx.store, runId),
       loadRunConfig(projectConfig, runId).catch(() => null),
       readInstallLog(ctx.store, runId),
@@ -220,6 +222,9 @@ export async function handleRunsRoutes(
       ? {
           maxRunTokens: runConfig.workflow.maxRunTokens,
           maxRunCostUsd: runConfig.workflow.maxRunCostUsd,
+          maxInvocationTokens: runConfig.workflow.maxInvocationTokens,
+          maxTaskTokens: runConfig.workflow.maxTaskTokens,
+          maxContextTurns: runConfig.workflow.maxContextTurns,
         }
       : undefined;
     json(response, 200, {
@@ -227,6 +232,7 @@ export async function handleRunsRoutes(
       job,
       events,
       sessions,
+      agentActivity,
       artifacts,
       activity,
       installLog,

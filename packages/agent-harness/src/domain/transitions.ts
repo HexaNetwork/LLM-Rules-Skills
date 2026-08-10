@@ -456,7 +456,13 @@ export function materializeTasks(
     attempts: { tests: 0, implementation: 0, review: 0 },
     evidence: [],
     testPaths: [],
+    redCheckpointPaths: [],
     changedFiles: [],
+    redCheckpointHistory: [],
+    seenEvidenceFingerprints: [],
+    seenRepairEdges: [],
+    acceptedTestRepairFingerprints: [],
+    integrityViolationCount: 0,
   }));
 }
 

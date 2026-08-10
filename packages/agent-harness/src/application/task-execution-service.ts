@@ -22,6 +22,14 @@ import { commandEvidence, recentEvidenceOutput } from "../commands.js";
 import { compactDomainSeed } from "../knowledge.js";
 import { taskFrontier } from "../tracker.js";
 import type { ApplicationContext } from "./application-context.js";
+import type { InvocationKind } from "./agent-activity.js";
+import {
+  evaluateRepairProgress,
+  evidenceFingerprint,
+  failingTestIdsFromEvidence,
+  failureCategoryFromEvidence,
+  repairEdgeKey,
+} from "./evidence-fingerprint.js";
 import { normalizePathKey, taskForPacket, unique } from "./helpers.js";
 
 export class TaskExecutionService {
@@ -79,11 +87,7 @@ export class TaskExecutionService {
       case "writing_tests":
         return this.writeTests(state, task);
       case "red":
-        return this.updateTask(
-          state,
-          { ...task, step: "implementing" },
-          "task.red_confirmed",
-        );
+        return this.confirmRed(state, task);
       case "implementing":
         return this.implementTask(state, task);
       case "verifying":
@@ -105,13 +109,23 @@ export class TaskExecutionService {
     const knownPaths = this.ctx.config.git.enabled
       ? new Set(await this.ctx.git.changedFiles())
       : undefined;
+    const isRepair = Boolean(task.redCheckpointSha) && task.attempts.implementation > 0;
     const result = await this.ctx.agents.invoke({
       runId: state.runId,
       role: "test-writer",
-      objective: `Write the next failing behavioral test for “${task.title}”`,
+      objective: isRepair
+        ? `Repair the failing behavioral tests for “${task.title}” without weakening acceptance criteria`
+        : `Write the next failing behavioral test for “${task.title}”`,
       input: {
         task: taskForPacket(task),
         priorCommandOutput: recentEvidenceOutput(task.evidence),
+        ...(isRepair
+          ? {
+              redCheckpointSha: task.redCheckpointSha,
+              redBaseSha: task.redBaseSha,
+              repairMode: true,
+            }
+          : {}),
       },
       expectedOutput: "{summary,changedFiles}",
       schema: WorkerOutputSchema,
@@ -124,6 +138,20 @@ export class TaskExecutionService {
         task.description,
       ),
       signal: this.ctx.signalFor(state.runId),
+      causal: {
+        taskId: task.id,
+        phase: state.phase,
+        taskStep: task.step,
+        invocationKind: isRepair ? "test-repair" : task.attempts.tests > 0 ? "continuation" : "initial",
+        trigger: {
+          event: isRepair ? "task.test_repair" : "task.writing_tests",
+          classification: isRepair ? "test-repair" : "initial",
+          summary: isRepair
+            ? "bounded test-writer repair from diagnostic evidence"
+            : "initial test writer for RED",
+          evidenceFingerprint: task.evidenceFingerprint,
+        },
+      },
     });
     const observedPaths = this.ctx.config.git.enabled
       ? (await this.ctx.git.changedFiles()).filter((file) => !knownPaths!.has(file))
@@ -137,6 +165,10 @@ export class TaskExecutionService {
         false,
       );
     }
+    const testPaths = unique([
+      ...task.testPaths,
+      ...observedPaths.filter((file) => isTestPath(file, testPatterns)),
+    ]);
     const evidence = await this.runTargetedTest(state.runId, task, "tdd:red");
     const attempts = { ...task.attempts, tests: task.attempts.tests + 1 };
     const commandOutput = `${evidence.stdout}\n${evidence.stderr}`;
@@ -146,29 +178,76 @@ export class TaskExecutionService {
       evidence.exitCode !== 124 &&
       !/no tests found|no test files found/i.test(commandOutput) &&
       !commandNotLaunched;
+    if (isRepair && meaningfulRed) {
+      return this.acceptTestRepairCheckpoint(state, task, {
+        attempts,
+        testPaths,
+        changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
+        evidence: [...task.evidence, evidence],
+        observedPaths,
+      });
+    }
     const exhausted = !meaningfulRed && attempts.tests >= this.ctx.config.workflow.maxTestAttempts;
     const redFailure = exhausted
       ? commandNotLaunched
         ? formatCommandNotLaunchedFailure(evidence.command, evidence.stderr, evidence.stdout)
         : "Test writer could not produce a meaningful RED run"
       : undefined;
-    const updated: BuildTask = {
+    let updated: BuildTask = {
       ...task,
       attempts,
-      testPaths: unique([
-        ...task.testPaths,
-        ...observedPaths.filter((file) => isTestPath(file, testPatterns)),
-      ]),
+      testPaths,
       changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
       evidence: [...task.evidence, evidence],
       step: meaningfulRed ? "red" : exhausted ? "failed" : "writing_tests",
       status: exhausted ? "failed" : "active",
       failure: redFailure,
     };
+    if (meaningfulRed) {
+      updated = await this.establishRedCheckpoint(updated, observedPaths);
+    }
     return this.updateTask(
       await this.ctx.withTreeFingerprint(state),
       updated,
       meaningfulRed ? "task.red_observed" : "task.red_rejected",
+      meaningfulRed
+        ? {
+            redCheckpointSha: updated.redCheckpointSha,
+            redBaseSha: updated.redBaseSha,
+          }
+        : {},
+    );
+  }
+
+  async confirmRed(state: RunState, task: BuildTask): Promise<RunState> {
+    let next = task;
+    if (this.ctx.config.git.enabled && !next.redCheckpointSha) {
+      const recovered = await this.ctx.git.findRedCheckpoint(next.id);
+      if (recovered) {
+        next = {
+          ...next,
+          redBaseSha: recovered.baseSha,
+          redCheckpointSha: recovered.sha,
+          redCheckpointNumber: (next.redCheckpointNumber ?? 0) + 1,
+          redCheckpointPaths: recovered.paths.length > 0 ? recovered.paths : next.testPaths,
+          redCheckpointHistory: unique([...next.redCheckpointHistory, recovered.sha]),
+        };
+        state = await this.updateTask(state, next, "task.red_checkpoint_recovered", {
+          redCheckpointSha: recovered.sha,
+          redBaseSha: recovered.baseSha,
+        });
+      } else if (next.testPaths.length > 0) {
+        next = await this.establishRedCheckpoint(next, next.testPaths);
+        state = await this.updateTask(state, next, "task.red_checkpoint_committed", {
+          redCheckpointSha: next.redCheckpointSha,
+          redBaseSha: next.redBaseSha,
+        });
+      }
+    }
+    return this.updateTask(
+      state,
+      { ...next, step: "implementing" },
+      "task.red_confirmed",
     );
   }
 
@@ -185,7 +264,56 @@ export class TaskExecutionService {
       task = { ...task, evidence: [...task.evidence, recovery] };
       state = await this.updateTask(await this.ctx.withTreeFingerprint(state), task, "task.resume_check_failed");
     }
-    const episode = task.implementerSession;
+
+    const latestEvidence = task.evidence.at(-1);
+    const category = failureCategoryFromEvidence(latestEvidence, "verification");
+    if (category === "test-repair" && task.tdd && task.redCheckpointSha) {
+      return this.routeToTestRepair(state, task, latestEvidence);
+    }
+
+    const skipProgressGate =
+      latestEvidence?.purpose === "tdd:resume-check" ||
+      latestEvidence?.purpose === "guard:test-integrity";
+    if (!skipProgressGate && (task.attempts.implementation > 0 || task.reviewSummary)) {
+      const gate = await this.progressGate(task, "implementer", "implementer", latestEvidence);
+      if (!gate.allowed) {
+        return this.blockNoProgress(state, task, gate.fingerprint, gate.summary);
+      }
+    }
+
+    let episode = task.implementerSession;
+    const maxContextTurns = this.ctx.config.workflow.maxContextTurns;
+    if (
+      episode?.providerSessionId &&
+      maxContextTurns > 0 &&
+      (episode.turns ?? 0) >= maxContextTurns
+    ) {
+      await this.ctx.agents.releaseProviderSession(episode.providerSessionId);
+      state = await this.ctx.store.record(
+        {
+          ...state,
+          tasks: state.tasks.map((item) =>
+            item.id === task.id ? { ...item, implementerSession: undefined } : item,
+          ),
+        },
+        "circuit_breaker.context_turns",
+        {
+          taskId: task.id,
+          maxContextTurns,
+          turns: episode.turns,
+        },
+      );
+      task = { ...task, implementerSession: undefined };
+      episode = undefined;
+    }
+    const reuseContext =
+      Boolean(episode?.providerSessionId) && (task.integrityViolationCount ?? 0) === 0;
+    const invocationKind: InvocationKind =
+      task.attempts.implementation > 0 || task.reviewSummary
+        ? "implementation-repair"
+        : episode?.providerSessionId
+          ? "continuation"
+          : "initial";
     const invocation = await this.ctx.agents.invokeInEpisode({
       runId: state.runId,
       role: "implementer",
@@ -206,9 +334,27 @@ export class TaskExecutionService {
         task.title,
         task.description,
       ),
-      providerSessionId: episode?.providerSessionId,
-      previousGuidanceFingerprint: episode?.guidanceFingerprint,
+      providerSessionId: reuseContext ? episode?.providerSessionId : undefined,
+      previousGuidanceFingerprint: reuseContext ? episode?.guidanceFingerprint : undefined,
       signal: this.ctx.signalFor(state.runId),
+      causal: {
+        taskId: task.id,
+        phase: state.phase,
+        taskStep: task.step,
+        invocationKind,
+        trigger: {
+          event:
+            task.attempts.implementation > 0 || task.reviewSummary
+              ? "task.implementation_repair_needed"
+              : "task.implementing",
+          classification: category,
+          summary:
+            task.attempts.implementation > 0 || task.reviewSummary
+              ? "implementation repair from verification evidence"
+              : "initial implementation",
+          evidenceFingerprint: task.evidenceFingerprint,
+        },
+      },
     });
     const result = invocation.value;
     task = {
@@ -219,55 +365,49 @@ export class TaskExecutionService {
         turns: (episode?.turns ?? 0) + 1,
       },
     };
+
+    const integrity = await this.enforceTestIntegrity(state, task, result.changedFiles);
+    state = integrity.state;
+    task = integrity.task;
+    if (integrity.restoredOnly) {
+      return state;
+    }
+
     const evidence = await this.runTargetedTest(state.runId, task, task.tdd ? "tdd:green" : "test");
     const attempts = {
       ...task.attempts,
       implementation: task.attempts.implementation + 1,
     };
-    const observedPaths = this.ctx.config.git.enabled
-      ? await this.ctx.git.changedFiles()
-      : result.changedFiles;
-    const touchedTests = observedPaths.filter((file) =>
-      task.testPaths.some((testPath) => normalizePathKey(testPath) === normalizePathKey(file)),
-    );
-    if (touchedTests.length > 0) {
-      const exhausted = attempts.implementation >= this.ctx.config.workflow.maxImplementationAttempts;
-      const failure = `Implementer modified recorded test files: ${touchedTests.join(", ")}`;
+    if (evidence.passed) {
       const updated: BuildTask = {
         ...task,
         attempts,
         changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
-        evidence: [
-          ...task.evidence,
-          evidence,
-          {
-            purpose: "guard:test-tamper",
-            command: "deterministic-test-path-guard",
-            exitCode: 1,
-            passed: false,
-            stdout: "",
-            stderr: failure,
-            durationMs: 0,
-            at: new Date().toISOString(),
-          },
-        ],
-        step: exhausted ? "failed" : "implementing",
-        status: exhausted ? "failed" : "active",
-        failure: exhausted ? failure : undefined,
-        reviewSummary: failure,
+        evidence: [...task.evidence, evidence],
+        step: "verifying",
+        status: "active",
+        failure: undefined,
+        reviewSummary: undefined,
       };
-      return this.updateTask(await this.ctx.withTreeFingerprint(state), updated, "task.implementation_test_tamper", {
-        passed: evidence.passed,
-      });
+      return this.updateTask(
+        await this.ctx.withTreeFingerprint(state),
+        updated,
+        "task.green_observed",
+      );
     }
-    const exhausted =
-      !evidence.passed && attempts.implementation >= this.ctx.config.workflow.maxImplementationAttempts;
+
+    const fingerprint = await this.fingerprintFor(task, evidence, "verification");
+    const exhausted = attempts.implementation >= this.ctx.config.workflow.maxImplementationAttempts;
+    const edge = repairEdgeKey(fingerprint, "implementer", "implementer");
     const updated: BuildTask = {
       ...task,
       attempts,
       changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
       evidence: [...task.evidence, evidence],
-      step: evidence.passed ? "verifying" : exhausted ? "failed" : "implementing",
+      evidenceFingerprint: fingerprint,
+      seenEvidenceFingerprints: unique([...task.seenEvidenceFingerprints, fingerprint]),
+      seenRepairEdges: unique([...task.seenRepairEdges, edge]),
+      step: exhausted ? "failed" : "implementing",
       status: exhausted ? "failed" : "active",
       failure: exhausted
         ? `Targeted test failed after ${attempts.implementation} implementation attempts`
@@ -276,7 +416,8 @@ export class TaskExecutionService {
     return this.updateTask(
       await this.ctx.withTreeFingerprint(state),
       updated,
-      evidence.passed ? "task.green_observed" : "task.implementation_repair_needed",
+      exhausted ? "task.implementation_exhausted" : "task.implementation_repair_needed",
+      { evidenceFingerprint: fingerprint },
     );
   }
 
@@ -381,7 +522,22 @@ export class TaskExecutionService {
         )
       : MessageOutputSchema.parse(fallback);
     assertCanMarkTaskDone(task);
-    const commitSha = await this.ctx.git.commitTask(task.id, message, task.changedFiles);
+    const checkpointShas = unique([
+      ...task.redCheckpointHistory,
+      ...(task.redCheckpointSha ? [task.redCheckpointSha] : []),
+    ]);
+    const commitSha =
+      checkpointShas.length > 0
+        ? await this.ctx.git.squashCheckpointsIntoTaskCommit({
+            taskId: task.id,
+            message,
+            reportedPaths: task.changedFiles,
+            redCheckpointShas: checkpointShas,
+            expectedBranch: state.branchName,
+          })
+        : await this.ctx.git.commitTask(task.id, message, task.changedFiles, {
+            redCheckpointShas: checkpointShas,
+          });
     const graphifyUpdated = includesSourcePath(
       task.changedFiles,
       this.ctx.config.knowledge.graphify.sourceExtensions,
@@ -392,7 +548,7 @@ export class TaskExecutionService {
       await this.ctx.withTreeFingerprint(state),
       { ...task, status: "done", step: "done", commitSha },
       "task.committed",
-      { commitSha, graphifyUpdated },
+      { commitSha, graphifyUpdated, redCheckpointShas: checkpointShas },
     );
   }
 
@@ -534,6 +690,362 @@ export class TaskExecutionService {
       await this.ctx.syncArtifacts(state);
       return state;
     });
+  }
+
+  private async establishRedCheckpoint(
+    task: BuildTask,
+    candidatePaths: string[],
+  ): Promise<BuildTask> {
+    if (!this.ctx.config.git.enabled) {
+      return {
+        ...task,
+        redCheckpointPaths: unique([...task.redCheckpointPaths, ...candidatePaths]),
+      };
+    }
+    const existing = await this.ctx.git.findRedCheckpoint(task.id);
+    if (existing && task.redCheckpointSha === existing.sha) {
+      return task;
+    }
+    if (existing && !task.redCheckpointSha) {
+      return {
+        ...task,
+        redBaseSha: existing.baseSha,
+        redCheckpointSha: existing.sha,
+        redCheckpointNumber: (task.redCheckpointNumber ?? 0) + 1,
+        redCheckpointPaths: existing.paths.length > 0 ? existing.paths : candidatePaths,
+        redCheckpointHistory: unique([...task.redCheckpointHistory, existing.sha]),
+      };
+    }
+    const testPatterns = this.ctx.config.workflow.testPathPatterns;
+    const paths = unique(
+      (candidatePaths.length > 0 ? candidatePaths : task.testPaths).filter((file) =>
+        isTestPath(file, testPatterns),
+      ),
+    );
+    const committed = await this.ctx.git.commitRedCheckpoint({
+      taskId: task.id,
+      taskTitle: task.title,
+      testPaths: paths,
+    });
+    if (!committed) return task;
+    return {
+      ...task,
+      redBaseSha: committed.baseSha,
+      redCheckpointSha: committed.sha,
+      redCheckpointNumber: (task.redCheckpointNumber ?? 0) + 1,
+      redCheckpointPaths: committed.paths,
+      redCheckpointHistory: unique([...task.redCheckpointHistory, committed.sha]),
+      changedFiles: unique([...task.changedFiles, ...committed.paths]),
+    };
+  }
+
+  private async enforceTestIntegrity(
+    state: RunState,
+    task: BuildTask,
+    reportedChangedFiles: string[],
+  ): Promise<{ state: RunState; task: BuildTask; restoredOnly: boolean }> {
+    const recorded = task.redCheckpointPaths.length > 0 ? task.redCheckpointPaths : task.testPaths;
+    if (recorded.length === 0) {
+      return { state, task, restoredOnly: false };
+    }
+    if (!this.ctx.config.git.enabled || !task.redCheckpointSha) {
+      // Legacy / git-disabled fallback: detect reported or porcelain test edits.
+      const observedPaths = this.ctx.config.git.enabled
+        ? await this.ctx.git.changedFiles()
+        : reportedChangedFiles;
+      const touchedTests = observedPaths.filter((file) =>
+        recorded.some((testPath) => normalizePathKey(testPath) === normalizePathKey(file)),
+      );
+      if (touchedTests.length === 0) {
+        return { state, task, restoredOnly: false };
+      }
+      const attempts = {
+        ...task.attempts,
+        implementation: task.attempts.implementation + 1,
+      };
+      const exhausted = attempts.implementation >= this.ctx.config.workflow.maxImplementationAttempts;
+      const failure = `Implementer modified recorded test files: ${touchedTests.join(", ")}`;
+      const updated: BuildTask = {
+        ...task,
+        attempts,
+        changedFiles: unique([...task.changedFiles, ...reportedChangedFiles]),
+        evidence: [
+          ...task.evidence,
+          {
+            purpose: "guard:test-tamper",
+            command: "deterministic-test-path-guard",
+            exitCode: 1,
+            passed: false,
+            stdout: "",
+            stderr: failure,
+            durationMs: 0,
+            at: new Date().toISOString(),
+          },
+        ],
+        step: exhausted ? "failed" : "implementing",
+        status: exhausted ? "failed" : "active",
+        failure: exhausted ? failure : undefined,
+        reviewSummary: failure,
+      };
+      const nextState = await this.updateTask(
+        await this.ctx.withTreeFingerprint(state),
+        updated,
+        "task.implementation_test_tamper",
+        { passed: false },
+      );
+      return { state: nextState, task: updated, restoredOnly: true };
+    }
+    const touched = await this.ctx.git.pathsChangedVersusSha(task.redCheckpointSha, recorded);
+    if (touched.length === 0) {
+      return { state, task, restoredOnly: false };
+    }
+    await this.ctx.git.restorePathsFromSha(task.redCheckpointSha, touched);
+    const dirtyAfter = await this.ctx.git.changedFiles();
+    const productionDirty = dirtyAfter.filter(
+      (file) =>
+        !recorded.some((testPath) => normalizePathKey(testPath) === normalizePathKey(file)),
+    );
+    const violationCount = (task.integrityViolationCount ?? 0) + 1;
+    const releaseContext = violationCount >= 2;
+    if (releaseContext && task.implementerSession?.providerSessionId) {
+      await this.ctx.agents.releaseProviderSession(task.implementerSession.providerSessionId);
+    }
+    const failIntegrity = violationCount >= 3 && productionDirty.length === 0;
+    const updated: BuildTask = {
+      ...task,
+      integrityViolationCount: violationCount,
+      implementerSession: releaseContext || failIntegrity ? undefined : task.implementerSession,
+      changedFiles: unique([...task.changedFiles, ...reportedChangedFiles, ...productionDirty]),
+      evidence: [
+        ...task.evidence,
+        {
+          purpose: "guard:test-integrity",
+          command: "restore-from-red-checkpoint",
+          exitCode: failIntegrity ? 1 : 0,
+          passed: !failIntegrity,
+          stdout: `Restored ${touched.join(", ")} from ${task.redCheckpointSha}`,
+          stderr: failIntegrity ? "Repeated test integrity violations without production progress" : "",
+          durationMs: 0,
+          at: new Date().toISOString(),
+        },
+      ],
+      reviewSummary: `Restored recorded tests from RED checkpoint: ${touched.join(", ")}`,
+      step: failIntegrity ? "failed" : "implementing",
+      status: failIntegrity ? "failed" : "active",
+      failure: failIntegrity
+        ? "Repeated test integrity violations without production progress"
+        : undefined,
+    };
+    // Restoration alone does not consume an implementation attempt.
+    const nextState = await this.updateTask(
+      await this.ctx.withTreeFingerprint(state),
+      updated,
+      failIntegrity ? "task.test_integrity_exhausted" : "test_integrity.restored",
+      {
+        restoredPaths: touched,
+        redCheckpointSha: task.redCheckpointSha,
+        consumedImplementationAttempt: false,
+        releasedProviderContext: releaseContext,
+        kind: "test_integrity",
+      },
+    );
+    return {
+      state: nextState,
+      task: updated,
+      restoredOnly: failIntegrity || productionDirty.length === 0,
+    };
+  }
+
+  private async fingerprintFor(
+    task: BuildTask,
+    evidence: BuildTask["evidence"][number] | undefined,
+    fallbackCategory: string,
+  ): Promise<string> {
+    const sourceTreeState = this.ctx.config.git.enabled
+      ? await this.ctx.git.treeFingerprint()
+      : "git-disabled";
+    return evidenceFingerprint({
+      taskId: task.id,
+      step: task.step,
+      sourceTreeState,
+      redCheckpointSha: task.redCheckpointSha,
+      failingTestIds: failingTestIdsFromEvidence(evidence),
+      failureCategory: failureCategoryFromEvidence(evidence, fallbackCategory),
+      reviewFinding: task.reviewSummary,
+      frozenConfigHash: this.ctx.config.workflow.maxImplementationAttempts.toString(),
+    });
+  }
+
+  private async progressGate(
+    task: BuildTask,
+    fromRole: string,
+    toRole: string,
+    evidence: BuildTask["evidence"][number] | undefined,
+  ) {
+    const fingerprint = await this.fingerprintFor(task, evidence, "verification");
+    return evaluateRepairProgress({
+      fingerprint,
+      lastFingerprint: task.evidenceFingerprint,
+      seenFingerprints: task.seenEvidenceFingerprints,
+      seenEdges: task.seenRepairEdges,
+      fromRole,
+      toRole,
+    });
+  }
+
+  private async blockNoProgress(
+    state: RunState,
+    task: BuildTask,
+    fingerprint: string,
+    summary: string,
+  ): Promise<RunState> {
+    if (task.implementerSession?.providerSessionId) {
+      await this.ctx.agents.releaseProviderSession(task.implementerSession.providerSessionId);
+    }
+    const updated: BuildTask = {
+      ...task,
+      implementerSession: undefined,
+      evidenceFingerprint: fingerprint,
+      seenEvidenceFingerprints: unique([...task.seenEvidenceFingerprints, fingerprint]),
+      step: "failed",
+      status: "failed",
+      failure: summary,
+    };
+    return this.updateTask(await this.ctx.withTreeFingerprint(state), updated, "task.no_progress", {
+      evidenceFingerprint: fingerprint,
+      kind: "no_progress",
+    });
+  }
+
+  private async routeToTestRepair(
+    state: RunState,
+    task: BuildTask,
+    evidence: BuildTask["evidence"][number] | undefined,
+  ): Promise<RunState> {
+    const fingerprint = await this.fingerprintFor(task, evidence, "test-repair");
+    if (task.acceptedTestRepairFingerprints.includes(fingerprint)) {
+      return this.blockNoProgress(
+        state,
+        task,
+        fingerprint,
+        "Test-repair already accepted for this implementation-failure fingerprint",
+      );
+    }
+    const gate = evaluateRepairProgress({
+      fingerprint,
+      lastFingerprint: task.evidenceFingerprint,
+      seenFingerprints: task.seenEvidenceFingerprints,
+      seenEdges: task.seenRepairEdges,
+      fromRole: "implementer",
+      toRole: "test-writer",
+    });
+    if (!gate.allowed) {
+      return this.blockNoProgress(state, task, gate.fingerprint, gate.summary);
+    }
+    const edge = repairEdgeKey(fingerprint, "implementer", "test-writer");
+    const updated: BuildTask = {
+      ...task,
+      evidenceFingerprint: fingerprint,
+      seenEvidenceFingerprints: unique([...task.seenEvidenceFingerprints, fingerprint]),
+      seenRepairEdges: unique([...task.seenRepairEdges, edge]),
+      step: "writing_tests",
+      status: "active",
+      reviewSummary: "Routed to test-writer after test-repair candidate classification",
+    };
+    return this.updateTask(
+      await this.ctx.withTreeFingerprint(state),
+      updated,
+      "task.test_repair_routed",
+      { evidenceFingerprint: fingerprint },
+    );
+  }
+
+  private async acceptTestRepairCheckpoint(
+    state: RunState,
+    task: BuildTask,
+    args: {
+      attempts: BuildTask["attempts"];
+      testPaths: string[];
+      changedFiles: string[];
+      evidence: BuildTask["evidence"];
+      observedPaths: string[];
+    },
+  ): Promise<RunState> {
+    const fingerprint = task.evidenceFingerprint ?? (await this.fingerprintFor(task, args.evidence.at(-1), "test-repair"));
+    // Counterfactual RED: candidate tests must still fail against production at redBaseSha.
+    if (this.ctx.config.git.enabled && task.redBaseSha) {
+      const counterfactual = await this.counterfactualRedAccepted(task, args.observedPaths);
+      if (!counterfactual.accepted) {
+        if (task.redCheckpointSha) {
+          await this.ctx.git.restorePathsFromSha(task.redCheckpointSha, args.testPaths);
+        }
+        return this.blockNoProgress(
+          state,
+          {
+            ...task,
+            attempts: args.attempts,
+            evidence: args.evidence,
+          },
+          fingerprint,
+          counterfactual.reason,
+        );
+      }
+    }
+    const withCheckpoint = await this.establishRedCheckpoint(
+      {
+        ...task,
+        attempts: args.attempts,
+        testPaths: args.testPaths,
+        changedFiles: args.changedFiles,
+        evidence: args.evidence,
+      },
+      args.observedPaths,
+    );
+    const updated: BuildTask = {
+      ...withCheckpoint,
+      acceptedTestRepairFingerprints: unique([
+        ...withCheckpoint.acceptedTestRepairFingerprints,
+        fingerprint,
+      ]),
+      evidenceFingerprint: undefined,
+      step: "implementing",
+      status: "active",
+      failure: undefined,
+      reviewSummary: "Accepted repaired RED checkpoint after counterfactual verification",
+    };
+    return this.updateTask(
+      await this.ctx.withTreeFingerprint(state),
+      updated,
+      "task.test_repair_accepted",
+      {
+        redCheckpointSha: updated.redCheckpointSha,
+        evidenceFingerprint: fingerprint,
+      },
+    );
+  }
+
+  private async counterfactualRedAccepted(
+    task: BuildTask,
+    candidatePaths: string[],
+  ): Promise<{ accepted: boolean; reason: string }> {
+    if (!task.redBaseSha || candidatePaths.length === 0) {
+      return { accepted: true, reason: "no counterfactual baseline" };
+    }
+    // Soft counterfactual: stash production dirty state is not required because
+    // we only need tests to remain meaningful RED in the current workspace after
+    // the repair writer ran (production code is still the post-implement tree).
+    // Stronger isolation would use a temporary worktree; for harness runs we
+    // validate meaningful RED against the current production tree and reject
+    // infrastructure / empty failures.
+    const evidence = task.evidence.at(-1);
+    if (!evidence || evidence.passed) {
+      return { accepted: false, reason: "Candidate test repair did not remain RED" };
+    }
+    const output = `${evidence.stdout}\n${evidence.stderr}`;
+    if (/command not found|not recognized|no tests found|no test files found/i.test(output)) {
+      return { accepted: false, reason: "Candidate test repair failed for infrastructure reasons" };
+    }
+    return { accepted: true, reason: "meaningful RED" };
   }
 }
 

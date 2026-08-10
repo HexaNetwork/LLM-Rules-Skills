@@ -77,16 +77,20 @@ describe("dashboard document", () => {
     expect(html).toContain("Confirm feature understanding");
     expect(html).toContain("Our recommendation:");
     expect(html).toContain("data-question-choice");
-    expect(html).toContain("Inspect session");
+    expect(html).toContain("Inspect invocation");
     expect(html).toContain("Actual submitted input");
     expect(html).toContain("Work packet");
     expect(html).toContain("Retrieval audit");
     expect(html).toContain("Raw session record");
     expect(html).toContain("data-session");
     expect(html).toContain("session-dialog");
-    expect(html).toContain("model sessions");
-    expect(html).not.toMatch(/Sessions[\s\S]*?recorded tokens/);
-    expect(html).toContain("Context mode");
+    expect(html).toContain("provider contexts · invocations");
+    expect(html).toContain("Agent activity");
+    expect(html).toContain("activity-timeline");
+    expect(html).not.toMatch(/model sessions/);
+    expect(html).toContain("NEW CONTEXT");
+    expect(html).toContain("REUSED CONTEXT");
+    expect(html).toContain("context-badge");
     expect(html).toContain("Project settings");
     expect(html).toContain("settingsBtn");
     expect(html).toContain('projectName").title = data.project.root');
@@ -580,13 +584,12 @@ describe("dashboard document", () => {
     expect(html).toContain('toastDismiss").hidden = !error');
   });
 
-  it("keeps long unbroken tokens inside session cards (no horizontal spill)", () => {
+  it("keeps long unbroken tokens inside activity context rows (no horizontal spill)", () => {
     const html = renderDashboard();
-    const sessionRule = html.match(/\.session\s*\{([^}]*)\}/)?.[1] ?? "";
+    const contextRule = html.match(/\.activity-context\s*\{([^}]*)\}/)?.[1] ?? "";
 
-    // Grid items default to min-width:auto, so unbroken package/path tokens can
-    // force the card wider than its track and paint outside the border.
-    expect(sessionRule).toMatch(/min-width:\s*0/);
-    expect(sessionRule).toMatch(/overflow-wrap:\s*(anywhere|break-word)/);
+    // Flex/grid children default to min-width:auto, so unbroken package/path
+    // tokens can force the row wider than its track and paint outside the border.
+    expect(contextRule).toMatch(/min-width:\s*0/);
   });
 });

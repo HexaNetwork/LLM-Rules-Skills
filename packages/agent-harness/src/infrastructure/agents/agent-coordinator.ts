@@ -1,10 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import type {
+  InvocationKind,
+  InvocationTrigger,
+} from "../../application/agent-activity.js";
 import type { HarnessConfig } from "../../config.js";
 import { modelForRole } from "../../config.js";
 import {
   PromptBuilderOutputSchema,
   type AgentRole,
+  type RunPhase,
   type WorkPacket,
 } from "../../domain.js";
 import { HarnessFailure, RunCancelledError } from "../../errors.js";
@@ -26,6 +31,14 @@ import {
   type InvokeInput,
 } from "./types.js";
 import { usageRecord } from "./usage.js";
+
+type CausalMeta = {
+  taskId?: string;
+  phase?: RunPhase;
+  taskStep?: string;
+  invocationKind?: InvocationKind;
+  trigger?: InvocationTrigger;
+};
 
 export class AgentCoordinator {
   constructor(
@@ -203,6 +216,7 @@ export class AgentCoordinator {
         mode: episode.mode,
         allowTools: input.allowTools,
         signal: input.signal,
+        causal: input.causal,
       },
     );
     return { ...invocation, guidanceFingerprint };
@@ -222,6 +236,7 @@ export class AgentCoordinator {
       mode?: "agent" | "plan";
       allowTools?: boolean;
       signal?: AbortSignal;
+      causal?: CausalMeta;
     } = {},
   ): Promise<AgentInvocation<T>> {
     let prompt = initialPrompt;
@@ -239,6 +254,12 @@ export class AgentCoordinator {
           ? continuationPrompt
           : prompt;
         const model = modelForRole(this.config, role);
+        const causalFields = causalFieldsForAttempt(options.causal, {
+          role,
+          attempt,
+          providerSessionId,
+          providerSessionReused: Boolean(providerSessionId && (continuationPrompt || attempt > 0)),
+        });
         await this.store.writeJson(runId, `sessions/${sessionId}.json`, {
           sessionId,
           invocationId: packet.invocationId,
@@ -250,6 +271,7 @@ export class AgentCoordinator {
           packet: packetPath,
           prompt: submittedPrompt,
           startedAt,
+          ...causalFields,
         });
 
         const activity = createSessionActivityTracker(this.store, runId, {
@@ -328,6 +350,12 @@ export class AgentCoordinator {
             usage: usageRecord(failure),
             output: failureOutput,
             error: error instanceof Error ? error.message : String(error),
+            ...causalFieldsForAttempt(options.causal, {
+              role,
+              attempt,
+              providerSessionId,
+              providerSessionReused: failure.providerSessionReused,
+            }),
           });
           // Cancel, timeout, and provider errors are not schema-repairable.
           if (cancelled && !(error instanceof RunCancelledError)) {
@@ -366,6 +394,12 @@ export class AgentCoordinator {
             usage: usageRecord(result),
             output: harvestedRaw,
             error: error instanceof Error ? error.message : String(error),
+            ...causalFieldsForAttempt(options.causal, {
+              role,
+              attempt,
+              providerSessionId,
+              providerSessionReused: result.providerSessionReused,
+            }),
           });
           if (attempt + 1 >= attempts) {
             throw new HarnessFailure(
@@ -405,6 +439,12 @@ export class AgentCoordinator {
                 : `${role} completed`,
             artifactRefs: [packetPath, `sessions/${sessionId}.json`],
           },
+          ...causalFieldsForAttempt(options.causal, {
+            role,
+            attempt,
+            providerSessionId,
+            providerSessionReused: result.providerSessionReused,
+          }),
         });
         completed = true;
         return {
@@ -429,6 +469,45 @@ export class AgentCoordinator {
       }
     }
   }
+}
+
+function causalFieldsForAttempt(
+  causal: CausalMeta | undefined,
+  args: {
+    role: AgentRole;
+    attempt: number;
+    providerSessionId?: string;
+    providerSessionReused?: boolean;
+  },
+): {
+  taskId?: string;
+  phase?: RunPhase;
+  taskStep?: string;
+  invocationKind: InvocationKind;
+  trigger: InvocationTrigger;
+} {
+  const invocationKind: InvocationKind =
+    args.attempt > 0
+      ? "schema-repair"
+      : causal?.invocationKind ??
+        (args.providerSessionId || args.providerSessionReused ? "continuation" : "initial");
+  const trigger: InvocationTrigger = causal?.trigger ?? {
+    event: `${args.role}.invoke`,
+    classification: invocationKind,
+    summary:
+      invocationKind === "schema-repair"
+        ? "schema repair within the same logical invocation"
+        : invocationKind === "continuation"
+          ? "continued provider context"
+          : `initial ${args.role} invocation`,
+  };
+  return {
+    ...(causal?.taskId ? { taskId: causal.taskId } : {}),
+    ...(causal?.phase ? { phase: causal.phase } : {}),
+    ...(causal?.taskStep ? { taskStep: causal.taskStep } : {}),
+    invocationKind,
+    trigger,
+  };
 }
 
 function knownPaths(input: unknown): string[] {

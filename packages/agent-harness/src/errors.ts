@@ -4,6 +4,10 @@ export type FailureKind =
   | "config" // run config drift, version mismatch — retry cannot help
   | "budget" // step/token/cost ceiling — retry only after raising the ceiling
   | "contract" // model could not satisfy the schema after repair attempts
+  | "test_integrity" // recorded RED tests were edited after the checkpoint
+  | "verification" // production compile/behavior failure under targeted verification
+  | "baseline" // unchanged known baseline failures; no implementer retry
+  | "no_progress" // repeated evidence fingerprint with no new operator input
   | "internal"; // harness bug
 
 /** Failures that must be repaired via config-fixer (frozen run snapshot), not a file fixer. */

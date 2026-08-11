@@ -300,7 +300,12 @@ describe("tdd loop guards and attempt accounting", () => {
         },
       ],
     });
-    expect(canAcceptRedDone({ output: doneOutput, tddLoop: ready, dirtyPaths: [] })).toEqual({
+    expect(canAcceptRedDone({
+      output: doneOutput,
+      tddLoop: ready,
+      dirtyPaths: [],
+      acceptanceCriteriaCount: 1,
+    })).toEqual({
       ok: true,
     });
     expect(
@@ -308,6 +313,7 @@ describe("tdd loop guards and attempt accounting", () => {
         output: doneOutput,
         tddLoop: createTddLoop({ atVerifiedGreen: false, completedRounds: ready.completedRounds }),
         dirtyPaths: [],
+        acceptanceCriteriaCount: 1,
       }).ok,
     ).toBe(false);
     expect(
@@ -323,6 +329,7 @@ describe("tdd loop guards and attempt accounting", () => {
           completedRounds: ready.completedRounds,
         }),
         dirtyPaths: [],
+        acceptanceCriteriaCount: 1,
       }).ok,
     ).toBe(false);
     expect(
@@ -330,8 +337,97 @@ describe("tdd loop guards and attempt accounting", () => {
         output: doneOutput,
         tddLoop: createTddLoop({ atVerifiedGreen: true }),
         dirtyPaths: [],
+        acceptanceCriteriaCount: 1,
       }).ok,
     ).toBe(false);
+  });
+
+  it("rejects done when acceptance coverage is missing, uncovered, duplicated, or unsubstantiated", () => {
+    const ready = createTddLoop({
+      atVerifiedGreen: true,
+      completedRounds: [
+        {
+          number: 1,
+          outcome: "implemented",
+          testPathsAdded: ["tests/a.test.ts"],
+          behaviorsAdded: ["greets"],
+          edgeCasesAdded: [],
+          targetedEvidencePurpose: "tdd:green",
+          completedAt: NOW,
+        },
+      ],
+    });
+    const incomplete = RedWriterOutputSchema.parse({
+      status: "done",
+      summary: "incomplete",
+      changedFiles: [],
+      acceptanceCoverage: [
+        {
+          criterionIndex: 0,
+          covered: false,
+          testPaths: [],
+          rationale: "missing behavior",
+        },
+        {
+          criterionIndex: 0,
+          covered: true,
+          testPaths: [],
+          rationale: "duplicate without evidence",
+        },
+      ],
+      edgeCaseRationale: "incomplete",
+    });
+    const result = canAcceptRedDone({
+      output: incomplete,
+      tddLoop: ready,
+      dirtyPaths: [],
+      acceptanceCriteriaCount: 2,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("missing criteria 1");
+      expect(result.reason).toContain("duplicate criteria 0");
+      expect(result.reason).toContain("uncovered criteria 0");
+      expect(result.reason).toContain("automated-test criteria without test paths 0");
+    }
+  });
+
+  it("allows covered operator-owned criteria to be deliberately not validated", () => {
+    const ready = createTddLoop({
+      atVerifiedGreen: true,
+      completedRounds: [
+        {
+          number: 1,
+          outcome: "implemented",
+          testPathsAdded: ["tests/a.test.ts"],
+          behaviorsAdded: ["config bounds"],
+          edgeCasesAdded: [],
+          targetedEvidencePurpose: "tdd:green",
+          completedAt: NOW,
+        },
+      ],
+    });
+    const operatorOwned = RedWriterOutputSchema.parse({
+      status: "done",
+      summary: "complete",
+      changedFiles: [],
+      acceptanceCoverage: [
+        {
+          criterionIndex: 0,
+          covered: true,
+          verificationMode: "not-validated",
+          testPaths: [],
+          rationale: "Exact configured value is operator-owned",
+        },
+      ],
+      edgeCaseRationale: "Bounds and fallback behavior are tested separately",
+    });
+    expect(canAcceptRedDone({
+      output: operatorOwned,
+      tddLoop: ready,
+      dirtyPaths: [],
+      acceptanceCriteriaCount: 1,
+    })).toEqual({ ok: true });
   });
 
   it("gates round completion and test_issue on a pending round", () => {

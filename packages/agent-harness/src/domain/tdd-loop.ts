@@ -51,6 +51,7 @@ export function canAcceptRedDone(input: {
   output: Extract<RedWriterOutput, { status: "done" }>;
   tddLoop: TddLoop;
   dirtyPaths: readonly string[];
+  acceptanceCriteriaCount: number;
 }): TddGuardResult {
   if (input.output.changedFiles.length > 0) {
     return { ok: false, reason: "RED done must not change any files" };
@@ -70,7 +71,51 @@ export function canAcceptRedDone(input: {
   if (input.tddLoop.completedRounds.length === 0) {
     return { ok: false, reason: "RED done requires at least one completed GREEN round" };
   }
+  const expectedIndexes = Array.from(
+    { length: input.acceptanceCriteriaCount },
+    (_, index) => index,
+  );
+  const indexes = input.output.acceptanceCoverage.map((item) => item.criterionIndex);
+  const duplicates = indexes.filter((index, position) => indexes.indexOf(index) !== position);
+  const missing = expectedIndexes.filter((index) => !indexes.includes(index));
+  const outOfRange = indexes.filter(
+    (index) => index < 0 || index >= input.acceptanceCriteriaCount,
+  );
+  const uncovered = input.output.acceptanceCoverage
+    .filter((item) => !item.covered)
+    .map((item) => item.criterionIndex);
+  const unsubstantiatedTests = input.output.acceptanceCoverage
+    .filter(
+      (item) =>
+        item.covered && item.verificationMode === "automated-test" && item.testPaths.length === 0,
+    )
+    .map((item) => item.criterionIndex);
+  const defects = [
+    missing.length > 0 ? `missing criteria ${uniqueNumbers(missing).join(", ")}` : undefined,
+    duplicates.length > 0
+      ? `duplicate criteria ${uniqueNumbers(duplicates).join(", ")}`
+      : undefined,
+    outOfRange.length > 0
+      ? `out-of-range criteria ${uniqueNumbers(outOfRange).join(", ")}`
+      : undefined,
+    uncovered.length > 0
+      ? `uncovered criteria ${uniqueNumbers(uncovered).join(", ")}`
+      : undefined,
+    unsubstantiatedTests.length > 0
+      ? `automated-test criteria without test paths ${uniqueNumbers(unsubstantiatedTests).join(", ")}`
+      : undefined,
+  ].filter((item): item is string => Boolean(item));
+  if (defects.length > 0) {
+    return {
+      ok: false,
+      reason: `RED done coverage assessment is incomplete: ${defects.join("; ")}`,
+    };
+  }
   return { ok: true };
+}
+
+function uniqueNumbers(values: readonly number[]): number[] {
+  return [...new Set(values)].sort((left, right) => left - right);
 }
 
 /**

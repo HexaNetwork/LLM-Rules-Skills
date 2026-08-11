@@ -2003,6 +2003,7 @@ describe("durable idea-to-feature workflow", () => {
 
     let redCalls = 0;
     let greenCalls = 0;
+    let reviewCalls = 0;
     const sessionByRole = new Map<string, string>();
     const backend: AgentBackend = {
       async run(request) {
@@ -2034,6 +2035,37 @@ describe("durable idea-to-feature workflow", () => {
                 : request.prompt,
             };
           }
+          if (redCalls === 4) {
+            return {
+              output: {
+                status: "done",
+                summary: "Premature completion",
+                changedFiles: [],
+                acceptanceCoverage: [
+                  {
+                    criterionIndex: 0,
+                    covered: true,
+                    testPaths: ["tests/round-1.test.ts"],
+                    rationale: "Primary behavior covered",
+                  },
+                  {
+                    criterionIndex: 1,
+                    covered: false,
+                    verificationMode: "inspection",
+                    testPaths: [],
+                    rationale: "Still needs assessment",
+                  },
+                ],
+                edgeCaseRationale: "Boundary cases covered in round 2",
+              },
+              providerSessionId,
+              providerRunId: `red-run-${redCalls}`,
+              providerSessionReused,
+              submittedPrompt: providerSessionReused
+                ? request.continuationPrompt ?? request.prompt
+                : request.prompt,
+            };
+          }
           return {
             output: {
               status: "done",
@@ -2049,6 +2081,13 @@ describe("durable idea-to-feature workflow", () => {
                     "tests/round-3.test.ts",
                   ],
                   rationale: "All primary behaviors covered",
+                },
+                {
+                  criterionIndex: 1,
+                  covered: true,
+                  verificationMode: "inspection",
+                  testPaths: [],
+                  rationale: "The exported surface was inspected",
                 },
               ],
               edgeCaseRationale: "Boundary cases covered in round 2",
@@ -2101,6 +2140,7 @@ describe("durable idea-to-feature workflow", () => {
         }
 
         if (request.role === "reviewer") {
+          reviewCalls += 1;
           return {
             output: { approved: true, summary: "ok", findings: [] },
             providerSessionId: "reviewer-session",
@@ -2132,7 +2172,7 @@ describe("durable idea-to-feature workflow", () => {
           id: "three-round",
           title: "Ship greeting",
           description: "Multi-round TDD",
-          acceptanceCriteria: ["greeting works"],
+          acceptanceCriteria: ["greeting works", "exported surface is present"],
           affectedPaths: ["src/greet.ts"],
           blockedBy: [],
           tdd: true,
@@ -2148,8 +2188,9 @@ describe("durable idea-to-feature workflow", () => {
 
     const advanced = await engine.advance(started.runId);
     expect(advanced.phase).toBe("completed");
-    expect(redCalls).toBe(4); // 3 continue + done
+    expect(redCalls).toBe(5); // 3 continue + rejected done + corrected done
     expect(greenCalls).toBe(3);
+    expect(reviewCalls).toBe(1);
     expect(advanced.tasks[0]?.tddLoop?.completedRounds).toHaveLength(3);
     expect(advanced.tasks[0]?.tddLoop?.completedRounds.map((round) => round.outcome)).toEqual([
       "implemented",
@@ -2174,6 +2215,7 @@ describe("durable idea-to-feature workflow", () => {
     expect(events).toContain("task.tdd_round_started");
     expect(events).toContain("task.tdd_round_completed");
     expect(events).toContain("task.green_already_covered");
+    expect(events).toContain("task.red_done_rejected");
     expect(events).toContain("task.tdd_done_declared");
 
     // Phase 5 exit: one final task commit, oldest redBaseSha, cumulative paths, no lost files.
@@ -2919,7 +2961,7 @@ describe("durable idea-to-feature workflow", () => {
       workflow: {
         tdd: true,
         maxImplementationAttempts: 3,
-        maxReviewAttempts: 3,
+        maxReviewAttempts: 2,
         generateCommitMessages: false,
       } as never,
       commands: {
@@ -2929,6 +2971,7 @@ describe("durable idea-to-feature workflow", () => {
     });
 
     let reviewCalls = 0;
+    const redPrompts: string[] = [];
     const backend: AgentBackend = {
       async run(request) {
         if (request.role === "reviewer") {
@@ -2980,6 +3023,7 @@ describe("durable idea-to-feature workflow", () => {
           };
         }
         if (request.role === "red-writer") {
+          redPrompts.push(request.continuationPrompt ?? request.prompt);
           return {
             output: {
               status: "done",
@@ -3091,7 +3135,8 @@ describe("durable idea-to-feature workflow", () => {
     );
     expect(events).toContain('"reviewRepairRoute":"test-coverage"');
     expect(events).toContain('"reviewRepairRoute":"production"');
-    expect(reviewCalls).toBeGreaterThanOrEqual(2);
+    expect(reviewCalls).toBe(3);
+    expect(redPrompts.some((prompt) => prompt.includes("Null dereference in greet"))).toBe(true);
     // Production route budgets with finalRepairAttempts / finalRepairPending.
     expect(events).toContain('"finalRepairPending":true');
     expect(events).toMatch(/"finalRepairAttempts":[1-9]/);

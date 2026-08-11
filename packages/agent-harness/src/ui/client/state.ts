@@ -25,7 +25,8 @@ export const stateScript = `  (function () {
       lastSoundPhase: null,
       installSelections: {},
       // After reflect confirm / grill batch submit, keep the viewport at the top
-      // even if a silent poll captures scroll mid-flight.
+      // until the operator scrolls away or the follow-on job finishes — so a
+      // silent poll cannot restore the deep pre-submit offset mid-flight.
       pinScrollTop: false
     };
     var $ = function (id) { return document.getElementById(id); };
@@ -178,6 +179,14 @@ export const stateScript = `  (function () {
       }
       return false;
     }
+    function releaseScrollTopPin() {
+      if (!state.pinScrollTop) return;
+      state.pinScrollTop = false;
+      if (state.scrolls) {
+        state.scrolls.windowX = window.scrollX;
+        state.scrolls.windowY = window.scrollY;
+      }
+    }
     function captureScrolls() {
       var nodes = {};
       var details = {};
@@ -193,6 +202,10 @@ export const stateScript = `  (function () {
       });
       var runList = $("runList");
       if (runList) nodes.runList = { top: runList.scrollTop, left: runList.scrollLeft };
+      // Pin only fights the post-submit race that would restore a deep offset.
+      // Once the operator scrolls away from top, stop yanking them back up on
+      // every activity-driven silent poll during a long thinking wait.
+      if (state.pinScrollTop && window.scrollY > 0) releaseScrollTopPin();
       if (state.pinScrollTop) window.scrollTo(0, 0);
       state.scrolls = {
         windowX: state.pinScrollTop ? 0 : window.scrollX,
@@ -214,17 +227,19 @@ export const stateScript = `  (function () {
         var node = document.querySelector('[data-details-key="' + key.replace(/"/g, "") + '"]');
         if (node) node.open = scrolls.details[key];
       });
+      if (state.pinScrollTop && window.scrollY > 0) releaseScrollTopPin();
       if (state.pinScrollTop) window.scrollTo(0, 0);
       else if (scrolls.windowY != null) window.scrollTo(scrolls.windowX || 0, scrolls.windowY);
     }
     // Answers (reflect confirm + grill batch) leave the user deep in a tall form.
     // Scroll immediately — do not wait for the follow-on job — and pin restored
     // window coords so a silent poll cannot jump them back down mid-work.
+    // Pin after scrollTo so a scroll listener never treats this jump as operator intent.
     function scrollMainToTop() {
-      state.pinScrollTop = true;
       window.scrollTo(0, 0);
       var content = $("content");
       if (content) content.scrollTop = 0;
+      state.pinScrollTop = true;
       if (state.scrolls) {
         state.scrolls.windowX = 0;
         state.scrolls.windowY = 0;
@@ -232,6 +247,9 @@ export const stateScript = `  (function () {
         state.scrolls = { windowX: 0, windowY: 0, nodes: {}, details: {} };
       }
     }
+    window.addEventListener("scroll", function () {
+      if (state.pinScrollTop && window.scrollY > 0) releaseScrollTopPin();
+    }, { passive: true });
     function hideToast() {
       var node = $("toast");
       node.className = "toast";

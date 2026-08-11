@@ -72,6 +72,12 @@ now tracks `state.signature` (the last *rendered* signature) instead.
    - every `[data-details-key]` open/closed state (including the fog
      register's `data-details-key="fog-resolved"` collapsible)
    After `renderRun()`, `restoreScrolls()` reapplies them.
+   After reflect/grill/plan submits, `scrollMainToTop()` pins window
+   scroll at `0` so an in-flight silent poll cannot restore the deep
+   pre-submit offset. The pin clears when the operator scrolls away
+   (`scrollY > 0`) or when `runAction` finishes — it must not keep
+   yanking the viewport to top on every activity-driven poll during a
+   long thinking wait.
 
 5. **Sidebar list scroll survives every poll.**
    `renderSidebar()` restores `#runList.scrollTop` after rewriting items
@@ -137,6 +143,10 @@ consistent with overview/task keys.
 - **Scroll jumps while idle** → signature short-circuit broken, or a field in
   `runSignature` (server) is changing every poll without a real state
   transition (including a thrashing `activity.lastStepAt` / `stepCount`).
+- **Scroll jumps to top while a job is thinking** → `pinScrollTop` still held
+  after the operator scrolled away; capture/restore must call
+  `releaseScrollTopPin()` when `window.scrollY > 0` (see e2e
+  `polling-scroll.spec.ts`).
 - **Thinking strip stuck on a generic "working" line while tools run** →
   `activity` missing from the poll payload, or `lastStepAt`/`stepCount` omitted
   from `runSignature` so unchanged polls hide step updates.

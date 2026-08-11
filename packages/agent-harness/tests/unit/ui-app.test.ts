@@ -321,6 +321,8 @@ describe("dashboard document", () => {
     expect(html).toContain("function scrollMainToTop()");
     expect(html).toContain("if (action === 'answer') scrollMainToTop()");
     expect(html).toContain("pinScrollTop");
+    expect(html).toContain("function releaseScrollTopPin()");
+    expect(html).toContain("if (state.pinScrollTop && window.scrollY > 0) releaseScrollTopPin()");
     // Reflect confirm / grill batch can queue a long job — scroll must not wait for it.
     const earlyScroll = html.indexOf("if (action === 'answer') scrollMainToTop()");
     const waitForJobCall = html.indexOf("result = await waitForJob(state.selected)");

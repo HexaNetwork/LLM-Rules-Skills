@@ -7,6 +7,7 @@ import {
   applyGrillOutput,
   applyReflectOutput,
   formatReflectRestatement,
+  seedUnknownsFromReflect,
   type GrillEpisode,
   type GrillOutput,
   type HumanQuestionDraft,
@@ -98,11 +99,17 @@ export class InterviewService {
         );
         const structured = reflectEntry.structured;
         const confirmed = structured ? formatReflectRestatement(structured) : trimmed;
+        // Draft seeding happens at reflect.drafted; confirm replaces the register
+        // with the operator's edited unknowns so removed items do not reach grilling.
+        const openUnknowns = structured
+          ? seedUnknownsFromReflect(structured.unknowns)
+          : state.openUnknowns;
         state = await this.ctx.store.record(
           {
             ...state,
             questions,
             activeQuestionId: undefined,
+            openUnknowns,
             reflectBrief: {
               draft: state.reflectBrief?.draft ?? trimmed,
               structured: state.reflectBrief?.structured,

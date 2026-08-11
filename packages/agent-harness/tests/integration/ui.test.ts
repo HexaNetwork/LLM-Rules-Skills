@@ -720,6 +720,7 @@ describe("central dashboard", () => {
       (item: { id: string }) => item.id === detail.state.activeQuestionId,
     )!;
     expect(question.purpose).toBe("reflect");
+    expect(detail.state.openUnknowns.map((item: { title: string }) => item.title)).toEqual(["tone"]);
 
     const editedStructured = {
       proposedTitle: "Ship edited goal",
@@ -730,7 +731,8 @@ describe("central dashboard", () => {
       inScope: ["editable list scope"],
       outOfScope: [],
       assumptions: ["nothing implicit"],
-      unknowns: [],
+      // Operator dropped the draft unknown and added a different one.
+      unknowns: ["delivery channel"],
     };
     const answered = await request(ui, `/api/runs/${started.runId}/actions`, {
       method: "POST",
@@ -750,21 +752,38 @@ describe("central dashboard", () => {
     // The structured confirmation happens synchronously inside answerMany,
     // before advance runs, so poll state instead of pinning a transient phase.
     const deadline = Date.now() + 10_000;
-    let confirmedStructured: { goal?: string; proposedTitle?: string } | undefined;
+    let confirmedStructured: {
+      goal?: string;
+      proposedTitle?: string;
+      unknowns?: string[];
+    } | undefined;
     let confirmedText: string | undefined;
+    let openUnknowns: Array<{ title: string; status: string }> | undefined;
     for (;;) {
       const response = await request(ui, `/api/runs/${started.runId}`);
       const body = (await response.json()) as {
-        state?: { reflectBrief?: { confirmed?: string; confirmedStructured?: { goal?: string; proposedTitle?: string } } };
+        state?: {
+          openUnknowns?: Array<{ title: string; status: string }>;
+          reflectBrief?: {
+            confirmed?: string;
+            confirmedStructured?: { goal?: string; proposedTitle?: string; unknowns?: string[] };
+          };
+        };
       };
       confirmedText = body.state?.reflectBrief?.confirmed;
       confirmedStructured = body.state?.reflectBrief?.confirmedStructured;
+      openUnknowns = body.state?.openUnknowns;
       if (confirmedStructured || Date.now() > deadline) break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect(confirmedText).toContain("operator rewrote this restatement");
     expect(confirmedStructured?.goal).toBe("Ship the edited goal");
     expect(confirmedStructured?.proposedTitle).toBe("Ship edited goal");
+    expect(confirmedStructured?.unknowns).toEqual(["delivery channel"]);
+    // Confirm must re-seed the fog register from the edited brief — draft
+    // unknowns the operator removed must not survive into grilling.
+    expect(openUnknowns?.map((item) => item.title)).toEqual(["delivery channel"]);
+    expect(openUnknowns?.every((item) => item.status === "fog")).toBe(true);
 
     const list = await request(ui, "/api/runs");
     const listed = (await list.json()) as { runs?: Array<{ runId: string; title?: string }> };

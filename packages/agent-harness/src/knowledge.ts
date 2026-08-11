@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { z } from "zod";
+import { resolveFrozenGuidanceRoot } from "./application/component-freeze.js";
 import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
 import type {
   HarnessConfig,
@@ -23,6 +24,11 @@ import {
   normalizePath,
   resolveClassification,
 } from "./infrastructure/knowledge/document-index.js";
+import {
+  guidanceRootsGeneration,
+  loadGuidanceDocuments,
+  type GuidanceLoadRoot,
+} from "./infrastructure/knowledge/guidance-loader.js";
 import { compactDomainSeed, toCurrentProjectResult } from "./infrastructure/knowledge/graphify-lookup.js";
 import {
   cloneGuidanceAudit,
@@ -78,6 +84,14 @@ export { isVisibleForRun } from "./infrastructure/knowledge/lexical-search.js";
 export { matchesGlob } from "./infrastructure/knowledge/guidance-selector.js";
 export { compactDomainSeed } from "./infrastructure/knowledge/graphify-lookup.js";
 
+/** Optional filesystem roots for injected-only guidance (not knowledge.sources). */
+export type KnowledgeGuidanceRoots = {
+  projectRoot?: string;
+  sharedRoot?: string;
+  /** Parent of per-run directories; used with `runId` to resolve frozen guidance. */
+  runsRoot?: string;
+};
+
 export class LocalKnowledgeBase {
   private readonly directory: string;
   private readonly documentsPath: string;
@@ -85,9 +99,12 @@ export class LocalKnowledgeBase {
   private readonly embeddings: LocalEmbeddingIndex;
   private readonly repositoryLookup: RepositoryLookup;
   private readonly paths: HarnessPaths;
+  private readonly guidanceRoots: KnowledgeGuidanceRoots;
   private cachedDocuments?: KnowledgeDocument[];
   private cachedChunks?: KnowledgeChunk[];
+  private cachedGuidanceDocuments?: KnowledgeDocument[];
   private indexGeneration = "";
+  private guidanceGeneration = "";
   private readonly searchResultCache = new Map<string, KnowledgeSearchAudit>();
   private readonly guidanceResultCache = new Map<string, GuidanceSelectionAudit>();
   private static readonly RESULT_CACHE_LIMIT = 64;
@@ -96,8 +113,14 @@ export class LocalKnowledgeBase {
     private readonly config: HarnessConfig,
     repositoryLookup?: RepositoryLookup,
     paths: HarnessPaths = resolveHarnessPaths(config),
+    guidanceRoots: KnowledgeGuidanceRoots = {},
   ) {
     this.paths = paths;
+    this.guidanceRoots = {
+      projectRoot: guidanceRoots.projectRoot ?? config.knowledge.guidance.projectRoot,
+      sharedRoot: guidanceRoots.sharedRoot ?? config.knowledge.guidance.sharedRoot,
+      runsRoot: guidanceRoots.runsRoot ?? path.join(paths.stateRoot, "runs"),
+    };
     this.repositoryLookup = repositoryLookup ?? new GraphifyRepositoryLookup(config, undefined, paths);
     this.directory = config.knowledge.sharedIndexDirectory
       ? path.resolve(paths.controlRoot, config.knowledge.sharedIndexDirectory)
@@ -315,11 +338,11 @@ export class LocalKnowledgeBase {
       });
     }
     const stateDirectory = normalizePath(this.config.stateDirectory);
+    // Guidance is injected-only and never indexed; every chunk is a document.
     const allowedChunks = chunks.filter(
       (chunk) =>
         isVisibleToProject(chunk, activeProjectId, options.includeProjects ?? []) &&
-        isVisibleForRun(chunk.source, options.runId, stateDirectory) &&
-        (!options.excludeGuidance || chunk.kind === "document"),
+        isVisibleForRun(chunk.source, options.runId, stateDirectory),
     );
     if (allowedChunks.length === 0) {
       const repositoryResult = repositoryLookup.result
@@ -406,14 +429,14 @@ export class LocalKnowledgeBase {
 
     const semanticScores = await this.embeddings.search(
       query,
-      new Set(allowedChunks.filter((chunk) => chunk.kind === "document").map((chunk) => chunk.id)),
+      new Set(allowedChunks.map((chunk) => chunk.id)),
     );
     const scoredLexicalIds = new Set(scoredLexical.map((result) => result.id));
     const acceptedLexicalIds = new Set(lexical.map((result) => result.id));
     const { minSemanticOnlySimilarity } = this.config.knowledge.embeddings;
     const semanticCandidates: IndexedSearchResult[] = allowedChunks
       .filter((chunk) => {
-        if (chunk.kind !== "document" || !semanticScores.has(chunk.id)) return false;
+        if (!semanticScores.has(chunk.id)) return false;
         // Embeddings must not resurrect lexical rows already refused by the floor.
         if (scoredLexicalIds.has(chunk.id) && !acceptedLexicalIds.has(chunk.id)) return false;
         // Semantic-only hits (no lexical evidence) need a stricter cosine floor.
@@ -472,27 +495,12 @@ export class LocalKnowledgeBase {
     query: string,
     options: GuidanceSelectionOptions,
   ): Promise<GuidanceSelectionAudit> {
-    const generation = await this.ensureIndexGeneration();
+    const { documents, generation } = await this.loadGuidanceDocumentsForSelection(options.runId);
     const cacheKey = guidanceResultCacheKey(query, options, generation);
     const cached = this.guidanceResultCache.get(cacheKey);
     if (cached) return cloneGuidanceAudit(cached);
 
-    const result = await this.selectGuidanceWithAuditUncached(query, options);
-    rememberFifo(
-      this.guidanceResultCache,
-      cacheKey,
-      cloneGuidanceAudit(result),
-      LocalKnowledgeBase.RESULT_CACHE_LIMIT,
-    );
-    return cloneGuidanceAudit(result);
-  }
-
-  private async selectGuidanceWithAuditUncached(
-    query: string,
-    options: GuidanceSelectionOptions,
-  ): Promise<GuidanceSelectionAudit> {
-    const documents = await this.loadDocuments();
-    return selectGuidanceFromDocuments(
+    const result = selectGuidanceFromDocuments(
       documents,
       query,
       { ...options, chunkCharacters: this.config.knowledge.chunkCharacters },
@@ -502,6 +510,62 @@ export class LocalKnowledgeBase {
         projectId: this.config.knowledge.projectId,
       },
     );
+    rememberFifo(
+      this.guidanceResultCache,
+      cacheKey,
+      cloneGuidanceAudit(result),
+      LocalKnowledgeBase.RESULT_CACHE_LIMIT,
+    );
+    return cloneGuidanceAudit(result);
+  }
+
+  private async loadGuidanceDocumentsForSelection(
+    runId?: string,
+  ): Promise<{ documents: KnowledgeDocument[]; generation: string }> {
+    const roots = await this.resolveGuidanceLoadRoots(runId);
+    const frozenHash =
+      runId && this.guidanceRoots.runsRoot
+        ? (await resolveFrozenGuidanceRoot(this.guidanceRoots.runsRoot, runId))?.sha256
+        : undefined;
+    const generation = await guidanceRootsGeneration(roots, frozenHash);
+    if (generation === this.guidanceGeneration && this.cachedGuidanceDocuments) {
+      return { documents: this.cachedGuidanceDocuments, generation };
+    }
+    const documents = await loadGuidanceDocuments(roots, {
+      projectId: this.config.knowledge.projectId,
+    });
+    this.cachedGuidanceDocuments = documents;
+    this.guidanceGeneration = generation;
+    this.guidanceResultCache.clear();
+    return { documents, generation };
+  }
+
+  private async resolveGuidanceLoadRoots(runId?: string): Promise<GuidanceLoadRoot[]> {
+    if (runId && this.guidanceRoots.runsRoot) {
+      const frozen = await resolveFrozenGuidanceRoot(this.guidanceRoots.runsRoot, runId);
+      if (frozen) {
+        return [{ absolutePath: frozen.path, scope: "global", visibility: "private" }];
+      }
+    }
+    const roots: GuidanceLoadRoot[] = [];
+    const projectRoot = this.guidanceRoots.projectRoot?.trim();
+    if (projectRoot) {
+      roots.push({
+        absolutePath: path.resolve(projectRoot),
+        scope: "project",
+        projectId: this.config.knowledge.projectId,
+        visibility: "private",
+      });
+    }
+    const sharedRoot = this.guidanceRoots.sharedRoot?.trim();
+    if (sharedRoot) {
+      roots.push({
+        absolutePath: path.resolve(sharedRoot),
+        scope: "global",
+        visibility: "private",
+      });
+    }
+    return roots;
   }
 
   private async loadDocuments(): Promise<KnowledgeDocument[]> {
@@ -556,7 +620,6 @@ export class LocalKnowledgeBase {
       this.cachedDocuments = undefined;
       this.cachedChunks = undefined;
       this.searchResultCache.clear();
-      this.guidanceResultCache.clear();
       this.indexGeneration = generation;
     }
     return this.indexGeneration;
@@ -578,7 +641,6 @@ export class LocalKnowledgeBase {
     this.cachedChunks = undefined;
     this.indexGeneration = "";
     this.searchResultCache.clear();
-    this.guidanceResultCache.clear();
   }
 
   private async persist(documents: KnowledgeDocument[]): Promise<void> {
@@ -600,9 +662,7 @@ export class LocalKnowledgeBase {
     try {
       const chunks = await this.loadChunks();
       await this.embeddings.sync(
-        chunks
-          .filter((chunk) => chunk.kind === "document")
-          .map((chunk) => ({ id: chunk.id, text: chunk.text, textHash: hash(chunk.text) })),
+        chunks.map((chunk) => ({ id: chunk.id, text: chunk.text, textHash: hash(chunk.text) })),
         (progress) => onProgress?.({
           stage: "embedding",
           completed: progress.completed,

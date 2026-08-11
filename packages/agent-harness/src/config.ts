@@ -36,5 +36,7 @@ export {
 } from "./config/io.js";
 export {
   applyLiveProjectPolicy,
+  isLegacyGuidanceSourcePath,
   normalizeFrozenRunConfig,
+  stripLegacyGuidanceSources,
 } from "./config/migrations.js";

@@ -122,7 +122,8 @@ knowledge:
   # Optional shared directory used by several project configs.
   # sharedIndexDirectory: ../shared-rag-index
   sources:
-    # Global guidance is seeded under harness home by project add, not into the repo.
+    # Project documents only. Guidance is injected from harness-home / frozen run
+    # copies via knowledge.guidance roots — never listed here.
     - path: README.md
       scope: project
     - path: docs

@@ -869,6 +869,11 @@ export const renderRunScript = `    function renderSidebar() {
       return '';
     }
 
+    function renderUsageWarningIcon(warnReason) {
+      if (!warnReason) return '';
+      return ' <details class="activity-warn"><summary class="activity-warn-icon" title="Usage warning — click for details">⚠</summary><div class="activity-warn-popup">' + esc(warnReason) + '</div></details>';
+    }
+
     function activityViewMode() {
       return state.activityView === 'contexts' ? 'contexts' : 'sequence';
     }
@@ -989,9 +994,8 @@ export const renderRunScript = `    function renderSidebar() {
             html += '<span class="context-badge ' + (badge === 'NEW CONTEXT' ? 'new' : 'reused') + '">' + badge + '</span>';
             html += '<span>' + esc(kind) + '</span>';
             if (repaired) html += '<span class="badge completed">repaired</span>';
-            html += '<span class="faint">' + esc(tokens) + esc(invCached) + (warnReason ? ' <span class="activity-warn-icon" title="' + attr(warnReason) + '">⚠</span>' : '') + '</span></div>';
+            html += '<span class="faint">' + esc(tokens) + esc(invCached) + renderUsageWarningIcon(warnReason) + '</span></div>';
             html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
-            if (warnReason) html += '<div class="activity-warn-reason" style="margin-top:4px">' + esc(warnReason) + '</div>';
             if (invocation.error) html += '<div class="' + (repaired ? 'muted' : 'fail') + '" style="margin-top:4px">' + (repaired ? '<strong>Repaired contract error:</strong> ' : '') + esc(invocation.error) + '</div>';
             html += renderInvocationInspectButton(invocation, turn, context.invocationCount || 0, badge, repaired);
             html += '</div>';
@@ -1062,11 +1066,10 @@ export const renderRunScript = `    function renderSidebar() {
           html += '<span class="tag">' + esc(kind) + '</span>';
           html += '<span class="context-badge ' + badgeClass + '">' + esc(badge) + '</span>';
           html += '<span class="activity-result">' + esc(result) + '</span>';
-          html += '<span class="faint">' + esc(tokens) + esc(invCached) + (warnReason ? ' <span class="activity-warn-icon" title="' + attr(warnReason) + '">⚠</span>' : '') + '</span>';
+          html += '<span class="faint">' + esc(tokens) + esc(invCached) + renderUsageWarningIcon(warnReason) + '</span>';
           html += '</div>';
           html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
           if (outcomeSummary(invocation)) html += '<div class="muted" style="margin-top:3px">' + esc(outcomeSummary(invocation)) + '</div>';
-          if (warnReason) html += '<div class="activity-warn-reason" style="margin-top:4px">' + esc(warnReason) + '</div>';
           if (invocation.error) html += '<div class="' + (repaired ? 'muted' : 'fail') + '" style="margin-top:4px">' + (repaired ? '<strong>Repaired contract error:</strong> ' : '') + esc(invocation.error) + '</div>';
           if (repaired) html += '<div style="margin-top:6px"><span class="badge completed">repaired</span></div>';
           html += renderInvocationInspectButton(invocation, turn, contextTotals[providerKey] || turn, badge.indexOf('REUSED') === 0 ? 'REUSED CONTEXT' : 'NEW CONTEXT', repaired);

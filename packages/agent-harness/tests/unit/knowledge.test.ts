@@ -315,7 +315,7 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/java.mdc":
         "---\ndescription: Java implementation guidance\nglobs: src/**/*.java\n---\n\nUse Java braces.",
       "General/skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: Test-first behavior\nroles: [red-writer, test-writer]\n---\n\nWrite a failing behavioral test first.",
+        "---\nname: tdd\ndescription: Test-first behavior\nroles: [red-writer]\n---\n\nWrite a failing behavioral test first.",
     });
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
       sharedRoot,
@@ -325,9 +325,6 @@ describe("LocalKnowledgeBase", () => {
       role: "implementer",
       knownPaths: ["src/feature.ts"],
     });
-    const testWriting = await knowledge.selectGuidance("write a behavioral test", {
-      role: "test-writer",
-    });
     const redWriting = await knowledge.selectGuidance("establish runnable red", {
       role: "red-writer",
     });
@@ -335,8 +332,6 @@ describe("LocalKnowledgeBase", () => {
     expect(implementation.map((item) => item.source)).toEqual(["General/rules/typescript.mdc"]);
     expect(implementation[0]).toMatchObject({ kind: "rule" });
     expect(implementation[0]?.reason).toContain("path matches");
-    expect(testWriting.map((item) => item.source)).toEqual(["General/skills/tdd/SKILL.md"]);
-    expect(testWriting[0]).toMatchObject({ kind: "skill" });
     expect(redWriting.map((item) => item.source)).toEqual(["General/skills/tdd/SKILL.md"]);
     expect(redWriting[0]).toMatchObject({ kind: "skill" });
   });
@@ -469,13 +464,13 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/no-legacy-fallback-code.mdc":
         "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nglobal authorization fallback text.",
       "General/skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer, test-writer]\n---\n\nglobal authorization test skill.",
+        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer]\n---\n\nglobal authorization test skill.",
     });
     await writeGuidanceFiles(projectRoot, {
       "rules/no-legacy-fallback-code.mdc":
         "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nproject authorization fallback text.",
       "skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer, test-writer]\n---\n\nproject authorization test skill.",
+        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer]\n---\n\nproject authorization test skill.",
     });
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
       projectRoot,
@@ -496,14 +491,14 @@ describe("LocalKnowledgeBase", () => {
       }),
     ]);
 
-    const testWriter = await knowledge.selectGuidanceWithAudit("authorization tests", {
-      role: "test-writer",
+    const redWriter = await knowledge.selectGuidanceWithAudit("authorization tests", {
+      role: "red-writer",
     });
-    expect(testWriter.selected.map((item) => item.source)).toContain("skills/tdd/SKILL.md");
-    expect(testWriter.selected.map((item) => item.source)).not.toContain(
+    expect(redWriter.selected.map((item) => item.source)).toContain("skills/tdd/SKILL.md");
+    expect(redWriter.selected.map((item) => item.source)).not.toContain(
       "General/skills/tdd/SKILL.md",
     );
-    expect(testWriter.omittedOverrides).toEqual(
+    expect(redWriter.omittedOverrides).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           source: "General/skills/tdd/SKILL.md",
@@ -535,7 +530,7 @@ describe("LocalKnowledgeBase", () => {
     });
 
     const audit = await knowledge.selectGuidanceWithAudit("unrelated words", {
-      role: "test-writer",
+      role: "red-writer",
       assignment: {
         rules: ["no-legacy-fallback-code"],
         skills: ["tdd"],

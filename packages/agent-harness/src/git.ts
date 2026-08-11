@@ -181,16 +181,33 @@ export class GitService {
   }
 
   /**
+   * Paths that differ between `baseRef` and the worktree (committed + dirty + untracked).
+   * Used for TDD review over `redBaseSha..worktree`.
+   */
+  async changedFilesVersusRef(baseRef: string): Promise<string[]> {
+    if (!this.config.git.enabled) return [];
+    const named = await this.git(["diff", "--name-only", baseRef], true);
+    const fromDiff = named.stdout
+      .split(/\r?\n/)
+      .map((line) => normalize(line.trim()))
+      .filter(Boolean);
+    const dirty = await this.changedFiles();
+    return [...new Set([...fromDiff, ...dirty])];
+  }
+
+  /**
    * Unified diff for specific paths, budgeted per whole file (never mid-hunk).
-   * Intent-to-add newly created files so they appear vs HEAD.
+   * Intent-to-add newly created files so they appear vs the base ref (default HEAD).
    */
   async diffForPaths(
     paths: string[],
     maxCharacters: number,
+    options: { baseRef?: string } = {},
   ): Promise<{ diff: string; omittedFiles: string[]; truncated: boolean }> {
     if (!this.config.git.enabled || paths.length === 0) {
       return { diff: "", omittedFiles: [], truncated: false };
     }
+    const baseRef = options.baseRef ?? "HEAD";
     const existing: string[] = [];
     for (const filePath of paths) {
       try {
@@ -204,7 +221,7 @@ export class GitService {
       return { diff: "", omittedFiles: [], truncated: false };
     }
     await this.git(["add", "--intent-to-add", "--", ...existing], true);
-    const result = await this.git(["diff", "--no-color", "HEAD", "--", ...existing], true);
+    const result = await this.git(["diff", "--no-color", baseRef, "--", ...existing], true);
     const sections = splitDiffSections(result.stdout);
     const kept: string[] = [];
     const omittedFiles: string[] = [];
@@ -471,19 +488,22 @@ export class GitService {
   }
 
   /**
-   * Commit verified RED paths (tests and optional compile scaffolds) with checkpoint trailers.
+   * Commit verified RED test paths with checkpoint trailers.
    * Idempotent when a checkpoint for the task is already at HEAD and no new dirty paths remain.
    * Creates a new checkpoint when HEAD already has a checkpoint but additional allowed dirty paths appear.
    */
   async commitRedCheckpoint(args: {
     taskId: string;
     taskTitle: string;
-    /** Paths to stage: test files and optional production scaffolds. */
+    /** Paths to stage: test files only. */
     paths: string[];
+    /** TDD round number recorded as `Harness-Checkpoint-Round`. Defaults to 1. */
+    round?: number;
     /** @deprecated Prefer `paths`. */
     testPaths?: string[];
-  }): Promise<{ sha: string; baseSha: string; paths: string[] } | undefined> {
+  }): Promise<{ sha: string; baseSha: string; paths: string[]; round: number } | undefined> {
     if (!this.config.git.enabled) return undefined;
+    const round = Number.isFinite(args.round) && (args.round ?? 0) > 0 ? Math.floor(args.round!) : 1;
     const requested = [...new Set((args.paths ?? args.testPaths ?? []).map(normalize))].filter(Boolean);
     if (requested.length === 0) {
       throw new HarnessFailure(
@@ -498,7 +518,7 @@ export class GitService {
     if (existing && (await this.isHead(existing.sha))) {
       // Stale-checkpoint no-op only when there is nothing new to commit.
       if (dirtyRequested.length === 0) {
-        return existing;
+        return { ...existing, round: existing.round ?? round };
       }
     }
     const paths = dirtyRequested.length > 0 ? dirtyRequested : requested;
@@ -513,27 +533,39 @@ export class GitService {
     const baseSha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
     await this.stagePaths(paths);
     const subject = sanitizeSubject(`test: establish RED for ${args.taskTitle}`);
-    const body = [`Harness-Checkpoint: red`, `Harness-Checkpoint-Task: ${args.taskId}`].join("\n");
+    const body = [
+      `Harness-Checkpoint: red`,
+      `Harness-Checkpoint-Task: ${args.taskId}`,
+      `Harness-Checkpoint-Round: ${round}`,
+    ].join("\n");
     await this.git(["commit", "-m", subject, "-m", body]);
     const sha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
-    return { sha, baseSha, paths };
+    return { sha, baseSha, paths, round };
   }
 
-  /** Locate the newest RED checkpoint commit for a task (crash-recovery attach). */
+  /**
+   * Locate the newest RED checkpoint commit for a task (crash-recovery attach).
+   * `baseSha` is always the parent of the oldest matching checkpoint so multi-round
+   * recovery never rewrites `redBaseSha` to a later checkpoint parent.
+   */
   async findRedCheckpoint(
     taskId: string,
-  ): Promise<{ sha: string; baseSha: string; paths: string[] } | undefined> {
+  ): Promise<{ sha: string; baseSha: string; paths: string[]; round?: number } | undefined> {
     if (!this.config.git.enabled) return undefined;
     const result = await this.git(["log", "-40", "--format=%H%x00%B%x00"], true);
     if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
     const records = result.stdout.split("\0").map((part) => part.trim()).filter(Boolean);
+    let newest:
+      | { sha: string; paths: string[]; round?: number }
+      | undefined;
+    let oldestBaseSha: string | undefined;
     for (let index = 0; index + 1 < records.length; index += 2) {
       const sha = records[index]!;
       const body = records[index + 1]!;
       if (!body.includes("Harness-Checkpoint: red")) continue;
       if (!body.includes(`Harness-Checkpoint-Task: ${taskId}`)) continue;
       const parent = await this.git(["rev-parse", `${sha}^`], true);
-      const baseSha = parent.exitCode === 0 ? parent.stdout.trim() : sha;
+      const parentSha = parent.exitCode === 0 ? parent.stdout.trim() : sha;
       const files = await this.git(["diff-tree", "--no-commit-id", "--name-only", "-r", sha], true);
       const paths =
         files.exitCode === 0
@@ -542,9 +574,16 @@ export class GitService {
               .map((line) => normalize(line.trim()))
               .filter(Boolean)
           : [];
-      return { sha, baseSha, paths };
+      const roundMatch = body.match(/Harness-Checkpoint-Round:\s*(\d+)/);
+      const round = roundMatch ? Number(roundMatch[1]) : undefined;
+      if (!newest) {
+        newest = { sha, paths, round };
+      }
+      // Log is newest-first; the last match is the oldest checkpoint.
+      oldestBaseSha = parentSha;
     }
-    return undefined;
+    if (!newest || !oldestBaseSha) return undefined;
+    return { sha: newest.sha, baseSha: oldestBaseSha, paths: newest.paths, round: newest.round };
   }
 
   /** Restore exact paths from a commit without touching other dirty production files. */

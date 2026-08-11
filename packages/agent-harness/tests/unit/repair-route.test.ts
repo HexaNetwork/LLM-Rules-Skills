@@ -21,7 +21,7 @@ describe("repairRoute", () => {
     expect(
       repairRoute({
         blockedKind: "internal",
-        failure: "Red writer changed paths outside tests and affectedPaths: src/sneaky.ts",
+        failure: "Red writer changed non-test paths: src/sneaky.ts",
       }),
     ).toBe("config-fixer");
   });

@@ -53,6 +53,18 @@ describe("evidenceFingerprint", () => {
       evidenceFingerprint({ ...base, failureCategory: "test-repair" }),
     );
   });
+
+  it("changes when tddRound changes under a constant git-disabled tree state", () => {
+    const base = {
+      taskId: "greet",
+      step: "implementing" as const,
+      sourceTreeState: "git-disabled",
+      failingTestIds: ["FAIL tests/a.test.ts"],
+      failureCategory: "verification",
+      tddRound: 1,
+    };
+    expect(evidenceFingerprint(base)).not.toBe(evidenceFingerprint({ ...base, tddRound: 2 }));
+  });
 });
 
 describe("evaluateRepairProgress", () => {
@@ -75,9 +87,9 @@ describe("evaluateRepairProgress", () => {
     const result = evaluateRepairProgress({
       fingerprint,
       seenFingerprints: [],
-      seenEdges: [`${fingerprint}:implementer->test-writer`],
+      seenEdges: [`${fingerprint}:implementer->red-writer`],
       fromRole: "implementer",
-      toRole: "test-writer",
+      toRole: "red-writer",
     });
     expect(result.allowed).toBe(false);
     if (!result.allowed) expect(result.reason).toBe("repeated_edge");

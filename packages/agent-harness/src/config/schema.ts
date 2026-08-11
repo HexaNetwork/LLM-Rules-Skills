@@ -7,7 +7,6 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
   "planner",
   "issue-slicer",
   "red-writer",
-  "test-writer",
   "implementer",
   "reviewer",
 ];
@@ -16,7 +15,7 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  * Bumped when the frozen run-config shape or configuration-hash algorithm changes
  * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
  */
-export const CONFIG_VERSION = 11;
+export const CONFIG_VERSION = 12;
 
 export const VerificationCommandSchema = z.object({
   id: z.string().min(1),
@@ -68,7 +67,7 @@ const GuidanceAssignmentSchema = z.object({
   skills: z.array(z.string().min(1)).default([]),
 }).strict();
 
-const GuidanceAssignmentsSchema = z.object({
+const GuidanceAssignmentsObjectSchema = z.object({
   reflector: GuidanceAssignmentSchema,
   griller: GuidanceAssignmentSchema,
   planner: GuidanceAssignmentSchema,
@@ -79,7 +78,6 @@ const GuidanceAssignmentsSchema = z.object({
   "prompt-builder": GuidanceAssignmentSchema,
   // Default keeps older assignment maps valid when this role is introduced.
   "red-writer": GuidanceAssignmentSchema.default({ rules: [], skills: ["tdd"] }),
-  "test-writer": GuidanceAssignmentSchema,
   implementer: GuidanceAssignmentSchema,
   reviewer: GuidanceAssignmentSchema,
   "message-writer": GuidanceAssignmentSchema,
@@ -89,8 +87,17 @@ const GuidanceAssignmentsSchema = z.object({
   "project-profiler": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
 }).strict();
 
+/** Strip the deleted test-writer role from legacy assignment maps before strict parse. */
+const GuidanceAssignmentsSchema = z.preprocess((value) => {
+  if (value && typeof value === "object" && !Array.isArray(value) && "test-writer" in value) {
+    const { ["test-writer"]: _removed, ...rest } = value as Record<string, unknown>;
+    return rest;
+  }
+  return value;
+}, GuidanceAssignmentsObjectSchema);
+
 /** Authoritative guidance map applied when `knowledge.guidance.assignments` is omitted. */
-export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsSchema> = {
+export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsObjectSchema> = {
   reflector: { rules: [], skills: ["domain-modeling"] },
   griller: { rules: [], skills: ["grill-me", "domain-modeling"] },
   planner: { rules: [], skills: ["domain-modeling", "to-prd"] },
@@ -100,7 +107,6 @@ export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsSch
   },
   "prompt-builder": { rules: [], skills: [] },
   "red-writer": { rules: [], skills: ["tdd"] },
-  "test-writer": { rules: [], skills: ["tdd"] },
   implementer: { rules: [], skills: ["tdd"] },
   reviewer: { rules: [], skills: ["code-review"] },
   "message-writer": { rules: [], skills: [] },
@@ -182,7 +188,9 @@ export const HarnessConfigSchema = z.object({
       maxContextTurns: z.number().int().nonnegative().default(0),
       // Automatic in-place retries for transient provider failures inside advance().
       maxProviderRetries: z.number().int().min(0).max(5).default(2),
+      // Per-round RED schema/path/test-repair revision limit — not RED/GREEN round count.
       maxTestAttempts: z.number().int().positive().max(10).default(2),
+      // Per-round GREEN attempt limit; resets after each verified GREEN round.
       maxImplementationAttempts: z.number().int().positive().max(10).default(3),
       maxReviewAttempts: z.number().int().positive().max(10).default(2),
       // Grill-me reuses one provider session for this many Q→A turns, then
@@ -204,7 +212,7 @@ export const HarnessConfigSchema = z.object({
       graphifyCharacters: z.number().int().positive().default(3_000),
       // Per-task commit subjects use the deterministic fallback unless enabled.
       generateCommitMessages: z.boolean().default(false),
-      // Globs that mark paths as test files for red-writer / test-writer legality checks.
+      // Globs that mark paths as test files for red-writer legality checks.
       testPathPatterns: z.array(z.string().min(1)).default([
         "tests/**",
         "test/**",

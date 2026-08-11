@@ -132,7 +132,7 @@ export class RecoveryService {
       await this.ctx.clearCancelRequest(state.runId);
       return state;
     }
-    const withoutSessions = await this.ctx.releaseAllImplementerSessions({
+    const withoutSessions = await this.ctx.releaseAllTaskWorkerSessions({
       ...state,
       phase: "cancelled",
     });

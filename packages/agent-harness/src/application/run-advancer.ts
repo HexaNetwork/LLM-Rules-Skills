@@ -65,6 +65,11 @@ function workflowSignature(state: RunState): string {
           attempts: activeTask.attempts,
           reviewSummary: activeTask.reviewSummary,
           integrityViolationCount: activeTask.integrityViolationCount,
+          // Distinguish same-step GREEN retries and multi-round loops for the
+          // repeated-transition circuit breaker (attempts alone is not enough when
+          // only the per-round counter moves between identical diagnostic totals).
+          tddRound: activeTask.tddLoop?.pendingRound?.number ?? activeTask.tddLoop?.round,
+          pendingImplementerAttempts: activeTask.tddLoop?.pendingRound?.implementerAttempts,
         }
       : undefined,
     taskStates: state.tasks.map(({ id, status, step }) => [id, status, step]),

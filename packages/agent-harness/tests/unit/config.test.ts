@@ -50,8 +50,8 @@ describe("token-conscious defaults", () => {
       "domain-modeling",
       "to-prd",
     ]);
-    expect(config.knowledge.guidance.assignments?.["test-writer"].skills).toEqual(["tdd"]);
     expect(config.knowledge.guidance.assignments?.["red-writer"].skills).toEqual(["tdd"]);
+    expect(config.knowledge.guidance.assignments).not.toHaveProperty("test-writer");
     expect(HarnessConfigSchema.parse({
       knowledge: { guidance: { enabled: true } },
     }).knowledge.guidance.assignments).toEqual(DEFAULT_GUIDANCE_ASSIGNMENTS);
@@ -107,6 +107,8 @@ describe("token-conscious defaults", () => {
     expect(defaultConfigYaml()).toContain("sourceExtensions:");
     expect(defaultConfigYaml()).toContain("assignments:");
     expect(defaultConfigYaml()).toContain("scope: project");
+    expect(defaultConfigYaml()).toContain("not the number of");
+    expect(defaultConfigYaml()).toContain("do not run after every RED batch");
     expect(defaultConfigYaml()).not.toContain("agent-harness/guidance/General");
     const deployed = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({
       sources: [
@@ -143,7 +145,6 @@ describe("token-conscious defaults", () => {
       "issue-slicer": { rules: [], skills: [] },
       "prompt-builder": { rules: [], skills: [] },
       "red-writer": { rules: [], skills: ["tdd"] },
-      "test-writer": { rules: [], skills: ["tdd"] },
       implementer: { rules: ["no-legacy-fallback-code"], skills: [] },
       reviewer: { rules: [], skills: ["code-review"] },
       "message-writer": { rules: [], skills: [] },
@@ -154,6 +155,18 @@ describe("token-conscious defaults", () => {
     expect(HarnessConfigSchema.parse({
       knowledge: { guidance: { assignments: complete } },
     }).knowledge.guidance.assignments).toEqual(complete);
+    expect(
+      HarnessConfigSchema.parse({
+        knowledge: {
+          guidance: {
+            assignments: {
+              ...complete,
+              "test-writer": { rules: [], skills: ["tdd"] },
+            },
+          },
+        },
+      }).knowledge.guidance.assignments,
+    ).toEqual(complete);
     expect(() => HarnessConfigSchema.parse({
       knowledge: { guidance: { assignments: { implementer: complete.implementer } } },
     })).toThrow();
@@ -241,7 +254,7 @@ version: 2
 repositoryRoot: .
 `) as unknown;
     const parsed = HarnessConfigSchema.parse(minimal);
-    expect(CONFIG_VERSION).toBe(11);
+    expect(CONFIG_VERSION).toBe(12);
     expect(parsed.agent.promptBuilder).toBe(false);
     expect(parsed.knowledge.guidance.enabled).toBe(true);
     expect(parsed.git.ignoredArtifactPatterns.length).toBeGreaterThan(0);

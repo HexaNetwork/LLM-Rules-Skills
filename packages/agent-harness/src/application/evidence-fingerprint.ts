@@ -10,6 +10,8 @@ export type EvidenceFingerprintInput = {
   failureCategory: string;
   reviewFinding?: string;
   frozenConfigHash?: string;
+  /** Distinguishes identical git-disabled tree states across TDD rounds. */
+  tddRound?: number;
 };
 
 /** Canonical hash of the evidence that would justify another repair invocation. */
@@ -23,6 +25,7 @@ export function evidenceFingerprint(input: EvidenceFingerprintInput): string {
     input.failureCategory,
     (input.reviewFinding ?? "").trim(),
     input.frozenConfigHash ?? "",
+    input.tddRound === undefined ? "" : String(input.tddRound),
   ].join("\0");
   return createHash("sha256").update(payload).digest("hex");
 }

@@ -65,7 +65,7 @@ function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
           diff: "diff --git a/src/settlement.ts b/src/settlement.ts\n+export {}",
           diffOmittedFiles: [],
         }
-      : role === "test-writer" || role === "red-writer"
+      : role === "red-writer"
         ? {
             task: taskForPacket(task),
             priorCommandOutput: recentEvidenceOutput(task.evidence),
@@ -102,21 +102,18 @@ describe("packet size baseline", () => {
     const task = worstCaseTask();
     const lengths = {
       "red-writer": renderPrompt(packetForRole("red-writer", task)).length,
-      "test-writer": renderPrompt(packetForRole("test-writer", task)).length,
       implementer: renderPrompt(packetForRole("implementer", task)).length,
       reviewer: renderPrompt(packetForRole("reviewer", task)).length,
     };
 
     // Ceiling guards: Phase 1 projection + budgets must keep repair prompts bounded.
     expect(lengths["red-writer"]).toBeLessThan(60_000);
-    expect(lengths["test-writer"]).toBeLessThan(60_000);
     expect(lengths.implementer).toBeLessThan(60_000);
     expect(lengths.reviewer).toBeLessThan(60_000);
 
     // Stable order for regression visibility in failures.
     expect(lengths).toEqual({
       "red-writer": lengths["red-writer"],
-      "test-writer": lengths["test-writer"],
       implementer: lengths.implementer,
       reviewer: lengths.reviewer,
     });

@@ -54,7 +54,11 @@ workflow:
   maxContextTurns: 0
   # Transient provider failures retry in-place (backoff 1s/4s/16s).
   maxProviderRetries: 2
+  # Per-round RED schema/path/test-repair revision limit — not the number of
+  # RED/GREEN rounds. Ordinary alternating rounds are unbounded.
   maxTestAttempts: 2
+  # Per-round GREEN implementation attempt limit; resets after each verified
+  # GREEN round. Final post-done repairs use tddLoop.finalRepairAttempts.
   maxImplementationAttempts: 3
   maxReviewAttempts: 2
   maxGrillQuestionsPerEpisode: 5
@@ -71,7 +75,7 @@ workflow:
   graphifyCharacters: 3000
   # Deterministic commit subjects by default; PR bodies still use the model.
   generateCommitMessages: false
-  # Paths the test-writer may edit; tune for Go (_test.go), Maven (src/test), etc.
+  # Paths the red-writer may edit; tune for Go (_test.go), Maven (src/test), etc.
   testPathPatterns:
     - tests/**
     - test/**
@@ -82,8 +86,10 @@ workflow:
     - src/test/**
 
 commands:
-  # Authoritative ordered commands used by both the pre-planning baseline and
-  # post-implementation verification. The repository profiler replaces this list.
+  # Authoritative ordered commands for the pre-planning baseline and final
+  # post-done verification. Targeted GREEN uses testTargetTemplate (when set);
+  # these final gates do not run after every RED batch. The repository profiler
+  # replaces this list during the verification-settings gate.
   verification:
     - id: test
       command: npm test -- --run
@@ -160,9 +166,6 @@ knowledge:
         rules: []
         skills: []
       red-writer:
-        rules: []
-        skills: [tdd]
-      test-writer:
         rules: []
         skills: [tdd]
       implementer:

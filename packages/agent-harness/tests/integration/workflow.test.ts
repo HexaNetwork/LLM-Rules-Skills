@@ -1001,10 +1001,18 @@ describe("durable idea-to-feature workflow", () => {
             ],
           };
         }
-        const prompt = String(request.prompt);
-        expect(prompt).toContain("Formal");
-        expect(prompt).toContain("Short");
-        expect(prompt).toContain("Plain");
+        const fullFallbackPrompt = String(request.prompt);
+        const continuationPrompt = String(request.continuationPrompt);
+        expect(request.providerSessionId).toBeTruthy();
+        expect(continuationPrompt).toContain("Formal");
+        expect(continuationPrompt).toContain("Short");
+        expect(continuationPrompt).toContain("Plain");
+        expect(continuationPrompt).not.toContain("Confirmed brief");
+        expect(continuationPrompt).not.toContain('"resolutions"');
+        expect(continuationPrompt).not.toContain('"openUnknowns"');
+        expect(fullFallbackPrompt).toContain("Confirmed brief");
+        expect(fullFallbackPrompt).toContain('"resolutions"');
+        expect(fullFallbackPrompt).toContain('"openUnknowns"');
         return { status: "ready_to_plan", summary: "All set", resolutions: [], openUnknowns: [] };
       },
       planner: createPlannerPrdSequence().planner,

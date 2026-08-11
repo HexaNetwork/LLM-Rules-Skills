@@ -295,7 +295,10 @@ export class AgentCoordinator {
       {
         providerSessionId: episode.providerSessionId,
         continuationPrompt: episode.providerSessionId
-          ? renderContinuationPrompt(packet, { includeGuidance })
+          ? renderContinuationPrompt(packet, {
+              includeGuidance,
+              deltaInput: input.continuationInput,
+            })
           : undefined,
         retainProviderSession: episode.retainProviderSession,
         mode: episode.mode,

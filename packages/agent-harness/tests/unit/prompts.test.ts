@@ -55,6 +55,30 @@ describe("prompt rendering", () => {
     expect(withoutGuidance).not.toContain("Reject blank credentials.");
   });
 
+  it("renders retained grill turns from only the new delta", () => {
+    const grillPacket = {
+      ...packet,
+      role: "griller" as const,
+      input: {
+        confirmedBrief: "A deliberately unique durable brief",
+        resolutions: [{ summary: "A deliberately unique old resolution" }],
+        openUnknowns: [{ title: "A deliberately unique old unknown" }],
+      },
+      expectedOutput: "A deliberately unique full grill contract",
+    };
+    const rendered = renderContinuationPrompt(grillPacket, {
+      includeGuidance: false,
+      deltaInput: { responses: [{ questionId: "q-1", answer: "The new answer" }] },
+    });
+
+    expect(rendered).toContain("The new answer");
+    expect(rendered).not.toContain("durable brief");
+    expect(rendered).not.toContain("old resolution");
+    expect(rendered).not.toContain("old unknown");
+    expect(rendered).not.toContain("full grill contract");
+    expect(rendered).not.toContain("You are the griller worker");
+  });
+
   it("strips YAML frontmatter markers from model-facing packs", () => {
     const withFrontmatter: WorkPacket = {
       ...packet,

@@ -1030,7 +1030,7 @@ describe("central dashboard", () => {
       session: { output: { summary: string } };
     };
     expect(inspection.inputSource).toBe("stored exact input");
-    expect(inspection.inputPrompt).toContain("griller");
+    expect(inspection.inputPrompt).toContain("Quiet and focused");
     expect(inspection.packet.role).toBe("griller");
 
     const brief = await request(

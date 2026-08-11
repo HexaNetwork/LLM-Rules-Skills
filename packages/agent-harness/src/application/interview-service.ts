@@ -396,6 +396,31 @@ export class InterviewService {
             })),
           }
         : {};
+    // pendingBatchId is persisted for current runs. The fallback derives the
+    // newest touched batch so an in-flight run written by an older harness can
+    // still resume without dropping the human response.
+    const legacyPendingBatchId = [...state.questions]
+      .filter(
+        (question) =>
+          question.purpose === "grill" &&
+          (question.status === "answered" || question.status === "parked"),
+      )
+      .sort((left, right) => right.askedAt.localeCompare(left.askedAt))[0]?.batchId;
+    const pendingBatchId = state.grillEpisode?.pendingBatchId ?? legacyPendingBatchId;
+    const respondedQuestions = state.questions.filter(
+      (question) =>
+        question.purpose === "grill" &&
+        question.batchId === pendingBatchId &&
+        (question.status === "answered" || question.status === "parked"),
+    );
+    const responseDelta = respondedQuestions.map((question) => ({
+      questionId: question.id,
+      question: question.prompt,
+      status: question.status,
+      ...(question.status === "answered"
+        ? { answer: question.answer, optionId: question.answerOptionId }
+        : {}),
+    }));
     const notesPayload =
       unconsumedNotes.length > 0
         ? { operatorNotes: unconsumedNotes.map((note) => ({ text: note.text, title: note.title })) }
@@ -407,6 +432,17 @@ export class InterviewService {
       resolutions: state.grillResolutions,
       openUnknowns: state.openUnknowns,
       ...questionsPayload,
+      ...(responseDelta.some((response) => response.status === "parked")
+        ? { parkedQuestions: responseDelta.filter((response) => response.status === "parked") }
+        : {}),
+      ...notesPayload,
+    };
+
+    // A retained griller already has the brief, register, rules, questions, and
+    // prior answers in its conversation. Send only the human/event delta. The
+    // complete `input` above remains available to the backend's cold fallback.
+    const continuationInput = {
+      responses: responseDelta,
       ...notesPayload,
     };
 
@@ -419,6 +455,7 @@ export class InterviewService {
           ? "Incorporate the human answers and either ask the next batch of independent grill questions or declare ready to plan"
           : "Begin grilling from the confirmed feature brief; ask the first batch of decision-ready questions",
       input,
+      continuationInput,
       constraints: [
         `Ask at most ${batchCeiling} question(s) this turn, and only if they are mutually independent. This is a ceiling, not a target — prefer fewer, and ask exactly one whenever the next decision forks on its answer.`,
       ],

@@ -135,6 +135,8 @@ export const GrillEpisodeSchema = z.object({
   questionsAnswered: z.number().int().nonnegative(),
   // Hash of selected guidance sources so continuations can skip unchanged blocks.
   guidanceFingerprint: z.string().optional(),
+  // Batch awaiting a human response; used to send exactly one warm-turn delta.
+  pendingBatchId: z.string().min(1).optional(),
   startedAt: z.string(),
   updatedAt: z.string(),
   closedAt: z.string().optional(),

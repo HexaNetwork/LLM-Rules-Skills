@@ -214,7 +214,12 @@ export function applyGrillOutput(
       const episode = next.grillEpisode;
       next = {
         ...next,
-        grillEpisode: { ...episode, updatedAt: now, closedAt: now },
+        grillEpisode: {
+          ...episode,
+          pendingBatchId: undefined,
+          updatedAt: now,
+          closedAt: now,
+        },
       };
       events.push({
         type: "grill.episode_closed",
@@ -287,7 +292,13 @@ export function applyGrillOutput(
     now,
   });
   return {
-    state: { ...batch.state, openUnknowns },
+    state: {
+      ...batch.state,
+      openUnknowns,
+      grillEpisode: batch.state.grillEpisode
+        ? { ...batch.state.grillEpisode, pendingBatchId: batchId }
+        : batch.state.grillEpisode,
+    },
     events: [...events, ...batch.events],
   };
 }

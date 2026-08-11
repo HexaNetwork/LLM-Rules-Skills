@@ -146,9 +146,24 @@ export function renderPromptBuilderPrompt(packet: WorkPacket): string {
 
 export function renderContinuationPrompt(
   packet: WorkPacket,
-  options: { includeGuidance?: boolean } = {},
+  options: {
+    includeGuidance?: boolean;
+    /** When supplied, rely on retained history and submit only this new input. */
+    deltaInput?: unknown;
+  } = {},
 ): string {
   const includeGuidance = options.includeGuidance !== false;
+  if (options.deltaInput !== undefined) {
+    return [
+      "Continue the existing conversation; all prior instructions and context remain in force.",
+      ...(includeGuidance
+        ? ["Updated guidance for this and later turns:", ...renderGuidance(packet)]
+        : []),
+      "The only new authoritative input since the previous turn is:",
+      JSON.stringify(options.deltaInput),
+      "Return the same output contract as the previous turn.",
+    ].join("\n");
+  }
   return [
     `Continue the durable episode. For this turn, act as the ${packet.role} worker.`,
     "Use the existing conversation and repository findings; do not repeat exploration already completed unless the new input invalidates it.",

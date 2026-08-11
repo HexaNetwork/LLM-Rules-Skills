@@ -123,6 +123,8 @@ The **planner** then produces a **high-level plan** only (problem, solution, app
 
 An episode spans at most `workflow.maxGrillQuestionsPerEpisode` answered questions (five by default), then checkpoints and rolls to a new provider agent with the confirmed brief and resolutions so far. Staleness is measured once per batch from its shared `askedAt`: if a batch is submitted more than `workflow.staleAnswerMinutes` (30 by default) after it was asked, the harness discards the episode and continues with a cold packet containing only those questions and answers. Planning, implementation tasks, and review retain clean boundaries. If the Cursor checkpoint cannot be resumed, the backend creates a fresh agent and submits the complete packet instead.
 
+Within a successfully retained grill episode, subsequent turns send only the new human-response and operator-note delta. The confirmed brief, accumulated resolutions, open-unknowns snapshot, role rules, and output contract stay in the existing provider conversation instead of being appended again. Every invocation still persists a complete packet separately; if resume fails, that complete packet—not the warm delta—is submitted to the fresh provider context.
+
 ## Scope-aware local retrieval
 
 The default tracker and knowledge system require no external service. Human-readable issues and tasks are local Markdown. Configured docs, skills, and rules (`.md`, `.mdc`, `.yaml`, and supported source files) are chunked into `.agent-harness/knowledge/documents.json` and `chunks.json`; retrieval uses deterministic lexical scoring and stable tie-breaking.

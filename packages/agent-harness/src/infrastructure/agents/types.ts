@@ -85,6 +85,12 @@ type InvokeBase<T> = {
   role: AgentRole;
   objective: string;
   input: unknown;
+  /**
+   * New information for a retained provider conversation. The complete `input`
+   * remains in the durable packet and is used if provider resume falls back to
+   * a fresh context; this delta is submitted only when resume actually works.
+   */
+  continuationInput?: unknown;
   expectedOutput: string;
   // Input is intentionally loosened: schemas with `.default()` fields have an
   // Input type narrower than parsed Output T, which a plain z.ZodType<T> would reject here.

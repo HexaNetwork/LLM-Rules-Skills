@@ -42,10 +42,8 @@ function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
     source: `rules/rule-${index}.mdc`,
     title: `Rule ${index}`,
     kind: "rule" as const,
-    excerpt: "G".repeat(1_400),
-    reason: "role match",
-    score: 10 - index,
   }));
+  const guidancePack = "G".repeat(5_600);
   const context = [
     {
       source: "graphify:graphify-out/graph.json",
@@ -86,6 +84,7 @@ function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
     constraints: ["Do not commit"],
     input,
     guidance,
+    guidancePack,
     retrievalResults: context,
     priorArtifacts: [],
     expectedOutput: "{summary,changedFiles}",

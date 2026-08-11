@@ -16,11 +16,9 @@ const packet: WorkPacket = {
       source: "General/rules/login.mdc",
       title: "Login validation",
       kind: "rule",
-      excerpt: "Reject blank credentials.",
-      reason: "path matches src/**/*.ts; lexical relevance",
-      score: 81,
     },
   ],
+  guidancePack: "Reject blank credentials.",
   context: [],
   priorArtifacts: [],
   expectedOutput: "{summary,changedFiles}",
@@ -28,18 +26,24 @@ const packet: WorkPacket = {
 };
 
 describe("prompt rendering", () => {
-  it("renders auditable selected guidance for fresh and resumed workers", () => {
-    expect(renderPrompt(packet)).toContain("General/rules/login.mdc");
-    expect(renderPrompt(packet)).toContain("Reject blank credentials.");
+  it("renders a lean compiled guidance pack without selection metadata", () => {
+    const rendered = renderPrompt(packet);
+    expect(rendered).toContain("GUIDANCE");
+    expect(rendered).toContain("Reject blank credentials.");
+    expect(rendered).not.toContain("SELECTED GUIDANCE");
+    expect(rendered).not.toContain("Reason:");
+    expect(rendered).not.toContain("General/rules/login.mdc");
+    expect(rendered).not.toContain("skill:");
     expect(renderContinuationPrompt({ ...packet, role: "griller" })).toContain(
-      "General/rules/login.mdc",
+      "Reject blank credentials.",
     );
   });
 
-  it("emits guidance excerpts once and serialises the packet without pretty-print indent", () => {
+  it("emits guidance body once and serialises the packet without pretty-print indent", () => {
     const rendered = renderPrompt(packet);
     expect(rendered.split("Reject blank credentials.").length).toBe(2);
     expect(rendered).not.toContain('\n    "');
+    expect(rendered).not.toContain('"guidancePack"');
     expect(renderPromptBuilderPrompt(packet).split("Reject blank credentials.").length).toBe(2);
   });
 
@@ -49,6 +53,16 @@ describe("prompt rendering", () => {
     const withoutGuidance = renderContinuationPrompt(grillPacket, { includeGuidance: false });
     expect(withGuidance).toContain("Reject blank credentials.");
     expect(withoutGuidance).not.toContain("Reject blank credentials.");
+  });
+
+  it("strips YAML frontmatter markers from model-facing packs", () => {
+    const withFrontmatter: WorkPacket = {
+      ...packet,
+      guidancePack: "# Test-Driven Development\n\nWrite a failing test first.",
+    };
+    const rendered = renderPrompt(withFrontmatter);
+    expect(rendered).toContain("# Test-Driven Development");
+    expect(rendered).not.toContain("---\nname:");
   });
 
   it("allows grillers to deliver JSON via CreatePlan or assistant result", () => {
@@ -141,7 +155,8 @@ describe("prompt rendering", () => {
 
   it("requires the prompt builder to preserve guidance", () => {
     expect(renderPromptBuilderPrompt(packet)).toContain("selected guidance block");
-    expect(renderPromptBuilderPrompt(packet)).toContain("General/rules/login.mdc");
+    expect(renderPromptBuilderPrompt(packet)).toContain("GUIDANCE");
+    expect(renderPromptBuilderPrompt(packet)).toContain("Reject blank credentials.");
   });
 
   it("tells reviewers the diff is primary evidence", () => {

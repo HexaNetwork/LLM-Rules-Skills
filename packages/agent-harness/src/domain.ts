@@ -670,14 +670,14 @@ export type WorkPacket = {
   objective: string;
   constraints: string[];
   input: unknown;
+  /** Slim source refs for audit/fingerprint; model text is `guidancePack`. */
   guidance: Array<{
     source: string;
     title: string;
     kind: "rule" | "skill";
-    excerpt: string;
-    reason: string;
-    score: number;
   }>;
+  /** Compiled assigned rules/skills body (no selection headers or frontmatter). */
+  guidancePack: string;
   context: Array<{ source: string; title: string; excerpt: string }>;
   priorArtifacts: string[];
   expectedOutput: string;

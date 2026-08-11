@@ -18,6 +18,7 @@ import {
   json,
   setSecurityHeaders,
 } from "./http/request.js";
+import { handleGuidanceRoutes } from "./http/routes/guidance.js";
 import { handleKnowledgeRoutes } from "./http/routes/knowledge.js";
 import { handleRunsRoutes } from "./http/routes/runs.js";
 import { handleSettingsRoutes } from "./http/routes/settings.js";
@@ -102,6 +103,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
       if (await handleSettingsRoutes(request, response, url, ctx)) return;
       if (await handleRunsRoutes(request, response, url, ctx)) return;
       if (await handleKnowledgeRoutes(request, response, url, ctx)) return;
+      if (await handleGuidanceRoutes(request, response, url, ctx)) return;
 
       throw new HttpError(404, "Not found");
     } catch (error) {

@@ -465,6 +465,7 @@ export const eventsScript = `    async function waitForJob(runId) {
     $("menuBtn").addEventListener('click', function () { document.body.classList.toggle('menu-open'); });
     $("refreshBtn").addEventListener('click', function () { bootstrap(true); });
     $("knowledgeBtn").addEventListener('click', renderKnowledge);
+    $("guidanceBtn").addEventListener('click', renderGuidance);
     $("runFilter").addEventListener('input', function (event) { state.filter = event.target.value; renderSidebar(); });
     document.addEventListener('input', function (event) {
       if (event.target.name === 'answer' && event.target.closest('#answerForm')) state.answerDrafts[event.target.closest('#answerForm').dataset.question] = event.target.value;
@@ -635,6 +636,13 @@ export const eventsScript = `    async function waitForJob(runId) {
       if (event.target.id === 'knowledgeAdd') { event.preventDefault(); try { var added = await api('/api/knowledge/add',{method:'POST',body:{path:$("knowledgePath").value}}); toast(added.changed ? 'Document indexed' : 'Document unchanged'); } catch(error) { toast(error.message,true); } }
     });
     document.addEventListener('click', async function (event) { if (event.target.id === 'refreshKnowledge') { try { var result = await api('/api/knowledge/refresh',{method:'POST'}); toast('Indexed ' + result.changed + ' changed document(s)'); } catch(error) { toast(error.message,true); } } });
+    document.addEventListener('click', function (event) {
+      var roleBtn = event.target.closest && event.target.closest('[data-guidance-role]');
+      if (!roleBtn) return;
+      state.guidanceRole = roleBtn.getAttribute('data-guidance-role');
+      renderGuidanceRoles();
+      renderGuidanceDetail();
+    });
 
     function applyDefaults() {
       if (!state.bootstrap) return;

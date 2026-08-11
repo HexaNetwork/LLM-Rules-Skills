@@ -27,6 +27,7 @@ export const apiScript = `    async function api(path, options) {
         if (state.selected && !state.runs.some(function (run) { return run.runId === state.selected; })) state.selected = state.runs[0] ? state.runs[0].runId : null;
         renderSidebar();
         if (state.view === "knowledge") renderKnowledge();
+        else if (state.view === "guidance") renderGuidance();
         else if (state.selected) await loadRun(state.selected, false);
         else renderHome();
       } catch (error) {

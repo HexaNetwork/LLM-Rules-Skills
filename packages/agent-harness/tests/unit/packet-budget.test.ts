@@ -187,7 +187,7 @@ describe("buildWorkPacket budgets", () => {
   });
 
   it("keeps guidance + context + input under the configured sum", () => {
-    const guidanceExcerpt = "R".repeat(2_000);
+    const guidancePack = "R".repeat(2_000);
     const { packet, budgetAudit } = buildWorkPacket({
       invocationId: "inv",
       runId: "run",
@@ -200,11 +200,9 @@ describe("buildWorkPacket budgets", () => {
           source: "rules/a.mdc",
           title: "A",
           kind: "rule",
-          excerpt: guidanceExcerpt,
-          reason: "role",
-          score: 1,
         },
       ],
+      guidancePack,
       retrievalResults: [
         { source: "docs/a.md", title: "A", excerpt: "C".repeat(20_000) },
       ],
@@ -220,6 +218,7 @@ describe("buildWorkPacket budgets", () => {
     expect(budgetAudit.guidanceCharacters + budgetAudit.contextCharacters).toBeLessThanOrEqual(5_000);
     expect(budgetAudit.inputCharacters).toBeLessThanOrEqual(2_000);
     expect(JSON.stringify(packet.input).length).toBeLessThanOrEqual(2_000);
+    expect(packet.guidancePack.length).toBe(2_000);
   });
 });
 

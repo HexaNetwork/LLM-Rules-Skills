@@ -1,6 +1,6 @@
 import type { AgentRole, WorkPacket } from "./domain.js";
 
-const ROLE_RULES: Record<AgentRole, string[]> = {
+export const ROLE_RULES: Record<AgentRole, string[]> = {
   reflector: [
     "Restate the idea in your own words without inventing requirements.",
     "Propose a concise imperative feature title suitable as a run label (for example \"Add greeting tone\"), not a paragraph.",
@@ -103,8 +103,21 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
   ],
 };
 
+export function roleRulesFor(role: AgentRole): readonly string[] {
+  return ROLE_RULES[role];
+}
+
+/** Role intro + role rules + compiled guidance pack (no WORK PACKET). */
+export function renderGuidancePromptPreview(role: AgentRole, guidancePack: string): string {
+  return [
+    `You are the ${role} worker in a deterministic software-delivery harness.`,
+    ...ROLE_RULES[role].map((rule) => `- ${rule}`),
+    ...renderGuidancePack(guidancePack),
+  ].join("\n");
+}
+
 export function renderPrompt(packet: WorkPacket): string {
-  const { guidance: _rendered, ...packetForJson } = packet;
+  const { guidance: _guidance, guidancePack: _pack, ...packetForJson } = packet;
   return [
     `You are the ${packet.role} worker in a deterministic software-delivery harness.`,
     "This is a fresh session. The work packet below is the complete handoff; do not assume hidden chat history.",
@@ -120,7 +133,7 @@ export function renderPrompt(packet: WorkPacket): string {
 }
 
 export function renderPromptBuilderPrompt(packet: WorkPacket): string {
-  const { guidance: _rendered, ...packetForJson } = packet;
+  const { guidance: _guidance, guidancePack: _pack, ...packetForJson } = packet;
   return [
     "You are a low-cost prompt compiler.",
     "Transform the work packet into the prompt for the named downstream worker.",
@@ -170,14 +183,11 @@ function outputContractLines(role: AgentRole): string[] {
 }
 
 function renderGuidance(packet: WorkPacket): string[] {
-  if (packet.guidance.length === 0) return [];
-  return [
-    "",
-    "SELECTED GUIDANCE",
-    ...packet.guidance.flatMap((item) => [
-      `### ${item.title} (${item.kind}: ${item.source})`,
-      `Reason: ${item.reason}`,
-      item.excerpt,
-    ]),
-  ];
+  return renderGuidancePack(packet.guidancePack);
+}
+
+function renderGuidancePack(guidancePack: string): string[] {
+  const pack = guidancePack.trim();
+  if (!pack) return [];
+  return ["", "GUIDANCE", pack];
 }

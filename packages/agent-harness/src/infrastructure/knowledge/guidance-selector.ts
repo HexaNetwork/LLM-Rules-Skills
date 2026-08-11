@@ -18,6 +18,9 @@ export function cloneGuidanceAudit(value: GuidanceSelectionAudit): GuidanceSelec
     missingAssignments: (value.missingAssignments ?? []).map((item) => ({ ...item })),
     omittedAlwaysApply: value.omittedAlwaysApply.map((item) => ({ ...item })),
     omittedOverrides: (value.omittedOverrides ?? []).map((item) => ({ ...item })),
+    ...(value.truncated ? { truncated: { ...value.truncated } } : {}),
+    ...(value.sources ? { sources: [...value.sources] } : {}),
+    ...(value.guidancePack !== undefined ? { guidancePack: value.guidancePack } : {}),
   };
 }
 

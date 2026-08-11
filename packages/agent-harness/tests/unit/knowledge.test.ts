@@ -543,10 +543,13 @@ describe("LocalKnowledgeBase", () => {
     });
 
     expect(audit.selected.map((item) => item.source)).toEqual([
-      "skills/tdd/SKILL.md",
       "General/rules/no-legacy-fallback-code.mdc",
+      "skills/tdd/SKILL.md",
     ]);
     expect(audit.selected.every((item) => item.reason.includes("agent assignment"))).toBe(true);
+    expect(audit.guidancePack).toContain("remove compatibility paths");
+    expect(audit.guidancePack).toContain("project tdd guidance");
+    expect(audit.guidancePack).not.toContain("---");
     expect(audit.selected.map((item) => item.source)).not.toContain("General/skills/diagnose/SKILL.md");
     expect(audit.omittedOverrides).toEqual([
       expect.objectContaining({ source: "General/skills/tdd/SKILL.md" }),

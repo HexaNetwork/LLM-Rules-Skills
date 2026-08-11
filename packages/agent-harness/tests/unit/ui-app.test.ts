@@ -61,8 +61,12 @@ describe("dashboard document", () => {
     expect(html).toContain("New run");
     expect(html).toContain("Starting reflect");
     expect(html).toContain("Knowledge base");
+    expect(html).toContain("Agent guidance");
+    expect(html).toContain("id=\"guidanceBtn\"");
     expect(html).toContain("RAG inspector");
     expect(html).toContain("Manual RAG query");
+    expect(html).toContain("Role inspector");
+    expect(html).toContain("/api/guidance/packs");
     expect(html).toContain("newRunFeedback");
     expect(html).toContain("Confirm & continue to grill");
     expect(html).toContain("Resume run");

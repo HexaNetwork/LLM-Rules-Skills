@@ -1,6 +1,7 @@
 import { apiScript } from "./api.js";
 import { eventsScript } from "./events.js";
 import { renderArtifactsScript } from "./render-artifacts.js";
+import { renderGuidanceScript } from "./render-guidance.js";
 import { renderInterviewScript } from "./render-interview.js";
 import { renderRunScript } from "./render-run.js";
 import { renderSettingsScript } from "./render-settings.js";
@@ -18,6 +19,7 @@ export function clientScriptBody(): string {
     interviewParts[0] ?? "",
     runParts[1] ?? "",
     renderArtifactsScript,
+    renderGuidanceScript,
     renderSettingsScript,
     eventParts[0] ?? "",
     interviewParts[1] ?? "",

@@ -27,6 +27,7 @@ export type BuildWorkPacketInput = {
   constraints: string[];
   input: unknown;
   guidance: WorkPacket["guidance"];
+  guidancePack?: string;
   retrievalResults: Array<{ source: string; title: string; excerpt: string }>;
   priorArtifacts: string[];
   expectedOutput: string;
@@ -45,7 +46,17 @@ export function buildWorkPacket(input: BuildWorkPacketInput): {
   budgetAudit: BudgetAudit;
 } {
   const truncations: BudgetTruncation[] = [];
-  const guidanceCharacters = input.guidance.reduce((total, item) => total + item.excerpt.length, 0);
+  const rawPack = input.guidancePack ?? "";
+  const guidancePack = rawPack.slice(0, Math.max(0, input.budgets.contextCharacters));
+  if (guidancePack.length < rawPack.length) {
+    truncations.push({
+      path: "guidancePack",
+      reason: "context-budget",
+      before: rawPack.length,
+      after: guidancePack.length,
+    });
+  }
+  const guidanceCharacters = guidancePack.length;
   let remaining = Math.max(0, input.budgets.contextCharacters - guidanceCharacters);
 
   const context: WorkPacket["context"] = [];
@@ -90,6 +101,7 @@ export function buildWorkPacket(input: BuildWorkPacketInput): {
     constraints: input.constraints,
     input: budgetedInput,
     guidance: input.guidance,
+    guidancePack,
     context,
     priorArtifacts: input.priorArtifacts,
     expectedOutput: input.expectedOutput,

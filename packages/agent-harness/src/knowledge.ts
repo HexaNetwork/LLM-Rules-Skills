@@ -31,6 +31,11 @@ import {
 } from "./infrastructure/knowledge/guidance-loader.js";
 import { compactDomainSeed, toCurrentProjectResult } from "./infrastructure/knowledge/graphify-lookup.js";
 import {
+  cloneCompiledGuidancePack,
+  compileRoleGuidancePack,
+  guidancePackCacheKey,
+} from "./infrastructure/knowledge/guidance-pack.js";
+import {
   cloneGuidanceAudit,
   guidanceResultCacheKey,
   matchesGlob,
@@ -53,6 +58,7 @@ import {
 import {
   ChunkSchema,
   DocumentSchema,
+  type CompiledGuidancePack,
   type GuidanceSelection,
   type GuidanceSelectionAudit,
   type GuidanceSelectionOptions,
@@ -68,6 +74,7 @@ import {
 } from "./infrastructure/knowledge/types.js";
 
 export type {
+  CompiledGuidancePack,
   GuidanceKind,
   GuidanceOmission,
   GuidanceSelection,
@@ -108,6 +115,7 @@ export class LocalKnowledgeBase {
   private guidanceGeneration = "";
   private readonly searchResultCache = new Map<string, KnowledgeSearchAudit>();
   private readonly guidanceResultCache = new Map<string, GuidanceSelectionAudit>();
+  private readonly guidancePackCache = new Map<string, CompiledGuidancePack>();
   private static readonly RESULT_CACHE_LIMIT = 64;
 
   constructor(
@@ -521,10 +529,62 @@ export class LocalKnowledgeBase {
     return (await this.selectGuidanceWithAudit(query, options)).selected;
   }
 
+  async compileRoleGuidancePack(
+    role: string,
+    options: Omit<GuidanceSelectionOptions, "role"> = {},
+  ): Promise<CompiledGuidancePack> {
+    const assignment = options.assignment ?? { rules: [], skills: [] };
+    const { documents, generation } = await this.loadGuidanceDocumentsForSelection(options.runId);
+    const maxCharacters = options.maxCharacters ?? this.config.knowledge.guidance.maxCharacters;
+    const projectId = options.projectId ?? this.config.knowledge.projectId;
+    const cacheKey = guidancePackCacheKey(
+      role,
+      generation,
+      assignment,
+      maxCharacters,
+      projectId,
+      options.includeProjects ?? [],
+    );
+    const cached = this.guidancePackCache.get(cacheKey);
+    if (cached) return cloneCompiledGuidancePack(cached);
+
+    const result = compileRoleGuidancePack(documents, {
+      assignment,
+      maxCharacters,
+      projectId,
+      includeProjects: options.includeProjects,
+    });
+    rememberFifo(
+      this.guidancePackCache,
+      cacheKey,
+      cloneCompiledGuidancePack(result),
+      LocalKnowledgeBase.RESULT_CACHE_LIMIT,
+    );
+    return cloneCompiledGuidancePack(result);
+  }
+
   async selectGuidanceWithAudit(
     query: string,
     options: GuidanceSelectionOptions,
   ): Promise<GuidanceSelectionAudit> {
+    if (options.assignment) {
+      const pack = await this.compileRoleGuidancePack(options.role, options);
+      return {
+        selected: pack.selected.map((item, index) => ({
+          ...item,
+          excerpt: "",
+          reason: "agent assignment",
+          score: 1_000 - index,
+        })),
+        missingAssignments: pack.missingAssignments,
+        omittedAlwaysApply: [],
+        omittedOverrides: pack.omittedOverrides,
+        sources: pack.sources,
+        guidancePack: pack.text,
+        ...(pack.truncated ? { truncated: pack.truncated } : {}),
+      };
+    }
+
     const { documents, generation } = await this.loadGuidanceDocumentsForSelection(options.runId);
     const cacheKey = guidanceResultCacheKey(query, options, generation);
     const cached = this.guidanceResultCache.get(cacheKey);
@@ -567,6 +627,7 @@ export class LocalKnowledgeBase {
     this.cachedGuidanceDocuments = documents;
     this.guidanceGeneration = generation;
     this.guidanceResultCache.clear();
+    this.guidancePackCache.clear();
     return { documents, generation };
   }
 

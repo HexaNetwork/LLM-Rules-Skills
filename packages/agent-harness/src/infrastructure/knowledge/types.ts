@@ -136,6 +136,13 @@ export type GuidanceSelection = {
   score: number;
 };
 
+/** Slim projection stored on the work packet (model text lives in `guidancePack`). */
+export type GuidanceSourceRef = {
+  source: string;
+  title: string;
+  kind: "rule" | "skill";
+};
+
 export type GuidanceSelectionOptions = {
   role: string;
   /** Authoritative name lists for this role. Undefined retains relevance-based selection. */
@@ -158,6 +165,21 @@ export type GuidanceOmission = {
   reason: string;
 };
 
+export type GuidancePackTruncation = {
+  before: number;
+  after: number;
+};
+
+/** Compiled per-role pack: model-facing text plus audit metadata. */
+export type CompiledGuidancePack = {
+  text: string;
+  sources: string[];
+  selected: GuidanceSourceRef[];
+  missingAssignments: Array<{ kind: "rule" | "skill"; name: string; reason: string }>;
+  omittedOverrides: GuidanceOmission[];
+  truncated?: GuidancePackTruncation;
+};
+
 export type GuidanceSelectionAudit = {
   selected: GuidanceSelection[];
   /** Explicitly assigned names that had neither an active-project nor General entry. */
@@ -165,4 +187,10 @@ export type GuidanceSelectionAudit = {
   omittedAlwaysApply: GuidanceOmission[];
   /** Global guidance dropped because a same-name project entry won. */
   omittedOverrides: GuidanceOmission[];
+  /** Present when assignment-mode compilation truncated the joined pack. */
+  truncated?: GuidancePackTruncation;
+  /** Resolved relative paths in assignment order (assignment mode). */
+  sources?: string[];
+  /** Model-facing compiled pack (assignment mode). */
+  guidancePack?: string;
 };

@@ -295,6 +295,15 @@ export function renderDashboard(): string {
     .artifact code { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .knowledge-layout { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:20px; }
     .knowledge-results { display:grid; gap:11px; margin-top:18px; }
+    .guidance-layout { display:grid; grid-template-columns:220px minmax(0,1fr); gap:20px; }
+    .guidance-roles { display:grid; gap:6px; align-content:start; }
+    .guidance-role { width:100%; justify-content:flex-start; text-align:left; }
+    .guidance-role.active { border-color:rgba(170,220,120,.45); background:rgba(170,220,120,.08); }
+    .guidance-meta { display:grid; gap:8px; margin:14px 0 18px; }
+    .guidance-warnings { display:grid; gap:8px; margin-bottom:16px; }
+    .guidance-section { margin-top:16px; }
+    .guidance-section h2 { margin:0 0 8px; font-size:14px; }
+    .guidance-section pre { max-height:min(52vh,520px); border:1px solid var(--line-soft); border-radius:12px; background:#0b0e11; }
     .score { color:var(--lime); font:11px monospace; }
     .empty { text-align:center; color:var(--muted); border:1px dashed var(--line); border-radius:var(--radius); padding:50px 20px; }
     dialog { color:var(--text); width:min(680px,calc(100vw - 28px)); border:1px solid var(--line); border-radius:20px; background:#12161b; padding:0; box-shadow:var(--shadow); }
@@ -348,6 +357,7 @@ export function renderDashboard(): string {
       .hero { grid-template-columns:1fr; gap:28px; }
       .card.third, .card.half, .card.two-thirds { grid-column:span 12; }
       .knowledge-layout { grid-template-columns:1fr; }
+      .guidance-layout { grid-template-columns:1fr; }
     }
     @media (max-width: 600px) {
       .topbar { height:62px; }
@@ -377,6 +387,7 @@ export function renderDashboard(): string {
       <div class="section-label">Runs</div>
       <div class="run-list" id="runList"></div>
       <div class="sidebar-foot">
+        <button class="btn ghost global-link" id="guidanceBtn">▤ &nbsp;Agent guidance</button>
         <button class="btn ghost global-link" id="knowledgeBtn">⌕ &nbsp;Knowledge base</button>
         <div class="connection"><i></i><span>Local connection secured</span></div>
       </div>

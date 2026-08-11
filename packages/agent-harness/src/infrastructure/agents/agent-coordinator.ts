@@ -128,10 +128,11 @@ export class AgentCoordinator {
       invocationRetrieval &&
       this.config.knowledge.graphify.enabled &&
       this.config.knowledge.graphify.roles.includes(input.role);
-    let guidanceAudit: Awaited<ReturnType<LocalKnowledgeBase["selectGuidanceWithAudit"]>> = {
+    let guidancePack: Awaited<ReturnType<LocalKnowledgeBase["compileRoleGuidancePack"]>> = {
+      text: "",
+      sources: [],
       selected: [],
       missingAssignments: [],
-      omittedAlwaysApply: [],
       omittedOverrides: [],
     };
     let retrieval: Awaited<ReturnType<LocalKnowledgeBase["searchWithAudit"]>> = {
@@ -175,18 +176,17 @@ export class AgentCoordinator {
           skipped: "rag-disabled",
         },
       });
-      [guidanceAudit, retrieval] = await Promise.all([
+      [guidancePack, retrieval] = await Promise.all([
         guidanceEnabled
-          ? this.knowledge.selectGuidanceWithAudit(knowledgeQuery, {
-              role: input.role,
+          ? this.knowledge.compileRoleGuidancePack(input.role, {
               assignment: this.config.knowledge.guidance.assignments?.[input.role],
-              knownPaths: pathHints,
               runId: input.runId,
             })
           : Promise.resolve({
+              text: "",
+              sources: [],
               selected: [],
               missingAssignments: [],
-              omittedAlwaysApply: [],
               omittedOverrides: [],
             }),
         ragEnabled || graphifyWanted
@@ -229,7 +229,8 @@ export class AgentCoordinator {
       objective: input.objective,
       constraints: input.constraints ?? [],
       input: input.input,
-      guidance: guidanceAudit.selected,
+      guidance: guidancePack.selected,
+      guidancePack: guidancePack.text,
       retrievalResults: retrieval.results,
       priorArtifacts: input.priorArtifacts ?? [],
       expectedOutput: input.expectedOutput,
@@ -244,7 +245,12 @@ export class AgentCoordinator {
     const guidanceFingerprint = fingerprintGuidance(packet.guidance);
     const packetPath = `packets/${invocationId}.json`;
     await this.store.writeJson(input.runId, packetPath, packet);
-    await this.store.writeJson(input.runId, `packets/${invocationId}.guidance.json`, guidanceAudit);
+    await this.store.writeJson(input.runId, `packets/${invocationId}.guidance.json`, {
+      sources: guidancePack.sources,
+      missingAssignments: guidancePack.missingAssignments,
+      omittedOverrides: guidancePack.omittedOverrides,
+      ...(guidancePack.truncated ? { truncated: guidancePack.truncated } : {}),
+    });
     await this.store.writeJson(input.runId, `packets/${invocationId}.retrieval.json`, {
       retrieval: retrieval.audit,
       budget: budgetAudit,

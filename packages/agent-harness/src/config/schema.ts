@@ -77,7 +77,7 @@ const GuidanceAssignmentsObjectSchema = z.object({
   }),
   "prompt-builder": GuidanceAssignmentSchema,
   // Default keeps older assignment maps valid when this role is introduced.
-  "red-writer": GuidanceAssignmentSchema.default({ rules: [], skills: ["tdd"] }),
+  "red-writer": GuidanceAssignmentSchema.default({ rules: [], skills: ["red-writer-tdd"] }),
   implementer: GuidanceAssignmentSchema,
   reviewer: GuidanceAssignmentSchema,
   "message-writer": GuidanceAssignmentSchema,
@@ -106,7 +106,7 @@ export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsObj
     skills: ["prd-to-issues", "domain-modeling", "improve-codebase-architecture"],
   },
   "prompt-builder": { rules: [], skills: [] },
-  "red-writer": { rules: [], skills: ["tdd"] },
+  "red-writer": { rules: [], skills: ["red-writer-tdd"] },
   implementer: { rules: [], skills: ["tdd"] },
   reviewer: { rules: [], skills: ["code-review"] },
   "message-writer": { rules: [], skills: [] },

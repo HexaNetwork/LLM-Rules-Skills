@@ -298,7 +298,10 @@ function renderCoverage(loop: TddLoop, task: BuildTask): string {
     const criterion = task.acceptanceCriteria[item.criterionIndex] ?? `criterion ${item.criterionIndex}`;
     lines.push(
       `- [${item.covered ? "x" : " "}] ${criterion}`,
-      `  - Tests: ${formatBulletList(item.testPaths)}`,
+      `  - Verification: ${item.verificationMode}`,
+      ...(item.verificationMode === "automated-test"
+        ? [`  - Tests: ${formatBulletList(item.testPaths)}`]
+        : []),
       `  - ${item.rationale}`,
     );
   }

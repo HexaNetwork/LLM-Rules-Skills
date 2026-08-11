@@ -186,7 +186,7 @@ knowledge:
       griller: { rules: [], skills: [grill-me, domain-modeling] }
       planner: { rules: [], skills: [domain-modeling, improve-codebase-architecture] }
       prompt-builder: { rules: [], skills: [] }
-      red-writer: { rules: [], skills: [tdd] }
+      red-writer: { rules: [], skills: [red-writer-tdd] }
       implementer: { rules: [], skills: [tdd] }
       reviewer: { rules: [], skills: [code-review] }
       message-writer: { rules: [], skills: [] }
@@ -242,11 +242,11 @@ Prompt compilation is disabled by default because the deterministic renderer is 
 
 With TDD on, each task runs an **alternating multi-round loop** with two retained logical agents:
 
-1. **red-writer** adds the next coherent batch of tests (and may reference missing production surfaces). It edits only `workflow.testPathPatterns` paths and does **not** run shell/test commands.
+1. **red-writer** adds the minimum discriminating test for one uncovered behavior (and may reference missing production surfaces). It edits only `workflow.testPathPatterns` paths and does **not** run shell/test commands. Exact operator-owned configuration values are deliberately not validated; synthetic configuration tests cover contractual ranges, missing/malformed values, defaults, and validation behavior.
 2. The harness records a RED checkpoint (no targeted command yet).
 3. **green-implementer** implements until the harness independently verifies the accumulated targeted tests via `commands.testTargetTemplate` (when configured) or the first verification command.
-4. Control returns to the same red-writer session for another batch.
-5. The loop ends only when the red-writer returns `done` from an already verified-green checkpoint, with a final behavior/edge-case coverage assessment.
+4. Control returns to the same red-writer session, which defaults to `done` at verified GREEN unless it can name a distinct uncovered criterion or high-risk defect.
+5. The loop ends when the red-writer returns `done` with no file changes and a final assessment that records automated, non-test, or deliberately not-validated criteria.
 6. **Final** `commands.verification` gates, review, and commit run only after `done` — not after every RED batch.
 
 `workflow.maxTestAttempts` is the per-round RED schema/path/test-repair revision limit, **not** the number of RED/GREEN rounds. `workflow.maxImplementationAttempts` is the per-round GREEN attempt limit and resets after each verified GREEN round. Post-`done` verification/review repairs use a dedicated `tddLoop.finalRepairAttempts` budget.

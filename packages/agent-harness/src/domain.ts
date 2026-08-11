@@ -355,15 +355,35 @@ export const TddCompletedRoundSchema = z.object({
 });
 export type TddCompletedRound = z.infer<typeof TddCompletedRoundSchema>;
 
+export const AcceptanceVerificationModeSchema = z.enum([
+  "automated-test",
+  "command",
+  "inspection",
+  "not-validated",
+]);
+export type AcceptanceVerificationMode = z.infer<typeof AcceptanceVerificationModeSchema>;
+
+export const TddAcceptanceCoverageItemSchema = z
+  .object({
+    criterionIndex: z.number().int().nonnegative(),
+    covered: z.boolean(),
+    verificationMode: AcceptanceVerificationModeSchema.default("automated-test"),
+    testPaths: z.array(z.string()).default([]),
+    rationale: z.string().min(1),
+  })
+  .superRefine((item, ctx) => {
+    if (item.verificationMode !== "automated-test" && item.testPaths.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["testPaths"],
+        message: `${item.verificationMode} criteria may not claim automated test paths`,
+      });
+    }
+  });
+export type TddAcceptanceCoverageItem = z.infer<typeof TddAcceptanceCoverageItemSchema>;
+
 export const TddCoverageAssessmentSchema = z.object({
-  acceptanceCriteria: z.array(
-    z.object({
-      criterionIndex: z.number().int().nonnegative(),
-      covered: z.boolean(),
-      testPaths: z.array(z.string()),
-      rationale: z.string().min(1),
-    }),
-  ),
+  acceptanceCriteria: z.array(TddAcceptanceCoverageItemSchema),
   edgeCaseRationale: z.string().min(1),
 });
 export type TddCoverageAssessment = z.infer<typeof TddCoverageAssessmentSchema>;
@@ -729,21 +749,14 @@ export const RedWriterOutputSchema = z.discriminatedUnion("status", [
     status: z.literal("done"),
     summary: z.string().min(1),
     changedFiles: z.array(z.string()).length(0),
-    acceptanceCoverage: z.array(
-      z.object({
-        criterionIndex: z.number().int().nonnegative(),
-        covered: z.boolean(),
-        testPaths: z.array(z.string()),
-        rationale: z.string().min(1),
-      }),
-    ),
+    acceptanceCoverage: z.array(TddAcceptanceCoverageItemSchema),
     edgeCaseRationale: z.string().min(1),
   }),
 ]);
 export type RedWriterOutput = z.infer<typeof RedWriterOutputSchema>;
 
 export const RED_WRITER_EXPECTED_OUTPUT =
-  "either {status:'continue',summary,changedFiles:[string] (min 1),behaviorsAdded:[string] (min 1),edgeCasesAdded?:[string]} or {status:'done',summary,changedFiles:[] (empty),acceptanceCoverage:[{criterionIndex,covered,testPaths,rationale}],edgeCaseRationale}";
+  "either {status:'continue',summary,changedFiles:[string] (min 1),behaviorsAdded:[string] (min 1),edgeCasesAdded?:[string]} or {status:'done',summary,changedFiles:[] (empty),acceptanceCoverage:[{criterionIndex,covered,verificationMode:'automated-test'|'command'|'inspection'|'not-validated',testPaths,rationale}],edgeCaseRationale}";
 
 /** Green-implementer output for the alternating TDD loop. */
 export const GreenImplementerOutputSchema = z.discriminatedUnion("status", [

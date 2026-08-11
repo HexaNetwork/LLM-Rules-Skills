@@ -131,6 +131,46 @@ describe("agent output contracts", () => {
       edgeCaseRationale: "empty and boundary covered",
     });
     expect(done.status).toBe("done");
+    if (done.status === "done") {
+      expect(done.acceptanceCoverage[0]?.verificationMode).toBe("automated-test");
+    }
+
+    const operatorConfigured = RedWriterOutputSchema.parse({
+      status: "done",
+      summary: "complete without freezing operator policy",
+      changedFiles: [],
+      acceptanceCoverage: [
+        {
+          criterionIndex: 1,
+          covered: true,
+          verificationMode: "not-validated",
+          testPaths: [],
+          rationale: "The selected value remains operator owned.",
+        },
+      ],
+      edgeCaseRationale: "Configuration mechanics are covered with synthetic boundaries.",
+    });
+    expect(operatorConfigured.status).toBe("done");
+    if (operatorConfigured.status === "done") {
+      expect(operatorConfigured.acceptanceCoverage[0]?.verificationMode).toBe("not-validated");
+    }
+    expect(() =>
+      RedWriterOutputSchema.parse({
+        status: "done",
+        summary: "incorrectly claims a test for operator policy",
+        changedFiles: [],
+        acceptanceCoverage: [
+          {
+            criterionIndex: 1,
+            covered: true,
+            verificationMode: "not-validated",
+            testPaths: ["tests/config-values.test.ts"],
+            rationale: "must be rejected",
+          },
+        ],
+        edgeCaseRationale: "n/a",
+      }),
+    ).toThrow(/may not claim automated test paths/);
   });
 
   it("rejects continue without behaviors or files, and done with dirty changedFiles", () => {

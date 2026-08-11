@@ -260,8 +260,10 @@ export class TaskExecutionService {
       continuationInput: reuseContext
         ? {
             round: pendingRoundNumber(task.tddLoop),
-            instruction:
-              "Add the next coherent test batch or return done. Do not run commands.",
+            atVerifiedGreen: task.tddLoop?.atVerifiedGreen ?? false,
+            instruction: task.tddLoop?.atVerifiedGreen
+              ? "The accumulated suite is verified GREEN. Default to done. Continue only for a named uncovered acceptance criterion or a distinct high-risk defect not detected by existing tests. Do not run commands."
+              : "Add the minimum discriminating test for the current uncovered behavior. Do not run commands.",
           }
         : undefined,
       expectedOutput: RED_WRITER_EXPECTED_OUTPUT,
@@ -269,8 +271,9 @@ export class TaskExecutionService {
       constraints: [
         "Edit tests only; do not add production scaffolds or implement behavior",
         "Do not run test, compile, build, lint, or verification commands",
-        "Add a coherent batch (typically 3-5 tests) including relevant edge cases",
-        "Return status continue when adding a batch, or done only at verified GREEN with no file changes",
+        "Add the minimum discriminating test evidence for one uncovered behavior and avoid redundant coverage",
+        "Treat exact operator-owned configuration values as deliberately unvalidated",
+        "At verified GREEN default to done; continue only for a named uncovered criterion or distinct high-risk defect",
       ],
       knowledgeQuery: [task.title, task.description, ...task.acceptanceCriteria].join(" "),
       knowledgeFallbackQuery: compactDomainSeed(
@@ -480,6 +483,22 @@ export class TaskExecutionService {
   }
 
   async implementTask(state: RunState, task: BuildTask): Promise<RunState> {
+    const redAlreadyDeclaredDone = Boolean(
+      task.tdd &&
+      task.tddLoop?.atVerifiedGreen &&
+      !task.tddLoop.pendingRound &&
+      !task.tddLoop.finalRepairPending &&
+      task.tddLoop.coverage.finalAssessment,
+    );
+    if (redAlreadyDeclaredDone) {
+      return this.updateTask(
+        state,
+        { ...task, step: "verifying", status: "active", failure: undefined },
+        "task.redundant_green_skipped",
+        { reason: "RED already declared done at verified GREEN" },
+      );
+    }
+
     const latestEvidence = task.evidence.at(-1);
     const category = failureCategoryFromEvidence(latestEvidence, "verification");
     const pendingAttempts = task.tddLoop?.pendingRound?.implementerAttempts ?? 0;

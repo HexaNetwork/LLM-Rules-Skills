@@ -50,7 +50,7 @@ describe("token-conscious defaults", () => {
       "domain-modeling",
       "to-prd",
     ]);
-    expect(config.knowledge.guidance.assignments?.["red-writer"].skills).toEqual(["tdd"]);
+    expect(config.knowledge.guidance.assignments?.["red-writer"].skills).toEqual(["red-writer-tdd"]);
     expect(config.knowledge.guidance.assignments).not.toHaveProperty("test-writer");
     expect(HarnessConfigSchema.parse({
       knowledge: { guidance: { enabled: true } },
@@ -144,7 +144,7 @@ describe("token-conscious defaults", () => {
       planner: { rules: [], skills: [] },
       "issue-slicer": { rules: [], skills: [] },
       "prompt-builder": { rules: [], skills: [] },
-      "red-writer": { rules: [], skills: ["tdd"] },
+      "red-writer": { rules: [], skills: ["red-writer-tdd"] },
       implementer: { rules: ["no-legacy-fallback-code"], skills: [] },
       reviewer: { rules: [], skills: ["code-review"] },
       "message-writer": { rules: [], skills: [] },

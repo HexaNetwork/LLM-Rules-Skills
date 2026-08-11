@@ -818,7 +818,7 @@ export const renderRunScript = `    function renderSidebar() {
         html += '<div class="resolution" style="margin-top:10px"><strong>Final coverage assessment</strong><div class="muted" style="margin-top:5px">' + esc(assessment.edgeCaseRationale || "") + '</div>';
         html += '<ul style="margin:8px 0 0;padding-left:18px">' + (assessment.acceptanceCriteria || []).map(function (item) {
           var criterion = (task.acceptanceCriteria && task.acceptanceCriteria[item.criterionIndex]) || ("criterion " + item.criterionIndex);
-          return '<li>' + (item.covered ? "✓ " : "○ ") + esc(criterion) + '<div class="faint">' + esc(item.rationale || "") + '</div></li>';
+          return '<li>' + (item.covered ? "✓ " : "○ ") + esc(criterion) + '<div class="faint">' + esc(item.verificationMode || "automated-test") + ' · ' + esc(item.rationale || "") + '</div></li>';
         }).join("") + '</ul></div>';
       } else if (loop.coverage && ((loop.coverage.behaviors || []).length || (loop.coverage.edgeCases || []).length)) {
         html += '<div class="muted" style="margin-top:10px">Covered so far: ' + esc((loop.coverage.behaviors || []).length) + ' behaviors · ' + esc((loop.coverage.edgeCases || []).length) + ' edge cases</div>';

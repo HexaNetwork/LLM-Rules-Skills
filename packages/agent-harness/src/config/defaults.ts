@@ -167,7 +167,7 @@ knowledge:
         skills: []
       red-writer:
         rules: []
-        skills: [tdd]
+        skills: [red-writer-tdd]
       implementer:
         rules: []
         skills: [tdd]

@@ -230,11 +230,20 @@ describe("prompt rendering", () => {
     const rendered = renderPrompt({ ...packet, role: "red-writer" });
     expect(rendered).toContain("Edit test files only");
     expect(rendered).toContain("Do not run test, compile, build, lint, verification");
-    expect(rendered).toContain("typically three to five tests");
-    expect(rendered).toContain("Own edge-case discovery");
-    expect(rendered).toContain("Return status continue when adding a batch, or done only");
+    expect(rendered).toContain("minimum discriminating test evidence");
+    expect(rendered).toContain("distinct plausible defect");
+    expect(rendered).toContain("operator-owned inputs");
+    expect(rendered).toContain("Mark criteria that only select operator-owned values as not-validated");
+    expect(rendered).toContain("At a verified-GREEN checkpoint, default to done");
+    expect(rendered).not.toContain("three to five tests");
     expect(rendered).not.toContain("Establish a runnable RED");
     expect(rendered).not.toContain("minimal compile scaffolds");
+  });
+
+  it("tells reviewers not to turn operator-owned values into validation work", () => {
+    const rendered = renderPrompt({ ...packet, role: "reviewer" });
+    expect(rendered).toContain("marked not-validated");
+    expect(rendered).toContain("do not request tests, inspection, or command checks");
   });
 
   it("labels TDD implementer as green-implementer with status rules", () => {
@@ -279,10 +288,11 @@ describe("prompt rendering", () => {
       includeGuidance: false,
       deltaInput: {
         round: 2,
-        instruction: "Add the next coherent test batch or return done. Do not run commands.",
+        atVerifiedGreen: true,
+        instruction: "The accumulated suite is verified GREEN. Default to done.",
       },
     });
-    expect(rendered).toContain("Add the next coherent test batch");
+    expect(rendered).toContain("Default to done");
     expect(rendered).not.toContain("unique full task title");
     expect(rendered).not.toContain("unique prior evidence blob");
     expect(rendered).not.toContain("unique-red-contract");

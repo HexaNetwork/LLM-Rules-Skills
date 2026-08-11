@@ -105,20 +105,20 @@ These are authoritative for the implementation.
   The harness also does not run commands after RED.
 - The harness performs deterministic path and checkpoint checks after the red-writer returns.
 
-### Soft batch guidance, including edge cases
+### Minimum discriminating coverage
 
 The red-writer receives this guidance:
 
-> Add the smallest coherent batch that meaningfully advances the feature, typically three to five
-> tests. Each batch should cover a focused behavior cluster and include relevant edge cases,
-> boundaries, invalid inputs, or exemption paths. Use judgment: prefer a parameterized test when
-> several cases express the same rule, and stop when implementation feedback would help determine
-> the next batch.
+> Add the minimum discriminating test evidence for one uncovered observable behavior, normally one
+> test method. Before adding it, name the distinct plausible defect it detects and do not add it if
+> existing coverage would already fail for substantially the same defect. At verified GREEN,
+> default to done unless a named acceptance criterion or distinct high-risk defect remains uncovered.
 
-This is not a hard test-count limit. The output records normal behaviors separately from edge cases
-so that later rounds and final review can see both kinds of coverage.
+This is not a hard test-count limit. Parameterized examples may express one rule. The output records
+normal behaviors separately from selected edge cases so later rounds and final review can see both.
 
-Relevant edge-case categories include, when applicable:
+Select an edge case only when required by an acceptance criterion, a demonstrated regression, a
+materially different implementation path, or a high-impact failure. Relevant examples include:
 
 - minimum, maximum, and exact-boundary values;
 - one step inside and outside a boundary;
@@ -439,8 +439,8 @@ The full packet contains:
 - affected paths and test path patterns;
 - configured targeted filter and command description;
 - RED test-only rules;
-- three-to-five soft batch guidance;
-- explicit edge-case responsibility;
+- minimum-discriminating-evidence and redundancy guidance;
+- operator-owned configuration policy;
 - red output contract.
 
 ### Subsequent red-writer turn
@@ -458,7 +458,8 @@ The full packet contains:
     "behaviors": ["..."],
     "edgeCases": ["..."]
   },
-  "instruction": "Add the next coherent test batch or return done. Do not run commands."
+  "atVerifiedGreen": true,
+  "instruction": "The accumulated suite is verified GREEN. Default to done; continue only for a named uncovered criterion or distinct high-risk defect. Do not run commands."
 }
 ```
 
@@ -676,9 +677,10 @@ Update `ROLE_RULES`:
 - Remove the runnable-RED requirement.
 - Remove permission for production scaffolds.
 - Add test-only and no-command rules.
-- Add the three-to-five soft batch guidance verbatim.
-- Add explicit edge-case discovery responsibility.
-- Explain `continue` versus `done` and that `done` is permitted only at verified GREEN.
+- Add minimum-discriminating-evidence and distinct-defect redundancy rules.
+- Treat exact operator-owned configuration selections as deliberately unvalidated while testing
+  synthetic range, missing, malformed, default, and validation behavior when contractual.
+- Explain `continue` versus `done`, default to `done` at verified GREEN, and require no file changes.
 - Tell the agent to use existing accumulated tests and avoid duplicating covered behaviors.
 
 ### Implementer
@@ -959,7 +961,7 @@ matches runtime behavior.
 ### Integration tests with scripted backend
 
 1. Three-round happy path uses one red provider session and one green provider session.
-2. RED writes three to five tests as guidance but a two-test or six-test batch is still accepted.
+2. RED normally writes one discriminating test method; the harness does not enforce a test count.
 3. RED may introduce uncompilable references; no command runner is called before GREEN.
 4. RED production edit is rejected deterministically.
 5. GREEN test edit is restored/rejected across cumulative tests from every round.
@@ -1031,7 +1033,7 @@ The implementation is complete when all of the following are true:
 - A TDD task alternates between exactly one logical red-writer and one logical green-implementer.
 - Both provider sessions are reused across rounds when the provider process remains alive.
 - RED changes tests only and neither the red-writer nor harness runs commands after RED.
-- RED batches receive the three-to-five soft guidance and explicitly report edge cases.
+- RED batches receive minimum-discriminating-evidence guidance and explicitly avoid redundant tests.
 - GREEN is independently verified with the config-owned targeted command before returning to RED.
 - The state machine contains no language-, framework-, or build-tool-specific branch.
 - RED can declare `done` only at verified GREEN with a final behavior and edge-case coverage

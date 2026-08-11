@@ -117,7 +117,8 @@ describe("invokeInEpisode continuations", () => {
       },
       continuationInput: {
         round: 2,
-        instruction: "Add the next coherent test batch or return done. Do not run commands.",
+        atVerifiedGreen: true,
+        instruction: "The accumulated suite is verified GREEN. Default to done.",
       },
       expectedOutput: "{summary,changedFiles}",
       schema: WorkerOutputSchema,
@@ -196,10 +197,10 @@ describe("invokeInEpisode continuations", () => {
     expect(redInitial?.prompt).toContain("WORK PACKET");
     expect(redInitial?.prompt).toContain(uniqueTaskTitle);
     expect(redInitial?.prompt).toContain(uniqueEvidence);
-    expect(redInitial?.prompt).toContain("typically three to five tests");
+    expect(redInitial?.prompt).toContain("minimum discriminating test evidence");
 
     expect(redContinue?.reused).toBe(true);
-    expect(redContinue?.prompt).toContain("Add the next coherent test batch");
+    expect(redContinue?.prompt).toContain("Default to done");
     expect(redContinue?.prompt).not.toContain("WORK PACKET");
     expect(redContinue?.prompt).not.toContain(uniqueTaskTitle);
     expect(redContinue?.prompt).not.toContain(uniqueEvidence);
@@ -530,6 +531,73 @@ describe("red-writer shell-tool audit and episode persist", () => {
     expect(updated?.tddLoop?.coverage.finalAssessment?.edgeCaseRationale).toContain(
       "boundary cases",
     );
+    scripted.assertExhausted();
+  });
+
+  it("does not invoke GREEN when a completed RED assessment is accidentally scheduled as implementing", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      agent: { promptBuilder: false } as never,
+      git: { ...fixtureConfig(root).git, enabled: false },
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
+      },
+    });
+    const scripted = createScriptedBackend([]);
+    const ctx = new ApplicationContext(config, { backend: scripted.backend });
+    await ctx.store.initialize();
+    const runId = "skip-redundant-green-after-red-done";
+    const task = BuildTaskSchema.parse({
+      id: "task-1",
+      title: "Feature",
+      description: "Add feature",
+      acceptanceCriteria: ["works"],
+      blockedBy: [],
+      tdd: true,
+      status: "active",
+      step: "implementing",
+      attempts: { tests: 2, implementation: 1, review: 0 },
+      testPaths: ["tests/feature.test.ts"],
+      tddLoop: createTddLoop({
+        atVerifiedGreen: true,
+        completedRounds: [
+          {
+            number: 1,
+            outcome: "implemented",
+            testPathsAdded: ["tests/feature.test.ts"],
+            behaviorsAdded: ["feature works"],
+            edgeCasesAdded: [],
+            completedAt: new Date().toISOString(),
+          },
+        ],
+        coverage: {
+          finalAssessment: {
+            acceptanceCriteria: [
+              {
+                criterionIndex: 0,
+                covered: true,
+                verificationMode: "automated-test",
+                testPaths: ["tests/feature.test.ts"],
+                rationale: "covered by round 1",
+              },
+            ],
+            edgeCaseRationale: "No additional high-risk case remains.",
+          },
+        },
+      }),
+    });
+    const state = {
+      ...createRunState(runId, "Skip redundant GREEN", new Date().toISOString()),
+      phase: "executing" as const,
+      tasks: [task],
+    };
+    await ctx.store.create(state);
+
+    const service = new TaskExecutionService(ctx);
+    const next = await service.implementTask(state, task);
+
+    expect(next.tasks[0]?.step).toBe("verifying");
     scripted.assertExhausted();
   });
 

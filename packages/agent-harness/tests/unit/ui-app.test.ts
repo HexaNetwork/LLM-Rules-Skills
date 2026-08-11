@@ -666,4 +666,14 @@ describe("dashboard document", () => {
     // tokens can force the row wider than its track and paint outside the border.
     expect(contextRule).toMatch(/min-width:\s*0/);
   });
+
+  it("labels contract failures repaired by a later schema attempt", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain("candidate.invocationKind === 'schema-repair'");
+    expect(html).toContain('class="badge completed">repaired</span>');
+    expect(html).toContain("Repaired contract error:");
+    expect(html).toContain('data-display-status="repaired"');
+    expect(html).toContain("hints.displayStatus || session.status");
+  });
 });

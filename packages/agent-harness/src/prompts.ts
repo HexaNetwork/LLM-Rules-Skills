@@ -127,7 +127,7 @@ export function renderPrompt(packet: WorkPacket): string {
     "",
     "WORK PACKET",
     JSON.stringify(packetForJson),
-    ...outputContractLines(packet.role),
+    ...outputContractLines(packet),
     `Expected output: ${packet.expectedOutput}`,
   ].join("\n");
 }
@@ -173,15 +173,15 @@ export function renderContinuationPrompt(
     `Objective: ${packet.objective}`,
     "New authoritative input:",
     JSON.stringify(packet.input),
-    ...outputContractLines(packet.role),
+    ...outputContractLines(packet),
     `Expected output: ${packet.expectedOutput}`,
   ].join("\n");
 }
 
 const EPISODE_ROLES = new Set<AgentRole>(["griller"]);
 
-function outputContractLines(role: AgentRole): string[] {
-  if (EPISODE_ROLES.has(role)) {
+function outputContractLines(packet: Pick<WorkPacket, "role" | "expectedOutput">): string[] {
+  if (EPISODE_ROLES.has(packet.role)) {
     return [
       "Return exactly one JSON object matching the expected output contract.",
       "Do not write Markdown interview prose, headings, or reports as the deliverable.",
@@ -191,10 +191,17 @@ function outputContractLines(role: AgentRole): string[] {
       "Put codebase facts in JSON fields (summary, question context), not outside the object.",
     ];
   }
-  return [
+  const lines = [
     "Return exactly one raw JSON object matching the expected output contract.",
     "Do not wrap the object in Markdown or split its fields into separate sections.",
   ];
+  if (packet.role === "planner") {
+    const example = packet.expectedOutput.includes("userStories")
+      ? '{"summary":"...","problemStatement":"...","solution":"...","userStories":["..."],"implementationDecisions":["..."],"testingDecisions":["..."],"outOfScope":["..."],"furtherNotes":"..."}'
+      : '{"summary":"...","problemStatement":"...","solution":"...","approach":"...","constraints":["..."],"outOfScope":["..."],"openQuestions":[]}';
+    lines.push(`Valid shape example: ${example}`);
+  }
+  return lines;
 }
 
 function renderGuidance(packet: WorkPacket): string[] {

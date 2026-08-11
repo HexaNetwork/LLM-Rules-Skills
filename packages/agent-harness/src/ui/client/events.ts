@@ -136,7 +136,7 @@ export const eventsScript = `    async function waitForJob(runId) {
           : (session.role || 'Invocation');
         var meta = '';
         meta += '<div class="context-badge ' + (contextBadge === 'NEW CONTEXT' ? 'new' : 'reused') + '" style="grid-column:1/-1">' + esc(contextBadge) + '</div>';
-        meta += sessionStat('Status', session.status || 'unknown');
+        meta += sessionStat('Status', hints.displayStatus || session.status || 'unknown');
         meta += sessionStat('Model', session.model || 'unknown');
         meta += sessionStat('Schema attempt', String(Number(session.attempt || 0) + 1));
         meta += sessionStat('Duration', duration == null ? '—' : (duration / 1000).toFixed(1) + 's');
@@ -420,6 +420,7 @@ export const eventsScript = `    async function waitForJob(runId) {
           contextTurn: target.dataset.contextTurn,
           contextTotal: target.dataset.contextTotal,
           contextBadge: target.dataset.contextBadge,
+          displayStatus: target.dataset.displayStatus,
         });
       }
       if (target.id === 'settingsBtn') openSettings();

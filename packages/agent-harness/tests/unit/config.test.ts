@@ -46,6 +46,10 @@ describe("token-conscious defaults", () => {
     expect(config.workflow.maxProviderRetries).toBe(2);
     expect(config.knowledge.guidance).toMatchObject({ enabled: true, maxResults: 6, maxCharacters: 6_000 });
     expect(config.knowledge.guidance.assignments).toEqual(DEFAULT_GUIDANCE_ASSIGNMENTS);
+    expect(config.knowledge.guidance.assignments?.planner.skills).toEqual([
+      "domain-modeling",
+      "to-prd",
+    ]);
     expect(config.knowledge.guidance.assignments?.["test-writer"].skills).toEqual(["tdd"]);
     expect(config.knowledge.guidance.assignments?.["red-writer"].skills).toEqual(["tdd"]);
     expect(HarnessConfigSchema.parse({

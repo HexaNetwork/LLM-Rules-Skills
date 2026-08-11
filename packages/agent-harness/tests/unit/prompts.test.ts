@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { WorkPacket } from "../../src/domain.js";
-import { GRILL_EXPECTED_OUTPUT, REFLECT_EXPECTED_OUTPUT } from "../../src/domain.js";
+import {
+  GRILL_EXPECTED_OUTPUT,
+  PRD_EXPECTED_OUTPUT,
+  REFLECT_EXPECTED_OUTPUT,
+} from "../../src/domain.js";
 import { renderContinuationPrompt, renderPrompt, renderPromptBuilderPrompt } from "../../src/prompts.js";
 
 const packet: WorkPacket = {
@@ -163,6 +167,28 @@ describe("prompt rendering", () => {
     expect(renderPrompt(plannerPacket)).toContain(
       "Do not emit a task list, BuildTasks, acceptance criteria tickets, or proposedInstalls.",
     );
+  });
+
+  it("shows planners valid JSON shapes with explicit string-list PRD fields", () => {
+    const highLevelPacket: WorkPacket = {
+      ...packet,
+      role: "planner",
+      expectedOutput:
+        "{summary,problemStatement,solution,approach,constraints?,outOfScope?,openQuestions?}",
+    };
+    const prdPacket: WorkPacket = {
+      ...highLevelPacket,
+      expectedOutput: PRD_EXPECTED_OUTPUT,
+    };
+
+    expect(renderPrompt(highLevelPacket)).toContain(
+      'Valid shape example: {"summary":"...","problemStatement":"...","solution":"...","approach":"..."',
+    );
+    const renderedPrd = renderContinuationPrompt(prdPacket);
+    expect(PRD_EXPECTED_OUTPUT).toContain("implementationDecisions:[string]");
+    expect(PRD_EXPECTED_OUTPUT).toContain("testingDecisions:[string]");
+    expect(renderedPrd).toContain('"implementationDecisions":["..."]');
+    expect(renderedPrd).toContain('"testingDecisions":["..."]');
   });
 
   it("asks the issue-slicer to propose installs without installing them", () => {

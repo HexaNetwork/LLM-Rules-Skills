@@ -93,7 +93,7 @@ const GuidanceAssignmentsSchema = z.object({
 export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsSchema> = {
   reflector: { rules: [], skills: ["domain-modeling"] },
   griller: { rules: [], skills: ["grill-me", "domain-modeling"] },
-  planner: { rules: [], skills: ["domain-modeling", "improve-codebase-architecture", "to-prd"] },
+  planner: { rules: [], skills: ["domain-modeling", "to-prd"] },
   "issue-slicer": {
     rules: [],
     skills: ["prd-to-issues", "domain-modeling", "improve-codebase-architecture"],

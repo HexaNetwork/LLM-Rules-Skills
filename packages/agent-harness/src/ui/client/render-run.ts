@@ -462,7 +462,7 @@ export const renderRunScript = `    function renderSidebar() {
       var stories = (prd.userStories || []).map(function (item, index) {
         return '<li>' + esc(item) + '</li>';
       }).join("");
-      return '<div class="card"><div class="card-label">Local PRD</div><div class="muted" style="margin-bottom:8px">' + esc(prd.summary || "") + '</div><div class="resolution"><strong>Problem</strong><div class="muted" style="margin-top:4px">' + esc(prd.problemStatement || "") + '</div></div><div class="resolution" style="margin-top:10px"><strong>Solution</strong><div class="muted" style="margin-top:4px">' + esc(prd.solution || "") + '</div></div>' + (stories ? '<div class="resolution" style="margin-top:10px"><strong>User stories</strong><ol style="margin:6px 0 0;padding-left:20px">' + stories + '</ol></div>' : '') + '</div>';
+      return '<div class="card" style="margin-bottom:16px"><details data-details-key="local-prd" style="border-top:0;margin-top:0;padding-top:0"><summary class="card-label" style="margin-bottom:0">Local PRD</summary><div style="padding-top:12px"><div class="muted" style="margin-bottom:8px">' + esc(prd.summary || "") + '</div><div class="resolution"><strong>Problem</strong><div class="muted" style="margin-top:4px">' + esc(prd.problemStatement || "") + '</div></div><div class="resolution" style="margin-top:10px"><strong>Solution</strong><div class="muted" style="margin-top:4px">' + esc(prd.solution || "") + '</div></div>' + (stories ? '<div class="resolution" style="margin-top:10px"><strong>User stories</strong><ol style="margin:6px 0 0;padding-left:20px">' + stories + '</ol></div>' : '') + '</div></details></div>';
     }
 
     function renderGrillReady(gate) {
@@ -570,9 +570,6 @@ export const renderRunScript = `    function renderSidebar() {
             else html += renderQuestionBatch(s, q);
           }
         }
-      }
-      if (s.prd && !s.planReady) {
-        html += renderPrdReadonly(s.prd);
       }
       if (s.stoppedAfterTaskAt) {
         html += '<div class="card"><div class="alert warning"><div><strong>Stopped after task</strong><div class="muted" style="margin-top:5px">The current task finished and the next frontier task was not started. Resume continues from here. Cancel remains available to abort immediately.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
@@ -748,7 +745,11 @@ export const renderRunScript = `    function renderSidebar() {
     }
 
     function renderTasks(s) {
-      var html = s.tasks.length ? '<div class="list">' + s.tasks.map(function (task, index) {
+      var html = '';
+      if (s.prd && !s.planReady) {
+        html += renderPrdReadonly(s.prd);
+      }
+      html += s.tasks.length ? '<div class="list">' + s.tasks.map(function (task, index) {
         var taskKey = task.id || ("task-" + index);
         var criteria = '<ul>' + task.acceptanceCriteria.map(function (criterion) { return '<li>' + esc(criterion) + '</li>'; }).join("") + '</ul>';
         var evidence = task.evidence.length ? '<details data-details-key="' + attr(taskKey + "-evidence") + '"><summary>' + task.evidence.length + ' command result(s)</summary>' + task.evidence.map(function (item, evidenceIndex) { var output = [item.stderr,item.stdout].filter(Boolean).join(String.fromCharCode(10)); return '<div class="evidence"><div class="evidence-head"><span>' + esc(item.purpose) + ' · <code>' + esc(item.command) + '</code></span><strong class="' + (item.passed ? "pass" : "fail") + '">' + (item.passed ? "PASS" : "FAIL") + ' / ' + item.exitCode + '</strong></div>' + (output ? '<pre data-scroll-key="' + attr(taskKey + "-evidence-" + evidenceIndex) + '">' + esc(output.slice(-8000)) + '</pre>' : '') + '</div>'; }).join("") + '</details>' : '';
@@ -817,10 +818,13 @@ export const renderRunScript = `    function renderSidebar() {
         html += '</button>';
         if (expanded) {
           html += '<div class="activity-invocations">';
-          (context.invocations || []).forEach(function (invocation) {
+          (context.invocations || []).forEach(function (invocation, invocationIndex) {
             var turn = invocation.contextTurn || 1;
             var badge = invocation.providerSessionReused === true || turn > 1 ? 'REUSED CONTEXT' : 'NEW CONTEXT';
             var kind = invocation.invocationKind || 'invocation';
+            var repaired = invocation.status === 'failed' && (context.invocations || []).slice(invocationIndex + 1).some(function (candidate) {
+              return candidate.invocationId && candidate.invocationId === invocation.invocationId && candidate.invocationKind === 'schema-repair' && candidate.status === 'completed';
+            });
             var trigger = invocation.triggerSummary || (invocation.trigger && invocation.trigger.summary) || 'Reason unavailable for historical invocation';
             var warnReason = invocationUsageWarning(invocation, usage);
             var tokens = formatTokenCount((invocation.usage && invocation.usage.totalTokens) || 0);
@@ -830,11 +834,12 @@ export const renderRunScript = `    function renderSidebar() {
             html += '<strong>Turn ' + esc(String(turn)) + '</strong>';
             html += '<span class="context-badge ' + (badge === 'NEW CONTEXT' ? 'new' : 'reused') + '">' + badge + '</span>';
             html += '<span>' + esc(kind) + '</span>';
+            if (repaired) html += '<span class="badge completed">repaired</span>';
             html += '<span class="faint">' + esc(tokens) + (warnReason ? ' <span class="activity-warn-icon" title="' + attr(warnReason) + '">⚠</span>' : '') + '</span></div>';
             html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
             if (warnReason) html += '<div class="activity-warn-reason" style="margin-top:4px">' + esc(warnReason) + '</div>';
-            if (invocation.error) html += '<div class="fail" style="margin-top:4px">' + esc(invocation.error) + '</div>';
-            html += '<button class="btn small" data-session="' + attr(invocation.path) + '" data-context-turn="' + attr(String(turn)) + '" data-context-total="' + attr(String(context.invocationCount || 0)) + '" data-context-badge="' + attr(badge) + '">Inspect invocation</button>';
+            if (invocation.error) html += '<div class="' + (repaired ? 'muted' : 'fail') + '" style="margin-top:4px">' + (repaired ? '<strong>Repaired contract error:</strong> ' : '') + esc(invocation.error) + '</div>';
+            html += '<button class="btn small" data-session="' + attr(invocation.path) + '" data-context-turn="' + attr(String(turn)) + '" data-context-total="' + attr(String(context.invocationCount || 0)) + '" data-context-badge="' + attr(badge) + '"' + (repaired ? ' data-display-status="repaired"' : '') + '>Inspect invocation</button>';
             html += '</div>';
           });
           html += '</div>';

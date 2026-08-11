@@ -152,7 +152,7 @@ knowledge:
         skills: [grill-me, domain-modeling]
       planner:
         rules: []
-        skills: [domain-modeling, improve-codebase-architecture, to-prd]
+        skills: [domain-modeling, to-prd]
       issue-slicer:
         rules: []
         skills: [prd-to-issues, domain-modeling, improve-codebase-architecture]

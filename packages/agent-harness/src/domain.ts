@@ -606,7 +606,7 @@ export const PLANNER_EXPECTED_OUTPUT =
   "{summary,problemStatement,solution,approach,constraints?,outOfScope?,openQuestions?}";
 
 export const PRD_EXPECTED_OUTPUT =
-  "{summary,problemStatement,solution,userStories:[string],implementationDecisions?,testingDecisions?,outOfScope?,furtherNotes?}";
+  "{summary:string,problemStatement:string,solution:string,userStories:[string],implementationDecisions:[string]?,testingDecisions:[string]?,outOfScope:[string]?,furtherNotes:string?}";
 
 /** Fresh issue-slicer output: executable BuildTasks (+ optional installs). */
 export const IssueSlicerOutputSchema = z.object({

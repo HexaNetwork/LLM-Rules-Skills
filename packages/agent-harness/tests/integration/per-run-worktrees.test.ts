@@ -1,7 +1,7 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
 import { openRunHarness } from "../../src/application/run-engine-factory.js";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
@@ -20,6 +20,7 @@ import {
 } from "../../src/domain/workspace.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
+import type { GraphifyRunner } from "../../src/graphify.js";
 import { git as runGit } from "../testkit/git.js";
 import {
   createProjectFixture,
@@ -147,6 +148,68 @@ describe("per-run worktrees (Slice 2)", () => {
 
     const afterAdvance = await snapshotControl(fixture);
     expect(afterAdvance).toEqual(before);
+  });
+
+  it("keeps startup Graphify output ignored when the committed base has no ignore rule", async () => {
+    await assertGitWorktreeCapability();
+    fixture = await createProjectFixture({
+      config: {
+        git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
+        knowledge: {
+          sources: [{ path: "README.md" }],
+          graphify: { enabled: true },
+          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
+        },
+      },
+    });
+    await fixture.initGit({ branch: "main" });
+
+    const graphifyRunner = vi.fn<GraphifyRunner>(async (_executable, args, options) => {
+      if (args[0] === "--version") {
+        return { exitCode: 0, stdout: "graphify 0.9.1\n", stderr: "", timedOut: false };
+      }
+      if (args[0] === "update") {
+        const graphRoot = path.join(options.cwd, "graphify-out");
+        await mkdir(path.join(graphRoot, "cache"), { recursive: true });
+        await writeFile(path.join(graphRoot, "graph.json"), "{}\n", "utf8");
+        await writeFile(path.join(graphRoot, "cache", "entry.json"), "{}\n", "utf8");
+        return { exitCode: 0, stdout: "Updated graph\n", stderr: "", timedOut: false };
+      }
+      return { exitCode: 1, stdout: "", stderr: "unexpected", timedOut: false };
+    });
+
+    const engine = new HarnessEngine(fixture.config, {
+      backend: createFakeBackend({ reflector: () => REFLECT_OUTPUT }),
+      graphifyRunner,
+    });
+    const runId = "worktree-graphify-ignore";
+    const state = await engine.start("Ship a feature", runId, false, true);
+    const workspace = migrateRunWorkspace(await engine.store.readJson(runId, "workspace.json"), {
+      controlRoot: fixture.root,
+    });
+
+    expect(state.phase).toBe("new");
+    const updateCall = graphifyRunner.mock.calls.find(([, args]) => args[0] === "update");
+    expect(updateCall).toBeDefined();
+    expect(canonicalizeWorkspacePath(updateCall![1][1]!)).toBe(workspace.worktreePath);
+    expect(canonicalizeWorkspacePath(updateCall![2].cwd)).toBe(workspace.worktreePath);
+    expect(
+      (await runGit(workspace.worktreePath!, "status", "--porcelain=v1", "--untracked-files=all")).trim(),
+    ).toBe("");
+    await expect(
+      runGit(
+        workspace.worktreePath!,
+        "check-ignore",
+        "--quiet",
+        "--no-index",
+        "--",
+        "graphify-out/graph.json",
+      ),
+    ).resolves.toBe("");
+
+    const advanced = await engine.advance(runId);
+    expect(advanced.phase).toBe("awaiting_input");
+    expect(advanced.blockedKind).toBeUndefined();
   });
 
   it("recomposes resume from frozen config + workspace.json onto the registered worktree", async () => {

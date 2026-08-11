@@ -53,6 +53,10 @@ export class RunLifecycleService {
         this.ctx.bindWorkspace(workspace);
       }
       if (prepareGraphify && this.ctx.config.knowledge.graphify.enabled) {
+        await this.ctx.store.withWorkspaceAdminLock(
+          { runId, action: "ensure-graphify-ignore" },
+          () => this.ctx.git.ensureGraphifyOutputIgnored(),
+        );
         await prepareGraphifyForRun(this.ctx.config, this.ctx.graphifyRunner, this.ctx.paths);
       }
       if (refreshKnowledge) {

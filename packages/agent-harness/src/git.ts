@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
-import { access } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { relative as pathRelative, resolve as pathResolve } from "node:path";
+import {
+  dirname as pathDirname,
+  relative as pathRelative,
+  resolve as pathResolve,
+} from "node:path";
 import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
 import type { HarnessConfig } from "./config.js";
 import type { MessageOutput } from "./domain.js";
@@ -109,6 +113,71 @@ export class GitService {
     if (!this.config.git.enabled) return [];
     const { paths } = await this.porcelainStatus();
     return paths;
+  }
+
+  /**
+   * Keep Graphify's generated repository graph out of run-local Git evidence.
+   *
+   * A run worktree is created from a committed base, so an uncommitted
+   * `.gitignore` rule in the control checkout cannot protect it. Install the
+   * invariant in Git's repository-local exclude file instead; that metadata is
+   * shared by linked worktrees and does not dirty any checkout.
+   */
+  async ensureGraphifyOutputIgnored(): Promise<void> {
+    if (!this.config.git.enabled) return;
+
+    const tracked = await this.git(["ls-files", "--", "graphify-out"]);
+    if (tracked.stdout.trim()) {
+      throw new HarnessFailure(
+        "Graphify output must be generated and Git-ignored, but graphify-out contains tracked files. " +
+          "Remove them from Git before enabling Graphify for harness runs.",
+        "workspace",
+        true,
+      );
+    }
+
+    if (await this.isGraphifyOutputIgnored()) return;
+
+    const excludeResult = await this.git(["rev-parse", "--git-path", "info/exclude"]);
+    const rawExcludePath = excludeResult.stdout.trim();
+    if (!rawExcludePath) {
+      throw new HarnessFailure(
+        "Git did not provide an info/exclude path for Graphify's generated output.",
+        "workspace",
+        true,
+      );
+    }
+    const excludePath = pathResolve(this.workspaceRoot, rawExcludePath);
+    await mkdir(pathDirname(excludePath), { recursive: true });
+
+    let existing = "";
+    try {
+      existing = await readFile(excludePath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+    await appendFile(
+      excludePath,
+      `${prefix}# agent-harness generated repository artifacts\n/graphify-out/\n`,
+      "utf8",
+    );
+
+    if (!(await this.isGraphifyOutputIgnored())) {
+      throw new HarnessFailure(
+        "Graphify output is not ignored by Git. Add graphify-out/ to the repository's ignore rules before retrying.",
+        "workspace",
+        true,
+      );
+    }
+  }
+
+  private async isGraphifyOutputIgnored(): Promise<boolean> {
+    const result = await this.git(
+      ["check-ignore", "--quiet", "--no-index", "--", "graphify-out/graph.json"],
+      true,
+    );
+    return result.exitCode === 0;
   }
 
   /**

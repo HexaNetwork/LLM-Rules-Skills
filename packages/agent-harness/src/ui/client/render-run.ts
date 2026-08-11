@@ -765,10 +765,15 @@ export const renderRunScript = `    function renderSidebar() {
     function invocationUsageWarning(invocation, contextUsage) {
       var total = Number((invocation.usage && invocation.usage.totalTokens) || 0);
       var ceiling = state.detail && state.detail.ceilings && state.detail.ceilings.maxInvocationTokens;
-      if (ceiling && total > ceiling) return true;
+      if (ceiling && total > ceiling) {
+        return 'Exceeded max invocation tokens (' + formatTokenCount(total) + ' > ' + formatTokenCount(ceiling) + ' ceiling)';
+      }
       var contextTotal = Number((contextUsage && contextUsage.totalTokens) || 0);
-      if (contextTotal > 0 && total > contextTotal * 0.6 && total >= 100000) return true;
-      return false;
+      if (contextTotal > 0 && total > contextTotal * 0.6 && total >= 100000) {
+        var pct = Math.round((total / contextTotal) * 100);
+        return 'Dominant share of context usage (' + formatTokenCount(total) + ' is ' + pct + '% of ' + formatTokenCount(contextTotal) + ')';
+      }
+      return '';
     }
 
     function renderAgentActivity() {
@@ -811,16 +816,17 @@ export const renderRunScript = `    function renderSidebar() {
             var badge = invocation.providerSessionReused === true || turn > 1 ? 'REUSED CONTEXT' : 'NEW CONTEXT';
             var kind = invocation.invocationKind || 'invocation';
             var trigger = invocation.triggerSummary || (invocation.trigger && invocation.trigger.summary) || 'Reason unavailable for historical invocation';
-            var warn = invocationUsageWarning(invocation, usage);
+            var warnReason = invocationUsageWarning(invocation, usage);
             var tokens = formatTokenCount((invocation.usage && invocation.usage.totalTokens) || 0);
             var time = invocation.startedAt ? date(invocation.startedAt).slice(11, 16) : '—';
-            html += '<div class="activity-invocation' + (warn ? ' warn' : '') + '">';
+            html += '<div class="activity-invocation' + (warnReason ? ' warn' : '') + '">';
             html += '<div class="activity-invocation-main"><span class="faint">' + esc(time) + '</span>';
             html += '<strong>Turn ' + esc(String(turn)) + '</strong>';
             html += '<span class="context-badge ' + (badge === 'NEW CONTEXT' ? 'new' : 'reused') + '">' + badge + '</span>';
             html += '<span>' + esc(kind) + '</span>';
-            html += '<span class="faint">' + esc(tokens) + (warn ? ' <span class="activity-warn-icon">⚠</span>' : '') + '</span></div>';
+            html += '<span class="faint">' + esc(tokens) + (warnReason ? ' <span class="activity-warn-icon" title="' + attr(warnReason) + '">⚠</span>' : '') + '</span></div>';
             html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
+            if (warnReason) html += '<div class="activity-warn-reason" style="margin-top:4px">' + esc(warnReason) + '</div>';
             if (invocation.error) html += '<div class="fail" style="margin-top:4px">' + esc(invocation.error) + '</div>';
             html += '<button class="btn small" data-session="' + attr(invocation.path) + '" data-context-turn="' + attr(String(turn)) + '" data-context-total="' + attr(String(context.invocationCount || 0)) + '" data-context-badge="' + attr(badge) + '">Inspect invocation</button>';
             html += '</div>';

@@ -179,9 +179,6 @@ export async function seedExternalGuidance(
 ): Promise<{ sourcePath: string; copied: boolean }> {
   await mkdir(home.sharedGuidanceRoot, { recursive: true });
   const target = path.join(home.sharedGuidanceRoot, "General");
-  if (await isNonEmptyDirectory(target)) {
-    return { sourcePath: target, copied: false };
-  }
   const templateDirectory = resolveGuidanceTemplateDirectory();
   if (!(await isNonEmptyDirectory(templateDirectory))) {
     throw new HarnessFailure(
@@ -191,8 +188,26 @@ export async function seedExternalGuidance(
     );
   }
   await mkdir(path.dirname(target), { recursive: true });
-  await cp(templateDirectory, target, { recursive: true });
-  return { sourcePath: target, copied: true };
+  const copiedFiles = await copyMissingGuidanceFiles(templateDirectory, target);
+  return { sourcePath: target, copied: copiedFiles > 0 };
+}
+
+/** Add newly packaged guidance without overwriting operator-owned shared guidance. */
+async function copyMissingGuidanceFiles(source: string, target: string): Promise<number> {
+  await mkdir(target, { recursive: true });
+  let copied = 0;
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const sourcePath = path.join(source, entry.name);
+    const targetPath = path.join(target, entry.name);
+    if (entry.isDirectory()) {
+      copied += await copyMissingGuidanceFiles(sourcePath, targetPath);
+      continue;
+    }
+    if (!entry.isFile() || (await stat(targetPath).catch(() => undefined))) continue;
+    await cp(sourcePath, targetPath, { force: false, errorOnExist: false });
+    copied += 1;
+  }
+  return copied;
 }
 
 async function ensureHarnessHomeDefaults(home: HarnessHomePaths): Promise<void> {

@@ -3,7 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
-import { loadExternalProjectConfig } from "../../src/application/external-config.js";
+import {
+  loadExternalProjectConfig,
+  seedExternalGuidance,
+} from "../../src/application/external-config.js";
 import { resolveHarnessHome } from "../../src/application/harness-home.js";
 import { migrateHome } from "../../src/application/migrate-home.js";
 import { ProjectRegistry } from "../../src/application/project-registry.js";
@@ -52,6 +55,36 @@ const REFLECT_OUTPUT = {
 };
 
 describe("external harness home", () => {
+  it("adds newly packaged guidance to an existing home without overwriting operator files", async () => {
+    const homeRoot = await tempDir("ah-guidance-upgrade-home-");
+    const home = resolveHarnessHome({ homeRoot });
+    const existingSkill = path.join(
+      home.sharedGuidanceRoot,
+      "General",
+      "skills",
+      "tdd",
+      "SKILL.md",
+    );
+    await mkdir(path.dirname(existingSkill), { recursive: true });
+    await writeFile(existingSkill, "operator-customized guidance\n", "utf8");
+
+    const result = await seedExternalGuidance(home);
+
+    expect(result.copied).toBe(true);
+    expect(await readFile(existingSkill, "utf8")).toBe("operator-customized guidance\n");
+    await expect(
+      access(
+        path.join(
+          home.sharedGuidanceRoot,
+          "General",
+          "skills",
+          "red-writer-tdd",
+          "SKILL.md",
+        ),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it("deep-merges sparse home and project policy without masking home defaults", async () => {
     const homeRoot = await tempDir("ah-layer-home-");
     const repo = await tempDir("ah-layer-repo-");

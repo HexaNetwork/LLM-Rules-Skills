@@ -58,7 +58,6 @@ export const renderRunScript = `    function renderSidebar() {
       var fullIdea = String(s.idea || "");
       var subtitle = title !== fullIdea ? '<div class="subtitle">' + esc(fullIdea) + '</div>' : '';
       var html = '<div class="title-row"><div><div class="eyebrow">Run ' + esc(s.runId.slice(0,8)) + '</div><h1>' + esc(title) + '</h1>' + subtitle + '</div><span class="badge ' + attr(phase) + '" data-testid="run-status"><i class="dot ' + attr(phase) + '"></i>' + esc(phaseLabel(phase)) + '</span></div>';
-      html += renderUsageRow(s);
       html += renderRunVitals(s);
       html += '<div id="runErrorSlot">' + renderInlineError() + '</div>';
       html += '<nav class="tabs">' + tabs.map(function (tab) { return '<button class="tab ' + (state.tab === tab.id ? "active" : "") + '" data-tab="' + tab.id + '">' + esc(tab.label) + '</button>'; }).join("") + '</nav><div id="tabBody"></div>';
@@ -209,19 +208,6 @@ export const renderRunScript = `    function renderSidebar() {
       return (usage.costIsLowerBound ? "≥$" : "$") + formatted;
     }
 
-    function renderUsageRow(s) {
-      var usage = s.usage || {};
-      var tokens = Number(usage.totalTokens || 0);
-      var cached = Number(usage.cacheReadTokens || 0);
-      if (!tokens && !(state.detail && state.detail.sessions && state.detail.sessions.length)) {
-        return '<div class="usage-row muted">No recorded usage yet</div>';
-      }
-      var parts = [number(tokens) + " total tokens"];
-      if (cached) parts.push(number(cached) + " cached");
-      parts.push(formatCostUsd(usage) + (usage.costIsLowerBound ? " (lower bound)" : ""));
-      return '<div class="usage-row muted">' + esc(parts.join(" · ")) + '</div>';
-    }
-
     function renderRunVitals(s) {
       var tasks = s.tasks || [];
       var taskTotal = tasks.length;
@@ -354,12 +340,18 @@ export const renderRunScript = `    function renderSidebar() {
       if (!usedTokens && sessions.length) {
         usedTokens = sessions.reduce(function (sum, session) { return sum + sessionTotalTokens(session.usage); }, 0);
       }
+      var cachedTokens = Number(usage.cacheReadTokens || 0);
+      if (!cachedTokens && sessions.length) {
+        cachedTokens = sessions.reduce(function (sum, session) {
+          return sum + Number((session.usage && session.usage.cacheReadTokens) || 0);
+        }, 0);
+      }
       var usedCost = Number(usage.costUsd || 0);
       var tokenPct = maxTokens > 0 ? Math.min(100, Math.round((usedTokens / maxTokens) * 100)) : 0;
       var costPct = maxCost > 0 ? Math.min(100, Math.round((usedCost / maxCost) * 100)) : 0;
       var html = '<div class="card usage-card"><div class="card-label">Usage</div>';
       html += '<div class="metric">' + number(usedTokens) + '<span class="faint"> tokens</span></div>';
-      html += '<div class="muted">' + esc(formatCostUsd(usage)) + (usage.costIsLowerBound ? ' · unpriced models omitted from cost' : '') + '</div>';
+      html += '<div class="muted">' + number(cachedTokens) + ' cached · ' + esc(formatCostUsd(usage)) + (usage.costIsLowerBound ? ' · unpriced models omitted from cost' : '') + '</div>';
       if (maxTokens > 0) {
         html += renderBudgetMeter("Token budget", number(usedTokens), number(maxTokens), tokenPct);
       }

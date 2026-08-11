@@ -499,15 +499,19 @@ describe("dashboard document", () => {
     expect(html).not.toContain("s.yieldedAt");
   });
 
-  it("shows a usage row, ceiling progress bar, and raise-and-retry controls for budget blocks", () => {
+  it("shows a usage card with cached total, ceiling progress bar, and raise-and-retry controls for budget blocks", () => {
     const html = renderDashboard();
 
-    expect(html).toContain("function renderUsageRow(s)");
+    expect(html).not.toContain("function renderUsageRow(s)");
+    expect(html).not.toContain("usage-row");
+    expect(html).not.toContain("total tokens");
     expect(html).toContain("function renderUsageBudgetCard(s)");
     expect(html).toContain("function renderBudgetMeter(label, usedLabel, limitLabel, pct)");
     expect(html).toContain("function renderUsageBreakdown(sessions, runTotal)");
     expect(html).toContain("function aggregateSessionUsage(sessions, key)");
-    expect(html).toContain("total tokens");
+    expect(html).toContain("cachedTokens");
+    expect(html).toContain("cacheReadTokens");
+    expect(html).toContain(" cached · ");
     expect(html).toContain("Token budget");
     expect(html).toContain("Cost budget");
     expect(html).toContain("budget-meter");

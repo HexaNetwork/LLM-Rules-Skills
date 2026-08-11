@@ -1,13 +1,30 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRole } from "../../domain.js";
-import type { AgentBackend, AgentRequest } from "./types.js";
+import type { AgentBackend, AgentRequest, AgentStepEvent } from "./types.js";
+
+export type FakeBackendHandler = (
+  request: AgentRequest,
+) => unknown | Promise<unknown>;
+
+/** Emit args-free tool-call steps through the request's onStep callback. */
+export function emitFakeToolCallSteps(
+  request: AgentRequest,
+  toolNames: readonly string[],
+): void {
+  for (const toolName of toolNames) {
+    const step: AgentStepEvent = {
+      type: "toolCall",
+      toolName,
+      summary: toolName,
+    };
+    request.onStep?.(step);
+  }
+}
 
 export function createFakeBackend(
-  handlers: Partial<Record<AgentRole, (request: AgentRequest) => unknown | Promise<unknown>>>,
+  handlers: Partial<Record<AgentRole, FakeBackendHandler>>,
 ): AgentBackend {
-  const withDefaults: Partial<
-    Record<AgentRole, (request: AgentRequest) => unknown | Promise<unknown>>
-  > = {
+  const withDefaults: Partial<Record<AgentRole, FakeBackendHandler>> = {
     // Keep current verification settings unless a test overrides the profiler.
     "project-profiler": () => ({
       summary: "Keep current verification settings",

@@ -65,10 +65,13 @@ describe("createScriptedBackend", () => {
         },
       },
       {
-        role: "test-writer",
+        role: "red-writer",
         output: {
+          status: "continue",
           summary: "RED",
-          testFiles: ["tests/greet.test.ts"],
+          changedFiles: ["tests/greet.test.ts"],
+          behaviorsAdded: ["greeting fails until implemented"],
+          edgeCasesAdded: [],
         },
       },
       {
@@ -91,7 +94,7 @@ describe("createScriptedBackend", () => {
       "planner",
       "planner",
       "issue-slicer",
-      "test-writer",
+      "red-writer",
       "implementer",
       "reviewer",
       "message-writer",
@@ -106,7 +109,7 @@ describe("createScriptedBackend", () => {
       "planner",
       "planner",
       "issue-slicer",
-      "test-writer",
+      "red-writer",
       "implementer",
       "reviewer",
       "message-writer",
@@ -144,6 +147,29 @@ describe("createScriptedBackend", () => {
     release();
     await expect(pending).resolves.toMatchObject({ output: { summary: "done" } });
     await expect(scripted.backend.run(request("reviewer"))).rejects.toThrow("review boom");
+    scripted.assertExhausted();
+  });
+
+  it("emits configured onStep tool-call steps before returning output", async () => {
+    const observed: string[] = [];
+    const scripted = createScriptedBackend([
+      {
+        role: "red-writer",
+        steps: [
+          { type: "toolCall", toolName: "readFile", summary: "readFile" },
+          { type: "toolCall", toolName: "shell", summary: "shell" },
+        ],
+        output: { summary: "red", changedFiles: [] },
+      },
+    ]);
+    const result = await scripted.backend.run({
+      ...request("red-writer"),
+      onStep: (step) => {
+        if (step.toolName) observed.push(step.toolName);
+      },
+    });
+    expect(result.output).toEqual({ summary: "red", changedFiles: [] });
+    expect(observed).toEqual(["readFile", "shell"]);
     scripted.assertExhausted();
   });
 });

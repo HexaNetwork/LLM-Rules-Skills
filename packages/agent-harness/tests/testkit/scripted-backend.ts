@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { AgentBackend, AgentRequest } from "../../src/agent.js";
+import type { AgentBackend, AgentRequest, AgentStepEvent } from "../../src/agent.js";
 import type { AgentRole } from "../../src/domain.js";
 
 export type ScriptedStep =
-  | { role: AgentRole; output: unknown }
-  | { role: AgentRole; error: Error }
-  | { role: AgentRole; waitFor?: Promise<void>; output: unknown };
+  | { role: AgentRole; output: unknown; steps?: AgentStepEvent[] }
+  | { role: AgentRole; error: Error; steps?: AgentStepEvent[] }
+  | { role: AgentRole; waitFor?: Promise<void>; output: unknown; steps?: AgentStepEvent[] };
 
 export type ScriptedCall = {
   role: AgentRole;
@@ -83,6 +83,7 @@ export function createScriptedBackend(steps: ScriptedStep[]): {
       if ("waitFor" in step && step.waitFor) {
         await step.waitFor;
       }
+      emitScriptedSteps(request, step.steps);
       if ("error" in step) {
         throw step.error;
       }
@@ -116,6 +117,16 @@ export function createScriptedBackend(steps: ScriptedStep[]): {
       }
     },
   };
+}
+
+function emitScriptedSteps(
+  request: AgentRequest,
+  steps: AgentStepEvent[] | undefined,
+): void {
+  if (!steps?.length) return;
+  for (const step of steps) {
+    request.onStep?.(step);
+  }
 }
 
 function sanitizeRequest(request: AgentRequest): Record<string, unknown> {

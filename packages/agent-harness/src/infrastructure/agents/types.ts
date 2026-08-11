@@ -127,4 +127,6 @@ export type AgentInvocation<T> = {
   providerSessionReused: boolean;
   providerTurns: number;
   guidanceFingerprint?: string;
+  /** Distinct tool names observed via onStep during this invocation (args omitted). */
+  observedToolNames: string[];
 };

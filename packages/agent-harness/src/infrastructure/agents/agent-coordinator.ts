@@ -49,7 +49,6 @@ type CausalMeta = {
 
 /** Roles that get a tighter document context budget (soft diversity + lower limit). */
 const WORKER_RETRIEVAL_ROLES = new Set<AgentRole>([
-  "test-writer",
   "red-writer",
   "implementer",
   "reviewer",
@@ -332,6 +331,7 @@ export class AgentCoordinator {
     let providerSessionId = options.providerSessionId;
     let lastError: unknown;
     let completed = false;
+    const observedToolNames = new Set<string>();
     const attempts = this.config.agent.schemaRepairAttempts + 1;
     const retainForRepair = attempts > 1;
     try {
@@ -389,6 +389,7 @@ export class AgentCoordinator {
                 signal,
                 taskId,
                 onStep: (step) => {
+                  if (step.toolName) observedToolNames.add(step.toolName);
                   void activity.recordStep(step);
                 },
                 onInstallObserved: (entry) => {
@@ -542,6 +543,7 @@ export class AgentCoordinator {
           providerRunId: result.providerRunId,
           providerSessionReused: result.providerSessionReused ?? false,
           providerTurns: attempt + 1,
+          observedToolNames: [...observedToolNames],
         };
       }
       throw lastError instanceof HarnessFailure

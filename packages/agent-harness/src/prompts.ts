@@ -43,16 +43,14 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   "red-writer": [
-    "Establish a runnable RED: targeted tests must compile, execute, and fail on assertions — not on missing symbols or compile-only errors.",
-    "You may add minimal compile scaffolds on the task's declared production seams (empty types, signatures, UnsupportedOperationException, or returns that keep asserts red).",
-    "Do not implement real behavior, do not make tests green, and do not commit.",
-    "Test public behavior at the agreed seam with independent expected values.",
-    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
-  ],
-  "test-writer": [
-    "Edit tests only. Do not implement production behavior, add production scaffolds, or commit.",
-    "Test public behavior at the agreed seam with independent expected values.",
-    "Return after creating a meaningful failing test.",
+    "Edit test files only. Do not add production scaffolds, configuration, localization, implementation wiring, or real behavior.",
+    "Do not run test, compile, build, lint, verification, or other shell commands. The harness owns all command execution.",
+    "Add the smallest coherent batch that meaningfully advances the feature, typically three to five tests. Each batch should cover a focused behavior cluster and include relevant edge cases, boundaries, invalid inputs, or exemption paths. Use judgment: prefer a parameterized test when several cases express the same rule, and stop when implementation feedback would help determine the next batch.",
+    "Own edge-case discovery for the batch: boundaries, invalid inputs, exemptions, duplicates, absent relationships, and regressions that must remain unchanged when applicable.",
+    "Reference production types, functions, methods, fields, routes, schema members, or other public interfaces that do not exist yet when that is what the seam requires. Compilation or equivalent pre-execution failure is acceptable until GREEN.",
+    "Test public behavior at the agreed seam with independent expected values. Build on accumulated tests and do not duplicate already covered behaviors.",
+    "Return status continue when adding a batch, or done only when the worktree is already at verified GREEN and no further tests are needed. A done turn must not change any files.",
+    "Do not commit, push, or open a pull request.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   implementer: [
@@ -65,6 +63,7 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "Do not edit files.",
     "Block only for a demonstrable correctness, security, or acceptance failure.",
     "Use advisory findings for optional improvements.",
+    "Every finding must include kind: production (implementation fix), test-coverage (missing tests), or advisory.",
     "The diff is the primary evidence. Read the listed omitted files from disk before commenting on them.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
@@ -103,8 +102,39 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
   ],
 };
 
+/** Extra implementer rules applied when the work packet is for a TDD task. */
+export const GREEN_IMPLEMENTER_RULES: readonly string[] = [
+  "You are the green-implementer for this TDD task.",
+  "Edit production paths only; never edit, weaken, delete, or bypass recorded tests.",
+  "Return status green when you implemented the current batch, already_green when the batch already passes without needed production changes, or test_issue when a test is defective or contradicts the agreed seam.",
+  "On test_issue, do not modify the test; report the path, reason, and evidence so the red-writer can repair it.",
+  "Focus on the current coherent batch while respecting the overall public contract; do not intentionally anticipate uncovered behaviors.",
+];
+
 export function roleRulesFor(role: AgentRole): readonly string[] {
   return ROLE_RULES[role];
+}
+
+export function roleRulesForPacket(packet: WorkPacket): readonly string[] {
+  if (packet.role === "implementer" && isTddWorkPacket(packet)) {
+    return [...ROLE_RULES.implementer, ...GREEN_IMPLEMENTER_RULES];
+  }
+  return ROLE_RULES[packet.role];
+}
+
+function roleLabelForPacket(packet: WorkPacket): string {
+  if (packet.role === "implementer" && isTddWorkPacket(packet)) return "green-implementer";
+  return packet.role;
+}
+
+function isTddWorkPacket(packet: WorkPacket): boolean {
+  if (!isRecord(packet.input)) return false;
+  const task = packet.input.task;
+  return isRecord(task) && task.tdd === true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Role intro + role rules + compiled guidance pack (no WORK PACKET). */
@@ -119,9 +149,9 @@ export function renderGuidancePromptPreview(role: AgentRole, guidancePack: strin
 export function renderPrompt(packet: WorkPacket): string {
   const { guidance: _guidance, guidancePack: _pack, ...packetForJson } = packet;
   return [
-    `You are the ${packet.role} worker in a deterministic software-delivery harness.`,
+    `You are the ${roleLabelForPacket(packet)} worker in a deterministic software-delivery harness.`,
     "This is a fresh session. The work packet below is the complete handoff; do not assume hidden chat history.",
-    ...ROLE_RULES[packet.role].map((rule) => `- ${rule}`),
+    ...roleRulesForPacket(packet).map((rule) => `- ${rule}`),
     ...packet.constraints.map((constraint) => `- ${constraint}`),
     ...renderGuidance(packet),
     "",
@@ -165,9 +195,9 @@ export function renderContinuationPrompt(
     ].join("\n");
   }
   return [
-    `Continue the durable episode. For this turn, act as the ${packet.role} worker.`,
+    `Continue the durable episode. For this turn, act as the ${roleLabelForPacket(packet)} worker.`,
     "Use the existing conversation and repository findings; do not repeat exploration already completed unless the new input invalidates it.",
-    ...ROLE_RULES[packet.role].map((rule) => `- ${rule}`),
+    ...roleRulesForPacket(packet).map((rule) => `- ${rule}`),
     ...packet.constraints.map((constraint) => `- ${constraint}`),
     ...(includeGuidance ? renderGuidance(packet) : []),
     `Objective: ${packet.objective}`,

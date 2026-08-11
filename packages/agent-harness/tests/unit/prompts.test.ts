@@ -209,11 +209,14 @@ describe("prompt rendering", () => {
     expect(renderPromptBuilderPrompt(packet)).toContain("Reject blank credentials.");
   });
 
-  it("tells reviewers the diff is primary evidence", () => {
+  it("tells reviewers the diff is primary evidence and structured finding kinds", () => {
     const reviewPacket: WorkPacket = { ...packet, role: "reviewer" };
-    expect(renderPrompt(reviewPacket)).toContain(
+    const rendered = renderPrompt(reviewPacket);
+    expect(rendered).toContain(
       "The diff is the primary evidence. Read the listed omitted files from disk before commenting on them.",
     );
+    expect(rendered).toContain("kind: production");
+    expect(rendered).toContain("test-coverage");
   });
 
   it("tells the planner not to edit the working tree", () => {
@@ -223,21 +226,73 @@ describe("prompt rendering", () => {
     );
   });
 
-  it("describes runnable RED and scaffolds for red-writer, tests-only for test-writer", () => {
-    expect(renderPrompt({ ...packet, role: "red-writer" })).toContain(
-      "Establish a runnable RED",
-    );
-    expect(renderPrompt({ ...packet, role: "red-writer" })).toContain(
-      "minimal compile scaffolds",
-    );
-    expect(renderPrompt({ ...packet, role: "test-writer" })).toContain("Edit tests only");
-    expect(renderPrompt({ ...packet, role: "test-writer" })).toContain(
-      "Do not implement production behavior, add production scaffolds, or commit",
-    );
+  it("describes test-only, no-command red-writer batches and continue versus done", () => {
+    const rendered = renderPrompt({ ...packet, role: "red-writer" });
+    expect(rendered).toContain("Edit test files only");
+    expect(rendered).toContain("Do not run test, compile, build, lint, verification");
+    expect(rendered).toContain("typically three to five tests");
+    expect(rendered).toContain("Own edge-case discovery");
+    expect(rendered).toContain("Return status continue when adding a batch, or done only");
+    expect(rendered).not.toContain("Establish a runnable RED");
+    expect(rendered).not.toContain("minimal compile scaffolds");
+  });
+
+  it("labels TDD implementer as green-implementer with status rules", () => {
+    const tddPacket: WorkPacket = {
+      ...packet,
+      role: "implementer",
+      input: {
+        task: {
+          title: "Feature",
+          description: "Do it",
+          acceptanceCriteria: ["works"],
+          tdd: true,
+        },
+      },
+    };
+    const rendered = renderPrompt(tddPacket);
+    expect(rendered).toContain("You are the green-implementer worker");
+    expect(rendered).toContain("Return status green when you implemented the current batch");
+    expect(rendered).toContain("already_green");
+    expect(rendered).toContain("test_issue");
+    expect(renderPrompt(packet)).toContain("You are the implementer worker");
+    expect(renderPrompt(packet)).not.toContain("green-implementer");
+  });
+
+  it("omits full task JSON from same-session continuation deltas", () => {
+    const redPacket: WorkPacket = {
+      ...packet,
+      role: "red-writer",
+      input: {
+        task: {
+          id: "task-1",
+          title: "A deliberately unique full task title",
+          description: "A deliberately unique full task description",
+          acceptanceCriteria: ["unique-criterion"],
+          tdd: true,
+        },
+        priorCommandOutput: "unique prior evidence blob",
+      },
+      expectedOutput: "unique-red-contract",
+    };
+    const rendered = renderContinuationPrompt(redPacket, {
+      includeGuidance: false,
+      deltaInput: {
+        round: 2,
+        instruction: "Add the next coherent test batch or return done. Do not run commands.",
+      },
+    });
+    expect(rendered).toContain("Add the next coherent test batch");
+    expect(rendered).not.toContain("unique full task title");
+    expect(rendered).not.toContain("unique prior evidence blob");
+    expect(rendered).not.toContain("unique-red-contract");
+    expect(rendered).not.toContain("WORK PACKET");
+    expect(renderPrompt(redPacket)).toContain("unique full task title");
+    expect(renderPrompt(redPacket)).toContain("unique prior evidence blob");
   });
 
   it("requires schema-validated workers to return one raw JSON object after the work packet", () => {
-    for (const role of ["red-writer", "test-writer", "implementer"] as const) {
+    for (const role of ["red-writer", "implementer"] as const) {
       const rendered = renderPrompt({ ...packet, role });
       const workPacketIndex = rendered.indexOf("WORK PACKET");
       const noMarkdownIndex = rendered.indexOf(

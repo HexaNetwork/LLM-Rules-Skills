@@ -21,7 +21,8 @@ export function summarizeAgentStep(step: {
   };
 }
 
-const SHELL_TOOL_NAMES = new Set([
+/** Provider tool names that execute shell/terminal commands. */
+export const SHELL_TOOL_NAMES = new Set([
   "shell",
   "bash",
   "Shell",
@@ -31,6 +32,11 @@ const SHELL_TOOL_NAMES = new Set([
   "terminal",
 ]);
 
+/** True when the tool name is a known or name-pattern command-execution tool. */
+export function isShellToolName(toolName: string): boolean {
+  return SHELL_TOOL_NAMES.has(toolName) || /shell|bash|terminal|command/i.test(toolName);
+}
+
 /** Detect install-like shell tool calls for passive logging. */
 export function detectInstallFromToolStep(step: {
   type: string;
@@ -38,7 +44,7 @@ export function detectInstallFromToolStep(step: {
 }): { manager: import("../../domain.js").PackageManager; packages: string[]; commandSummary: string } | undefined {
   if (step.type !== "toolCall") return undefined;
   const toolName = typeof step.message?.type === "string" ? step.message.type : "";
-  if (!SHELL_TOOL_NAMES.has(toolName) && !/shell|bash|terminal|command/i.test(toolName)) {
+  if (!isShellToolName(toolName)) {
     return undefined;
   }
   const command = shellCommandFromToolArgs(step.message?.args);

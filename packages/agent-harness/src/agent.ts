@@ -11,7 +11,11 @@ export type {
 export { AgentBackendRunError } from "./infrastructure/agents/types.js";
 export { AgentCoordinator } from "./infrastructure/agents/agent-coordinator.js";
 export { createCursorBackend } from "./infrastructure/agents/cursor-backend.js";
-export { createFakeBackend } from "./infrastructure/agents/fake-backend.js";
+export {
+  createFakeBackend,
+  emitFakeToolCallSteps,
+} from "./infrastructure/agents/fake-backend.js";
+export type { FakeBackendHandler } from "./infrastructure/agents/fake-backend.js";
 export {
   parseOutput,
   resolveAgentOutput,
@@ -19,6 +23,8 @@ export {
 export { stepPersistenceLimits } from "./infrastructure/agents/activity-tracker.js";
 export {
   detectInstallFromToolStep,
+  isShellToolName,
+  SHELL_TOOL_NAMES,
   summarizeAgentStep,
 } from "./infrastructure/agents/step-utils.js";
 export { reportedTotal } from "./infrastructure/agents/usage.js";

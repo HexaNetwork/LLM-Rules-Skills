@@ -106,6 +106,13 @@ export const stateScript = `  (function () {
     }
     function safeUrl(value) { var url = String(value || ""); return url.startsWith("https://") || url.startsWith("http://") ? url : "#"; }
     function date(value) { if (!value) return "—"; return new Intl.DateTimeFormat(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}).format(new Date(value)); }
+    // Local wall-clock HH:MM from ISO timestamps (startedAt is stored as UTC ISO).
+    function clockTime(value) {
+      if (!value) return "—";
+      var d = new Date(value);
+      if (Number.isNaN(d.getTime())) return "—";
+      return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    }
     function ago(value) {
       if (!value) return "";
       var seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));

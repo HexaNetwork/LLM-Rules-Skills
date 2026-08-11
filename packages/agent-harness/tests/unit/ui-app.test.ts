@@ -508,6 +508,9 @@ describe("dashboard document", () => {
     expect(html).toContain("budget-meter");
     expect(html).toContain("By model");
     expect(html).toContain("By agent type");
+    expect(html).toContain(">Invocations</th>");
+    expect(html).not.toContain(">Sessions</th>");
+    expect(html).toContain("No invocation usage recorded yet.");
     expect(html).toContain(">Thinking</th>");
     expect(html).toContain("reasoningTokens");
     expect(html).toContain("data-usage-tab");

@@ -286,10 +286,10 @@ export const renderRunScript = `    function renderSidebar() {
         var label = String(session[key] || "unknown");
         var usage = session.usage || {};
         if (!map[label]) {
-          map[label] = { label: label, sessions: 0, input: 0, output: 0, thinking: 0, cached: 0, total: 0 };
+          map[label] = { label: label, invocations: 0, input: 0, output: 0, thinking: 0, cached: 0, total: 0 };
         }
         var row = map[label];
-        row.sessions += 1;
+        row.invocations += 1;
         row.input += Number(usage.inputTokens || 0);
         row.output += Number(usage.outputTokens || 0);
         row.thinking += Number(usage.reasoningTokens || 0);
@@ -303,13 +303,13 @@ export const renderRunScript = `    function renderSidebar() {
 
     function renderUsageBreakdownTable(rows, labelHeader, runTotal) {
       if (!rows.length) {
-        return '<div class="muted" style="margin-top:4px">No session usage recorded yet.</div>';
+        return '<div class="muted" style="margin-top:4px">No invocation usage recorded yet.</div>';
       }
       var body = rows.map(function (row) {
         var share = runTotal > 0 ? Math.round((row.total / runTotal) * 1000) / 10 : 0;
         return '<tr>' +
           '<td><code>' + esc(row.label) + '</code></td>' +
-          '<td class="num">' + number(row.sessions) + '</td>' +
+          '<td class="num">' + number(row.invocations) + '</td>' +
           '<td class="num">' + number(row.input) + '</td>' +
           '<td class="num">' + number(row.output) + '</td>' +
           '<td class="num">' + number(row.thinking) + '</td>' +
@@ -320,7 +320,7 @@ export const renderRunScript = `    function renderSidebar() {
       }).join("");
       return '<div class="usage-table-wrap"><table class="usage-table">' +
         '<thead><tr>' +
-        '<th>' + esc(labelHeader) + '</th><th class="num">Sessions</th><th class="num">Input</th><th class="num">Output</th><th class="num">Thinking</th><th class="num">Cached</th><th class="num">Total</th><th class="num">Share</th>' +
+        '<th>' + esc(labelHeader) + '</th><th class="num">Invocations</th><th class="num">Input</th><th class="num">Output</th><th class="num">Thinking</th><th class="num">Cached</th><th class="num">Total</th><th class="num">Share</th>' +
         '</tr></thead><tbody>' + body + '</tbody></table></div>';
     }
 

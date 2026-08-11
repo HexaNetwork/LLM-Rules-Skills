@@ -5,7 +5,9 @@ import type {
   OpenUnknown,
   Prd,
   RunState,
+  TddLoop,
 } from "./domain.js";
+import { activeTddRoleLabel, describeActiveTddStatus, pendingRoundNumber } from "./domain.js";
 import { RunStore } from "./store.js";
 
 export interface TrackerPort {
@@ -210,7 +212,7 @@ ${task.description}
 
 ${task.acceptanceCriteria.map((criterion) => `- [${task.status === "done" ? "x" : " "}] ${criterion}`).join("\n")}
 
-## Verification
+${renderTddLoop(task)}## Verification
 
 ${
   task.evidence.length
@@ -218,6 +220,94 @@ ${
     : "_Not run._"
 }
 `;
+}
+
+function renderTddLoop(task: BuildTask): string {
+  if (!task.tdd) return "";
+  const loop = task.tddLoop;
+  if (!loop) {
+    return `## TDD loop
+
+_Not started._
+
+`;
+  }
+  const status = describeActiveTddStatus(task);
+  const role = activeTddRoleLabel(task) ?? task.step;
+  const lines = [
+    "## TDD loop",
+    "",
+    `**Round:** ${pendingRoundNumber(loop)} · **Active role:** ${role}`,
+    `**Verified green:** ${loop.atVerifiedGreen ? "yes" : "no"} · **Completed rounds:** ${loop.completedRounds.length}`,
+    `**Retained sessions:** red ${loop.redWriterSession?.turns ?? 0} turns · green ${loop.greenImplementerSession?.turns ?? 0} turns`,
+  ];
+  if (status) lines.push(`**Status:** ${status}`);
+  lines.push("", renderPendingRound(loop), renderCompletedRounds(loop), renderCoverage(loop, task));
+  return `${lines.filter((line, index, all) => !(line === "" && all[index + 1] === "")).join("\n").trim()}\n\n`;
+}
+
+function renderPendingRound(loop: TddLoop): string {
+  const pending = loop.pendingRound;
+  if (!pending) return "### Pending round\n\n_None open._\n";
+  return `### Pending round ${pending.number} (${pending.mode})
+
+- **Behaviors:** ${formatBulletList(pending.behaviorsAdded)}
+- **Edge cases:** ${formatBulletList(pending.edgeCasesAdded)}
+- **Tests:** ${formatBulletList(pending.testPathsAdded)}
+- **Implementer attempts:** ${pending.implementerAttempts}
+- **Checkpoint:** ${pending.redCheckpointSha ? `\`${pending.redCheckpointSha.slice(0, 12)}\`` : "_not committed_"}
+`;
+}
+
+function renderCompletedRounds(loop: TddLoop): string {
+  if (loop.completedRounds.length === 0) return "### Completed rounds\n\n_None yet._\n";
+  return `### Completed rounds
+
+${loop.completedRounds
+  .map((round) => {
+    const outcomeLabel =
+      round.outcome === "already-covered" ? "already-covered (no production delta)" : round.outcome;
+    return `#### Round ${round.number} — ${outcomeLabel}
+
+- **Behaviors:** ${formatBulletList(round.behaviorsAdded)}
+- **Edge cases:** ${formatBulletList(round.edgeCasesAdded)}
+- **Tests:** ${formatBulletList(round.testPathsAdded)}
+- **Targeted verification:** \`${round.targetedEvidencePurpose}\`
+- **Checkpoint:** ${round.redCheckpointSha ? `\`${round.redCheckpointSha.slice(0, 12)}\`` : "_n/a_"}
+- **Completed:** ${round.completedAt}
+`;
+  })
+  .join("\n")}`;
+}
+
+function renderCoverage(loop: TddLoop, task: BuildTask): string {
+  const coverage = loop.coverage;
+  const lines = [
+    "### Coverage ledger",
+    "",
+    `- **Behaviors covered:** ${formatBulletList(coverage.behaviors)}`,
+    `- **Edge cases covered:** ${formatBulletList(coverage.edgeCases)}`,
+  ];
+  const assessment = coverage.finalAssessment;
+  if (!assessment) {
+    lines.push("", "_Final coverage assessment appears when the red-writer declares done._");
+    return `${lines.join("\n")}\n`;
+  }
+  lines.push("", "#### Final coverage assessment", "", assessment.edgeCaseRationale, "");
+  for (const item of assessment.acceptanceCriteria) {
+    const criterion = task.acceptanceCriteria[item.criterionIndex] ?? `criterion ${item.criterionIndex}`;
+    lines.push(
+      `- [${item.covered ? "x" : " "}] ${criterion}`,
+      `  - Tests: ${formatBulletList(item.testPaths)}`,
+      `  - ${item.rationale}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatBulletList(items: readonly string[]): string {
+  if (!items.length) return "_none_";
+  return items.join("; ");
 }
 
 function slug(value: string): string {

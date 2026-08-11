@@ -95,6 +95,11 @@ describe("dashboard document", () => {
     expect(html).toContain("provider contexts · invocations");
     expect(html).toContain("Agent activity");
     expect(html).toContain("activity-timeline");
+    expect(html).toContain("function activeTddStatusLine(s)");
+    expect(html).toContain("function renderTaskTddDetails(task, taskKey)");
+    expect(html).toContain("green-implementer");
+    expect(html).toContain("Final coverage assessment");
+    expect(html).toContain("already-covered");
     expect(html).toContain("function renderRunVitals(s)");
     expect(html).toContain("run-vitals");
     expect(html).toContain("Build progress");

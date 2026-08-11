@@ -25,7 +25,7 @@ The lifecycle is:
 
 ```text
 idea → reflect (editable confirm) → grill-me → verification settings → implementation tickets
-     → [RED → GREEN] → command gates → review → commit → pull request
+     → [RED batch → GREEN verify]* → done → final gates → review → commit → pull request
 ```
 
 The process stops at `awaiting_input`, `blocked`, `cancelled`, or `completed`. It never waits indefinitely: agent calls, shell commands, locks, schema repair, implementation repair, review repair, grill episodes, and per-command advancement are all bounded.
@@ -186,7 +186,6 @@ knowledge:
       griller: { rules: [], skills: [grill-me, domain-modeling] }
       planner: { rules: [], skills: [domain-modeling, improve-codebase-architecture] }
       prompt-builder: { rules: [], skills: [] }
-      test-writer: { rules: [], skills: [tdd] }
       red-writer: { rules: [], skills: [tdd] }
       implementer: { rules: [], skills: [tdd] }
       reviewer: { rules: [], skills: [code-review] }
@@ -223,7 +222,7 @@ harness configs enable it by default. Install Graphify yourself
 `graphify-out/graph.json` with `graphify update` when the graph is missing.
 After each verified harness task commit that includes a source-file path, it
 runs `graphify update` again so the next task receives fresh structural
-context. Default Graphify roles are planner, red-writer, test-writer, implementer, and
+context. Default Graphify roles are planner, red-writer, implementer, and
 reviewer (not reflector/griller). Project-specific
 `knowledge.graphify.stopwords` merge over the built-in English and harness-meta
 lists. Enable `knowledge.graphify.updateOnRefresh` if a
@@ -241,7 +240,22 @@ Prompt compilation is disabled by default because the deterministic renderer is 
 
 ## TDD and deterministic evidence
 
-With TDD on, the harness launches a test writer first, restricts its reported/observed paths to tests, runs the declared targeted command, and requires a meaningful non-timeout failure. Only then does it launch the implementer. Failing GREEN or command-gate output is persisted and included in the next implementation packet. With TDD off, implementation starts first but the same targeted test, gate, review, and repair budgets still apply.
+With TDD on, each task runs an **alternating multi-round loop** with two retained logical agents:
+
+1. **red-writer** adds the next coherent batch of tests (and may reference missing production surfaces). It edits only `workflow.testPathPatterns` paths and does **not** run shell/test commands.
+2. The harness records a RED checkpoint (no targeted command yet).
+3. **green-implementer** implements until the harness independently verifies the accumulated targeted tests via `commands.testTargetTemplate` (when configured) or the first verification command.
+4. Control returns to the same red-writer session for another batch.
+5. The loop ends only when the red-writer returns `done` from an already verified-green checkpoint, with a final behavior/edge-case coverage assessment.
+6. **Final** `commands.verification` gates, review, and commit run only after `done` — not after every RED batch.
+
+`workflow.maxTestAttempts` is the per-round RED schema/path/test-repair revision limit, **not** the number of RED/GREEN rounds. `workflow.maxImplementationAttempts` is the per-round GREEN attempt limit and resets after each verified GREEN round. Post-`done` verification/review repairs use a dedicated `tddLoop.finalRepairAttempts` budget.
+
+Retained provider sessions are an optimization for prompt caching and continuity. Durable correctness lives in the worktree, `state.json` (`tddLoop` ledger), and evidence artifacts. A provider restart cold-starts either role from that ledger without depending on hidden transcript history. `workflow.maxContextTurns` (when non-zero) rotates each role's provider session independently.
+
+CLI `status` and the dashboard show the active TDD round, role (red-writer / green-implementer), completed round count, retained session turn counts, and current batch behaviors/edge cases. Agent activity surfaces cached versus total tokens from existing usage fields. See [ADR 0013](../../docs/adr/0013-alternating-persistent-tdd-loop.md).
+
+With TDD off, implementation starts first; the same targeted test, gate, review, and repair budgets still apply for non-loop tasks.
 
 Agents cannot claim a command passed. The harness owns process execution and records exit code, stdout, stderr, duration, and timestamp.
 

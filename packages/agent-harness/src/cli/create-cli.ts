@@ -21,6 +21,7 @@ import { migrateHome } from "../application/migrate-home.js";
 import { ProjectRegistry } from "../application/project-registry.js";
 import { formatBytes, reportProjectStorage } from "../application/storage-report.js";
 import { openRunHarness } from "../application/run-engine-factory.js";
+import { describeActiveTddStatus } from "../domain.js";
 import { HarnessEngine } from "../engine.js";
 import { GitService } from "../git.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
@@ -1055,6 +1056,17 @@ function printLockRemoval(
 function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {
   console.log(`Run ${state.runId}: ${state.phase}`);
   console.log(`Artifacts: ${state.runId}/state.json (under the configured state directory)`);
+  const activeTdd = state.tasks.find(
+    (task) => task.tdd && (task.status === "active" || task.status === "failed"),
+  );
+  if (activeTdd) {
+    const line = describeActiveTddStatus(activeTdd);
+    if (line) {
+      console.log(`TDD (${activeTdd.id}): ${line}`);
+    } else {
+      console.log(`TDD (${activeTdd.id}): ${activeTdd.status} / ${activeTdd.step}`);
+    }
+  }
   if (state.phase === "awaiting_input" && state.grillReady) {
     console.log(`Grilling complete: ${state.grillReady.summary}`);
     console.log(

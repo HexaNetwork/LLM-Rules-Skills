@@ -547,6 +547,8 @@ export const renderRunScript = `    function renderSidebar() {
                   : "An agent or deterministic command is working";
         if (jobDetail) thinkingDetail = jobDetail;
         if (activityText) thinkingDetail = activityText;
+        var tddStatus = activeTddStatusLine(s);
+        if (tddStatus) thinkingDetail = tddStatus + (thinkingDetail ? " · " + thinkingDetail : "");
         if (s.phase === "grilling" && unknowns.length && !activityText) thinkingDetail += " · " + openUnknownCount + " open unknown(s) remain";
         html += '<div class="thinking-strip" role="status" aria-live="polite"><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="thinking-copy"><strong>Thinking…</strong><span>' + esc(thinkingDetail) + '</span>' + (thinkingSince && !activityText ? '<span id="thinkingElapsed">' + esc(elapsed(thinkingSince)) + '</span>' : '') + '</div></div>';
       }
@@ -670,7 +672,7 @@ export const renderRunScript = `    function renderSidebar() {
         }
         var fixer = s.fixerRecovery;
         var fixerControls = '';
-        var isConfigBlock = s.blockedKind === 'config' || /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths|Red writer changed paths outside tests and affectedPaths|Test command could not be launched/i.test(String(s.failure || ''));
+        var isConfigBlock = s.blockedKind === 'config' || /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths|Red writer changed non-test paths|Red writer changed paths outside tests and affectedPaths|Test command could not be launched/i.test(String(s.failure || ''));
         if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
           var repairDetails = formatConfigRepair(fixer.plan.configPatch || {});
           var persistButton = canEditSettings
@@ -740,6 +742,91 @@ export const renderRunScript = `    function renderSidebar() {
       $("tabBody").innerHTML = html;
     }
 
+    function activeTddRoleLabel(task) {
+      if (!task || !task.tdd) return "";
+      var loop = task.tddLoop || {};
+      if (task.step === "writing_tests" || task.step === "red") {
+        return loop.pendingRound && loop.pendingRound.mode === "test-repair" ? "red-writer (test-repair)" : "red-writer";
+      }
+      if (task.step === "implementing") {
+        return loop.finalRepairPending ? "green-implementer (final-repair)" : "green-implementer";
+      }
+      if (task.step === "verifying") return "final-verification";
+      if (task.step === "reviewing") return "reviewer";
+      if (task.step === "committing") return "committing";
+      return "";
+    }
+
+    function tddRoundNumber(task) {
+      var loop = task && task.tddLoop;
+      if (!loop) return 1;
+      if (loop.pendingRound && loop.pendingRound.number) return loop.pendingRound.number;
+      return loop.round || 1;
+    }
+
+    function activeTddStatusLine(s) {
+      var task = (s.tasks || []).find(function (item) {
+        return item.tdd && (item.status === "active" || item.status === "failed");
+      });
+      if (!task) return "";
+      var loop = task.tddLoop || {};
+      var role = activeTddRoleLabel(task) || task.step;
+      var completed = (loop.completedRounds || []).length;
+      var redTurns = (loop.redWriterSession && loop.redWriterSession.turns) || 0;
+      var greenTurns = (loop.greenImplementerSession && loop.greenImplementerSession.turns) || 0;
+      var parts = ["TDD round " + tddRoundNumber(task), role, completed + " completed", "red " + redTurns + " turns", "green " + greenTurns + " turns"];
+      var pending = loop.pendingRound;
+      if (pending) {
+        var behaviors = (pending.behaviorsAdded || []).length;
+        var edges = (pending.edgeCasesAdded || []).length;
+        if (behaviors || edges) parts.push("batch " + behaviors + " behaviors / " + edges + " edge cases");
+      }
+      return parts.join(" · ");
+    }
+
+    function displayActivityRole(role, taskId) {
+      if (role !== "implementer" || !taskId || !state.detail || !state.detail.state) return role || "unknown";
+      var task = (state.detail.state.tasks || []).find(function (item) { return item.id === taskId; });
+      return task && task.tdd ? "green-implementer" : role;
+    }
+
+    function renderTaskTddDetails(task, taskKey) {
+      if (!task.tdd) return "";
+      var loop = task.tddLoop;
+      if (!loop) {
+        return '<details data-details-key="' + attr(taskKey + "-tdd") + '"><summary>TDD loop</summary><div class="muted" style="margin-top:8px">Not started.</div></details>';
+      }
+      var role = activeTddRoleLabel(task) || task.step;
+      var pending = loop.pendingRound;
+      var completed = loop.completedRounds || [];
+      var html = '<details data-details-key="' + attr(taskKey + "-tdd") + '"' + (task.status === "active" ? " open" : "") + '><summary>TDD loop · round ' + esc(String(tddRoundNumber(task))) + ' · ' + esc(role) + '</summary>';
+      html += '<div class="muted" style="margin-top:8px">' + esc(completed.length + " completed · red " + ((loop.redWriterSession && loop.redWriterSession.turns) || 0) + " turns · green " + ((loop.greenImplementerSession && loop.greenImplementerSession.turns) || 0) + " turns") + (loop.atVerifiedGreen ? " · at verified green" : "") + '</div>';
+      if (pending) {
+        html += '<div class="resolution" style="margin-top:10px"><strong>Current batch (round ' + esc(String(pending.number)) + ', ' + esc(pending.mode) + ')</strong>';
+        html += '<div class="muted" style="margin-top:5px">Behaviors: ' + esc((pending.behaviorsAdded || []).join("; ") || "none") + '</div>';
+        html += '<div class="muted" style="margin-top:4px">Edge cases: ' + esc((pending.edgeCasesAdded || []).join("; ") || "none") + '</div>';
+        html += '<div class="muted" style="margin-top:4px">Tests: ' + esc((pending.testPathsAdded || []).join("; ") || "none") + '</div></div>';
+      }
+      if (completed.length) {
+        html += '<div style="margin-top:10px">' + completed.map(function (round) {
+          var outcome = round.outcome === "already-covered" ? "already-covered" : round.outcome;
+          return '<div class="fog-entry" style="margin-bottom:8px"><div class="item-head"><div class="item-title">Round ' + esc(String(round.number)) + '</div><span class="tag">' + esc(outcome) + '</span></div><div class="muted" style="margin-top:4px">' + esc((round.behaviorsAdded || []).join("; ") || "no behaviors") + '</div>' + ((round.edgeCasesAdded || []).length ? '<div class="muted" style="margin-top:3px">Edge cases: ' + esc(round.edgeCasesAdded.join("; ")) + '</div>' : '') + '</div>';
+        }).join("") + '</div>';
+      }
+      var assessment = loop.coverage && loop.coverage.finalAssessment;
+      if (assessment) {
+        html += '<div class="resolution" style="margin-top:10px"><strong>Final coverage assessment</strong><div class="muted" style="margin-top:5px">' + esc(assessment.edgeCaseRationale || "") + '</div>';
+        html += '<ul style="margin:8px 0 0;padding-left:18px">' + (assessment.acceptanceCriteria || []).map(function (item) {
+          var criterion = (task.acceptanceCriteria && task.acceptanceCriteria[item.criterionIndex]) || ("criterion " + item.criterionIndex);
+          return '<li>' + (item.covered ? "✓ " : "○ ") + esc(criterion) + '<div class="faint">' + esc(item.rationale || "") + '</div></li>';
+        }).join("") + '</ul></div>';
+      } else if (loop.coverage && ((loop.coverage.behaviors || []).length || (loop.coverage.edgeCases || []).length)) {
+        html += '<div class="muted" style="margin-top:10px">Covered so far: ' + esc((loop.coverage.behaviors || []).length) + ' behaviors · ' + esc((loop.coverage.edgeCases || []).length) + ' edge cases</div>';
+      }
+      html += '</details>';
+      return html;
+    }
+
     function renderTasks(s) {
       var html = '';
       if (s.prd && !s.planReady) {
@@ -753,7 +840,10 @@ export const renderRunScript = `    function renderSidebar() {
         var tddControl = canToggle
           ? '<button type="button" class="tag" data-action="set_tdd" data-task-id="' + attr(task.id) + '" data-tdd="' + (task.tdd ? "false" : "true") + '" title="Toggle TDD for this pending task">TDD ' + (task.tdd ? "on" : "off") + ' · click</button>'
           : '<span class="tag" title="TDD is locked once the task starts">TDD ' + (task.tdd ? "on" : "off") + '</span>';
-        return '<article class="item"><div class="item-head"><div><div class="card-label">Task ' + String(index + 1).padStart(2,"0") + '</div><div class="item-title">' + esc(task.title) + '</div><div class="muted" style="margin-top:5px">' + esc(task.description) + '</div></div><span class="badge ' + attr(task.status === "done" ? "completed" : task.status) + '">' + esc(task.status + " · " + task.step) + '</span></div><div class="tags">' + tddControl + (task.blockedBy.length ? '<span class="tag">after ' + esc(task.blockedBy.join(", ")) + '</span>' : '') + (task.commitSha ? '<span class="tag">' + esc(task.commitSha.slice(0,8)) + '</span>' : '') + '</div><details data-details-key="' + attr(taskKey + "-criteria") + '"><summary>Acceptance criteria</summary>' + criteria + '</details>' + evidence + (task.failure ? '<div class="resolution" style="border-color:var(--red)">' + esc(task.failure) + '</div>' : '') + '</article>';
+        var tddBadge = task.tdd && task.status === "active"
+          ? '<span class="tag">round ' + esc(String(tddRoundNumber(task))) + ' · ' + esc(activeTddRoleLabel(task) || task.step) + '</span>'
+          : '';
+        return '<article class="item"><div class="item-head"><div><div class="card-label">Task ' + String(index + 1).padStart(2,"0") + '</div><div class="item-title">' + esc(task.title) + '</div><div class="muted" style="margin-top:5px">' + esc(task.description) + '</div></div><span class="badge ' + attr(task.status === "done" ? "completed" : task.status) + '">' + esc(task.status + " · " + task.step) + '</span></div><div class="tags">' + tddControl + tddBadge + (task.blockedBy.length ? '<span class="tag">after ' + esc(task.blockedBy.join(", ")) + '</span>' : '') + (task.commitSha ? '<span class="tag">' + esc(task.commitSha.slice(0,8)) + '</span>' : '') + '</div><details data-details-key="' + attr(taskKey + "-criteria") + '"><summary>Acceptance criteria</summary>' + criteria + '</details>' + renderTaskTddDetails(task, taskKey) + evidence + (task.failure ? '<div class="resolution" style="border-color:var(--red)">' + esc(task.failure) + '</div>' : '') + '</article>';
       }).join("") + '</div>' : '<div class="empty">Implementation tasks appear after grilling reaches shared understanding.</div>';
       $("tabBody").innerHTML = html;
     }
@@ -792,25 +882,30 @@ export const renderRunScript = `    function renderSidebar() {
         var key = context.id || ('ctx-' + contextIndex);
         var expanded = !!state.expandedContexts[key];
         var usage = context.usage || {};
-        var tokenLabel = formatTokenCount(usage.totalTokens || ((usage.inputTokens || 0) + (usage.outputTokens || 0)));
+        var totalTokens = usage.totalTokens || ((usage.inputTokens || 0) + (usage.outputTokens || 0));
+        var cachedTokens = usage.cacheReadTokens || 0;
+        var tokenLabel = formatTokenCount(totalTokens);
+        var cachedLabel = cachedTokens ? (formatTokenCount(cachedTokens) + ' cached') : '';
         var durationMs = 0;
         if (context.startedAt && context.endedAt) durationMs = Math.max(0, Date.parse(context.endedAt) - Date.parse(context.startedAt));
         else if (context.startedAt) durationMs = Math.max(0, Date.now() - Date.parse(context.startedAt));
         var durationLabel = durationMs ? ((durationMs / 1000).toFixed(1) + 's') : '—';
         var taskTitle = '';
+        var taskId = '';
         (context.invocations || []).some(function (inv) {
           if (!inv.taskId || !state.detail.state || !state.detail.state.tasks) return false;
           var task = state.detail.state.tasks.find(function (item) { return item.id === inv.taskId; });
-          if (task) { taskTitle = task.title; return true; }
+          if (task) { taskTitle = task.title; taskId = task.id; return true; }
           return false;
         });
+        var roleLabel = displayActivityRole(context.role, taskId);
         html += '<article class="activity-context' + (expanded ? ' open' : '') + '" data-context-key="' + attr(key) + '">';
         html += '<button type="button" class="activity-context-head" data-toggle-context="' + attr(key) + '">';
-        html += '<div class="item-head"><div><div class="session-role">' + esc(context.role || 'unknown') + (taskTitle ? ' · ' + esc(taskTitle) : '') + '</div>';
+        html += '<div class="item-head"><div><div class="session-role">' + esc(roleLabel) + (taskTitle ? ' · ' + esc(taskTitle) : '') + '</div>';
         html += '<div class="session-model">' + esc(context.model || 'unknown') + '</div>';
-        html += '<div class="muted">1 provider context · ' + esc(String(context.invocationCount || 0)) + ' invocations</div></div>';
+        html += '<div class="muted">1 provider context · ' + esc(String(context.invocationCount || 0)) + ' invocations / turns</div></div>';
         html += '<span class="badge ' + attr(context.status === 'completed' ? 'completed' : context.status) + '">' + esc(context.status || 'unknown') + '</span></div>';
-        html += '<div class="muted" style="margin-top:8px">' + esc(durationLabel) + ' · ' + esc(tokenLabel) + ' tokens</div>';
+        html += '<div class="muted" style="margin-top:8px">' + esc(durationLabel) + ' · ' + esc(tokenLabel) + ' tokens' + (cachedLabel ? ' · ' + esc(cachedLabel) : '') + '</div>';
         html += '</button>';
         if (expanded) {
           html += '<div class="activity-invocations">';
@@ -823,7 +918,9 @@ export const renderRunScript = `    function renderSidebar() {
             });
             var trigger = invocation.triggerSummary || (invocation.trigger && invocation.trigger.summary) || 'Reason unavailable for historical invocation';
             var warnReason = invocationUsageWarning(invocation, usage);
-            var tokens = formatTokenCount((invocation.usage && invocation.usage.totalTokens) || 0);
+            var invUsage = invocation.usage || {};
+            var tokens = formatTokenCount(invUsage.totalTokens || 0);
+            var invCached = invUsage.cacheReadTokens ? (' · ' + formatTokenCount(invUsage.cacheReadTokens) + ' cached') : '';
             var time = invocation.startedAt ? date(invocation.startedAt).slice(11, 16) : '—';
             html += '<div class="activity-invocation' + (warnReason ? ' warn' : '') + '">';
             html += '<div class="activity-invocation-main"><span class="faint">' + esc(time) + '</span>';
@@ -831,7 +928,7 @@ export const renderRunScript = `    function renderSidebar() {
             html += '<span class="context-badge ' + (badge === 'NEW CONTEXT' ? 'new' : 'reused') + '">' + badge + '</span>';
             html += '<span>' + esc(kind) + '</span>';
             if (repaired) html += '<span class="badge completed">repaired</span>';
-            html += '<span class="faint">' + esc(tokens) + (warnReason ? ' <span class="activity-warn-icon" title="' + attr(warnReason) + '">⚠</span>' : '') + '</span></div>';
+            html += '<span class="faint">' + esc(tokens) + esc(invCached) + (warnReason ? ' <span class="activity-warn-icon" title="' + attr(warnReason) + '">⚠</span>' : '') + '</span></div>';
             html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
             if (warnReason) html += '<div class="activity-warn-reason" style="margin-top:4px">' + esc(warnReason) + '</div>';
             if (invocation.error) html += '<div class="' + (repaired ? 'muted' : 'fail') + '" style="margin-top:4px">' + (repaired ? '<strong>Repaired contract error:</strong> ' : '') + esc(invocation.error) + '</div>';

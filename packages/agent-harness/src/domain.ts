@@ -318,6 +318,76 @@ export const InstallLogEntrySchema = z.object({
 });
 export type InstallLogEntry = z.infer<typeof InstallLogEntrySchema>;
 
+/** Retained provider episode for a TDD worker role (red-writer or green-implementer). */
+export const WorkerEpisodeSchema = z.object({
+  providerSessionId: z.string().min(1).optional(),
+  guidanceFingerprint: z.string().optional(),
+  turns: z.number().int().nonnegative().default(0),
+});
+export type WorkerEpisode = z.infer<typeof WorkerEpisodeSchema>;
+
+export const TddPendingRoundSchema = z.object({
+  number: z.number().int().positive(),
+  // A test_issue repair flips mode in place; number and implementerAttempts are unchanged.
+  // Only a completed GREEN round clears the pending round and advances the round counter.
+  mode: z.enum(["feature", "test-repair"]),
+  redCheckpointSha: z.string().optional(),
+  testPathsAdded: z.array(z.string()).default([]),
+  behaviorsAdded: z.array(z.string().min(1)).default([]),
+  edgeCasesAdded: z.array(z.string().min(1)).default([]),
+  implementerAttempts: z.number().int().nonnegative().default(0),
+  startedAt: z.string(),
+});
+export type TddPendingRound = z.infer<typeof TddPendingRoundSchema>;
+
+/** Purpose recorded on completed-round ledger entries (matches CommandEvidence.purpose). */
+export const TDD_GREEN_EVIDENCE_PURPOSE = "tdd:green" as const;
+
+export const TddCompletedRoundSchema = z.object({
+  number: z.number().int().positive(),
+  outcome: z.enum(["implemented", "already-covered"]),
+  redCheckpointSha: z.string().optional(),
+  testPathsAdded: z.array(z.string()),
+  behaviorsAdded: z.array(z.string()),
+  edgeCasesAdded: z.array(z.string()),
+  targetedEvidencePurpose: z.string().default(TDD_GREEN_EVIDENCE_PURPOSE),
+  completedAt: z.string(),
+});
+export type TddCompletedRound = z.infer<typeof TddCompletedRoundSchema>;
+
+export const TddCoverageAssessmentSchema = z.object({
+  acceptanceCriteria: z.array(
+    z.object({
+      criterionIndex: z.number().int().nonnegative(),
+      covered: z.boolean(),
+      testPaths: z.array(z.string()),
+      rationale: z.string().min(1),
+    }),
+  ),
+  edgeCaseRationale: z.string().min(1),
+});
+export type TddCoverageAssessment = z.infer<typeof TddCoverageAssessmentSchema>;
+
+export const TddCoverageLedgerSchema = z.object({
+  behaviors: z.array(z.string().min(1)).default([]),
+  edgeCases: z.array(z.string().min(1)).default([]),
+  finalAssessment: TddCoverageAssessmentSchema.optional(),
+});
+export type TddCoverageLedger = z.infer<typeof TddCoverageLedgerSchema>;
+
+export const TddLoopSchema = z.object({
+  round: z.number().int().positive().default(1),
+  atVerifiedGreen: z.boolean().default(false),
+  finalRepairPending: z.boolean().default(false),
+  finalRepairAttempts: z.number().int().nonnegative().default(0),
+  redWriterSession: WorkerEpisodeSchema.optional(),
+  greenImplementerSession: WorkerEpisodeSchema.optional(),
+  pendingRound: TddPendingRoundSchema.optional(),
+  completedRounds: z.array(TddCompletedRoundSchema).default([]),
+  coverage: TddCoverageLedgerSchema.default({}),
+});
+export type TddLoop = z.infer<typeof TddLoopSchema>;
+
 export const BuildTaskSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -349,8 +419,8 @@ export const BuildTaskSchema = z.object({
   evidence: z.array(CommandEvidenceSchema).default([]),
   // Test files from RED / test-repair; implementer edits to these are blocked.
   testPaths: z.array(z.string()).default([]),
-  // Paths committed into the RED checkpoint (tests + optional compile scaffolds).
-  // Integrity restores recorded test paths only; scaffolds are fair game for the implementer.
+  // Paths committed into the RED checkpoint (test-only under the alternating loop).
+  // Integrity restores recorded test paths only.
   redCheckpointPaths: z.array(z.string()).default([]),
   changedFiles: z.array(z.string()).default([]),
   reviewSummary: z.string().optional(),
@@ -371,14 +441,8 @@ export const BuildTaskSchema = z.object({
   // Accepted test-repair fingerprints (at most one per implementation failure by default).
   acceptedTestRepairFingerprints: z.array(z.string()).default([]),
   integrityViolationCount: z.number().int().nonnegative().default(0),
-  // In-process implementer episode; provider handles are not durable across processes.
-  implementerSession: z
-    .object({
-      providerSessionId: z.string().optional(),
-      guidanceFingerprint: z.string().optional(),
-      turns: z.number().int().nonnegative().default(0),
-    })
-    .optional(),
+  // Alternating RED/GREEN loop ledger + retained worker episodes (TDD tasks).
+  tddLoop: TddLoopSchema.optional(),
 });
 export type BuildTask = z.infer<typeof BuildTaskSchema>;
 
@@ -555,7 +619,6 @@ export const AgentRoleSchema = z.enum([
   "issue-slicer",
   "prompt-builder",
   "red-writer",
-  "test-writer",
   "implementer",
   "reviewer",
   "message-writer",
@@ -653,6 +716,63 @@ export const WorkerOutputSchema = z.object({
 });
 export type WorkerOutput = z.infer<typeof WorkerOutputSchema>;
 
+/** Red-writer output for the alternating TDD loop (continue batch or declare done). */
+export const RedWriterOutputSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("continue"),
+    summary: z.string().min(1),
+    changedFiles: z.array(z.string()).min(1),
+    behaviorsAdded: z.array(z.string().min(1)).min(1),
+    edgeCasesAdded: z.array(z.string().min(1)).default([]),
+  }),
+  z.object({
+    status: z.literal("done"),
+    summary: z.string().min(1),
+    changedFiles: z.array(z.string()).length(0),
+    acceptanceCoverage: z.array(
+      z.object({
+        criterionIndex: z.number().int().nonnegative(),
+        covered: z.boolean(),
+        testPaths: z.array(z.string()),
+        rationale: z.string().min(1),
+      }),
+    ),
+    edgeCaseRationale: z.string().min(1),
+  }),
+]);
+export type RedWriterOutput = z.infer<typeof RedWriterOutputSchema>;
+
+export const RED_WRITER_EXPECTED_OUTPUT =
+  "either {status:'continue',summary,changedFiles:[string] (min 1),behaviorsAdded:[string] (min 1),edgeCasesAdded?:[string]} or {status:'done',summary,changedFiles:[] (empty),acceptanceCoverage:[{criterionIndex,covered,testPaths,rationale}],edgeCaseRationale}";
+
+/** Green-implementer output for the alternating TDD loop. */
+export const GreenImplementerOutputSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.enum(["green", "already_green"]),
+    summary: z.string().min(1),
+    changedFiles: z.array(z.string()),
+  }),
+  z.object({
+    status: z.literal("test_issue"),
+    summary: z.string().min(1),
+    changedFiles: z.array(z.string()),
+    testPath: z.string().min(1),
+    reason: z.string().min(1),
+    evidence: z.string().min(1),
+  }),
+]);
+export type GreenImplementerOutput = z.infer<typeof GreenImplementerOutputSchema>;
+
+export const GREEN_IMPLEMENTER_EXPECTED_OUTPUT =
+  "either {status:'green'|'already_green',summary,changedFiles:[string]} or {status:'test_issue',summary,changedFiles:[string],testPath,reason,evidence}";
+
+export const ReviewFindingKindSchema = z.enum([
+  "production",
+  "test-coverage",
+  "advisory",
+]);
+export type ReviewFindingKind = z.infer<typeof ReviewFindingKindSchema>;
+
 export const ReviewOutputSchema = z.object({
   approved: z.boolean(),
   summary: z.string().min(1),
@@ -660,11 +780,15 @@ export const ReviewOutputSchema = z.object({
     .array(
       z.object({
         severity: z.enum(["blocking", "advisory"]),
+        kind: ReviewFindingKindSchema,
         message: z.string().min(1),
       }),
     ),
 });
 export type ReviewOutput = z.infer<typeof ReviewOutputSchema>;
+
+export const REVIEW_EXPECTED_OUTPUT =
+  "{approved,summary,findings:[{severity:'blocking'|'advisory',kind:'production'|'test-coverage'|'advisory',message}]}";
 
 export const MessageOutputSchema = z.object({
   subject: z.string().min(1).max(100),
@@ -766,6 +890,7 @@ export function createRunState(
 
 export * from "./domain/domain-artifacts.js";
 export * from "./domain/policies.js";
+export * from "./domain/tdd-loop.js";
 export * from "./domain/transitions.js";
 export * from "./domain/workspace.js";
 export * from "./domain/workspace-cleanup.js";

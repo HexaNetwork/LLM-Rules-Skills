@@ -12,4 +12,14 @@ describe("test path classification", () => {
     expect(isTestPath("tests/foo.test.ts", patterns)).toBe(false);
     expect(isTestPath("spec/foo.test.ts", patterns)).toBe(true);
   });
+
+  it("treats only testPathPatterns matches as RED-legal paths", () => {
+    const patterns = HarnessConfigSchema.parse({}).workflow.testPathPatterns;
+
+    expect(isTestPath("tests/foo.test.ts", patterns)).toBe(true);
+    expect(isTestPath("src/foo.ts", patterns)).toBe(false);
+    expect(isTestPath("src/greet.ts", patterns)).toBe(false);
+    // Affected production paths are no longer RED-legal scaffolds.
+    expect(isTestPath("src/greet.ts", patterns)).toBe(false);
+  });
 });

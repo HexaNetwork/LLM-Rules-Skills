@@ -1,6 +1,7 @@
 import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import path from "node:path";
 import type { AgentBackend } from "../agent.js";
 import { resolveHarnessPaths } from "../application/paths.js";
 import type { HarnessConfig } from "../config.js";
@@ -48,7 +49,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
   let projectConfig = options.config;
   const paths = resolveHarnessPaths(projectConfig);
   const store = new RunStore(projectConfig, paths.stateRoot);
-  const knowledge = new LocalKnowledgeBase(projectConfig, undefined, paths);
+  const knowledge = new LocalKnowledgeBase(projectConfig, undefined, paths, {
+    projectRoot: projectConfig.knowledge.guidance.projectRoot,
+    sharedRoot: projectConfig.knowledge.guidance.sharedRoot,
+    runsRoot: path.join(paths.stateRoot, "runs"),
+  });
   const agentReadiness = options.backend.readiness?.() ?? { ready: true };
   const jobs = new RunJobService();
   await store.initialize();

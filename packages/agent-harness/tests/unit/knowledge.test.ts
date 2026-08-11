@@ -1,9 +1,20 @@
 import path from "node:path";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import type { RepositoryLookup } from "../../src/graphify.js";
 import { LocalKnowledgeBase } from "../../src/knowledge.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
+
+async function writeGuidanceFiles(
+  guidanceRoot: string,
+  files: Record<string, string>,
+): Promise<void> {
+  for (const [relative, content] of Object.entries(files)) {
+    const full = path.join(guidanceRoot, relative);
+    await mkdir(path.dirname(full), { recursive: true });
+    await writeFile(full, content, "utf8");
+  }
+}
 
 describe("LocalKnowledgeBase", () => {
   it("persists documents locally and returns deterministic lexical matches", async () => {
@@ -295,27 +306,20 @@ describe("LocalKnowledgeBase", () => {
     }
   });
 
-  it("selects only role- and path-applicable rules and skills", async () => {
+  it("selects only role- and path-applicable rules and skills from guidance roots", async () => {
     const root = await fixtureRoot();
-    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
-    await knowledge.upsertText(
-      "General/rules/typescript.mdc",
-      "TypeScript rule",
-      "---\ndescription: TypeScript implementation guidance\nglobs: src/**/*.{ts,tsx}\nalwaysApply: true\n---\n\nUse explicit TypeScript boundaries.",
-      { scope: "global" },
-    );
-    await knowledge.upsertText(
-      "General/rules/java.mdc",
-      "Java rule",
-      "---\ndescription: Java implementation guidance\nglobs: src/**/*.java\n---\n\nUse Java braces.",
-      { scope: "global" },
-    );
-    await knowledge.upsertText(
-      "General/skills/tdd/SKILL.md",
-      "TDD",
-      "---\nname: tdd\ndescription: Test-first behavior\nroles: [test-writer]\n---\n\nWrite a failing behavioral test first.",
-      { scope: "global" },
-    );
+    const sharedRoot = path.join(root, "guidance-shared");
+    await writeGuidanceFiles(sharedRoot, {
+      "General/rules/typescript.mdc":
+        "---\ndescription: TypeScript implementation guidance\nglobs: src/**/*.{ts,tsx}\nalwaysApply: true\n---\n\nUse explicit TypeScript boundaries.",
+      "General/rules/java.mdc":
+        "---\ndescription: Java implementation guidance\nglobs: src/**/*.java\n---\n\nUse Java braces.",
+      "General/skills/tdd/SKILL.md":
+        "---\nname: tdd\ndescription: Test-first behavior\nroles: [test-writer]\n---\n\nWrite a failing behavioral test first.",
+    });
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
+      sharedRoot,
+    });
 
     const implementation = await knowledge.selectGuidance("implement TypeScript behavior", {
       role: "implementer",
@@ -332,21 +336,18 @@ describe("LocalKnowledgeBase", () => {
     expect(testWriting[0]).toMatchObject({ kind: "skill" });
   });
 
-  it("prioritizes relevant always-apply guidance, respects budgets, and excludes guidance from generic context", async () => {
+  it("prioritizes relevant always-apply guidance, respects budgets, and keeps guidance out of search", async () => {
     const root = await fixtureRoot();
-    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
-    await knowledge.upsertText(
-      "General/rules/priority.mdc",
-      "Priority rule",
-      "---\ndescription: login validation\nalwaysApply: true\n---\n\nlogin validation must reject blank credentials.",
-      { scope: "global" },
-    );
-    await knowledge.upsertText(
-      "General/rules/normal.mdc",
-      "Normal rule",
-      "---\ndescription: login validation\n---\n\nlogin validation should be clear.",
-      { scope: "global" },
-    );
+    const sharedRoot = path.join(root, "guidance-shared");
+    await writeGuidanceFiles(sharedRoot, {
+      "General/rules/priority.mdc":
+        "---\ndescription: login validation\nalwaysApply: true\n---\n\nlogin validation must reject blank credentials.",
+      "General/rules/normal.mdc":
+        "---\ndescription: login validation\n---\n\nlogin validation should be clear.",
+    });
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
+      sharedRoot,
+    });
     await knowledge.upsertText(
       "docs/login.md",
       "Login docs",
@@ -360,7 +361,6 @@ describe("LocalKnowledgeBase", () => {
     });
     const generic = await knowledge.search("login validation", 10, {
       repository: false,
-      excludeGuidance: true,
     });
 
     expect(selected[0]?.source).toBe("General/rules/priority.mdc");
@@ -370,11 +370,9 @@ describe("LocalKnowledgeBase", () => {
 
   it("excludes disable-model-invocation skills and reviewer-only code-review from fixer selection", async () => {
     const root = await fixtureRoot();
-    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
-    await knowledge.upsertText(
-      "General/skills/implement-auto/SKILL.md",
-      "implement-auto",
-      [
+    const sharedRoot = path.join(root, "guidance-shared");
+    await writeGuidanceFiles(sharedRoot, {
+      "General/skills/implement-auto/SKILL.md": [
         "---",
         "name: implement-auto",
         "description: Review failed recovery orchestration for chat entrypoints",
@@ -383,12 +381,7 @@ describe("LocalKnowledgeBase", () => {
         "",
         "Review failed. Emit ## Standards and ## Spec markdown for the recovery plan.",
       ].join("\n"),
-      { scope: "global" },
-    );
-    await knowledge.upsertText(
-      "General/skills/code-review/SKILL.md",
-      "code-review",
-      [
+      "General/skills/code-review/SKILL.md": [
         "---",
         "name: code-review",
         "description: Review failed Standards and Spec checks after test writer failures",
@@ -397,8 +390,10 @@ describe("LocalKnowledgeBase", () => {
         "",
         "Review failed. Report ## Standards and ## Spec findings side by side.",
       ].join("\n"),
-      { scope: "global" },
-    );
+    });
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
+      sharedRoot,
+    });
 
     const failureQuery = "Review failed. Test writer misclassified test paths.";
     const fixerSelected = await knowledge.selectGuidance(failureQuery, { role: "fixer" });
@@ -413,43 +408,36 @@ describe("LocalKnowledgeBase", () => {
     );
   });
 
-  it("does not select shared guidance from another project without explicit inclusion", async () => {
+  it("does not select project guidance that was never loaded for the active project", async () => {
     const root = await fixtureRoot();
-    const base = fixtureConfig(root);
+    const sharedRoot = path.join(root, "guidance-shared");
+    const foreignRoot = path.join(root, "guidance-beta");
+    await writeGuidanceFiles(foreignRoot, {
+      "rules/security.mdc":
+        "---\ndescription: payment authorization\n---\n\npayment authorization requires an audit trail.",
+    });
     const knowledge = new LocalKnowledgeBase(
-      fixtureConfig(root, { knowledge: { ...base.knowledge, projectId: "alpha" } }),
-    );
-    await knowledge.upsertText(
-      "beta/rules/security.mdc",
-      "Beta security",
-      "---\ndescription: payment authorization\n---\n\npayment authorization requires an audit trail.",
-      { projectId: "beta", visibility: "shared" },
+      fixtureConfig(root, { knowledge: { ...fixtureConfig(root).knowledge, projectId: "alpha" } }),
+      undefined,
+      undefined,
+      { sharedRoot, projectRoot: path.join(root, "guidance-alpha") },
     );
 
     expect(await knowledge.selectGuidance("payment authorization", { role: "reviewer" })).toEqual([]);
-    expect(
-      (await knowledge.selectGuidance("payment authorization", {
-        role: "reviewer",
-        includeProjects: ["beta"],
-      })).map((item) => item.source),
-    ).toEqual(["beta/rules/security.mdc"]);
   });
 
   it("audits relevantly omitted always-apply rules without injecting them", async () => {
     const root = await fixtureRoot();
-    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
-    await knowledge.upsertText(
-      "General/rules/a.mdc",
-      "First rule",
-      "---\ndescription: authorization\nalwaysApply: true\n---\n\nauthorization is required.",
-      { scope: "global" },
-    );
-    await knowledge.upsertText(
-      "General/rules/b.mdc",
-      "Second rule",
-      "---\ndescription: authorization\nalwaysApply: true\n---\n\nauthorization must be logged.",
-      { scope: "global" },
-    );
+    const sharedRoot = path.join(root, "guidance-shared");
+    await writeGuidanceFiles(sharedRoot, {
+      "General/rules/a.mdc":
+        "---\ndescription: authorization\nalwaysApply: true\n---\n\nauthorization is required.",
+      "General/rules/b.mdc":
+        "---\ndescription: authorization\nalwaysApply: true\n---\n\nauthorization must be logged.",
+    });
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
+      sharedRoot,
+    });
 
     const audit = await knowledge.selectGuidanceWithAudit("authorization", {
       role: "implementer",
@@ -470,42 +458,35 @@ describe("LocalKnowledgeBase", () => {
 
   it("prefers project-scope guidance and overrides same-name global entries", async () => {
     const root = await fixtureRoot();
-    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
-    await knowledge.upsertText(
-      "agent-harness/guidance/General/rules/no-legacy-fallback-code.mdc",
-      "Global no-legacy",
-      "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nglobal authorization fallback text.",
-      { scope: "global" },
-    );
-    await knowledge.upsertText(
-      "project/rules/no-legacy-fallback-code.mdc",
-      "Project no-legacy",
-      "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nproject authorization fallback text.",
-      { scope: "project" },
-    );
-    await knowledge.upsertText(
-      "agent-harness/guidance/General/skills/tdd/SKILL.md",
-      "Global TDD",
-      "---\nname: tdd\ndescription: authorization tests\nroles: [test-writer]\n---\n\nglobal authorization test skill.",
-      { scope: "global" },
-    );
-    await knowledge.upsertText(
-      "project/skills/tdd/SKILL.md",
-      "Project TDD",
-      "---\nname: tdd\ndescription: authorization tests\nroles: [test-writer]\n---\n\nproject authorization test skill.",
-      { scope: "project" },
-    );
+    const sharedRoot = path.join(root, "guidance-shared");
+    const projectRoot = path.join(root, "guidance-project");
+    await writeGuidanceFiles(sharedRoot, {
+      "General/rules/no-legacy-fallback-code.mdc":
+        "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nglobal authorization fallback text.",
+      "General/skills/tdd/SKILL.md":
+        "---\nname: tdd\ndescription: authorization tests\nroles: [test-writer]\n---\n\nglobal authorization test skill.",
+    });
+    await writeGuidanceFiles(projectRoot, {
+      "rules/no-legacy-fallback-code.mdc":
+        "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nproject authorization fallback text.",
+      "skills/tdd/SKILL.md":
+        "---\nname: tdd\ndescription: authorization tests\nroles: [test-writer]\n---\n\nproject authorization test skill.",
+    });
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
+      projectRoot,
+      sharedRoot,
+    });
 
     const implementer = await knowledge.selectGuidanceWithAudit("authorization fallback", {
       role: "implementer",
     });
     expect(implementer.selected.map((item) => item.source)).toEqual([
-      "project/rules/no-legacy-fallback-code.mdc",
+      "rules/no-legacy-fallback-code.mdc",
     ]);
     expect(implementer.selected[0]?.reason).toContain("project scope");
     expect(implementer.omittedOverrides).toEqual([
       expect.objectContaining({
-        source: "agent-harness/guidance/General/rules/no-legacy-fallback-code.mdc",
+        source: "General/rules/no-legacy-fallback-code.mdc",
         reason: "overridden by project guidance",
       }),
     ]);
@@ -513,14 +494,14 @@ describe("LocalKnowledgeBase", () => {
     const testWriter = await knowledge.selectGuidanceWithAudit("authorization tests", {
       role: "test-writer",
     });
-    expect(testWriter.selected.map((item) => item.source)).toContain("project/skills/tdd/SKILL.md");
+    expect(testWriter.selected.map((item) => item.source)).toContain("skills/tdd/SKILL.md");
     expect(testWriter.selected.map((item) => item.source)).not.toContain(
-      "agent-harness/guidance/General/skills/tdd/SKILL.md",
+      "General/skills/tdd/SKILL.md",
     );
     expect(testWriter.omittedOverrides).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          source: "agent-harness/guidance/General/skills/tdd/SKILL.md",
+          source: "General/skills/tdd/SKILL.md",
           reason: "overridden by project guidance",
         }),
       ]),
@@ -529,31 +510,24 @@ describe("LocalKnowledgeBase", () => {
 
   it("uses authoritative agent assignments with project override and General fallback", async () => {
     const root = await fixtureRoot();
-    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
-    await knowledge.upsertText(
-      "General/skills/tdd/SKILL.md",
-      "Global TDD",
-      "---\nname: tdd\ndescription: test workflow\ndisable-model-invocation: true\n---\n\nglobal tdd guidance",
-      { scope: "global" },
-    );
-    await knowledge.upsertText(
-      "project/skills/tdd/SKILL.md",
-      "Project TDD",
-      "---\nname: tdd\ndescription: project test workflow\n---\n\nproject tdd guidance",
-      { scope: "project" },
-    );
-    await knowledge.upsertText(
-      "General/rules/no-legacy-fallback-code.mdc",
-      "No legacy",
-      "---\ndescription: compatibility rule\n---\n\nremove compatibility paths",
-      { scope: "global" },
-    );
-    await knowledge.upsertText(
-      "General/skills/diagnose/SKILL.md",
-      "Diagnose",
-      "---\nname: diagnose\ndescription: debugging\n---\n\ndiagnose failures",
-      { scope: "global" },
-    );
+    const sharedRoot = path.join(root, "guidance-shared");
+    const projectRoot = path.join(root, "guidance-project");
+    await writeGuidanceFiles(sharedRoot, {
+      "General/skills/tdd/SKILL.md":
+        "---\nname: tdd\ndescription: test workflow\ndisable-model-invocation: true\n---\n\nglobal tdd guidance",
+      "General/rules/no-legacy-fallback-code.mdc":
+        "---\ndescription: compatibility rule\n---\n\nremove compatibility paths",
+      "General/skills/diagnose/SKILL.md":
+        "---\nname: diagnose\ndescription: debugging\n---\n\ndiagnose failures",
+    });
+    await writeGuidanceFiles(projectRoot, {
+      "skills/tdd/SKILL.md":
+        "---\nname: tdd\ndescription: project test workflow\n---\n\nproject tdd guidance",
+    });
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
+      projectRoot,
+      sharedRoot,
+    });
 
     const audit = await knowledge.selectGuidanceWithAudit("unrelated words", {
       role: "test-writer",
@@ -564,7 +538,7 @@ describe("LocalKnowledgeBase", () => {
     });
 
     expect(audit.selected.map((item) => item.source)).toEqual([
-      "project/skills/tdd/SKILL.md",
+      "skills/tdd/SKILL.md",
       "General/rules/no-legacy-fallback-code.mdc",
     ]);
     expect(audit.selected.every((item) => item.reason.includes("agent assignment"))).toBe(true);
@@ -586,6 +560,48 @@ describe("LocalKnowledgeBase", () => {
     expect(missing.missingAssignments).toEqual([
       expect.objectContaining({ kind: "rule", name: "does-not-exist" }),
     ]);
+  });
+
+  it("prefers frozen run guidance over live shared roots", async () => {
+    const root = await fixtureRoot();
+    const sharedRoot = path.join(root, "guidance-shared");
+    const runsRoot = path.join(root, ".agent-harness", "runs");
+    const frozenRoot = path.join(runsRoot, "run-1", "frozen-components", "guidance");
+    await writeGuidanceFiles(sharedRoot, {
+      "General/rules/live.mdc":
+        "---\ndescription: live guidance\nalwaysApply: true\n---\n\nlive guidance text",
+    });
+    await writeGuidanceFiles(frozenRoot, {
+      "General/rules/frozen.mdc":
+        "---\ndescription: frozen guidance\nalwaysApply: true\n---\n\nfrozen guidance text",
+    });
+    await mkdir(path.join(runsRoot, "run-1"), { recursive: true });
+    await writeFile(
+      path.join(runsRoot, "run-1", "frozen-components.json"),
+      `${JSON.stringify({
+        version: 1,
+        createdAt: new Date().toISOString(),
+        components: [{
+          kind: "guidance-tree",
+          id: "guidance",
+          sourcePath: sharedRoot,
+          relativePath: "guidance",
+          sha256: "abc",
+        }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
+      sharedRoot,
+      runsRoot,
+    });
+    const selected = await knowledge.selectGuidance("frozen guidance", {
+      role: "implementer",
+      runId: "run-1",
+    });
+    expect(selected.map((item) => item.source)).toEqual(["General/rules/frozen.mdc"]);
+    expect(selected.map((item) => item.source)).not.toContain("General/rules/live.mdc");
   });
 
   it("filters leftover run artifact chunks so only the active runId can retrieve them", async () => {

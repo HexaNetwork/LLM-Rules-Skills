@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   freezeRunComponents,
   loadFrozenComponentManifest,
+  resolveFrozenGuidanceRoot,
 } from "../../src/application/component-freeze.js";
 import { resolveHarnessHome, resolveProjectPaths } from "../../src/application/harness-home.js";
 import { HarnessConfigSchema } from "../../src/config.js";
@@ -67,5 +68,11 @@ describe("freezeRunComponents", () => {
 
     const loaded = await loadFrozenComponentManifest(project.runsRoot, "run-1");
     expect(loaded?.components[0]?.sha256).toBe(manifest.components[0]?.sha256);
+
+    const frozenRoot = await resolveFrozenGuidanceRoot(project.runsRoot, "run-1");
+    expect(frozenRoot?.path).toBe(
+      path.join(project.runsRoot, "run-1", "frozen-components", "guidance"),
+    );
+    expect(frozenRoot?.sha256).toBe(manifest.components[0]?.sha256);
   });
 });

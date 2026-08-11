@@ -59,7 +59,7 @@ describe("retrieval result cache", () => {
     expect(runner.mock.calls.filter((call) => call[1][0] === "query").length).toBeGreaterThanOrEqual(3);
   });
 
-  it("invalidates both retrieval and guidance caches when the index refreshes", async () => {
+  it("invalidates retrieval on refresh and guidance on root mtime changes independently", async () => {
     const root = await fixtureRoot();
     await mkdir(path.join(root, "docs"), { recursive: true });
     await writeFile(
@@ -67,7 +67,8 @@ describe("retrieval result cache", () => {
       "# SettlementWindow\n\nSettlementWindow refund ledger guidance.\n",
       "utf8",
     );
-    const rulesDir = path.join(root, "agent-harness", "guidance", "General", "rules");
+    const sharedRoot = path.join(root, "guidance-shared");
+    const rulesDir = path.join(sharedRoot, "General", "rules");
     await mkdir(rulesDir, { recursive: true });
     await writeFile(
       path.join(rulesDir, "settlement.mdc"),
@@ -75,7 +76,7 @@ describe("retrieval result cache", () => {
         "---",
         "description: SettlementWindow refunds",
         "globs:",
-        'alwaysApply: false',
+        "alwaysApply: false",
         "roles:",
         "  - planner",
         "---",
@@ -89,14 +90,16 @@ describe("retrieval result cache", () => {
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        sources: [
-          { path: "docs", scope: "project" as const, visibility: "private" as const },
-          { path: "agent-harness/guidance/General", scope: "global" as const, visibility: "private" as const },
-        ],
-        guidance: { enabled: true, maxResults: 6, maxCharacters: 6_000 },
+        sources: [{ path: "docs", scope: "project" as const, visibility: "private" as const }],
+        guidance: {
+          enabled: true,
+          maxResults: 6,
+          maxCharacters: 6_000,
+          sharedRoot,
+        },
       },
     });
-    const knowledge = new LocalKnowledgeBase(config);
+    const knowledge = new LocalKnowledgeBase(config, undefined, undefined, { sharedRoot });
     await knowledge.refresh();
 
     const retrievalFirst = await knowledge.searchWithAudit("SettlementWindow refunds", 4);
@@ -120,6 +123,17 @@ describe("retrieval result cache", () => {
       "# SettlementWindow\n\nSettlementWindow refund ledger guidance. UPDATED_TOKEN_XYZ.\n",
       "utf8",
     );
+    await knowledge.refresh();
+
+    const retrievalAfter = await knowledge.searchWithAudit("SettlementWindow refunds", 4);
+    const guidanceAfterRefresh = await knowledge.selectGuidanceWithAudit("SettlementWindow refunds", {
+      role: "planner",
+    });
+    expect(JSON.stringify(retrievalAfter)).toContain("UPDATED_TOKEN_XYZ");
+    expect(retrievalAfter).not.toEqual(retrievalFirst);
+    // Document refresh must not clear injected guidance.
+    expect(guidanceAfterRefresh).toEqual(guidanceFirst);
+
     await writeFile(
       path.join(rulesDir, "settlement.mdc"),
       [
@@ -136,15 +150,11 @@ describe("retrieval result cache", () => {
       ].join("\n"),
       "utf8",
     );
-    await knowledge.refresh();
 
-    const retrievalAfter = await knowledge.searchWithAudit("SettlementWindow refunds", 4);
     const guidanceAfter = await knowledge.selectGuidanceWithAudit("SettlementWindow refunds", {
       role: "planner",
     });
-    expect(JSON.stringify(retrievalAfter)).toContain("UPDATED_TOKEN_XYZ");
     expect(JSON.stringify(guidanceAfter)).toContain("UPDATED_TOKEN_XYZ");
-    expect(retrievalAfter).not.toEqual(retrievalFirst);
     expect(guidanceAfter).not.toEqual(guidanceFirst);
   });
 });

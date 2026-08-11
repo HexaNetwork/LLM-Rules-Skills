@@ -242,6 +242,24 @@ repositoryRoot: .
     });
   });
 
+  it("strips legacy guidance sources from frozen configs and records sharedRoot", () => {
+    const frozen = normalizeFrozenRunConfig({
+      repositoryRoot: "C:/tmp/project",
+      knowledge: {
+        sources: [
+          { path: "C:/Users/me/AppData/Local/agent-harness/guidance/General", scope: "global" },
+          { path: "README.md", scope: "project" },
+          "agent-harness/guidance/General",
+          "docs",
+        ],
+      },
+    });
+    expect(frozen.knowledge.sources.map((source) => source.path)).toEqual(["README.md", "docs"]);
+    expect(frozen.knowledge.guidance.sharedRoot?.replaceAll("\\", "/")).toBe(
+      "C:/Users/me/AppData/Local/agent-harness/guidance",
+    );
+  });
+
   it("summarizes all policy changes that require an explicit run repair", () => {
     const base = HarnessConfigSchema.parse({});
     const liveOverlay = {
@@ -312,6 +330,11 @@ repositoryRoot: .
         knowledge: {
           ...base.knowledge,
           sharedIndexDirectory: "E:/other/shared",
+          guidance: {
+            ...base.knowledge.guidance,
+            projectRoot: "E:/other/project-guidance",
+            sharedRoot: "E:/other/shared-guidance",
+          },
         },
       }),
     ).toBe(stamped);

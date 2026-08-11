@@ -25,7 +25,8 @@ describe("Phase 5 knowledge integration", () => {
     await withDiagnosticArtifacts(
       { testName: "knowledge-integration-cache-scope-graphify", fixture },
       async () => {
-        const rulesDir = path.join(fixture!.root, "agent-harness", "guidance", "General", "rules");
+        const sharedRoot = path.join(fixture!.root, "guidance-shared");
+        const rulesDir = path.join(sharedRoot, "General", "rules");
         await mkdir(rulesDir, { recursive: true });
         await writeFile(
           path.join(rulesDir, "alpha.mdc"),
@@ -77,13 +78,13 @@ describe("Phase 5 knowledge integration", () => {
             projectId: "project-a",
             sources: [
               { path: "docs", scope: "project" as const, visibility: "private" as const, projectId: "project-a" },
-              {
-                path: "agent-harness/guidance/General",
-                scope: "global" as const,
-                visibility: "private" as const,
-              },
             ],
-            guidance: { enabled: true, maxResults: 6, maxCharacters: 6_000 },
+            guidance: {
+              enabled: true,
+              maxResults: 6,
+              maxCharacters: 6_000,
+              sharedRoot,
+            },
             graphify: {
               ...fixture!.config.knowledge.graphify,
               enabled: true,
@@ -92,7 +93,12 @@ describe("Phase 5 knowledge integration", () => {
           },
         };
 
-        const knowledge = new LocalKnowledgeBase(config, new GraphifyRepositoryLookup(config, runner));
+        const knowledge = new LocalKnowledgeBase(
+          config,
+          new GraphifyRepositoryLookup(config, runner),
+          undefined,
+          { sharedRoot },
+        );
         await knowledge.refresh();
 
         const firstSearch = await knowledge.searchWithAudit("AlphaModule refunds", 4, {

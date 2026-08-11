@@ -152,9 +152,9 @@ knowledge:
     model: qwen3-embedding
 ```
 
-Rules (`.mdc`) and skill roots (`SKILL.md`) are also classified as guidance. New configurations contain a complete `assignments` map for every agent role. That map is authoritative: each role receives only the named rules and skills, including explicitly assigned manual-only skills. A same-kind, same-name entry from the active project overrides the global `General/` entry; when no project entry exists, the harness falls back to `General/`. Empty lists intentionally inject no guidance.
+Rules (`.mdc`) and skill roots (`SKILL.md`) are classified as guidance and injected into work packets. They are not indexed as searchable knowledge. New configurations contain a complete `assignments` map for every agent role. That map is authoritative: each role receives only the named rules and skills, including explicitly assigned manual-only skills. A same-kind, same-name entry from the active project overrides the global `General/` entry; when no project entry exists, the harness falls back to `General/`. Empty lists intentionally inject no guidance.
 
-Configurations without `assignments` retain the legacy relevance selector for compatibility. It uses the worker role, objective, known paths, rule `globs`, optional front-matter `roles`, and lexical relevance. In legacy mode, `alwaysApply: true` is a ranking priority rather than unconditional prompt injection. Selected excerpts and reasons are persisted in the work packet, omitted `alwaysApply` rules are recorded in the sibling guidance audit, and generic retrieval excludes selected guidance to avoid duplication.
+Configurations without `assignments` retain the legacy relevance selector for compatibility. It uses the worker role, objective, known paths, rule `globs`, optional front-matter `roles`, and lexical relevance. In legacy mode, `alwaysApply: true` is a ranking priority rather than unconditional prompt injection. Selected excerpts and reasons are persisted in the work packet, and omitted `alwaysApply` rules are recorded in the sibling guidance audit. Guidance is loaded from filesystem roots rather than the document index, so it never appears in generic retrieval.
 
 New runs enable this behavior by default with separate packet budgets: guidance+context, serialized `input`, and a Graphify sub-budget. Guidance itself is capped at 6,000 characters and six entries:
 
@@ -192,7 +192,7 @@ Policies such as `no-legacy-fallback-code` are deliberately opt-in. A project th
 
 Every role must appear when `assignments` is present. Assigned entries are not dropped by `maxResults`, although their excerpts still share `maxCharacters` and the overall context budget. A single budget authority (`buildWorkPacket`) applies these ceilings and records truncations beside the retrieval audit. Set `knowledge.guidance.enabled: false` to retain generic retrieval only. Frozen run configurations created before this setting continue with their original retrieval behavior.
 
-Every indexed document has a scope gate: `global` material is always eligible, while `project` material is eligible only for `knowledge.projectId`. A normal query therefore searches global guidance plus the active project's private documents. To include another project, name it with `--include-project`; only documents indexed with `visibility: shared` can cross that boundary. `private` and `restricted` documents are never returned to another project by this local index.
+Every indexed document has a scope gate: `global` material is always eligible, while `project` material is eligible only for `knowledge.projectId`. A normal query therefore searches the active project's private documents plus any shared/global documents you indexed. Harness rules and skills are not indexed: they are injected from frozen/project/shared guidance roots at packet build time. To include another project's documents, name it with `--include-project`; only documents indexed with `visibility: shared` can cross that boundary. `private` and `restricted` documents are never returned to another project by this local index.
 
 Multiple project configs can point `knowledge.sharedIndexDirectory` at the same directory. Each config supplies its own `projectId` and source classifications, producing one shared index without a default cross-project search path:
 
@@ -207,7 +207,7 @@ knowledge:
       scope: global
 ```
 
-Sources are currently constrained to the configured repository root, so shared global guidance should be available beneath each project root (for example as a submodule or synced folder). A remotely deployed multi-user RAG service must additionally authenticate callers and enforce the same scope filter server-side; the local CLI has no user identity model.
+Document sources are constrained to the configured repository root. Harness guidance lives under harness home (or a frozen run copy) and is never listed in `knowledge.sources`. A remotely deployed multi-user RAG service must additionally authenticate callers and enforce the same scope filter server-side; the local CLI has no user identity model.
 
 Graphify complements document matches with structural repository traversal. New
 harness configs enable it by default. Install Graphify yourself

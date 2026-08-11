@@ -58,7 +58,7 @@ export async function loadGuidanceDocuments(
   );
 }
 
-/** Stable cache key for a guidance root list (paths + mtimes, or an explicit frozen hash). */
+/** Stable cache key for a guidance root list (file mtimes/sizes, or an explicit frozen hash). */
 export async function guidanceRootsGeneration(
   roots: GuidanceLoadRoot[],
   frozenHash?: string,
@@ -67,9 +67,17 @@ export async function guidanceRootsGeneration(
   const parts = await Promise.all(
     roots.map(async (root) => {
       const info = await stat(root.absolutePath).catch(() => undefined);
-      return info?.isDirectory()
-        ? `${root.scope}:${root.absolutePath}:${info.mtimeMs}:${info.size}`
-        : `${root.scope}:${root.absolutePath}:missing`;
+      if (!info?.isDirectory()) return `${root.scope}:${root.absolutePath}:missing`;
+      const files = await listGuidanceFiles(root.absolutePath);
+      const fingerprints = await Promise.all(
+        files.map(async (filePath) => {
+          const fileInfo = await stat(filePath);
+          const relative = normalizePath(path.relative(root.absolutePath, filePath));
+          return `${relative}:${fileInfo.mtimeMs}:${fileInfo.size}`;
+        }),
+      );
+      fingerprints.sort();
+      return `${root.scope}:${root.absolutePath}:${fingerprints.join(",")}`;
     }),
   );
   return parts.join("|");

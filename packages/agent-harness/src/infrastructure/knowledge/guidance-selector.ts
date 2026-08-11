@@ -252,7 +252,7 @@ export function selectGuidanceFromDocuments(
       return {
         kind: key.slice(0, separator) as "rule" | "skill",
         name: key.slice(separator + 1),
-        reason: "no active-project or General guidance entry was indexed",
+        reason: "no active-project or General guidance entry was found in guidance roots",
       };
     });
   const overriddenSources = new Set(omittedOverrides.map((item) => item.source));

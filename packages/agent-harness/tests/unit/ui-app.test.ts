@@ -140,7 +140,10 @@ describe("dashboard document", () => {
     expect(html).toContain("set_graphify");
     expect(html).toContain("Document RAG");
     expect(html).toContain('id="rag"');
-    expect(html).toContain("RAG ' + (ragOn ? \"on\" : \"off\")");
+    expect(html).toContain('id="runRagToggle"');
+    expect(html).toContain('id="runGraphifyToggle"');
+    expect(html).toContain("runAction('set_rag', { rag: event.target.checked })");
+    expect(html).toContain("runAction('set_graphify', { graphify: event.target.checked })");
     expect(html).toContain("resolve_installs");
     expect(html).toContain("Grilling complete");
     expect(html).toContain("Send feedback to griller");
@@ -219,6 +222,8 @@ describe("dashboard document", () => {
 
     expect(html).toContain("grillResolutions");
     expect(html).toContain("No grill resolutions yet");
+    expect(html).toContain('data-details-key="reflect-brief"');
+    expect(html).toContain("renderBriefReadonly(s.reflectBrief)");
   });
 
   it("submits an answer with Shift+Enter", () => {

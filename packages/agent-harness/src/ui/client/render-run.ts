@@ -465,6 +465,13 @@ export const renderRunScript = `    function renderSidebar() {
       return '<div class="card" style="margin-bottom:16px"><details data-details-key="local-prd" style="border-top:0;margin-top:0;padding-top:0"><summary class="card-label" style="margin-bottom:0">Local PRD</summary><div style="padding-top:12px"><div class="muted" style="margin-bottom:8px">' + esc(prd.summary || "") + '</div><div class="resolution"><strong>Problem</strong><div class="muted" style="margin-top:4px">' + esc(prd.problemStatement || "") + '</div></div><div class="resolution" style="margin-top:10px"><strong>Solution</strong><div class="muted" style="margin-top:4px">' + esc(prd.solution || "") + '</div></div>' + (stories ? '<div class="resolution" style="margin-top:10px"><strong>User stories</strong><ol style="margin:6px 0 0;padding-left:20px">' + stories + '</ol></div>' : '') + '</div></details></div>';
     }
 
+    function renderBriefReadonly(brief) {
+      if (!brief) return "";
+      var title = brief.confirmed ? "Confirmed brief" : "Draft brief";
+      var body = brief.confirmed || brief.draft || "";
+      return '<div class="card" style="margin-bottom:16px"><details data-details-key="reflect-brief" style="border-top:0;margin-top:0;padding-top:0"><summary class="card-label" style="margin-bottom:0">' + esc(title) + '</summary><div style="padding-top:12px"><pre class="brief-body" data-scroll-key="brief" style="margin:0">' + esc(body) + '</pre></div></details></div>';
+    }
+
     function renderGrillReady(gate) {
       return '<div class="card question-card" id="grillReadyCard"><div class="card-label">Grilling complete</div><p class="muted">The griller is ready to plan. Continue, or send feedback to reopen the interview.</p><div class="resolution" style="margin:10px 0 12px"><strong>Summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div><form id="grillReadyForm"><label class="muted" for="grillFeedbackText">Optional feedback</label><textarea id="grillFeedbackText" placeholder="Something the griller missed or got wrong…">' + esc(state.grillFeedbackText) + '</textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" class="btn" id="sendGrillFeedbackBtn">Send feedback to griller</button><button type="button" class="btn primary" id="continueToPlanningBtn">Continue to planning</button></div></form></div>';
     }
@@ -483,13 +490,13 @@ export const renderRunScript = `    function renderSidebar() {
       var ragOn = policy.rag !== false;
       var graphifyOn = !!policy.graphify;
       if (locked) {
-        return '<div class="tags" style="margin-top:8px">' +
-          '<span class="tag">RAG ' + (ragOn ? "on" : "off") + '</span>' +
-          '<span class="tag">Graphify ' + (graphifyOn ? "on" : "off") + '</span></div>';
+        return '<div style="margin-top:8px"><div><strong>Document RAG:</strong> ' + (ragOn ? "Enabled" : "Disabled") + '</div>' +
+          '<div style="margin-top:6px"><strong>Graphify:</strong> ' + (graphifyOn ? "Enabled" : "Disabled") + '</div></div>';
       }
-      return '<div class="tags" style="margin-top:8px">' +
-        '<button type="button" class="tag" data-action="set_rag" data-rag="' + (ragOn ? "false" : "true") + '" title="Toggle document RAG for the next agent step">RAG ' + (ragOn ? "on" : "off") + ' · click</button>' +
-        '<button type="button" class="tag" data-action="set_graphify" data-graphify="' + (graphifyOn ? "false" : "true") + '" title="Toggle Graphify for the next agent step">Graphify ' + (graphifyOn ? "on" : "off") + ' · click</button></div>';
+      return '<div style="margin-top:8px">' +
+        '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runRagToggle"' + (ragOn ? " checked" : "") + '> <strong>Document RAG</strong> · ' + (ragOn ? "Enabled" : "Disabled") + '</label>' +
+        '<div style="margin-top:8px"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runGraphifyToggle"' + (graphifyOn ? " checked" : "") + '> <strong>Graphify</strong> · ' + (graphifyOn ? "Enabled" : "Disabled") + '</label></div>' +
+        '<div class="faint" style="margin-top:4px">Applies to the next agent step</div></div>';
     }
 
     function renderInstallLogPanel() {
@@ -704,10 +711,6 @@ export const renderRunScript = `    function renderSidebar() {
         return '<button type="button" class="copy-path-btn" data-copy-path="' + attr(value) + '" title="Copy" aria-label="' + attr(ariaLabel) + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg></button>';
       }
       html += renderUsageBudgetCard(s);
-      var brief = s.reflectBrief;
-      var briefTitle = brief && brief.confirmed ? "Confirmed brief" : (brief ? "Draft brief" : "Feature brief");
-      var briefBody = brief ? (brief.confirmed || brief.draft) : "The reflector will restate the idea for your confirmation before grilling begins.";
-      html += '<div class="card two-thirds"><div class="card-label">' + esc(briefTitle) + '</div><pre class="brief-body" data-scroll-key="brief">' + esc(briefBody) + '</pre></div>';
       var delivery = state.detail.workspace || {};
       var deliveryBranch = s.branchName || delivery.branchName;
       var deliveryBranchLabel = deliveryBranch || "branch pending";
@@ -715,7 +718,7 @@ export const renderRunScript = `    function renderSidebar() {
       var fullBaseSha = delivery.baseSha ? String(delivery.baseSha) : "";
       var baseSha = fullBaseSha ? fullBaseSha.slice(0, 12) : "";
       var worktreePath = delivery.worktreePath || "";
-      html += '<div class="card third"><div class="card-label">Delivery</div>';
+      html += '<div class="card"><div class="card-label">Delivery</div>';
       html += '<div class="muted repo-label">Repository' + copyPathBtn(repoRoot, "Copy repository path") + '</div><div style="margin:4px 0 10px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div>';
       html += '<div class="muted repo-label">Branch' + copyPathBtn(deliveryBranch, "Copy branch name") + '</div><div style="margin:4px 0 10px"><code>' + esc(deliveryBranchLabel) + '</code></div>';
       if (baseBranch) {
@@ -738,7 +741,8 @@ export const renderRunScript = `    function renderSidebar() {
 
     function renderDecisions(s) {
       var resolutions = s.grillResolutions || [];
-      var html = resolutions.length ? '<div class="list">' + resolutions.map(function (item) {
+      var html = renderBriefReadonly(s.reflectBrief);
+      html += resolutions.length ? '<div class="list">' + resolutions.map(function (item) {
         return '<article class="item"><div class="item-head"><div><div class="item-title">' + esc(item.summary) + '</div><div class="muted" style="margin-top:5px">' + esc(item.question) + '</div></div><span class="badge completed">resolved</span></div><div class="conversation"><div class="turn"><b>Answer:</b> ' + esc(item.answer) + '</div></div></article>';
       }).join("") + '</div>' : '<div class="empty">No grill resolutions yet. Confirm the reflect brief to begin grilling.</div>';
       $("tabBody").innerHTML = html;

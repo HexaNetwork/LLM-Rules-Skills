@@ -246,10 +246,6 @@ export const eventsScript = `    async function waitForJob(runId) {
             tdd: target.dataset.tdd === 'true',
             taskId: target.dataset.taskId || undefined
           });
-        } else if (target.dataset.action === 'set_rag') {
-          runAction('set_rag', { rag: target.dataset.rag === 'true' });
-        } else if (target.dataset.action === 'set_graphify') {
-          runAction('set_graphify', { graphify: target.dataset.graphify === 'true' });
         } else if (target.dataset.action === 'commit_preflight') {
           runAction(target.dataset.action, { order: target.dataset.preflightOrder });
         } else if (target.dataset.action === 'ignore_artifacts') {
@@ -548,6 +544,12 @@ export const eventsScript = `    async function waitForJob(runId) {
       }
       if (event.target.id === 'runTddToggle') {
         runAction('set_tdd', { tdd: event.target.checked });
+      }
+      if (event.target.id === 'runRagToggle') {
+        runAction('set_rag', { rag: event.target.checked });
+      }
+      if (event.target.id === 'runGraphifyToggle') {
+        runAction('set_graphify', { graphify: event.target.checked });
       }
     });
     document.addEventListener('keydown', function (event) {

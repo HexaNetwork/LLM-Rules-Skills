@@ -8,6 +8,9 @@ export const stateScript = `  (function () {
     var state = {
       bootstrap: null, runs: [], unreadableRuns: [], selected: null, detail: null, signature: "", scrolls: null,
       sidebarHtml: "",
+      // Sticky error shown inline under the run vitals; survives poll re-renders
+      // until dismissed or the selected run changes.
+      inlineError: "",
       tab: "overview", usageTab: "model", view: "runs", filter: "", answerDrafts: {}, settings: null,
       selectedOptions: {}, parked: {}, clarifications: {}, batchFeedback: "",
       reflectDrafts: {},
@@ -234,7 +237,18 @@ export const stateScript = `  (function () {
       $("toastDismiss").hidden = true;
       clearTimeout(toast.timer);
     }
+    // Run-view errors belong next to the run, not floating over unrelated
+    // content. When the run page is rendered they go inline under the vitals;
+    // the fixed toast remains for successes and errors outside the run view.
+    function showRunError(message) {
+      var slot = $("runErrorSlot");
+      if (!slot) return false;
+      state.inlineError = String(message || "Action failed");
+      slot.innerHTML = renderInlineError();
+      return true;
+    }
     function toast(message, error) {
+      if (error && showRunError(message)) { hideToast(); return; }
       var node = $("toast");
       $("toastMessage").textContent = message;
       $("toastDismiss").hidden = !error;

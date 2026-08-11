@@ -39,6 +39,8 @@ export const apiScript = `    async function api(path, options) {
     }
     async function loadRun(runId, showSpinner, silent, preserveEditor) {
       var sameRun = state.selected === runId;
+      // The inline error belongs to the run that raised it; switching runs drops it.
+      if (!sameRun) state.inlineError = "";
       state.selected = runId; state.view = "runs";
       if (showSpinner !== false) $("content").innerHTML = '<div class="empty">Loading run…</div>';
       try {

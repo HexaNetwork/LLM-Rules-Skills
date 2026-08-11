@@ -406,6 +406,11 @@ export const eventsScript = `    async function waitForJob(runId) {
       if (target.dataset.close) $(target.dataset.close).close();
       if (target.hasAttribute('data-open-new')) openNewRun();
       if (target.id === 'toastDismiss') hideToast();
+      if (target.id === 'runErrorDismiss') {
+        state.inlineError = '';
+        var errorSlot = $('runErrorSlot');
+        if (errorSlot) errorSlot.innerHTML = '';
+      }
     });
     $("newRunBtn").addEventListener('click', openNewRun);
     $("menuBtn").addEventListener('click', function () { document.body.classList.toggle('menu-open'); });

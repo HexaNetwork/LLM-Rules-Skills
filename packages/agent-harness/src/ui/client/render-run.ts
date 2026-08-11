@@ -8,12 +8,15 @@ export const renderRunScript = `    function renderSidebar() {
         var phase = effectivePhase(run);
         var title = shortTitle(run.title || run.idea || run.destination || run.runId, 62);
         var progress = run.taskProgress && run.taskProgress.total ? run.taskProgress.completed + "/" + run.taskProgress.total : phaseLabel(phase);
-        return '<button class="run-item ' + (run.runId === state.selected && state.view === "runs" ? "active" : "") + '" data-run="' + attr(run.runId) + '"><div class="run-title"><i class="dot ' + attr(phase) + '"></i><span>' + esc(title) + '</span></div><div class="run-meta"><span>' + esc(progress) + '</span><span>' + esc(ago(run.updatedAt)) + '</span></div></button>';
+        var warn = (phase === "blocked" || phase === "failed")
+          ? '<span class="run-warn" title="This run needs attention — open it to see the error" aria-label="Run needs attention">!</span>'
+          : "";
+        return '<button class="run-item ' + (run.runId === state.selected && state.view === "runs" ? "active" : "") + '" data-run="' + attr(run.runId) + '"><div class="run-title"><i class="dot ' + attr(phase) + '"></i><span>' + esc(title) + '</span>' + warn + '</div><div class="run-meta"><span>' + esc(progress) + '</span><span>' + esc(ago(run.updatedAt)) + '</span></div></button>';
       }).join("") : '<div class="empty" style="padding:25px 10px">No matching runs</div>';
       // Unreadable runs are listed, not hidden: a run silently missing from this
       // list is indistinguishable from a run the harness lost.
       (state.unreadableRuns || []).forEach(function (failure) {
-        html += '<div class="run-item" style="cursor:default" title="' + attr(failure.error) + '"><div class="run-title"><i class="dot blocked"></i><span>' + esc(shortTitle(failure.runId, 62)) + '</span></div><div class="run-meta"><span>unreadable state.json</span></div></div>';
+        html += '<div class="run-item" style="cursor:default" title="' + attr(failure.error) + '"><div class="run-title"><i class="dot blocked"></i><span>' + esc(shortTitle(failure.runId, 62)) + '</span><span class="run-warn" title="This run needs attention — open it to see the error" aria-label="Run needs attention">!</span></div><div class="run-meta"><span>unreadable state.json</span></div></div>';
       });
       // Skip the rewrite when nothing changed — innerHTML churn vs scrollTop
       // restore is what trips Chrome's scroll-anchoring warning.
@@ -23,7 +26,13 @@ export const renderRunScript = `    function renderSidebar() {
       runList.scrollTop = scrollTop;
     }
 
+    function renderInlineError() {
+      if (!state.inlineError) return "";
+      return '<div class="alert run-error" role="alert"><div class="run-error-message">' + esc(state.inlineError) + '</div><button type="button" class="toast-dismiss" id="runErrorDismiss" aria-label="Dismiss">×</button></div>';
+    }
+
     function renderHome() {
+      state.inlineError = "";
       $("crumbTitle").textContent = "Overview"; $("topActions").innerHTML = "";
       $("content").innerHTML = '<div class="hero"><div><div class="eyebrow">Durable delivery control plane</div><h1>One idea.<br>Every decision.<br>A finished feature.</h1><p class="hero-copy">Reflect the idea, grill until shared understanding, hand clean context between agents, and watch deterministic tests turn red into green—all without losing the thread.</p><p><button class="btn primary" data-open-new>Start your first run →</button></p></div><div class="hero-card"><div class="card-label">The route</div><h2>Clarity before code</h2><div class="route"><div class="route-step"><b>01</b><span>Reflect and confirm the brief</span></div><div class="route-step"><b>02</b><span>Grill the open decisions</span></div><div class="route-step"><b>03</b><span>Plan tracer-bullet tasks</span></div><div class="route-step"><b>04</b><span>Test, implement, review</span></div><div class="route-step"><b>05</b><span>Commit and publish</span></div></div></div></div>';
     }
@@ -51,6 +60,7 @@ export const renderRunScript = `    function renderSidebar() {
       var html = '<div class="title-row"><div><div class="eyebrow">Run ' + esc(s.runId.slice(0,8)) + '</div><h1>' + esc(title) + '</h1>' + subtitle + '</div><span class="badge ' + attr(phase) + '" data-testid="run-status"><i class="dot ' + attr(phase) + '"></i>' + esc(phaseLabel(phase)) + '</span></div>';
       html += renderUsageRow(s);
       html += renderRunVitals(s);
+      html += '<div id="runErrorSlot">' + renderInlineError() + '</div>';
       html += '<nav class="tabs">' + tabs.map(function (tab) { return '<button class="tab ' + (state.tab === tab.id ? "active" : "") + '" data-tab="' + tab.id + '">' + esc(tab.label) + '</button>'; }).join("") + '</nav><div id="tabBody"></div>';
       $("content").innerHTML = html;
       if (state.tab === "overview") renderOverview(s, summary, phase);

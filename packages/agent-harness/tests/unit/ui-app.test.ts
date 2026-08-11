@@ -614,6 +614,32 @@ describe("dashboard document", () => {
     expect(html).toContain('toastDismiss").hidden = !error');
   });
 
+  it("renders run-view errors inline under the vitals row instead of the top toast", () => {
+    const html = renderDashboard();
+
+    // Slot is mounted between the vitals and the tabs.
+    expect(html).toContain('html += renderRunVitals(s);');
+    expect(html).toMatch(/renderRunVitals\(s\);\s*html \+= '<div id="runErrorSlot">'/);
+    expect(html).toContain("function renderInlineError()");
+    expect(html).toContain("state.inlineError");
+    expect(html).toContain('id="runErrorDismiss"');
+    expect(html).toContain('role="alert"');
+    // toast() routes errors to the inline slot when the run view is rendered.
+    expect(html).toContain("if (error && showRunError(message))");
+    // Switching runs or leaving the run view clears the sticky error.
+    expect(html).toContain('if (!sameRun) state.inlineError = "";');
+    expect(html).toContain("state.detail = null; state.inlineError = \"\";");
+  });
+
+  it("marks blocked or failed runs with a red warning indicator in the sidebar", () => {
+    const html = renderDashboard();
+
+    expect(html).toContain('class="run-warn"');
+    expect(html).toContain('phase === "blocked" || phase === "failed"');
+    expect(html).toMatch(/\.run-warn\s*\{[^}]*color:var\(--red\)/);
+    expect(html).toMatch(/\.run-title > span\s*\{[^}]*text-overflow:ellipsis/);
+  });
+
   it("keeps long unbroken tokens inside activity context rows (no horizontal spill)", () => {
     const html = renderDashboard();
     const contextRule = html.match(/\.activity-context\s*\{([^}]*)\}/)?.[1] ?? "";

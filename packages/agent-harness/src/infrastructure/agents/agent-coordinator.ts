@@ -85,11 +85,13 @@ export class AgentCoordinator {
     input: InvokeInput<T> & {
       providerSessionId?: string;
       mode?: "agent" | "plan";
+      /** Defaults to true. Set false to reuse a context for one final turn then release it. */
+      retainProviderSession?: boolean;
     },
   ): Promise<AgentInvocation<T>> {
     return this.invokeInternal(input, {
       providerSessionId: input.providerSessionId,
-      retainProviderSession: true,
+      retainProviderSession: input.retainProviderSession ?? true,
       mode: input.mode ?? "plan",
     });
   }
@@ -522,11 +524,14 @@ function causalFieldsForAttempt(
   invocationKind: InvocationKind;
   trigger: InvocationTrigger;
 } {
+  // Only mark continuation when the provider context was actually reused.
+  // A freshly spawned context always gets a providerSessionId after the call;
+  // that alone must not count as reuse.
   const invocationKind: InvocationKind =
     args.attempt > 0
       ? "schema-repair"
       : causal?.invocationKind ??
-        (args.providerSessionId || args.providerSessionReused ? "continuation" : "initial");
+        (args.providerSessionReused ? "continuation" : "initial");
   const trigger: InvocationTrigger = causal?.trigger ?? {
     event: `${args.role}.invoke`,
     classification: invocationKind,

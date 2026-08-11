@@ -422,6 +422,8 @@ const FixerRecoveryBaseSchema = {
   appliedAt: z.string().optional(),
   result: z.string().optional(),
   changedFiles: z.array(z.string()).default([]),
+  /** Retained file-fixer provider context for approve-without-revise apply. */
+  providerSessionId: z.string().min(1).optional(),
 };
 
 export const FixerRecoverySchema = z.preprocess(

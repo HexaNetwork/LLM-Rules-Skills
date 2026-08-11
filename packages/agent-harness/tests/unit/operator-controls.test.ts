@@ -322,9 +322,11 @@ describe("operator controls", () => {
     });
     await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
     let fixerCalls = 0;
+    const fixerSessionIds: Array<string | undefined> = [];
     const backend = createFakeBackend({
-      fixer: () => {
+      fixer: (request) => {
         fixerCalls += 1;
+        fixerSessionIds.push(request.providerSessionId);
         return fixerCalls === 1
           ? {
             summary: "Repair the broken implementer output.",
@@ -342,6 +344,9 @@ describe("operator controls", () => {
     const proposed = await engine.proposeFix(runId, "Repair the broken implementer output.");
     expect(proposed.phase).toBe("blocked");
     expect(proposed.fixerRecovery).toMatchObject({ role: "fixer", status: "proposed", changedFiles: [] });
+    expect(proposed.fixerRecovery?.providerSessionId).toBeTruthy();
+    expect(fixerSessionIds[0]).toBeUndefined();
+
     const applied = await engine.applyApprovedFix(runId);
     expect(applied.phase).toBe("executing");
     expect(applied.failure).toBeUndefined();
@@ -350,6 +355,91 @@ describe("operator controls", () => {
       status: "applied",
       result: "Restored the broken files.",
     });
+    expect(fixerCalls).toBe(2);
+    expect(fixerSessionIds[1]).toBe(proposed.fixerRecovery?.providerSessionId);
+    expect(applied.fixerRecovery?.providerSessionId).toBe(proposed.fixerRecovery?.providerSessionId);
+
+    const sessionFiles = (await store.listFiles(runId, "sessions")).filter((file) => file.endsWith(".json"));
+    const sessions = await Promise.all(
+      sessionFiles.map(async (file) => store.readJson(runId, file) as Promise<{
+        role?: string;
+        providerSessionReused?: boolean;
+        invocationKind?: string;
+      }>),
+    );
+    const fixerSessions = sessions.filter((session) => session.role === "fixer");
+    expect(fixerSessions).toHaveLength(2);
+    expect(fixerSessions[0]).toMatchObject({
+      providerSessionReused: false,
+      invocationKind: "initial",
+    });
+    expect(fixerSessions[1]).toMatchObject({
+      providerSessionReused: true,
+      invocationKind: "continuation",
+    });
+  });
+
+  it("starts a fresh fixer context when the operator revises the plan", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, { agent: { promptBuilder: false } as never });
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
+    await store.initialize();
+    const runId = "fixer-revise-run";
+    const hash = configurationHash(config);
+    await store.create({
+      ...createRunState(runId, "idea", new Date().toISOString(), hash, CONFIG_VERSION),
+      phase: "blocked",
+      blockedFrom: "executing",
+      blockedKind: "internal",
+      blockedRetriable: false,
+      failure: "Implementer left the tree in a broken state",
+    });
+    await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
+    let fixerCalls = 0;
+    const fixerRequests: Array<{ providerSessionId?: string }> = [];
+    const released: string[] = [];
+    const inner = createFakeBackend({
+      fixer: (request) => {
+        fixerCalls += 1;
+        fixerRequests.push({ providerSessionId: request.providerSessionId });
+        if (fixerCalls <= 2) {
+          return {
+            summary: fixerCalls === 1 ? "First plan" : "Revised plan",
+            steps: [{ title: "Restore files", description: "Revert the broken paths." }],
+            risks: [],
+            allowedPaths: ["src/app.ts"],
+            validationCommands: [],
+          };
+        }
+        return { summary: "Applied revised plan.", changedFiles: ["src/app.ts"] };
+      },
+    });
+    const backend = {
+      ...inner,
+      async release(providerSessionId: string) {
+        released.push(providerSessionId);
+        await inner.release?.(providerSessionId);
+      },
+    };
+    const engine = new HarnessEngine(config, { backend });
+
+    const first = await engine.proposeFix(runId, "Repair the broken implementer output.");
+    const firstSession = first.fixerRecovery?.providerSessionId;
+    expect(firstSession).toBeTruthy();
+
+    const revised = await engine.proposeFix(runId, "Also clean up the leftover temp file.");
+    const revisedSession = revised.fixerRecovery?.providerSessionId;
+    expect(revisedSession).toBeTruthy();
+    expect(revisedSession).not.toBe(firstSession);
+    expect(released).toContain(firstSession!);
+    expect(fixerRequests[1]?.providerSessionId).toBeUndefined();
+    expect(revised.fixerRecovery?.plan.summary).toBe("Revised plan");
+
+    const applied = await engine.applyApprovedFix(runId);
+    expect(applied.phase).toBe("executing");
+    expect(fixerCalls).toBe(3);
+    expect(fixerRequests[2]?.providerSessionId).toBe(revisedSession);
+    expect(applied.fixerRecovery?.result).toBe("Applied revised plan.");
   });
 
   it("uses the config-fixer's validated recommendation without accepting a caller patch", async () => {

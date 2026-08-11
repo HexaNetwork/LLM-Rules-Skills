@@ -90,6 +90,43 @@ export class RecoveryService {
     }
   }
 
+  private async invokeFixerEpisodeWithUsage<T>(
+    state: RunState,
+    input: InvokeInput<T> & {
+      providerSessionId?: string;
+      mode?: "agent" | "plan";
+      retainProviderSession?: boolean;
+    },
+  ): Promise<{
+    value: T;
+    state: RunState;
+    providerSessionId?: string;
+    providerSessionReused: boolean;
+  }> {
+    try {
+      const invocation = await this.ctx.agents.invokeInEpisode(input);
+      return {
+        value: invocation.value,
+        state: await accrueRunUsage(this.ctx, state),
+        providerSessionId: invocation.providerSessionId,
+        providerSessionReused: invocation.providerSessionReused,
+      };
+    } catch (error) {
+      await accrueRunUsage(this.ctx, state).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async releaseFixerProviderSession(
+    recovery: FixerRecovery | undefined,
+  ): Promise<void> {
+    if (recovery?.role === "fixer" && recovery.providerSessionId) {
+      await this.ctx.agents
+        .releaseProviderSession(recovery.providerSessionId)
+        .catch(() => undefined);
+    }
+  }
+
   async completeCancellation(state: RunState): Promise<RunState> {
     if (isCancelSettled(state.phase)) {
       await this.ctx.clearCancelRequest(state.runId);
@@ -100,6 +137,13 @@ export class RecoveryService {
       phase: "cancelled",
     });
     let cancelled = await this.interview.closeGrillEpisode(withoutSessions);
+    await this.releaseFixerProviderSession(cancelled.fixerRecovery);
+    if (cancelled.fixerRecovery?.role === "fixer" && cancelled.fixerRecovery.providerSessionId) {
+      cancelled = {
+        ...cancelled,
+        fixerRecovery: { ...cancelled.fixerRecovery, providerSessionId: undefined },
+      };
+    }
     const plannerEpisode = cancelled.plannerEpisode;
     if (plannerEpisode && !plannerEpisode.closedAt) {
       await this.ctx.agents
@@ -130,6 +174,7 @@ export class RecoveryService {
   }
 
   private async proposeConfigFix(state: RunState, guidance: string): Promise<RunState> {
+    await this.releaseFixerProviderSession(state.fixerRecovery);
     const frozen = normalizeFrozenRunConfig(await this.ctx.store.readJson(state.runId, "config.json"));
     const currentRepairableSettings = {
       workflow: {
@@ -193,7 +238,9 @@ export class RecoveryService {
   }
 
   private async proposeFileFix(state: RunState, guidance: string): Promise<RunState> {
-    const invoked = await this.invokeWithUsage(state, {
+    // Revise / re-plan drops the prior retained context so apply never continues a discarded plan.
+    await this.releaseFixerProviderSession(state.fixerRecovery);
+    const invoked = await this.invokeFixerEpisodeWithUsage(state, {
       runId: state.runId,
       role: "fixer",
       objective: "Propose a minimal recovery plan for the blocked harness run; do not edit the working tree",
@@ -211,6 +258,17 @@ export class RecoveryService {
       expectedOutput: "{summary,steps:[{title,description}],risks:string[],allowedPaths:string[],validationCommands:string[]}",
       schema: FixerPlanSchema,
       knowledgeQuery: `${state.failure}\n${guidance}`,
+      mode: "plan",
+      retainProviderSession: true,
+      causal: {
+        phase: state.phase,
+        invocationKind: "initial",
+        trigger: {
+          event: "fixer.propose",
+          classification: "initial",
+          summary: "propose fixer recovery plan",
+        },
+      },
       signal: this.ctx.signalFor(state.runId),
     });
     state = invoked.state;
@@ -223,6 +281,7 @@ export class RecoveryService {
       status: "proposed",
       proposedAt: new Date().toISOString(),
       changedFiles: [],
+      providerSessionId: invoked.providerSessionId,
     };
     const updated = await this.ctx.store.record({ ...state, fixerRecovery }, "fixer.plan_proposed", {
       blockedFrom: state.blockedFrom,
@@ -230,6 +289,7 @@ export class RecoveryService {
       guidance,
       summary: plan.summary,
       role: "fixer",
+      providerSessionId: invoked.providerSessionId,
     });
     await this.ctx.syncArtifacts(updated);
     return updated;
@@ -309,7 +369,11 @@ export class RecoveryService {
           false,
         );
       }
-      const invoked = await this.invokeWithUsage(state, {
+      // Approve-without-revise reuses the planning context. Missing/expired contexts
+      // fall back to a fresh apply with the approved plan in the packet.
+      const reuseSessionId = recovery.providerSessionId;
+      const reusing = Boolean(reuseSessionId);
+      const invoked = await this.invokeFixerEpisodeWithUsage(state, {
         runId,
         role: "fixer",
         objective: "Apply the operator-approved recovery plan, validate the repair where practical, and do not commit",
@@ -328,6 +392,22 @@ export class RecoveryService {
         schema: WorkerOutputSchema,
         retrieval: false,
         buildPrompt: false,
+        mode: "agent",
+        providerSessionId: reuseSessionId,
+        // One final turn: reuse when possible, then release so revise/cancel cannot leak.
+        retainProviderSession: false,
+        causal: {
+          phase: state.phase,
+          invocationKind: reusing ? "continuation" : "initial",
+          trigger: {
+            event: "fixer.apply",
+            classification: reusing ? "continuation" : "initial",
+            summary: reusing
+              ? "apply approved fixer plan in retained provider context"
+              : "apply approved fixer plan in a fresh provider context",
+            previousInvocationId: undefined,
+          },
+        },
         signal: this.ctx.signalFor(runId),
       });
       state = invoked.state;
@@ -340,6 +420,7 @@ export class RecoveryService {
         (candidate) => !allowedPaths.has(normalizeRecoveryPath(candidate, this.ctx.paths.workspaceRoot)),
       );
       if (unexpectedChanges.length > 0) {
+        await this.releaseFixerProviderSession(recovery);
         throw new HarnessFailure(
           `Approved fixer changed paths outside its allowedPaths: ${unexpectedChanges.join(", ")}`,
           "contract",
@@ -352,6 +433,10 @@ export class RecoveryService {
         appliedAt: new Date().toISOString(),
         result: result.summary,
         changedFiles: unique(changedFiles),
+        // Context is released after apply; keep the id only when it was actually reused.
+        providerSessionId: invoked.providerSessionReused
+          ? invoked.providerSessionId ?? reuseSessionId
+          : undefined,
       };
       const stamped = this.ctx.config.git.enabled
         ? await this.ctx.stampWorkspaceEvidence()

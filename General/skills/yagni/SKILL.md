@@ -12,13 +12,7 @@ disable-model-invocation: true
 
 Review the changed code against the repository's base branch, or against the base branch named by the user.
 
-Run **three sequential** review agents (not parallel). Wait for each to finish before launching the next.
-
-| Order | Agent focus | Rubric |
-|-------|-------------|--------|
-| 1 | YAGNI and KISS | [YAGNI-KISS.md](YAGNI-KISS.md) |
-| 2 | Complexity depth | [COMPLEXITY-DEPTH.md](COMPLEXITY-DEPTH.md) |
-| 3 | Class explosion | [CLASS-EXPLOSION.md](CLASS-EXPLOSION.md) |
+Shared pass order, agent launch, prompt shape, retry, and report body: [ORCHESTRATION.md](ORCHESTRATION.md).
 
 This skill is **read-only**. Do not fix findings unless the user asks.
 
@@ -42,85 +36,29 @@ Default to **branch changes** (committed + staged + unstaged on the current bran
 
 7. **Changed-file list** — collect paths from the diff stat. Pass this list to every agent.
 
-## Agent launches
+## Run the three passes
 
-Launch exactly one `generalPurpose` subagent per pass with:
+Follow [ORCHESTRATION.md](ORCHESTRATION.md). For each agent:
 
-- `readonly: true`
-- `run_in_background: false`
-- `description`: `"YAGNI — YAGNI/KISS"`, `"YAGNI — complexity depth"`, or `"YAGNI — class explosion"`
-
-Read the matching rubric file **before** writing each agent prompt so criteria are accurate.
-
-Use this prompt shape for each agent:
-
-```text
-Full Repository Path: <absolute path>
-Base Branch: <base-ref>
-Current Branch: <name>
-Review Pass: <YAGNI/KISS | complexity depth | class explosion>
-Changed Files:
-- path/to/file.ts
-- ...
-
-Instructions:
-1. Read <skill-directory>/<RUBRIC-FILE>.md for the review rubric.
-2. Read applicable project rules, contributor docs, or architecture docs for the current workspace when present.
-3. For each changed file, read the full file (not diff-only) and inspect direct callers/imports when needed for context.
-4. Review ONLY the branch delta vs <base-ref> — new code, modified behaviour, deleted pass-throughs, and new exports. Do not nitpick untouched legacy code unless the change makes it worse.
-5. Return findings sorted by severity (highest first).
-
-Output format (markdown):
-
-## <Review Pass> — summary
-One sentence: N findings / no issues.
-
-## Findings
-| Severity | Location | Finding | Recommendation |
-|----------|----------|---------|----------------|
-| Critical / Suggestion / Nice-to-have | file:line | What violates the rubric | Concrete simplify/delete/merge action |
-
-If no issues: say so explicitly and leave the findings table empty.
-Do not propose fixes beyond the recommendation column. Do not edit files.
-```
-
-Replace `<RUBRIC-FILE>` with `YAGNI-KISS.md`, `COMPLEXITY-DEPTH.md`, or `CLASS-EXPLOSION.md`.
-
-### Retry
-
-If an agent fails before returning findings:
-
-- Wrong prompt shape or missing repo path → fix and retry once immediately.
-- Could not read diff or files → retry once with explicit file contents listed in the prompt.
-- Same failure twice → stop that pass, note the blocker, continue to the next pass only if prior passes succeeded; otherwise stop entirely.
+- **Descriptions:** `"YAGNI — YAGNI/KISS"`, `"YAGNI — complexity depth"`, `"YAGNI — class explosion"`
+- **SCOPE-HEADER:**
+  ```text
+  Base Branch: <base-ref>
+  Current Branch: <name>
+  ```
+- **FILE-LIST:** `Changed Files:` then the paths from preflight
+- **Scope rule (instruction 4):** Review ONLY the branch delta vs `<base-ref>` — new code, modified behaviour, deleted pass-throughs, and new exports. Do not nitpick untouched legacy code unless the change makes it worse.
 
 ## Final report
-
-After all three agents finish, synthesize for the user:
 
 ```markdown
 # YAGNI review — `<current>` vs `<base-ref>`
 
 **Scope:** N files changed
 
-## Verdict
-One paragraph: overall lean vs over-built; worst recurring theme across passes.
-
-## Pass 1 — YAGNI / KISS
-<agent summary + findings table or "no issues">
-
-## Pass 2 — Complexity depth
-<agent summary + findings table or "no issues">
-
-## Pass 3 — Class explosion
-<agent summary + findings table or "no issues">
-
-## Top actions
-Numbered list (max 5): highest-impact simplifications, deduped across passes.
+<ORCHESTRATION.md final report body>
 ```
-
-Do not rerun review or implement fixes unless the user explicitly asks.
 
 ## Scope boundaries
 
-Use this skill for simplicity and over-engineering review of a branch diff. If the user asks for correctness, security, dependency, or broad architecture review, use a more specific review workflow when one is available.
+Use this skill for simplicity and over-engineering review of a branch diff. For full-package inventory review, use `yagni-packages`. If the user asks for correctness, security, dependency, or broad architecture review, use a more specific review workflow when one is available.

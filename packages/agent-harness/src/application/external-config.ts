@@ -6,6 +6,7 @@ import {
   type HarnessConfig,
 } from "../config/schema.js";
 import { defaultConfigYaml } from "../config/defaults.js";
+import { stripLegacyGuidanceSources } from "../config/migrations.js";
 import { resolveGuidanceTemplateDirectory } from "../guidance-seed.js";
 import { HarnessFailure } from "../errors.js";
 import {
@@ -62,12 +63,12 @@ export async function loadExternalProjectConfig(
   await ensureHarnessHomeDefaults(home);
   const homeDefaults = await readOptionalYamlConfig(path.join(home.homeRoot, "config.yaml"));
   const projectFile = await readOptionalYamlConfig(lookup.paths.projectConfigPath);
-  const guidanceSource = path.join(home.sharedGuidanceRoot, "General");
   if (!projectFile) {
     await writeFile(
       lookup.paths.projectConfigPath,
       externalProjectConfigYaml({
-        guidanceSource,
+        projectGuidanceRoot: lookup.paths.projectGuidanceRoot,
+        sharedGuidanceRoot: home.sharedGuidanceRoot,
         worktreeRoot: lookup.paths.worktreeRoot,
       }),
       "utf8",
@@ -79,22 +80,38 @@ export async function loadExternalProjectConfig(
     isRecord(projectConfig.knowledge) && Array.isArray(projectConfig.knowledge.sources)
       ? (projectConfig.knowledge.sources as unknown[])
       : undefined;
-  const rewrittenSources = rewriteLegacyGuidanceSources(existingSources, guidanceSource);
+  const stripped = stripLegacyGuidanceSources(existingSources);
+  const homeKnowledge = isRecord(homeDefaults?.knowledge) ? homeDefaults.knowledge : {};
+  const projectKnowledge = isRecord(projectConfig.knowledge) ? projectConfig.knowledge : {};
+  const homeGuidance = isRecord(homeKnowledge.guidance) ? homeKnowledge.guidance : {};
+  const projectGuidance = isRecord(projectKnowledge.guidance) ? projectKnowledge.guidance : {};
 
   const merged = HarnessConfigSchema.parse({
     ...homeDefaults,
     ...projectConfig,
     knowledge: {
-      ...(isRecord(homeDefaults?.knowledge) ? homeDefaults.knowledge : {}),
-      ...(isRecord(projectConfig.knowledge) ? projectConfig.knowledge : {}),
+      ...homeKnowledge,
+      ...projectKnowledge,
       sources:
-        rewrittenSources && rewrittenSources.length > 0
-          ? rewrittenSources
+        stripped.sources && stripped.sources.length > 0
+          ? stripped.sources
           : [
-              { path: guidanceSource, scope: "global", visibility: "private" },
               { path: "README.md", scope: "project", visibility: "private" },
               { path: "docs", scope: "project", visibility: "private" },
             ],
+      guidance: {
+        ...homeGuidance,
+        ...projectGuidance,
+        projectRoot:
+          (typeof projectGuidance.projectRoot === "string" && projectGuidance.projectRoot.trim()) ||
+          (typeof homeGuidance.projectRoot === "string" && homeGuidance.projectRoot.trim()) ||
+          lookup.paths.projectGuidanceRoot,
+        sharedRoot:
+          (typeof projectGuidance.sharedRoot === "string" && projectGuidance.sharedRoot.trim()) ||
+          (typeof homeGuidance.sharedRoot === "string" && homeGuidance.sharedRoot.trim()) ||
+          stripped.sharedRoot ||
+          home.sharedGuidanceRoot,
+      },
       ...(options.overrides?.knowledge ?? {}),
     },
     ...(options.overrides ?? {}),
@@ -116,7 +133,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function externalProjectConfigYaml(options: {
-  guidanceSource: string;
+  projectGuidanceRoot: string;
+  sharedGuidanceRoot: string;
   worktreeRoot: string;
 }): string {
   // Familiar defaults, but guidance and path roots live outside the repository.
@@ -130,35 +148,17 @@ function externalProjectConfigYaml(options: {
     knowledge: {
       ...parsed.knowledge,
       sources: [
-        { path: options.guidanceSource, scope: "global", visibility: "private" },
         { path: "README.md", scope: "project", visibility: "private" },
         { path: "docs", scope: "project", visibility: "private" },
       ],
+      guidance: {
+        ...parsed.knowledge.guidance,
+        projectRoot: options.projectGuidanceRoot,
+        sharedRoot: options.sharedGuidanceRoot,
+      },
     },
   };
   return yaml.dump(stamped, { noRefs: true, lineWidth: -1 });
-}
-
-function rewriteLegacyGuidanceSources(
-  sources: unknown[] | undefined,
-  guidanceSource: string,
-): unknown[] | undefined {
-  if (!sources) return undefined;
-  return sources.map((source) => {
-    if (typeof source === "string") {
-      return source === "agent-harness/guidance/General" || source === "General"
-        ? guidanceSource
-        : source;
-    }
-    if (!isRecord(source) || typeof source.path !== "string") return source;
-    if (
-      source.path === "agent-harness/guidance/General" ||
-      source.path === "General"
-    ) {
-      return { ...source, path: guidanceSource, scope: source.scope ?? "global" };
-    }
-    return source;
-  });
 }
 
 

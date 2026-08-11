@@ -47,7 +47,9 @@ export {
 } from "./external-config.js";
 export {
   freezeRunComponents,
+  frozenGuidancePath,
   loadFrozenComponentManifest,
+  resolveFrozenGuidanceRoot,
   type FrozenComponentManifest,
 } from "./component-freeze.js";
 export { migrateHome, type MigrateHomeOptions, type MigrateHomeResult } from "./migrate-home.js";

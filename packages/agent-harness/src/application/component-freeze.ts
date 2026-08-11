@@ -94,7 +94,7 @@ export async function freezeRunComponents(options: {
     `${JSON.stringify(manifest, null, 2)}\n`,
     "utf8",
   );
-  // Bind knowledge sources for this run to the frozen guidance copy when present.
+  // Selection prefers this frozen tree over live project/shared guidance roots.
   void options.config;
   return manifest;
 }
@@ -111,6 +111,30 @@ export async function loadFrozenComponentManifest(
   } catch {
     return undefined;
   }
+}
+
+/** Absolute path to the frozen guidance tree for a run, when the manifest recorded one. */
+export function frozenGuidancePath(
+  runsRoot: string,
+  runId: string,
+  manifest: FrozenComponentManifest | undefined,
+): string | undefined {
+  const entry = manifest?.components.find((component) => component.kind === "guidance-tree");
+  if (!entry) return undefined;
+  return path.join(runsRoot, runId, "frozen-components", entry.relativePath);
+}
+
+export async function resolveFrozenGuidanceRoot(
+  runsRoot: string,
+  runId: string,
+): Promise<{ path: string; sha256: string } | undefined> {
+  const manifest = await loadFrozenComponentManifest(runsRoot, runId);
+  const guidancePath = frozenGuidancePath(runsRoot, runId, manifest);
+  if (!guidancePath || !manifest) return undefined;
+  const entry = manifest.components.find((component) => component.kind === "guidance-tree");
+  if (!entry) return undefined;
+  if (!(await isNonEmptyDirectory(guidancePath))) return undefined;
+  return { path: guidancePath, sha256: entry.sha256 };
 }
 
 async function hashDirectory(directory: string): Promise<string> {

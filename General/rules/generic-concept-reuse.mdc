@@ -49,6 +49,6 @@ const outcome = normalizePaginatedList(raw, mapStorySummary)
 
 ## Related rules
 
-- UI patterns: `ui-kitchen-sink.mdc`
-- HTTP/errors: `http-service-outcomes.mdc`, `api-service-deduplication.mdc`
+- UI patterns: `kitchen-sink-ui-catalog.mdc` (and the `kitchen-sink` skill)
 - Single code path: `no-legacy-fallback-code.mdc`
+- Module surface: `module-surface-minimal.mdc`

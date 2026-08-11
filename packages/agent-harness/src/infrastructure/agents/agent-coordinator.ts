@@ -142,6 +142,7 @@ export class AgentCoordinator {
               role: input.role,
               assignment: this.config.knowledge.guidance.assignments?.[input.role],
               knownPaths: knownPaths(input.input),
+              runId: input.runId,
             })
           : Promise.resolve({ selected: [], missingAssignments: [], omittedAlwaysApply: [], omittedOverrides: [] }),
         this.knowledge.searchWithAudit(
@@ -149,7 +150,6 @@ export class AgentCoordinator {
           this.config.workflow.contextResults,
           {
             repository: this.config.knowledge.graphify.roles.includes(input.role),
-            excludeGuidance: guidanceEnabled,
             runId: input.runId,
             fallbackQuery: knowledgeFallbackQuery,
           },

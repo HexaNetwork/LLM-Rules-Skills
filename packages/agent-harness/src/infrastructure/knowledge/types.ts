@@ -63,7 +63,6 @@ export type KnowledgeSearchOptions = {
   projectId?: string;
   includeProjects?: string[];
   maxCharacters?: number;
-  excludeGuidance?: boolean;
   /** When set, only this run's `.agent-harness/runs/<id>/*` artifacts are visible. */
   runId?: string;
   /** Domain seed tried when Graphify shaping of `query` is empty/generic. */
@@ -144,6 +143,8 @@ export type GuidanceSelectionOptions = {
   includeProjects?: string[];
   maxResults?: number;
   maxCharacters?: number;
+  /** When set, prefer the run's frozen guidance tree over live roots. */
+  runId?: string;
 };
 
 export type GuidanceOmission = {

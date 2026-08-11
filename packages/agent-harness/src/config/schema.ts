@@ -14,7 +14,7 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  * Bumped when the frozen run-config shape or configuration-hash algorithm changes
  * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
  */
-export const CONFIG_VERSION = 8;
+export const CONFIG_VERSION = 9;
 
 /** Environment paths / workspace identity — omitted from configurationHash. */
 const CONFIG_HASH_OMIT_PATHS = new Set([
@@ -22,6 +22,9 @@ const CONFIG_HASH_OMIT_PATHS = new Set([
   "stateDirectory",
   "worktreeRoot",
   "knowledge.sharedIndexDirectory",
+  // Machine-local guidance trees (resolved from harness home / project registration).
+  "knowledge.guidance.projectRoot",
+  "knowledge.guidance.sharedRoot",
   // Runtime workspace metadata (lives in workspace.json; omitted if present on a snapshot).
   "worktreePath",
   "controlRoot",
@@ -257,6 +260,10 @@ export const HarnessConfigSchema = z.object({
           enabled: z.boolean().default(true),
           maxResults: z.number().int().min(0).max(20).default(6),
           maxCharacters: z.number().int().positive().default(6_000),
+          // Optional absolute/relative roots used by GuidanceLoader (not knowledge.sources).
+          // Runtime prefers frozen run copy > projectRoot > sharedRoot.
+          projectRoot: z.string().min(1).optional(),
+          sharedRoot: z.string().min(1).optional(),
           // When present, this complete map is authoritative. A listed name resolves
           // to active-project guidance first and General/ guidance second.
           // Omitted assignments use DEFAULT_GUIDANCE_ASSIGNMENTS (not free lexical ranking).

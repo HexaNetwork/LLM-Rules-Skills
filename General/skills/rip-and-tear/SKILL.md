@@ -114,7 +114,7 @@ For approved rows, sketch the **after** picture in plain English:
 - **Handlers** for Bukkit events — `NewListener` list + `listener/<eventname>/` impls, not new `Listener` classes (see workspace rule `new-listener-handlers.mdc`).
 - **No new** `*Service`, `*Helper`, `*Resources` unless 3+ unrelated call sites need the same non-trivial block (`prefer-few-service-classes.mdc`).
 
-Project-specific consolidation targets: [PROJECT-PATTERNS.md](PROJECT-PATTERNS.md).
+Project-specific consolidation targets: copy [PROJECT-PATTERNS.example.md](PROJECT-PATTERNS.example.md) to `PROJECT-PATTERNS.md` and edit for the repo (or follow the example as-is when it matches).
 
 ---
 
@@ -242,4 +242,4 @@ public class BlockBreakFarm implements BlockBreakHandler {
 
 ## Additional resources
 
-- Project consolidation patterns: [PROJECT-PATTERNS.md](PROJECT-PATTERNS.md)
+- Project consolidation patterns: [PROJECT-PATTERNS.example.md](PROJECT-PATTERNS.example.md)

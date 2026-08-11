@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   runCommand,
   type CommandEnvironmentOptions,
@@ -84,12 +85,20 @@ export function createApplicationDependencies(
   const paths = dependencies.paths ?? resolveHarnessPaths(config);
   const store = dependencies.store ?? new RunStore(config, paths.stateRoot);
   const graphifyRunner = dependencies.graphifyRunner ?? runGraphify;
+  const project = dependencies.projectContext;
   const knowledge =
     dependencies.knowledge ??
     new LocalKnowledgeBaseImpl(
       config,
       new GraphifyRepositoryLookup(config, graphifyRunner, paths),
       paths,
+      {
+        projectRoot:
+          config.knowledge.guidance.projectRoot ?? project?.paths.projectGuidanceRoot,
+        sharedRoot:
+          config.knowledge.guidance.sharedRoot ?? project?.home.sharedGuidanceRoot,
+        runsRoot: project?.paths.runsRoot ?? path.join(paths.stateRoot, "runs"),
+      },
     );
   return {
     paths,

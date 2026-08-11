@@ -22,6 +22,21 @@ Characteristics:
 - Describes WHAT, not HOW
 - One logical assertion per test
 
+## Deep Modules
+
+From "A Philosophy of Software Design":
+
+**Deep module** = small interface + lots of implementation (prefer).  
+**Shallow module** = large interface + little implementation (avoid).
+
+When designing seams to test, ask:
+
+- Can I reduce the number of methods?
+- Can I simplify the parameters?
+- Can I hide more complexity inside?
+
+Deep modules make good tests natural: few public entry points, rich behavior behind them.
+
 ## Bad Tests
 
 **Implementation-detail tests**: Coupled to internal structure.

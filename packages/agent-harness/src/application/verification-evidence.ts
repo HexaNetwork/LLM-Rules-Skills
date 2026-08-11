@@ -11,7 +11,7 @@ const NO_TESTS_FOUND = /no tests found|no test files found/i;
 const COMMAND_NOT_LAUNCHED = /command not found|not recognized/i;
 
 /**
- * True when a pre-planner `commands.test` baseline is acceptable:
+ * True when a pre-planner verification baseline is acceptable:
  * exit 0, or runner output reports an empty suite (greenfield).
  * Command-not-launched and timeouts remain failures.
  */

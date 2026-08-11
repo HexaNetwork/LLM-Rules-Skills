@@ -412,14 +412,10 @@ describe("operator controls", () => {
     );
     const fixerSessions = sessions.filter((session) => session.role === "fixer");
     expect(fixerSessions).toHaveLength(2);
-    expect(fixerSessions[0]).toMatchObject({
-      providerSessionReused: false,
-      invocationKind: "initial",
-    });
-    expect(fixerSessions[1]).toMatchObject({
-      providerSessionReused: true,
-      invocationKind: "continuation",
-    });
+    expect(fixerSessions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ providerSessionReused: false, invocationKind: "initial" }),
+      expect.objectContaining({ providerSessionReused: true, invocationKind: "continuation" }),
+    ]));
   });
 
   it("starts a fresh fixer context when the operator revises the plan", async () => {

@@ -45,9 +45,8 @@ describe("Phase 5 scripted full lifecycle", () => {
           maxGrillQuestionsPerEpisode: 5,
         },
         commands: {
-          test: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
+          verification: [{ id: "test", command: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"', timeoutMs: 600_000 }],
           passEnv: ["HARNESS_FORCE_RED"],
-          gates: [],
         },
         git: { enabled: true },
         knowledge: {
@@ -119,8 +118,6 @@ describe("Phase 5 scripted full lifecycle", () => {
                   affectedPaths: ["src/greet.ts"],
                   blockedBy: [],
                   tdd: true,
-                  testCommand:
-                    'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
                 },
               ],
           proposedInstalls: [],

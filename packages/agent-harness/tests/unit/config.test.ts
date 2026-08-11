@@ -11,6 +11,7 @@ import {
   configurationPolicyDiff,
   defaultConfigYaml,
   deploymentConfigYaml,
+  loadConfig,
   loadRunConfig,
   normalizeFrozenRunConfig,
   writeProjectSettings,
@@ -176,15 +177,40 @@ describe("token-conscious defaults", () => {
         staleAnswerMinutes: 45,
         testPathPatterns: ["services/**/src/test/**", "**/*Test.java"],
       },
-      commands: { test: "./gradlew test" },
+      commands: { verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }] },
     });
 
     expect(updated.config.workflow.maxGrillQuestionsPerEpisode).toBe(8);
     expect(updated.config.workflow.staleAnswerMinutes).toBe(45);
     expect(updated.config.workflow.testPathPatterns).toEqual(["services/**/src/test/**", "**/*Test.java"]);
-    expect(updated.config.commands.test).toBe("./gradlew test");
+    expect(updated.config.commands.verification[0]?.command).toBe("./gradlew test");
     expect(updated.config.repositoryRoot).toBe(root);
     expect(await readFile(configPath, "utf8")).not.toContain(root);
+  });
+
+  it("serializes concurrent project-setting writes without losing either patch", async () => {
+    const root = await fixtureRoot();
+    const configPath = path.join(root, "agent-harness.config.yaml");
+    await writeFile(configPath, "version: 2\nrepositoryRoot: .\n", "utf8");
+
+    await Promise.all([
+      writeProjectSettings(configPath, {
+        workflow: { staleAnswerMinutes: 91 },
+      }),
+      writeProjectSettings(configPath, {
+        commands: {
+          verification: [{ id: "verify", command: "verify all", timeoutMs: 123_000 }],
+        },
+      }),
+    ]);
+
+    const loaded = await loadConfig(configPath);
+    expect(loaded.config.workflow.staleAnswerMinutes).toBe(91);
+    expect(loaded.config.commands.verification[0]).toEqual({
+      id: "verify",
+      command: "verify all",
+      timeoutMs: 123_000,
+    });
   });
 
   it("keeps legacy frozen runs on generic retrieval", async () => {
@@ -211,7 +237,7 @@ version: 2
 repositoryRoot: .
 `) as unknown;
     const parsed = HarnessConfigSchema.parse(minimal);
-    expect(CONFIG_VERSION).toBe(10);
+    expect(CONFIG_VERSION).toBe(11);
     expect(parsed.agent.promptBuilder).toBe(false);
     expect(parsed.knowledge.guidance.enabled).toBe(true);
     expect(parsed.git.ignoredArtifactPatterns.length).toBeGreaterThan(0);
@@ -278,11 +304,14 @@ repositoryRoot: .
 
     const hashedDrift = {
       ...base,
-      commands: { ...base.commands, test: "./gradlew test" },
+      commands: {
+        ...base.commands,
+        verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }],
+      },
       git: { ...base.git, baseBranch: "develop" },
     };
     expect(configurationPolicyDiff(base, hashedDrift)).toEqual(
-      expect.arrayContaining(["commands.test", "git.baseBranch"]),
+      expect.arrayContaining(["commands.verification", "git.baseBranch"]),
     );
   });
 
@@ -429,7 +458,10 @@ repositoryRoot: .
         "version: 2",
         "repositoryRoot: .",
         "commands:",
-        '  test: node -e "process.exit(0)"',
+        "  verification:",
+        "    - id: test",
+        '      command: node -e "process.exit(0)"',
+        "      timeoutMs: 600000",
         "workflow:",
         "  testPathPatterns:",
         "    - tests/**",
@@ -439,7 +471,7 @@ repositoryRoot: .
     );
     const initial = HarnessConfigSchema.parse({
       repositoryRoot: root,
-      commands: { test: 'node -e "process.exit(0)"' },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
       workflow: { testPathPatterns: ["tests/**"] },
     });
     const stamped = configurationHash(initial);
@@ -454,14 +486,14 @@ repositoryRoot: .
     const loadedAfterPaths = await loadRunConfig(afterPaths.config, runId);
     expect(configurationHash(loadedAfterPaths)).toBe(stamped);
     expect(loadedAfterPaths.workflow.testPathPatterns).toEqual(["tests/**"]);
-    expect(loadedAfterPaths.commands.test).toBe('node -e "process.exit(0)"');
+    expect(loadedAfterPaths.commands.verification[0]?.command).toBe('node -e "process.exit(0)"');
 
     const afterCommand = await writeProjectSettings(configPath, {
-      commands: { test: "./gradlew test" },
+      commands: { verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }] },
     });
     const loadedAfterCommand = await loadRunConfig(afterCommand.config, runId);
     expect(configurationHash(loadedAfterCommand)).toBe(stamped);
-    expect(loadedAfterCommand.commands.test).toBe('node -e "process.exit(0)"');
+    expect(loadedAfterCommand.commands.verification[0]?.command).toBe('node -e "process.exit(0)"');
     expect(loadedAfterCommand.workflow.testPathPatterns).toEqual(["tests/**"]);
   });
 });

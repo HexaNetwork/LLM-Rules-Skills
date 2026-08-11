@@ -39,7 +39,6 @@ export type GrillInput = {
 
 export type PlanTransitionConfig = {
   tdd: boolean;
-  testCommand: string;
   branchName?: string;
 };
 
@@ -466,7 +465,7 @@ export function materializeTasks(
       affectedPaths?: string[];
       blockedBy: string[];
       tdd?: boolean;
-      testCommand?: string;
+      testFilter?: string;
     }>;
   },
   config: PlanTransitionConfig,
@@ -491,7 +490,7 @@ export function materializeTasks(
     affectedPaths: task.affectedPaths ?? [],
     blockedBy: task.blockedBy.map((id) => idMap.get(id) ?? id),
     tdd: task.tdd ?? config.tdd,
-    testCommand: task.testCommand ?? config.testCommand,
+    testFilter: task.testFilter,
     status: "pending" as const,
     step: "pending" as const,
     attempts: { tests: 0, implementation: 0, review: 0 },

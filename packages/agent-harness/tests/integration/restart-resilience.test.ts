@@ -34,7 +34,7 @@ describe("Phase 5 restart resilience", () => {
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000, provider: "cursor" },
         workflow: { tdd: false, generateCommitMessages: false },
-        commands: { test: 'node -e "process.exit(0)"', gates: [] },
+        commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         git: { enabled: false },
         knowledge: {
           graphify: { enabled: false },
@@ -97,7 +97,6 @@ describe("Phase 5 restart resilience", () => {
                   acceptanceCriteria: ["Works"],
                   blockedBy: [],
                   tdd: false,
-                  testCommand: 'node -e "process.exit(0)"',
                 },
               ],
           proposedInstalls: [],

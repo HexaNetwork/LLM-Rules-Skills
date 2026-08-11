@@ -193,7 +193,13 @@ export const PrdSchema = z.object({
 });
 export type Prd = z.infer<typeof PrdSchema>;
 
-/** Verification-only settings patch (commands.test + workflow.testPathPatterns). */
+/** Verification-only settings patch. */
+const VerificationCommandSettingSchema = z.object({
+  id: z.string().min(1),
+  command: z.string().min(1),
+  timeoutMs: z.number().int().positive().default(10 * 60 * 1000),
+});
+
 export const VerificationSettingsPatchSchema = z
   .object({
     workflow: z
@@ -204,7 +210,8 @@ export const VerificationSettingsPatchSchema = z
       .optional(),
     commands: z
       .object({
-        test: z.string().min(1).optional(),
+        verification: z.array(VerificationCommandSettingSchema).min(1).optional(),
+        testTargetTemplate: z.string().min(1).optional(),
       })
       .strict()
       .optional(),
@@ -217,7 +224,8 @@ export const VerificationSettingsSnapshotSchema = z.object({
     testPathPatterns: z.array(z.string().min(1)),
   }),
   commands: z.object({
-    test: z.string().min(1),
+    verification: z.array(VerificationCommandSettingSchema).min(1),
+    testTargetTemplate: z.string().min(1).optional(),
   }),
 });
 export type VerificationSettingsSnapshot = z.infer<typeof VerificationSettingsSnapshotSchema>;
@@ -267,7 +275,7 @@ export const CommandEvidenceSchema = z.object({
 });
 export type CommandEvidence = z.infer<typeof CommandEvidenceSchema>;
 
-/** Operator gate when the pre-planner `commands.test` baseline fails; absent when not pending. */
+/** Operator gate when the pre-planner verification baseline fails; absent when not pending. */
 export const VerificationBaselineReadyGateSchema = z.object({
   summary: z.string().min(1),
   evidence: CommandEvidenceSchema,
@@ -320,7 +328,7 @@ export const BuildTaskSchema = z.object({
   affectedPaths: z.array(z.string().min(1)).default([]),
   blockedBy: z.array(z.string()).default([]),
   tdd: z.boolean(),
-  testCommand: z.string().optional(),
+  testFilter: z.string().min(1).optional(),
   status: z.enum(["pending", "active", "done", "failed"]),
   step: z.enum([
     "pending",
@@ -501,7 +509,7 @@ export const RunStateSchema = z.object({
   verificationReady: VerificationReadyGateSchema.optional(),
   // Set once the operator confirms verification; skips re-proposal on resume.
   verificationConfirmedAt: z.string().optional(),
-  // Set when the pre-planner commands.test baseline fails; cleared on retry/pass.
+  // Set when the pre-planner verification baseline fails; cleared on retry/pass.
   verificationBaselineReady: VerificationBaselineReadyGateSchema.optional(),
   // Set once the baseline test run is acceptable; skips re-run on resume.
   verificationBaselinePassedAt: z.string().optional(),
@@ -613,7 +621,7 @@ export const IssueSlicerOutputSchema = z.object({
         affectedPaths: z.array(z.string().min(1)).default([]),
         blockedBy: z.array(z.string()),
         tdd: z.boolean().optional(),
-        testCommand: z.string().optional(),
+        testFilter: z.string().min(1).optional(),
       }),
     )
     .min(1),
@@ -633,7 +641,7 @@ export const IssueSlicerOutputSchema = z.object({
 export type IssueSlicerOutput = z.infer<typeof IssueSlicerOutputSchema>;
 
 export const ISSUE_SLICER_EXPECTED_OUTPUT =
-  "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,tdd?,testCommand?}],proposedInstalls?:[{id,manager,packages,reason,command?}]}";
+  "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,tdd?,testFilter?}],proposedInstalls?:[{id,manager,packages,reason,command?}]}";
 
 export const PromptBuilderOutputSchema = z.object({
   prompt: z.string().min(1),

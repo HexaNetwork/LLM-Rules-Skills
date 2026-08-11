@@ -12,6 +12,7 @@
 - Tracer-bullet task planning and sequential dependency execution
 - Per-run TDD toggle with harness-owned RED/GREEN evidence
 - Deterministic command gates and bounded implementation/review repair
+- Ordered config-owned verification commands and targeted-test templates; tasks only provide validated filters
 - Deterministic prompts by default, with optional small-model compilation and small-model commit/PR writing
 - Clean-tree, branch, commit, push, and optional `gh pr create` ownership
 - Frozen per-run configuration and non-waiting run locks
@@ -38,7 +39,3 @@ Observe remote checks after push and support explicit merge policies. v2 stops a
 ### Additional agent providers
 
 Implement provider adapters behind `AgentBackend`. All must honor abort signals and the existing work-packet/session contract.
-
-### Command allowlisting for model-authored test targets
-
-`task.testCommand` is planner-authored and executed with `shell: true` under the operator's environment. Allowlist it against config-owned commands and replace free-form strings with a scoped `testFilter` into a config template. See [Trust boundary](../packages/agent-harness/README.md#trust-boundary) in the harness README.

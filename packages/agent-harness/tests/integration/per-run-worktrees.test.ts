@@ -305,7 +305,7 @@ describe("per-run worktrees (Slice 3 — run-local evidence)", () => {
       config: {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
         workflow: { tdd: false },
-        commands: { test: 'node -e "process.exit(0)"', gates: [] },
+        commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
@@ -420,7 +420,7 @@ describe("per-run worktrees (Slice 3 — run-local evidence)", () => {
       config: {
         git: { enabled: true, baseBranch: "main" },
         workflow: { tdd: false },
-        commands: { test: 'node -e "process.exit(0)"', gates: [] },
+        commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
@@ -536,7 +536,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
           openPullRequest: false,
         },
         workflow: { tdd: false },
-        commands: { test: 'node -e "process.exit(0)"', gates: [] },
+        commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
@@ -617,7 +617,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
       config: {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness", push: false },
         workflow: { tdd: false },
-        commands: { test: 'node -e "process.exit(0)"', gates: [] },
+        commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
@@ -665,7 +665,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
       config: {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness", push: false },
         workflow: { tdd: false },
-        commands: { test: 'node -e "process.exit(0)"', gates: [] },
+        commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
@@ -728,7 +728,6 @@ function pendingTask(id: string, title: string): BuildTask {
     affectedPaths: [],
     blockedBy: [],
     tdd: false,
-    testCommand: 'node -e "process.exit(0)"',
     status: "pending",
     step: "pending",
     attempts: { tests: 0, implementation: 0, review: 0 },

@@ -51,7 +51,7 @@ describe("verification settings gate", () => {
         return {
           summary: "Use vitest for this package",
           configPatch: {
-            commands: { test: "npm run test:unit" },
+            commands: { verification: [{ id: "unit", command: "npm run test:unit", timeoutMs: 600_000 }] },
             workflow: { testPathPatterns: ["**/*.test.ts"] },
           },
         };
@@ -61,7 +61,7 @@ describe("verification settings gate", () => {
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
       agent: { promptBuilder: false } as never,
-      commands: { test: "npm test" } as never,
+      commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never,
     });
     const engine = new HarnessEngine(config, {
       backend,
@@ -80,7 +80,7 @@ describe("verification settings gate", () => {
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
     expect(state.verificationReady?.summary).toContain("vitest");
-    expect(state.verificationReady?.proposedPatch.commands?.test).toBe("npm run test:unit");
+    expect(state.verificationReady?.proposedPatch.commands?.verification?.[0]?.command).toBe("npm run test:unit");
     expect(profilerCalls).toBe(1);
 
     // Resume while gate is open must not re-invoke the profiler.
@@ -94,7 +94,7 @@ describe("verification settings gate", () => {
     expect(state.phase).toBe("planning");
     expect(state.verificationReady).toBeUndefined();
     expect(state.verificationConfirmedAt).toBeTruthy();
-    expect(engine.config.commands.test).toBe("npm run test:unit");
+    expect(engine.config.commands.verification[0]?.command).toBe("npm run test:unit");
     expect(engine.config.workflow.testPathPatterns).toEqual(["**/*.test.ts"]);
 
     const frozen = JSON.parse(
@@ -102,8 +102,8 @@ describe("verification settings gate", () => {
         path.join(root, ".agent-harness", "runs", state.runId, "config.json"),
         "utf8",
       ),
-    ) as { commands: { test: string }; workflow: { testPathPatterns: string[] } };
-    expect(frozen.commands.test).toBe("npm run test:unit");
+    ) as { commands: { verification: Array<{ command: string }> }; workflow: { testPathPatterns: string[] } };
+    expect(frozen.commands.verification[0]?.command).toBe("npm run test:unit");
     expect(frozen.workflow.testPathPatterns).toEqual(["**/*.test.ts"]);
     expect(state.configurationHash).toBe(configurationHash(engine.config));
 
@@ -127,14 +127,14 @@ describe("verification settings gate", () => {
       }),
       "project-profiler": () => ({
         summary: "Suggested change",
-        configPatch: { commands: { test: "pytest" } },
+        configPatch: { commands: { verification: [{ id: "test", command: "pytest", timeoutMs: 600_000 }] } },
       }),
       ...planPipelineHandlers(),
     });
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
       agent: { promptBuilder: false } as never,
-      commands: { test: "npm test" } as never,
+      commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never,
     });
     const engine = new HarnessEngine(config, {
       backend,
@@ -152,7 +152,7 @@ describe("verification settings gate", () => {
 
     state = await engine.confirmVerification(state.runId, { keepCurrent: true });
     expect(state.verificationConfirmedAt).toBeTruthy();
-    expect(engine.config.commands.test).toBe("npm test");
+    expect(engine.config.commands.verification[0]?.command).toBe("npm test");
     state = await engine.advance(state.runId);
     expect(state.verificationBaselinePassedAt).toBeTruthy();
     expect(state.planReady?.summary).toBeTruthy();
@@ -173,11 +173,11 @@ describe("verification settings gate", () => {
     ).toThrow();
     expect(
       VerificationSettingsPatchSchema.parse({
-        commands: { test: "npm test" },
+        commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] },
         workflow: { testPathPatterns: ["**/*.test.ts"] },
       }),
     ).toEqual({
-      commands: { test: "npm test" },
+      commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] },
       workflow: { testPathPatterns: ["**/*.test.ts"] },
     });
   });
@@ -196,7 +196,7 @@ describe("verification settings gate", () => {
         observedAllowTools = request.allowTools;
         return {
           summary: "No manifests; proposing npm from brief",
-          configPatch: { commands: { test: "npm test -- --run" } },
+          configPatch: { commands: { verification: [{ id: "test", command: "npm test -- --run", timeoutMs: 600_000 }] } },
         };
       },
       ...planPipelineHandlers(),
@@ -247,7 +247,7 @@ describe("verification settings gate", () => {
         return {
           summary: "Use Gradle wrapper tests",
           configPatch: {
-            commands: { test: "./gradlew test" },
+            commands: { verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }] },
             workflow: {
               testPathPatterns: ["**/src/main/test/**", "**/*Test.java"],
             },
@@ -321,14 +321,14 @@ describe("verification settings gate", () => {
       }),
       "project-profiler": () => ({
         summary: "Broken command",
-        configPatch: { commands: { test: "failing-baseline" } },
+        configPatch: { commands: { verification: [{ id: "test", command: "failing-baseline", timeoutMs: 600_000 }] } },
       }),
       ...planPipelineHandlers(),
     });
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
       agent: { promptBuilder: false } as never,
-      commands: { test: "npm test" } as never,
+      commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never,
     });
     const engine = new HarnessEngine(config, {
       backend,
@@ -378,11 +378,11 @@ describe("verification settings gate", () => {
     expect(state.verificationBaselineReady?.readyAt).toBe(before);
 
     state = await engine.retryVerificationBaseline(state.runId, {
-      testCommand: 'node -e "process.exit(0)"',
+      verificationCommand: 'node -e "process.exit(0)"',
     });
     expect(state.verificationBaselineReady).toBeUndefined();
     expect(state.verificationBaselinePassedAt).toBeTruthy();
-    expect(engine.config.commands.test).toBe('node -e "process.exit(0)"');
+    expect(engine.config.commands.verification[0]?.command).toBe('node -e "process.exit(0)"');
     expect(state.phase).toBe("planning");
 
     state = await engine.advance(state.runId);
@@ -402,7 +402,7 @@ describe("verification settings gate", () => {
       }),
       "project-profiler": () => ({
         summary: "Empty suite",
-        configPatch: { commands: { test: "vitest run" } },
+        configPatch: { commands: { verification: [{ id: "test", command: "vitest run", timeoutMs: 600_000 }] } },
       }),
       ...planPipelineHandlers(),
     });

@@ -376,7 +376,8 @@ export class PlanningService {
         confirmedBrief: state.reflectBrief?.confirmed,
         resolutions: state.grillResolutions,
         defaultTdd: this.ctx.config.workflow.tdd,
-        defaultTestCommand: this.ctx.config.commands.test,
+        verificationCommands: this.ctx.config.commands.verification,
+        testTargetTemplate: this.ctx.config.commands.testTargetTemplate,
       },
       expectedOutput: ISSUE_SLICER_EXPECTED_OUTPUT,
       schema: IssueSlicerOutputSchema,
@@ -396,7 +397,6 @@ export class PlanningService {
     const now = new Date().toISOString();
     const transition = applyPlan(state, output, now, {
       tdd: this.ctx.config.workflow.tdd,
-      testCommand: this.ctx.config.commands.test,
       branchName: state.branchName,
     });
 
@@ -519,13 +519,13 @@ export class PlanningService {
   }
 
   /**
-   * Retry the pre-planner commands.test baseline after a failure gate.
-   * Optionally edits commands.test (and project defaults) before re-running.
+   * Retry the pre-planner verification baseline after a failure gate.
+   * A command edit replaces the authoritative verification collection.
    */
   async retryVerificationBaseline(
     runId: string,
     options: {
-      testCommand?: string;
+      verificationCommand?: string;
       persistProjectDefaults?: boolean;
       configPath?: string;
     } = {},
@@ -537,10 +537,14 @@ export class PlanningService {
         throw new Error(`Run ${runId} is not awaiting a verification baseline retry`);
       }
 
-      const testCommand = options.testCommand?.trim();
+      const verificationCommand = options.verificationCommand?.trim();
       let reportPaths: string[] = [];
-      if (testCommand) {
-        const patch: VerificationSettingsPatch = { commands: { test: testCommand } };
+      if (verificationCommand) {
+        const patch: VerificationSettingsPatch = {
+          commands: {
+            verification: [{ id: "test", command: verificationCommand, timeoutMs: 10 * 60 * 1000 }],
+          },
+        };
         assertVerificationOnlyPatch(patch);
         if (options.persistProjectDefaults) {
           if (!options.configPath) {
@@ -551,7 +555,10 @@ export class PlanningService {
           if (relative) reportPaths = [relative];
         }
         const current = currentVerificationSettings(this.ctx);
-        if (testCommand !== current.commands.test) {
+        if (
+          current.commands.verification.length !== 1 ||
+          current.commands.verification[0]?.command !== verificationCommand
+        ) {
           state = await applyFrozenConfigRepair(this.ctx, state, patch as ProjectSettingsPatch, {
             persistedProjectDefaults: Boolean(options.persistProjectDefaults),
             reportPaths,
@@ -559,7 +566,7 @@ export class PlanningService {
           });
         }
       } else if (options.persistProjectDefaults) {
-        throw new Error("persistProjectDefaults requires testCommand when retrying the baseline");
+        throw new Error("persistProjectDefaults requires verificationCommand when retrying the baseline");
       }
 
       state = await this.ctx.store.record(
@@ -570,7 +577,7 @@ export class PlanningService {
         },
         "verification.baseline_retried",
         {
-          testCommand: testCommand ?? this.ctx.config.commands.test,
+          verificationCommand: verificationCommand ?? this.ctx.config.commands.verification[0]!.command,
           persistProjectDefaults: Boolean(options.persistProjectDefaults),
           reportPaths,
         },
@@ -628,18 +635,22 @@ export class PlanningService {
   }
 
   private async executeVerificationBaseline(runId: string): Promise<CommandEvidence> {
-    const command = this.ctx.config.commands.test;
-    const gate = this.ctx.config.commands.gates.find((item) => item.command === command);
-    const result = await this.ctx.deps.commands.run(command, {
-      cwd: this.ctx.paths.workspaceRoot,
-      timeoutMs: gate?.timeoutMs ?? 10 * 60 * 1000,
-      signal: this.ctx.signalFor(runId),
-      ...this.ctx.commandEnvironmentOptions(),
-    });
-    if (result.cancelled) {
-      throw new RunCancelledError("Command cancelled: verification:baseline");
+    const collected: CommandEvidence[] = [];
+    for (const verification of this.ctx.config.commands.verification) {
+      const result = await this.ctx.deps.commands.run(verification.command, {
+        cwd: this.ctx.paths.workspaceRoot,
+        timeoutMs: verification.timeoutMs,
+        signal: this.ctx.signalFor(runId),
+        ...this.ctx.commandEnvironmentOptions(),
+      });
+      if (result.cancelled) {
+        throw new RunCancelledError(`Command cancelled: verification:baseline:${verification.id}`);
+      }
+      const evidence = commandEvidence(`verification:baseline:${verification.id}`, result);
+      collected.push(evidence);
+      if (!isVerificationBaselineAcceptable(evidence)) return evidence;
     }
-    return commandEvidence("verification:baseline", result);
+    return collected.at(-1)!;
   }
 
   private async proposeVerification(
@@ -656,7 +667,7 @@ export class PlanningService {
       runId: state.runId,
       role: "project-profiler",
       objective:
-        "Propose the smallest verification settings patch (test command and test path patterns) for this repository",
+        "Propose the complete ordered verification commands, config-owned targeted-test template, and test path patterns for this repository",
       input: {
         confirmedBrief: state.reflectBrief?.confirmed,
         evidence,
@@ -667,27 +678,29 @@ export class PlanningService {
             "Evidence is thin, empty, or ambiguous. You may list and read repository files to choose verification settings.",
             "Do not create, edit, or delete project files — only inspect and propose settings.",
             "When the repository has no build manifests, infer a single stack from the confirmed brief and explain that inference in summary.",
-            "Use evidence.host.platform and evidence.host.isWindows when proposing commands.test.",
+            "Use evidence.host.platform and evidence.host.isWindows when proposing commands.verification.",
             "On Windows (win32), do not use ./ prefixes; prefer native Windows entrypoints from evidence when present.",
             "On POSIX hosts, prefer conventional POSIX invocation from evidence.",
             "Ground the command only in manifests, sample test paths, and currentSettings — never invent a stack.",
             "Return exactly one raw JSON object with top-level summary and configPatch fields; no Markdown or code fences.",
-            "configPatch may only include workflow.testPathPatterns and/or commands.test.",
-            "Propose a single test runner command — never invent shell pipelines.",
+            "configPatch may only include workflow.testPathPatterns and/or commands.verification and commands.testTargetTemplate.",
+            "commands.verification is the complete ordered list used at baseline and after implementation; replace stale commands from other ecosystems.",
+            "Use {filter} in commands.testTargetTemplate when the runner supports targeted tests; never invent shell pipelines.",
           ]
         : [
             "The work packet contains every fact needed. Do not call tools, inspect files, or search the repository.",
-            "Use evidence.host.platform and evidence.host.isWindows when proposing commands.test.",
+            "Use evidence.host.platform and evidence.host.isWindows when proposing commands.verification.",
             "On Windows (win32), do not use ./ prefixes; prefer native Windows entrypoints from evidence when present.",
             "On POSIX hosts, prefer conventional POSIX invocation from evidence.",
             "Ground the command only in manifests, sample test paths, and currentSettings — never invent a stack.",
             "Return exactly one raw JSON object with top-level summary and configPatch fields; no Markdown or code fences.",
-            "configPatch may only include workflow.testPathPatterns and/or commands.test.",
+            "configPatch may only include workflow.testPathPatterns and/or commands.verification and commands.testTargetTemplate.",
+            "commands.verification is the complete ordered list used at baseline and after implementation; replace stale commands from other ecosystems.",
             "Prefer the existing currentSettings when they already match the evidence.",
-            "Propose a single test runner command — never invent shell pipelines.",
+            "Use {filter} in commands.testTargetTemplate when the runner supports targeted tests; never invent shell pipelines.",
           ],
       expectedOutput:
-        '{"summary":"concise explanation","configPatch":{"workflow":{"testPathPatterns":[]},"commands":{"test":"…"}}}',
+        '{"summary":"concise explanation","configPatch":{"workflow":{"testPathPatterns":[]},"commands":{"test":"…","verification":[{"id":"test","command":"…","timeoutMs":600000}],"testTargetTemplate":"… {filter}"}}}',
       schema: ProjectProfilerOutputSchema,
       retrieval: false,
       buildPrompt: false,
@@ -733,7 +746,12 @@ function baselineFailureSummary(evidence: CommandEvidence): string {
 function currentVerificationSettings(ctx: ApplicationContext): VerificationSettingsSnapshot {
   return {
     workflow: { testPathPatterns: [...ctx.config.workflow.testPathPatterns] },
-    commands: { test: ctx.config.commands.test },
+    commands: {
+      verification: ctx.config.commands.verification.map((item) => ({ ...item })),
+      ...(ctx.config.commands.testTargetTemplate
+        ? { testTargetTemplate: ctx.config.commands.testTargetTemplate }
+        : {}),
+    },
   };
 }
 
@@ -753,7 +771,7 @@ function assertVerificationOnlyPatch(patch: VerificationSettingsPatch): void {
   }
   if (patch.commands) {
     for (const key of Object.keys(patch.commands)) {
-      if (key !== "test") {
+      if (key !== "verification" && key !== "testTargetTemplate") {
         throw new Error(`Verification patch rejects unrelated commands key: ${key}`);
       }
     }
@@ -771,8 +789,14 @@ function mergeVerificationPatch(
   patch: VerificationSettingsPatch,
 ): VerificationSettingsPatch {
   const next: VerificationSettingsPatch = {};
-  if (patch.commands?.test != null) {
-    next.commands = { test: patch.commands.test };
+  if (patch.commands) {
+    const verification = patch.commands.verification;
+    next.commands = {
+      ...(verification ? { verification } : {}),
+      ...(patch.commands.testTargetTemplate
+        ? { testTargetTemplate: patch.commands.testTargetTemplate }
+        : {}),
+    };
   }
   if (patch.workflow?.testPathPatterns != null) {
     next.workflow = { testPathPatterns: patch.workflow.testPathPatterns };
@@ -780,7 +804,12 @@ function mergeVerificationPatch(
   // Empty patch means keep current (caller handles no-op).
   if (!next.commands && !next.workflow) {
     return {
-      commands: { test: current.commands.test },
+      commands: {
+        verification: current.commands.verification,
+        ...(current.commands.testTargetTemplate
+          ? { testTargetTemplate: current.commands.testTargetTemplate }
+          : {}),
+      },
       workflow: { testPathPatterns: current.workflow.testPathPatterns },
     };
   }
@@ -791,7 +820,16 @@ function verificationPatchChangesSettings(
   current: VerificationSettingsSnapshot,
   patch: VerificationSettingsPatch,
 ): boolean {
-  if (patch.commands?.test != null && patch.commands.test !== current.commands.test) {
+  if (
+    patch.commands?.verification != null &&
+    JSON.stringify(patch.commands.verification) !== JSON.stringify(current.commands.verification)
+  ) {
+    return true;
+  }
+  if (
+    patch.commands?.testTargetTemplate != null &&
+    patch.commands.testTargetTemplate !== current.commands.testTargetTemplate
+  ) {
     return true;
   }
   if (patch.workflow?.testPathPatterns != null) {
@@ -814,7 +852,12 @@ function toProjectSettingsPatch(
 ): ProjectSettingsPatch {
   if (keepCurrent) {
     return {
-      commands: { test: current.commands.test },
+      commands: {
+        verification: current.commands.verification,
+        ...(current.commands.testTargetTemplate
+          ? { testTargetTemplate: current.commands.testTargetTemplate }
+          : {}),
+      },
       workflow: { testPathPatterns: current.workflow.testPathPatterns },
     };
   }

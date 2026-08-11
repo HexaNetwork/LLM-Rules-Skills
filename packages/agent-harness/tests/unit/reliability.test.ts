@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
+import { RepeatedTransitionCircuitBreaker } from "../../src/application/run-advancer.js";
 import { createHash } from "node:crypto";
 import { readFile, utimes, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
@@ -28,6 +29,16 @@ async function deadPid(): Promise<number> {
   await new Promise<void>((resolve) => child.once("exit", () => resolve()));
   return pid;
 }
+
+describe("repeated-transition circuit breaker", () => {
+  it("flags the second identical transition", () => {
+    const breaker = new RepeatedTransitionCircuitBreaker();
+    expect(() => breaker.observe("A", "B", "executing")).not.toThrow();
+    expect(() => breaker.observe("A", "B", "executing")).toThrow(
+      /Repeated workflow transition detected 2 times/,
+    );
+  });
+});
 
 describe("stall protection", () => {
   it("does not pass provider credentials to commands and redacts their output", async () => {
@@ -469,12 +480,12 @@ describe("failure classification", () => {
     const engine = new HarnessEngine(config, { backend });
     const state = await engine.start("hash drift");
 
-    engine.config.commands.test = "npm run changed-test";
+    engine.config.commands.verification = [{ id: "test", command: "npm run changed-test", timeoutMs: 600_000 }];
     const blocked = await engine.advance(state.runId);
 
     expect(blocked.phase).toBe("blocked");
     expect(blocked.blockedKind).toBe("config");
     expect(blocked.blockedRetriable).toBe(false);
-    expect(blocked.failure).toMatch(/Differing hashed policy vs frozen snapshot: commands\.test/i);
+    expect(blocked.failure).toMatch(/Differing hashed policy vs frozen snapshot: commands\.verification/i);
   });
 });

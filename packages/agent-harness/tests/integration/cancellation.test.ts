@@ -256,7 +256,7 @@ describe("out-of-band cancellation", () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       workflow: { ...fixtureConfig(root).workflow, tdd: false },
-      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
     });
     let calls = 0;
     const backend = createFakeBackend({
@@ -276,7 +276,6 @@ describe("out-of-band cancellation", () => {
       affectedPaths: [],
       blockedBy: [],
       tdd: false,
-      testCommand: 'node -e "process.exit(0)"',
       status: "pending" as const,
       step: "pending" as const,
       attempts: { tests: 0, implementation: 0, review: 0 },

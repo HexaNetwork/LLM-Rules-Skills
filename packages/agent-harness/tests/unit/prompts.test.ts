@@ -107,7 +107,7 @@ describe("prompt rendering", () => {
   it("requires project-profilers to propose verification settings only", () => {
     const profilerPacket: WorkPacket = { ...packet, role: "project-profiler" };
     const rendered = renderPrompt(profilerPacket);
-    expect(rendered).toContain("commands.test");
+    expect(rendered).toContain("commands.verification");
     expect(rendered).toContain("workflow.testPathPatterns");
     expect(rendered).toContain("Prefer the evidence packet when it is strong");
     expect(rendered).toContain("empty/greenfield");

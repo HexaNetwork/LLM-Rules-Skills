@@ -181,7 +181,8 @@ export const renderRunScript = `    function renderSidebar() {
       var commands = patch && patch.commands || {};
       var git = patch && patch.git || {};
       if (workflow.testPathPatterns) rows.push('<li>Recognize <code>' + esc(workflow.testPathPatterns.length) + ' test path pattern' + (workflow.testPathPatterns.length === 1 ? '' : 's') + '</code></li>');
-      if (commands.test) rows.push('<li>Use <code>' + esc(commands.test) + '</code> as the test command</li>');
+      if (commands.verification) rows.push('<li>Use <code>' + esc(commands.verification.length) + '</code> verification command' + (commands.verification.length === 1 ? '' : 's') + '</li>');
+      if (commands.testTargetTemplate) rows.push('<li>Use <code>' + esc(commands.testTargetTemplate) + '</code> for targeted tests</li>');
       if (workflow.maxGrillQuestionsPerEpisode != null) rows.push('<li>Set the grill-question limit to <code>' + esc(workflow.maxGrillQuestionsPerEpisode) + '</code></li>');
       if (workflow.staleAnswerMinutes != null) rows.push('<li>Set stale-answer timeout to <code>' + esc(workflow.staleAnswerMinutes) + ' minutes</code></li>');
       if (workflow.grillQuestionsPerBatch != null) rows.push('<li>Set grill questions per batch to <code>' + esc(workflow.grillQuestionsPerBatch) + '</code></li>');
@@ -406,25 +407,30 @@ export const renderRunScript = `    function renderSidebar() {
     function renderVerificationReady(gate) {
       var current = gate.currentSettings || {};
       var proposed = gate.proposedPatch || {};
-      var currentTest = (current.commands && current.commands.test) || "";
+      var currentVerification = ((current.commands && current.commands.verification) || []).map(function (item) { return item.command; }).join("\\n");
+      var currentTemplate = (current.commands && current.commands.testTargetTemplate) || "";
       var currentPatterns = ((current.workflow && current.workflow.testPathPatterns) || []).join("\\n");
-      var proposedTest = (proposed.commands && proposed.commands.test != null)
-        ? proposed.commands.test
-        : currentTest;
+      var proposedVerification = (proposed.commands && proposed.commands.verification != null)
+        ? proposed.commands.verification.map(function (item) { return item.command; }).join("\\n")
+        : currentVerification;
+      var proposedTemplate = (proposed.commands && proposed.commands.testTargetTemplate != null)
+        ? proposed.commands.testTargetTemplate
+        : currentTemplate;
       var proposedPatterns = (proposed.workflow && proposed.workflow.testPathPatterns)
         ? proposed.workflow.testPathPatterns.join("\\n")
         : currentPatterns;
       var draft = state.verificationDraft || {};
-      var testValue = draft.testCommand != null ? draft.testCommand : proposedTest;
+      var verificationValue = draft.verificationCommands != null ? draft.verificationCommands : proposedVerification;
+      var templateValue = draft.testTargetTemplate != null ? draft.testTargetTemplate : proposedTemplate;
       var patternsValue = draft.testPathPatterns != null ? draft.testPathPatterns : proposedPatterns;
       var persist = !!draft.persistProjectDefaults;
-      return '<div class="card question-card" id="verificationReadyCard"><div class="card-label">Confirm verification settings</div><p class="muted">Before planning, confirm how this run finds and runs tests. Edit the proposal or keep the current settings.</p><div class="resolution" style="margin:10px 0 12px"><strong>Summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div><div class="muted" style="margin-bottom:10px"><strong>Current</strong><div style="margin-top:4px">Test command: <code>' + esc(currentTest) + '</code></div><div style="margin-top:4px">Path patterns: <code>' + esc(currentPatterns.replace(/\\n/g, ", ") || "(none)") + '</code></div></div><form id="verificationReadyForm"><label class="muted" for="verificationTestCommand">Test command</label><input id="verificationTestCommand" type="text" value="' + attr(testValue) + '" style="width:100%;margin:4px 0 10px"><label class="muted" for="verificationTestPatterns">Test path patterns (one per line)</label><textarea id="verificationTestPatterns" rows="4" style="width:100%;margin:4px 0 10px">' + esc(patternsValue) + '</textarea><label style="display:flex;align-items:center;gap:8px;margin:8px 0 12px"><input type="checkbox" id="verificationPersistDefaults"' + (persist ? " checked" : "") + '> Also write these as project defaults</label><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="keepCurrentVerificationBtn">Keep current</button><button type="button" class="btn primary" id="confirmVerificationBtn">Confirm verification</button></div></form></div>';
+      return '<div class="card question-card" id="verificationReadyCard"><div class="card-label">Confirm verification settings</div><p class="muted">Before planning, confirm every command that must pass. Commands run in order.</p><div class="resolution" style="margin:10px 0 12px"><strong>Summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div><div class="muted" style="margin-bottom:10px"><strong>Current</strong><div style="margin-top:4px">Verification: <code>' + esc(currentVerification.replace(/\\n/g, ", ") || "(none)") + '</code></div><div style="margin-top:4px">Target template: <code>' + esc(currentTemplate || "(none)") + '</code></div><div style="margin-top:4px">Path patterns: <code>' + esc(currentPatterns.replace(/\\n/g, ", ") || "(none)") + '</code></div></div><form id="verificationReadyForm"><label class="muted" for="verificationCommands">Verification commands (one per line)</label><textarea id="verificationCommands" rows="4" style="width:100%;margin:4px 0 10px">' + esc(verificationValue) + '</textarea><label class="muted" for="verificationTargetTemplate">Targeted-test template (optional; use {filter})</label><input id="verificationTargetTemplate" type="text" value="' + attr(templateValue) + '" style="width:100%;margin:4px 0 10px"><label class="muted" for="verificationTestPatterns">Test path patterns (one per line)</label><textarea id="verificationTestPatterns" rows="4" style="width:100%;margin:4px 0 10px">' + esc(patternsValue) + '</textarea><label style="display:flex;align-items:center;gap:8px;margin:8px 0 12px"><input type="checkbox" id="verificationPersistDefaults"' + (persist ? " checked" : "") + '> Also write these as project defaults</label><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="keepCurrentVerificationBtn">Keep current</button><button type="button" class="btn primary" id="confirmVerificationBtn">Confirm verification</button></div></form></div>';
     }
 
     function renderVerificationBaselineReady(gate) {
       var evidence = gate.evidence || {};
       var draft = state.verificationBaselineDraft || {};
-      var testValue = draft.testCommand != null ? draft.testCommand : (evidence.command || "");
+      var testValue = draft.verificationCommand != null ? draft.verificationCommand : (evidence.command || "");
       var persist = !!draft.persistProjectDefaults;
       var output = [evidence.stderr, evidence.stdout].filter(Boolean).join("\\n").slice(-4000);
       return '<div class="card question-card" id="verificationBaselineReadyCard"><div class="card-label">Verification baseline failed</div><p class="muted">The confirmed test command did not pass before planning. Edit the command and retry, or cancel the run.</p><div class="resolution" style="margin:10px 0 12px"><strong>Summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div><div class="muted" style="margin-bottom:10px"><div>Command: <code>' + esc(evidence.command || "") + '</code></div><div style="margin-top:4px">Exit: <code>' + esc(String(evidence.exitCode == null ? "" : evidence.exitCode)) + '</code> · ' + (evidence.passed ? "PASS" : "FAIL") + (evidence.durationMs != null ? " · " + esc(String(evidence.durationMs)) + "ms" : "") + '</div></div>' + (output ? '<pre class="code-block" style="max-height:220px;overflow:auto;margin:0 0 12px">' + esc(output) + '</pre>' : '') + '<form id="verificationBaselineReadyForm"><label class="muted" for="verificationBaselineTestCommand">Test command</label><input id="verificationBaselineTestCommand" type="text" value="' + attr(testValue) + '" style="width:100%;margin:4px 0 10px"><label style="display:flex;align-items:center;gap:8px;margin:8px 0 12px"><input type="checkbox" id="verificationBaselinePersistDefaults"' + (persist ? " checked" : "") + '> Also write this as the project default test command</label><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn primary" id="retryVerificationBaselineBtn">Retry baseline</button></div></form></div>';

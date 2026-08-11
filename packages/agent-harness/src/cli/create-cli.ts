@@ -463,8 +463,8 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .command("confirm-verification")
     .description("Confirm or edit verification settings before planning")
     .requiredOption("--run-id <id>", "run id")
-    .option("--keep-current", "keep the run's current test command and path patterns", false)
-    .option("--test-command <command>", "override commands.test for this run")
+    .option("--keep-current", "keep the run's current verification commands and path patterns", false)
+    .option("--verification-command <command>", "replace verification commands with this command")
     .option(
       "--test-path-pattern <pattern>",
       "add a workflow.testPathPatterns entry (repeatable)",
@@ -482,7 +482,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       async (options: {
         runId: string;
         keepCurrent: boolean;
-        testCommand?: string;
+        verificationCommand?: string;
         testPathPattern: string[];
         persistProjectDefaults: boolean;
         config?: string;
@@ -493,7 +493,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           backend: dependencies.createBackend(),
         });
         const hasOverrides =
-          options.testCommand != null || options.testPathPattern.length > 0;
+          options.verificationCommand != null || options.testPathPattern.length > 0;
         if (options.keepCurrent && hasOverrides) {
           throw new Error("--keep-current cannot be combined with test command/pattern overrides");
         }
@@ -501,8 +501,16 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           options.keepCurrent || !hasOverrides
             ? undefined
             : {
-                ...(options.testCommand != null
-                  ? { commands: { test: options.testCommand } }
+                ...(options.verificationCommand != null
+                  ? {
+                      commands: {
+                        verification: [{
+                          id: "test",
+                          command: options.verificationCommand,
+                          timeoutMs: 10 * 60 * 1000,
+                        }],
+                      },
+                    }
                   : {}),
                 ...(options.testPathPattern.length > 0
                   ? { workflow: { testPathPatterns: options.testPathPattern } }
@@ -526,9 +534,9 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
 
   program
     .command("retry-verification-baseline")
-    .description("Retry the pre-planner commands.test baseline after a failure gate")
+    .description("Retry the pre-planner verification baseline after a failure gate")
     .requiredOption("--run-id <id>", "run id")
-    .option("--test-command <command>", "override commands.test for this run before retrying")
+    .option("--verification-command <command>", "replace verification commands before retrying")
     .option(
       "--persist-project-defaults",
       "also write the test command into the project config file",
@@ -539,7 +547,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .action(
       async (options: {
         runId: string;
-        testCommand?: string;
+        verificationCommand?: string;
         persistProjectDefaults: boolean;
         config?: string;
         advance: boolean;
@@ -548,11 +556,11 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         let opened = await openRunHarness(loaded.config, options.runId, {
           backend: dependencies.createBackend(),
         });
-        if (options.persistProjectDefaults && !options.testCommand) {
-          throw new Error("--persist-project-defaults requires --test-command");
+        if (options.persistProjectDefaults && !options.verificationCommand) {
+          throw new Error("--persist-project-defaults requires --verification-command");
         }
         let state = await opened.engine.retryVerificationBaseline(options.runId, {
-          testCommand: options.testCommand,
+          verificationCommand: options.verificationCommand,
           persistProjectDefaults: options.persistProjectDefaults,
           configPath: loaded.path,
         });
@@ -1080,7 +1088,7 @@ function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {
       `Retry with: agent-harness retry-verification-baseline --run-id ${state.runId}`,
     );
     console.log(
-      `Or edit the command: agent-harness retry-verification-baseline --run-id ${state.runId} --test-command "…"`,
+      `Or edit the command: agent-harness retry-verification-baseline --run-id ${state.runId} --verification-command "…"`,
     );
   }
   const question = state.questions.find((item) => item.id === state.activeQuestionId);

@@ -23,4 +23,4 @@ Cancellation previously shared the UI server's FIFO with every other mutation. W
 - Concurrent runs against one tree fail fast with a holder-aware message instead of interleaving git state. Stale holders are cleared with `agent-harness unlock --repo`.
 - Unattended runs have a hard spend stop that survives restarts and includes failed attempts and provider retries. Budget recovery is an explicit raise-and-retry, not an edit to the project config alone.
 - Implementation repair reuses exploration and prompt-cache where the provider allows it, without weakening independent review.
-- Shell execution of planner-authored `task.testCommand` remains a separate trust-boundary risk; see the harness README [Trust boundary](../../packages/agent-harness/README.md#trust-boundary) and the deferred allowlisting item on the roadmap.
+- Planner-authored shell commands have since been removed: verification is config-owned and per-task targeting is a validated filter applied to a config-owned template.

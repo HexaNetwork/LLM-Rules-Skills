@@ -52,6 +52,47 @@ const REFLECT_OUTPUT = {
 };
 
 describe("external harness home", () => {
+  it("deep-merges sparse home and project policy without masking home defaults", async () => {
+    const homeRoot = await tempDir("ah-layer-home-");
+    const repo = await tempDir("ah-layer-repo-");
+    await initRepo(repo);
+    const home = resolveHarnessHome({ homeRoot });
+    await mkdir(home.homeRoot, { recursive: true });
+    await writeFile(
+      path.join(home.homeRoot, "config.yaml"),
+      [
+        "version: 2",
+        "workflow:",
+        "  maxGrillQuestionsPerEpisode: 9",
+        "commands:",
+        "  verification:",
+        "    - id: home-test",
+        "      command: home verify",
+        "      timeoutMs: 1234",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const lookup = await new ProjectRegistry(home).add({ repository: repo, home });
+    await writeFile(
+      lookup.paths.projectConfigPath,
+      "version: 2\nworkflow:\n  staleAnswerMinutes: 77\n",
+      "utf8",
+    );
+
+    const loaded = await loadExternalProjectConfig({
+      projectKey: lookup.registration.projectKey,
+      home,
+      allowLegacy: false,
+    });
+
+    expect(loaded.config.workflow.maxGrillQuestionsPerEpisode).toBe(9);
+    expect(loaded.config.workflow.staleAnswerMinutes).toBe(77);
+    expect(loaded.config.commands.verification).toEqual([
+      { id: "home-test", command: "home verify", timeoutMs: 1234 },
+    ]);
+  });
+
   it("starts a run with no harness-owned files under the control root", async () => {
     await assertGitWorktreeCapability();
     const homeRoot = await tempDir("ah-ext-home-");

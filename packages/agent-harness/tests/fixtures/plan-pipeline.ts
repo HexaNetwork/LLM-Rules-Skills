@@ -33,7 +33,6 @@ export const SLICER_ONE_TASK = {
       acceptanceCriteria: ["Greeting is casual"],
       blockedBy: [] as string[],
       tdd: false,
-      testCommand: 'node -e "process.exit(0)"',
     },
   ],
   proposedInstalls: [] as Array<{

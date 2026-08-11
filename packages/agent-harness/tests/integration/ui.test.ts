@@ -78,7 +78,7 @@ describe("central dashboard", () => {
       settings: { editable: boolean; definitions: unknown[]; values: Record<string, number> };
     };
     expect(initialBody.settings.editable).toBe(true);
-    expect(initialBody.settings.definitions).toHaveLength(8);
+    expect(initialBody.settings.definitions).toHaveLength(9);
     const byKey = Object.fromEntries(
       (initialBody.settings.definitions as Array<{ key: string; appliesTo: string }>).map((d) => [
         d.key,
@@ -87,7 +87,8 @@ describe("central dashboard", () => {
     );
     expect(byKey["workflow.testPathPatterns"]).toBe("new_runs");
     expect(byKey["git.ignoredArtifactPatterns"]).toBe("new_runs");
-    expect(byKey["commands.test"]).toBe("new_runs");
+    expect(byKey["commands.verification"]).toBe("new_runs");
+    expect(byKey["commands.testTargetTemplate"]).toBe("new_runs");
     expect(byKey["workflow.maxGrillQuestionsPerEpisode"]).toBe("new_runs");
     expect(initialBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(5);
     expect(initialBody.settings.values["workflow.staleAnswerMinutes"]).toBe(30);
@@ -97,7 +98,7 @@ describe("central dashboard", () => {
     expect(initialBody.settings.values["workflow.testPathPatterns"]).toEqual(
       expect.arrayContaining(["tests/**", "src/test/**"]),
     );
-    expect(initialBody.settings.values["commands.test"]).toBe('node -e "process.exit(0)"');
+    expect(initialBody.settings.values["commands.verification"]).toEqual(['node -e "process.exit(0)"']);
     expect(initialBody.settings.values["git.ignoredArtifactPatterns"]).toEqual(
       expect.arrayContaining(["**/obj/", "**/bin/", "*.pdb"]),
     );
@@ -136,7 +137,8 @@ describe("central dashboard", () => {
           "workflow.maxGrillQuestionsPerEpisode": 10,
           "workflow.staleAnswerMinutes": 45,
           "workflow.testPathPatterns": ["modules/**/src/test/**", "**/*Test.java"],
-          "commands.test": "./gradlew test",
+          "commands.verification": ["./gradlew test"],
+          "commands.testTargetTemplate": "./gradlew test --tests {filter}",
         },
       },
     });
@@ -157,10 +159,10 @@ describe("central dashboard", () => {
       "modules/**/src/test/**",
       "**/*Test.java",
     ]);
-    expect(updatedBody.settings.values["commands.test"]).toBe("./gradlew test");
+    expect(updatedBody.settings.values["commands.verification"]).toEqual(["./gradlew test"]);
     expect(await readFile(configPath, "utf8")).toContain("maxGrillQuestionsPerEpisode: 10");
     expect(await readFile(configPath, "utf8")).toContain("- modules/**/src/test/**");
-    expect(await readFile(configPath, "utf8")).toContain("test: ./gradlew test");
+    expect(await readFile(configPath, "utf8")).toContain("command: ./gradlew test");
 
     const bootstrap = await request(ui, "/api/bootstrap");
     const bootstrapBody = (await bootstrap.json()) as {
@@ -210,7 +212,10 @@ describe("central dashboard", () => {
         "version: 2",
         "repositoryRoot: .",
         "commands:",
-        '  test: node -e "process.exit(0)"',
+        "  verification:",
+        "    - id: test",
+        '      command: node -e "process.exit(0)"',
+        "      timeoutMs: 600000",
         "workflow:",
         "  maxGrillQuestionsPerEpisode: 5",
         "  staleAnswerMinutes: 30",
@@ -243,7 +248,7 @@ describe("central dashboard", () => {
           "workflow.maxGrillQuestionsPerEpisode": 5,
           "workflow.staleAnswerMinutes": 30,
           "workflow.testPathPatterns": ["modules/**/src/test/**"],
-          "commands.test": 'node -e "process.exit(0)"',
+          "commands.verification": ['node -e "process.exit(0)"'],
         },
       },
     });
@@ -666,7 +671,6 @@ describe("central dashboard", () => {
             acceptanceCriteria: ["Works"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -927,7 +931,6 @@ describe("central dashboard", () => {
             acceptanceCriteria: ["The dashboard shows the feature"],
             blockedBy: [],
             tdd: false,
-            testCommand: "node -e \"process.exit(0)\"",
           },
         ],
         proposedInstalls: [],
@@ -1171,7 +1174,7 @@ describe("central dashboard", () => {
     const config = fixtureConfig(root, {
       git: { enabled: true, ignoredArtifactPatterns: [] } as never,
       workflow: { ...fixtureConfig(root).workflow, tdd: false },
-      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
       knowledge: {
         ...fixtureConfig(root).knowledge,
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
@@ -1200,7 +1203,6 @@ describe("central dashboard", () => {
           affectedPaths: [],
           blockedBy: [],
           tdd: false,
-          testCommand: 'node -e "process.exit(0)"',
           status: "pending" as const,
           step: "pending" as const,
           attempts: { tests: 0, implementation: 0, review: 0 },

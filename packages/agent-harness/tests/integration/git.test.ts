@@ -85,7 +85,7 @@ describe("reviewTask packet", () => {
     const config = fixtureConfig(root, {
       agent: { promptBuilder: false } as never,
       workflow: { ...fixtureConfig(root).workflow, tdd: false },
-      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
       git: { enabled: true } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
@@ -135,7 +135,7 @@ describe("reviewTask packet", () => {
     const config = fixtureConfig(root, {
       agent: { promptBuilder: false } as never,
       workflow: { ...fixtureConfig(root).workflow, tdd: false },
-      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
       git: { enabled: true } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
@@ -404,7 +404,7 @@ describe("working-tree divergence guard", () => {
     await initGitRepo(root);
     const config = fixtureConfig(root, {
       workflow: { ...fixtureConfig(root).workflow, tdd: false },
-      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
       git: { enabled: true } as never,
     });
     const backend = createFakeBackend({
@@ -437,7 +437,7 @@ describe("working-tree divergence guard", () => {
     await writeFile(path.join(root, "src", "a.ts"), "export const a = 1;\n", "utf8");
     const config = fixtureConfig(root, {
       workflow: { ...fixtureConfig(root).workflow, tdd: false },
-      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
       git: { enabled: true } as never,
     });
     const backend = createFakeBackend({
@@ -493,7 +493,7 @@ describe("working-tree divergence guard", () => {
 
     const config = fixtureConfig(root, {
       workflow: { ...fixtureConfig(root).workflow, tdd: false },
-      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
       git: { enabled: true } as never,
     });
     const backend = createFakeBackend({
@@ -536,7 +536,7 @@ describe("working-tree divergence guard", () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       workflow: { ...fixtureConfig(root).workflow, tdd: false },
-      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
       git: { enabled: false } as never,
     });
     const backend = createFakeBackend({
@@ -579,7 +579,6 @@ function pendingTask(id: string, title: string): BuildTask {
     affectedPaths: [],
     blockedBy: [],
     tdd: false,
-    testCommand: 'node -e "process.exit(0)"',
     status: "pending",
     step: "pending",
     attempts: { tests: 0, implementation: 0, review: 0 },

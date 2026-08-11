@@ -59,7 +59,6 @@ describe("createScriptedBackend", () => {
               acceptanceCriteria: ["works"],
               blockedBy: [],
               tdd: true,
-              testCommand: 'node -e "process.exit(0)"',
             },
           ],
           proposedInstalls: [],
@@ -70,7 +69,6 @@ describe("createScriptedBackend", () => {
         output: {
           summary: "RED",
           testFiles: ["tests/greet.test.ts"],
-          testCommand: 'node -e "process.exit(1)"',
         },
       },
       {

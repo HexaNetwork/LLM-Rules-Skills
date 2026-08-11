@@ -94,14 +94,3 @@ export function normalizeFrozenRunConfig(raw: unknown): HarnessConfig {
   }
   return HarnessConfigSchema.parse(candidate);
 }
-
-/**
- * Apply live project policy overlays that are intentionally not frozen
- * (and omitted from configurationHash).
- */
-export function applyLiveProjectPolicy(
-  frozen: HarnessConfig,
-  _projectConfig: HarnessConfig,
-): HarnessConfig {
-  return frozen;
-}

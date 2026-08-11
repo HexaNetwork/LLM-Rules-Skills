@@ -75,23 +75,26 @@ export async function loadExternalProjectConfig(
     );
   }
   const projectConfig = (await readOptionalYamlConfig(lookup.paths.projectConfigPath)) ?? {};
+  const builtIn = yaml.load(defaultConfigYaml()) as Record<string, unknown>;
+  const layered = deepMerge(deepMerge(builtIn, homeDefaults ?? {}), projectConfig);
+  const withOverrides = deepMerge(layered, (options.overrides ?? {}) as Record<string, unknown>);
 
   const existingSources =
     isRecord(projectConfig.knowledge) && Array.isArray(projectConfig.knowledge.sources)
       ? (projectConfig.knowledge.sources as unknown[])
       : undefined;
   const stripped = stripLegacyGuidanceSources(existingSources);
+  const mergedKnowledge = isRecord(withOverrides.knowledge) ? withOverrides.knowledge : {};
   const homeKnowledge = isRecord(homeDefaults?.knowledge) ? homeDefaults.knowledge : {};
-  const projectKnowledge = isRecord(projectConfig.knowledge) ? projectConfig.knowledge : {};
   const homeGuidance = isRecord(homeKnowledge.guidance) ? homeKnowledge.guidance : {};
+  const projectKnowledge = isRecord(projectConfig.knowledge) ? projectConfig.knowledge : {};
+  const mergedGuidance = isRecord(mergedKnowledge.guidance) ? mergedKnowledge.guidance : {};
   const projectGuidance = isRecord(projectKnowledge.guidance) ? projectKnowledge.guidance : {};
 
   const merged = HarnessConfigSchema.parse({
-    ...homeDefaults,
-    ...projectConfig,
+    ...withOverrides,
     knowledge: {
-      ...homeKnowledge,
-      ...projectKnowledge,
+      ...mergedKnowledge,
       sources:
         stripped.sources && stripped.sources.length > 0
           ? stripped.sources
@@ -100,8 +103,7 @@ export async function loadExternalProjectConfig(
               { path: "docs", scope: "project", visibility: "private" },
             ],
       guidance: {
-        ...homeGuidance,
-        ...projectGuidance,
+        ...mergedGuidance,
         projectRoot:
           (typeof projectGuidance.projectRoot === "string" && projectGuidance.projectRoot.trim()) ||
           (typeof homeGuidance.projectRoot === "string" && homeGuidance.projectRoot.trim()) ||
@@ -112,9 +114,7 @@ export async function loadExternalProjectConfig(
           stripped.sharedRoot ||
           home.sharedGuidanceRoot,
       },
-      ...(options.overrides?.knowledge ?? {}),
     },
-    ...(options.overrides ?? {}),
     repositoryRoot: lookup.paths.controlRoot,
     stateDirectory: lookup.paths.projectStateRoot,
     worktreeRoot: lookup.registration.worktreeRoot ?? lookup.paths.worktreeRoot,
@@ -137,28 +137,39 @@ function externalProjectConfigYaml(options: {
   sharedGuidanceRoot: string;
   worktreeRoot: string;
 }): string {
-  // Familiar defaults, but guidance and path roots live outside the repository.
-  const parsed = HarnessConfigSchema.parse(yaml.load(defaultConfigYaml()));
+  // Keep project files sparse so harness-home defaults remain effective.
   const stamped = {
-    ...parsed,
+    version: 2,
     repositoryRoot: ".",
     // Load-time stamping replaces this with the absolute project state root.
     stateDirectory: ".",
     worktreeRoot: options.worktreeRoot,
     knowledge: {
-      ...parsed.knowledge,
       sources: [
         { path: "README.md", scope: "project", visibility: "private" },
         { path: "docs", scope: "project", visibility: "private" },
       ],
       guidance: {
-        ...parsed.knowledge.guidance,
         projectRoot: options.projectGuidanceRoot,
         sharedRoot: options.sharedGuidanceRoot,
       },
     },
   };
   return yaml.dump(stamped, { noRefs: true, lineWidth: -1 });
+}
+
+function deepMerge(
+  base: Record<string, unknown>,
+  overlay: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(overlay)) {
+    const prior = merged[key];
+    merged[key] = isRecord(prior) && isRecord(value)
+      ? deepMerge(prior, value)
+      : value;
+  }
+  return merged;
 }
 
 

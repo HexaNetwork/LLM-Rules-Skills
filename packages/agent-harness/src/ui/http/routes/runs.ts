@@ -427,15 +427,14 @@ export async function handleRunsRoutes(
       const configRelative = path
         .relative(updated.config.repositoryRoot, ctx.configPath)
         .replaceAll("\\", "/");
-      const liveConfig = await loadRunConfig(updated.config, runId);
-      const liveEngine = new HarnessEngine(liveConfig, { backend: ctx.backend });
       ctx.jobs.enqueue(runId, action, async () => {
+        await engine.setIgnoredArtifactPatterns(runId, merged);
         // Persist the config edit as a reported path on the active task so later
         // commitTask / divergence checks treat it as intentional harness work.
-        await liveEngine.acceptTree(runId, {
+        await engine.acceptTree(runId, {
           reportPaths: configRelative && !configRelative.startsWith("..") ? [configRelative] : [],
         });
-        await liveEngine.advance(runId);
+        await engine.advance(runId);
       });
     } else if (action === "resolve_installs") {
       const accepted = optionalStringArray(body.accepted, "accepted", 200) ?? [];
@@ -478,7 +477,7 @@ export async function handleRunsRoutes(
           persistProjectDefaults,
           configPath: ctx.configPath,
         });
-        // Reload frozen config so the planner sees updated commands.test / patterns.
+        // Reload frozen config so the planner sees updated verification policy.
         const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId);
         await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
       });
@@ -488,15 +487,15 @@ export async function handleRunsRoutes(
       if (persistProjectDefaults && !ctx.configPath) {
         throw new HttpError(400, "Cannot persist project defaults without a config file path");
       }
-      const testCommand = optionalString(body.testCommand, "testCommand", 2_000);
+      const verificationCommand = optionalString(body.verificationCommand, "verificationCommand", 2_000);
       ctx.jobs.enqueue(runId, action, async () => {
         ctx.jobs.setDetail(runId, "Retrying the verification baseline");
         await engine.retryVerificationBaseline(runId, {
-          testCommand,
+          verificationCommand,
           persistProjectDefaults,
           configPath: ctx.configPath,
         });
-        // Reload frozen config in case the operator edited commands.test.
+        // Reload frozen config in case the operator edited verification commands.
         const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId);
         await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
       });

@@ -19,6 +19,7 @@ const terminal = isTerminalPhase;
 import { CONFIG_FAILURE_PATTERN, HarnessFailure, RunCancelledError } from "../errors.js";
 import { commandEvidence, recentEvidenceOutput } from "../commands.js";
 import { compactDomainSeed } from "../knowledge.js";
+import { prepareGraphifyForRun } from "../graphify.js";
 import { taskFrontier } from "../tracker.js";
 import type { ApplicationContext } from "./application-context.js";
 import type { InvocationKind } from "./agent-activity.js";
@@ -302,7 +303,12 @@ export class TaskExecutionService {
   }
 
   async implementTask(state: RunState, task: BuildTask): Promise<RunState> {
-    if (task.tdd && task.attempts.implementation > 0) {
+    const latestBeforeResume = task.evidence.at(-1);
+    if (
+      task.tdd &&
+      task.attempts.implementation > 0 &&
+      !latestBeforeResume?.purpose.startsWith("verification:")
+    ) {
       const recovery = await this.runTargetedTest(state.runId, task, "tdd:resume-check");
       if (recovery.passed) {
         return this.updateTask(
@@ -479,17 +485,17 @@ export class TaskExecutionService {
 
   async verifyTask(state: RunState, task: BuildTask): Promise<RunState> {
     const evidence = [];
-    for (const gate of this.ctx.config.commands.gates) {
-      const result = await this.ctx.deps.commands.run(gate.command, {
+    for (const verification of this.ctx.config.commands.verification) {
+      const result = await this.ctx.deps.commands.run(verification.command, {
         cwd: this.ctx.paths.workspaceRoot,
-        timeoutMs: gate.timeoutMs,
+        timeoutMs: verification.timeoutMs,
         signal: this.ctx.signalFor(state.runId),
         ...this.ctx.commandEnvironmentOptions(),
       });
       if (result.cancelled) {
-        throw new RunCancelledError(`Gate ${gate.id} cancelled`);
+        throw new RunCancelledError(`Verification ${verification.id} cancelled`);
       }
-      evidence.push(commandEvidence(`gate:${gate.id}`, result));
+      evidence.push(commandEvidence(`verification:${verification.id}`, result));
     }
     const passed = evidence.every((item) => item.passed);
     const canRepair = task.attempts.implementation < this.ctx.config.workflow.maxImplementationAttempts;
@@ -713,11 +719,29 @@ export class TaskExecutionService {
   }
 
   async runTargetedTest(runId: string, task: BuildTask, purpose: string) {
-    const command = task.testCommand ?? this.ctx.config.commands.test;
-    const gate = this.ctx.config.commands.gates.find((item) => item.command === command);
+    const primary = this.ctx.config.commands.verification[0]!;
+    let command = primary.command;
+    if (task.testFilter) {
+      const template = this.ctx.config.commands.testTargetTemplate;
+      if (!template || !template.includes("{filter}")) {
+        throw new HarnessFailure(
+          `Task ${task.id} requires test filter ${task.testFilter}, but commands.testTargetTemplate is not configured`,
+          "config",
+          false,
+        );
+      }
+      if (!/^[A-Za-z0-9_.$*?/:\\[\]{}-]+$/.test(task.testFilter)) {
+        throw new HarnessFailure(
+          `Task ${task.id} has an unsafe test filter`,
+          "config",
+          false,
+        );
+      }
+      command = template.replaceAll("{filter}", task.testFilter);
+    }
     const result = await this.ctx.deps.commands.run(command, {
       cwd: this.ctx.paths.workspaceRoot,
-      timeoutMs: gate?.timeoutMs ?? 10 * 60 * 1000,
+      timeoutMs: primary.timeoutMs,
       signal: this.ctx.signalFor(runId),
       ...this.ctx.commandEnvironmentOptions(),
     });
@@ -838,8 +862,30 @@ export class TaskExecutionService {
         { alreadyLocked: true },
       );
       state = result.state;
+      if (enabled) {
+        await prepareGraphifyForRun(this.ctx.config, this.ctx.graphifyRunner, this.ctx.paths);
+      }
       await this.ctx.syncArtifacts(state);
       return state;
+    });
+  }
+
+  async setIgnoredArtifactPatterns(runId: string, patterns: string[]): Promise<RunState> {
+    return this.ctx.store.withLock(runId, async () => {
+      const state = await this.ctx.store.load(runId);
+      if (state.phase === "completed" || state.phase === "cancelled") {
+        throw new Error(`Run ${runId} is already ${state.phase}`);
+      }
+      const result = await updateRunConfig(
+        this.ctx,
+        state.runId,
+        state.configRevision ?? 0,
+        { git: { ignoredArtifactPatterns: unique(patterns) } },
+        { reason: "ignored-artifacts", detail: { count: unique(patterns).length } },
+        { alreadyLocked: true, allowNoChange: true },
+      );
+      await this.ctx.syncArtifacts(result.state);
+      return result.state;
     });
   }
 

@@ -84,8 +84,7 @@ export async function writeAcceptanceConfig(
       ...(overrides.workflow ?? {}),
     },
     commands: {
-      test: 'node -e "process.exit(0)"',
-      gates: [],
+      verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }],
       ...(overrides.commands ?? {}),
     },
     git: {

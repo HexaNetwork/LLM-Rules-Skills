@@ -82,15 +82,14 @@ workflow:
     - src/test/**
 
 commands:
-  test: npm test -- --run
+  # Authoritative ordered commands used by both the pre-planning baseline and
+  # post-implementation verification. The repository profiler replaces this list.
+  verification:
+    - id: test
+      command: npm test -- --run
   # Child commands receive only runtime variables by default. Add only the
   # non-secret environment variable names a project command genuinely needs.
   passEnv: []
-  gates:
-    - id: typecheck
-      command: npm run typecheck
-    - id: test
-      command: npm test -- --run
 
 git:
   enabled: true

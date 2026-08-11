@@ -10,7 +10,7 @@ import type { VerificationEvidence, VerificationSettingsSnapshot } from "../../s
 
 const SETTINGS: VerificationSettingsSnapshot = {
   workflow: { testPathPatterns: ["**/*.test.ts"] },
-  commands: { test: "npm test" },
+  commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] },
 };
 
 describe("collectVerificationEvidence", () => {

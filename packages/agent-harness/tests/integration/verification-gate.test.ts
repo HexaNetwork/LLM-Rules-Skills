@@ -32,7 +32,7 @@ describe("verification gate integration", () => {
     fixture = undefined;
   });
 
-  it("profiler proposal updates frozen config and planner defaultTestCommand", async () => {
+  it("profiler proposal updates frozen config and planner verification commands", async () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
@@ -41,8 +41,7 @@ describe("verification gate integration", () => {
           testPathPatterns: ["**/*.spec.ts"],
         },
         commands: {
-          test: "npm test",
-          gates: [],
+          verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }],
         },
         git: { enabled: false },
         knowledge: {
@@ -73,7 +72,7 @@ describe("verification gate integration", () => {
         output: {
           summary: "Prefer the unit vitest script and tighten patterns",
           configPatch: {
-            commands: { test: "npm run test:unit" },
+            commands: { verification: [{ id: "unit", command: "npm run test:unit", timeoutMs: 600_000 }] },
             workflow: { testPathPatterns: ["**/*.test.ts", "tests/**/*.ts"] },
           },
         },
@@ -121,7 +120,7 @@ describe("verification gate integration", () => {
     state = await engine.confirmGrill(state.runId);
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
-    expect(state.verificationReady?.proposedPatch.commands?.test).toBe("npm run test:unit");
+    expect(state.verificationReady?.proposedPatch.commands?.verification?.[0]?.command).toBe("npm run test:unit");
 
     const profilerCall = scripted.calls.find((call) => call.role === "project-profiler");
     expect(profilerCall).toBeTruthy();
@@ -133,7 +132,7 @@ describe("verification gate integration", () => {
     state = await engine.confirmVerification(state.runId, {
       patch: state.verificationReady!.proposedPatch,
     });
-    expect(engine.config.commands.test).toBe("npm run test:unit");
+    expect(engine.config.commands.verification[0]?.command).toBe("npm run test:unit");
     expect(engine.config.workflow.testPathPatterns).toEqual([
       "**/*.test.ts",
       "tests/**/*.ts",
@@ -144,8 +143,8 @@ describe("verification gate integration", () => {
         path.join(fixture.root, ".agent-harness", "runs", state.runId, "config.json"),
         "utf8",
       ),
-    ) as { commands: { test: string }; workflow: { testPathPatterns: string[] } };
-    expect(frozen.commands.test).toBe("npm run test:unit");
+    ) as { commands: { verification: Array<{ command: string }> }; workflow: { testPathPatterns: string[] } };
+    expect(frozen.commands.verification[0]?.command).toBe("npm run test:unit");
 
     state = await engine.advance(state.runId);
     expect(state.verificationBaselinePassedAt).toBeTruthy();
@@ -166,7 +165,7 @@ describe("verification gate integration", () => {
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
         workflow: { tdd: false },
-        commands: { test: 'node -e "process.exit(0)"', gates: [] },
+        commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         git: { enabled: false },
         knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
       },
@@ -225,7 +224,7 @@ describe("verification gate integration", () => {
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
         workflow: { tdd: false },
-        commands: { test: "npm test", gates: [] },
+        commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] },
         git: { enabled: false },
         knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
       },
@@ -240,7 +239,7 @@ describe("verification gate integration", () => {
         role: "project-profiler",
         output: {
           summary: "Use failing suite",
-          configPatch: { commands: { test: "failing-baseline" } },
+          configPatch: { commands: { verification: [{ id: "test", command: "failing-baseline", timeoutMs: 600_000 }] } },
         },
       },
       { role: "planner", output: HIGH_LEVEL_PLAN },
@@ -302,7 +301,7 @@ describe("verification gate integration", () => {
     expect(state.verificationBaselineReady?.evidence.exitCode).toBe(1);
 
     state = await engine.retryVerificationBaseline(state.runId, {
-      testCommand: 'node -e "process.exit(0)"',
+      verificationCommand: 'node -e "process.exit(0)"',
     });
     expect(state.verificationBaselinePassedAt).toBeTruthy();
     state = await engine.advance(state.runId);

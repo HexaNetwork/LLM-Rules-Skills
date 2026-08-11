@@ -152,7 +152,7 @@ export class HarnessEngine {
   retryVerificationBaseline(
     runId: string,
     options?: {
-      testCommand?: string;
+      verificationCommand?: string;
       persistProjectDefaults?: boolean;
       configPath?: string;
     },
@@ -225,6 +225,10 @@ export class HarnessEngine {
 
   setGraphify(runId: string, enabled: boolean): Promise<RunState> {
     return this.execution.setGraphify(runId, enabled);
+  }
+
+  setIgnoredArtifactPatterns(runId: string, patterns: string[]): Promise<RunState> {
+    return this.execution.setIgnoredArtifactPatterns(runId, patterns);
   }
 
 }

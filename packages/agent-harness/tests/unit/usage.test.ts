@@ -101,7 +101,7 @@ describe("run usage accrual and cost ceiling", () => {
         maxRunTokens: 100,
         tdd: false,
       },
-      commands: { test: 'node -e "process.exit(0)"', gates: [] },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
     });
     let implementerCalls = 0;
     const backend = createFakeBackend({
@@ -121,7 +121,6 @@ describe("run usage accrual and cost ceiling", () => {
       affectedPaths: [],
       blockedBy: [],
       tdd: false,
-      testCommand: 'node -e "process.exit(0)"',
       status: "pending" as const,
       step: "pending" as const,
       attempts: { tests: 0, implementation: 0, review: 0 },

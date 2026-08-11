@@ -363,13 +363,18 @@ export const eventsScript = `    async function waitForJob(runId) {
         var draft = state.verificationDraft || {};
         var current = (gate && gate.currentSettings) || {};
         var proposed = (gate && gate.proposedPatch) || {};
-        var fallbackTest = (proposed.commands && proposed.commands.test != null)
-          ? proposed.commands.test
-          : ((current.commands && current.commands.test) || '');
+        var fallbackVerification = (proposed.commands && proposed.commands.verification != null)
+          ? proposed.commands.verification
+          : ((current.commands && current.commands.verification) || []);
+        var fallbackTemplate = (proposed.commands && proposed.commands.testTargetTemplate != null)
+          ? proposed.commands.testTargetTemplate
+          : ((current.commands && current.commands.testTargetTemplate) || '');
         var fallbackPatterns = (proposed.workflow && proposed.workflow.testPathPatterns)
           ? proposed.workflow.testPathPatterns
           : ((current.workflow && current.workflow.testPathPatterns) || []);
-        var testCommand = (draft.testCommand != null ? draft.testCommand : fallbackTest).trim();
+        var verificationRaw = draft.verificationCommands != null ? draft.verificationCommands : fallbackVerification.map(function (item) { return item.command; }).join('\\n');
+        var verificationCommands = String(verificationRaw).split(/\\r?\\n/).map(function (line) { return line.trim(); }).filter(Boolean);
+        var testTargetTemplate = String(draft.testTargetTemplate != null ? draft.testTargetTemplate : fallbackTemplate).trim();
         var patternsRaw = draft.testPathPatterns != null
           ? draft.testPathPatterns
           : fallbackPatterns.join('\\n');
@@ -378,7 +383,10 @@ export const eventsScript = `    async function waitForJob(runId) {
         var body = { keepCurrent: keepCurrent, persistProjectDefaults: persistProjectDefaults };
         if (!keepCurrent) {
           body.patch = {
-            commands: testCommand ? { test: testCommand } : undefined,
+            commands: verificationCommands.length ? {
+              verification: verificationCommands.map(function (command, index) { return { id: 'verify-' + (index + 1), command: command, timeoutMs: 600000 }; }),
+              testTargetTemplate: testTargetTemplate || undefined
+            } : undefined,
             workflow: testPathPatterns.length ? { testPathPatterns: testPathPatterns } : undefined
           };
         }
@@ -389,10 +397,10 @@ export const eventsScript = `    async function waitForJob(runId) {
         var baselineGate = state.detail && state.detail.state && state.detail.state.verificationBaselineReady;
         var baselineDraft = state.verificationBaselineDraft || {};
         var baselineFallback = (baselineGate && baselineGate.evidence && baselineGate.evidence.command) || '';
-        var baselineCommand = (baselineDraft.testCommand != null ? baselineDraft.testCommand : baselineFallback).trim();
+        var baselineCommand = (baselineDraft.verificationCommand != null ? baselineDraft.verificationCommand : baselineFallback).trim();
         var baselinePersist = !!baselineDraft.persistProjectDefaults;
         var baselineBody = { persistProjectDefaults: baselinePersist };
-        if (baselineCommand) baselineBody.testCommand = baselineCommand;
+        if (baselineCommand) baselineBody.verificationCommand = baselineCommand;
         state.verificationBaselineDraft = {};
         runAction('retry_verification_baseline', baselineBody);
       }
@@ -507,9 +515,13 @@ export const eventsScript = `    async function waitForJob(runId) {
         }[event.target.id];
         if (planField) state.planDraft[planField] = event.target.value;
       }
-      if (event.target.id === 'verificationTestCommand') {
+      if (event.target.id === 'verificationCommands') {
         state.verificationDraft = state.verificationDraft || {};
-        state.verificationDraft.testCommand = event.target.value;
+        state.verificationDraft.verificationCommands = event.target.value;
+      }
+      if (event.target.id === 'verificationTargetTemplate') {
+        state.verificationDraft = state.verificationDraft || {};
+        state.verificationDraft.testTargetTemplate = event.target.value;
       }
       if (event.target.id === 'verificationTestPatterns') {
         state.verificationDraft = state.verificationDraft || {};
@@ -517,7 +529,7 @@ export const eventsScript = `    async function waitForJob(runId) {
       }
       if (event.target.id === 'verificationBaselineTestCommand') {
         state.verificationBaselineDraft = state.verificationBaselineDraft || {};
-        state.verificationBaselineDraft.testCommand = event.target.value;
+        state.verificationBaselineDraft.verificationCommand = event.target.value;
       }
     });
     document.addEventListener('change', function (event) {

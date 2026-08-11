@@ -18,8 +18,58 @@ import { accrueRunUsage } from "./usage-ledger.js";
 
 const terminal = isTerminalPhase;
 
-/** Fixed ceiling so a stuck phase cannot spin forever; throws internal, does not yield. */
-const ADVANCE_SAFETY_ITERATION_CAP = 10_000;
+/** Last-resort ceiling in addition to the repeated-transition circuit breaker. */
+const ADVANCE_SAFETY_ITERATION_CAP = 1_000;
+const REPEATED_TRANSITION_LIMIT = 2;
+
+export class RepeatedTransitionCircuitBreaker {
+  private readonly counts = new Map<string, number>();
+
+  constructor(private readonly limit = REPEATED_TRANSITION_LIMIT) {}
+
+  observe(from: string, to: string, phase: RunState["phase"]): void {
+    const transition = `${from} -> ${to}`;
+    const repeated = (this.counts.get(transition) ?? 0) + 1;
+    this.counts.set(transition, repeated);
+    if (repeated >= this.limit) {
+      throw new HarnessFailure(
+        `Repeated workflow transition detected ${repeated} times: ${phase}`,
+        "internal",
+        false,
+      );
+    }
+  }
+}
+
+function workflowSignature(state: RunState): string {
+  const activeTask = state.tasks.find((task) => task.status === "active");
+  return JSON.stringify({
+    phase: state.phase,
+    configRevision: state.configRevision,
+    activeQuestionId: state.activeQuestionId,
+    questionStates: state.questions.map(({ id, status }) => [id, status]),
+    grillResolutions: state.grillResolutions.length,
+    grillReady: Boolean(state.grillReady),
+    planReady: Boolean(state.planReady),
+    verificationReady: Boolean(state.verificationReady),
+    verificationBaselineReady: Boolean(state.verificationBaselineReady),
+    verificationConfirmed: Boolean(state.verificationConfirmedAt),
+    verificationBaselinePassed: Boolean(state.verificationBaselinePassedAt),
+    plan: Boolean(state.plan),
+    prd: Boolean(state.prd),
+    activeTask: activeTask
+      ? {
+          id: activeTask.id,
+          status: activeTask.status,
+          step: activeTask.step,
+          attempts: activeTask.attempts,
+          reviewSummary: activeTask.reviewSummary,
+          integrityViolationCount: activeTask.integrityViolationCount,
+        }
+      : undefined,
+    taskStates: state.tasks.map(({ id, status, step }) => [id, status, step]),
+  });
+}
 
 export class RunAdvancer {
   constructor(
@@ -87,6 +137,7 @@ export class RunAdvancer {
           }
           await this.ctx.assertTreeFingerprint(state);
           let iterations = 0;
+          const transitionCircuitBreaker = new RepeatedTransitionCircuitBreaker();
           while (iterations < ADVANCE_SAFETY_ITERATION_CAP) {
             iterations += 1;
             if (await this.ctx.isCancelRequested(runId)) {
@@ -96,7 +147,10 @@ export class RunAdvancer {
             // Enforce spend ceilings between steps only — never abort mid-step.
             state = await this.accrueUsage(state);
             this.assertWithinBudget(state);
+            const transitionFrom = workflowSignature(state);
             state = await this.advanceOneWithProviderRetry(state);
+            const transitionTo = workflowSignature(state);
+            transitionCircuitBreaker.observe(transitionFrom, transitionTo, state.phase);
             await this.ctx.syncArtifacts(state);
             state = await this.accrueUsage(state);
             if (await this.ctx.isCancelRequested(runId)) {

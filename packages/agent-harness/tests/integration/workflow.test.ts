@@ -56,7 +56,7 @@ describe("durable idea-to-feature workflow", () => {
     await fixture.initGit();
     const config = fixtureConfig(fixture.root, {
       git: { enabled: true, baseBranch: "main" } as never,
-      commands: { test: 'node -e "process.exit(1)"', gates: [] } as never,
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(1)"', timeoutMs: 600_000 }] } as never,
     });
     const backend = createFakeBackend({
       "red-writer": async (request) => {
@@ -159,7 +159,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -245,7 +244,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -335,7 +333,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -410,7 +407,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -474,7 +470,10 @@ describe("durable idea-to-feature workflow", () => {
         "version: 2",
         "repositoryRoot: .",
         "commands:",
-        '  test: node -e "process.exit(0)"',
+        "  verification:",
+        "    - id: test",
+        '      command: node -e "process.exit(0)"',
+        "      timeoutMs: 600000",
         "workflow:",
         "  testPathPatterns:",
         "    - tests/**",
@@ -484,7 +483,7 @@ describe("durable idea-to-feature workflow", () => {
     );
     const config = fixtureConfig(root, {
       workflow: { tdd: false, testPathPatterns: ["tests/**"] } as never,
-      commands: { test: 'node -e "process.exit(0)"' },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
     });
     const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
     const engine = new HarnessEngine(config, { backend });
@@ -496,7 +495,7 @@ describe("durable idea-to-feature workflow", () => {
     });
     const project = fixtureConfig(root, {
       workflow: { tdd: false, testPathPatterns: ["modules/**/src/test/**"] } as never,
-      commands: { test: 'node -e "process.exit(0)"' },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
     });
     const runConfig = await loadRunConfig(project, state.runId);
     expect(configurationHash(runConfig)).toBe(stamped);
@@ -509,7 +508,7 @@ describe("durable idea-to-feature workflow", () => {
     expect(resumed.config.workflow.testPathPatterns).toEqual(["tests/**"]);
   });
 
-  it("continues after mid-run hashed commands.test change via frozen snapshot isolation", async () => {
+  it("continues after mid-run verification change via frozen snapshot isolation", async () => {
     const root = await fixtureRoot();
     const configPath = path.join(root, "agent-harness.config.yaml");
     const originalTest = 'node -e "process.exit(0)"';
@@ -519,7 +518,10 @@ describe("durable idea-to-feature workflow", () => {
         "version: 2",
         "repositoryRoot: .",
         "commands:",
-        `  test: ${originalTest}`,
+        "  verification:",
+        "    - id: test",
+        `      command: ${originalTest}`,
+        "      timeoutMs: 600000",
         "workflow:",
         "  testPathPatterns:",
         "    - tests/**",
@@ -529,7 +531,7 @@ describe("durable idea-to-feature workflow", () => {
     );
     const config = fixtureConfig(root, {
       workflow: { tdd: false, testPathPatterns: ["tests/**"] } as never,
-      commands: { test: originalTest },
+      commands: { verification: [{ id: "test", command: originalTest, timeoutMs: 600_000 }] },
     });
     const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
     const engine = new HarnessEngine(config, { backend });
@@ -537,23 +539,23 @@ describe("durable idea-to-feature workflow", () => {
     const stamped = state.configurationHash;
 
     await writeProjectSettings(configPath, {
-      commands: { test: "./gradlew test" },
+      commands: { verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }] },
     });
     const driftedProject = fixtureConfig(root, {
       workflow: { tdd: false, testPathPatterns: ["tests/**"] } as never,
-      commands: { test: "./gradlew test" },
+      commands: { verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }] },
     });
     expect(configurationHash(driftedProject)).not.toBe(stamped);
 
     const runConfig = await loadRunConfig(driftedProject, state.runId);
     expect(configurationHash(runConfig)).toBe(stamped);
-    expect(runConfig.commands.test).toBe(originalTest);
+    expect(runConfig.commands.verification[0]?.command).toBe(originalTest);
 
     const resumed = new HarnessEngine(runConfig, { backend });
     state = await resumed.advance(state.runId);
     expect(state.blockedKind).not.toBe("config");
     expect(state.phase).toBe("awaiting_input");
-    expect(resumed.config.commands.test).toBe(originalTest);
+    expect(resumed.config.commands.verification[0]?.command).toBe(originalTest);
   });
 
   it("migrates older configVersion runs and refuses same-version hash mismatches", async () => {
@@ -589,7 +591,7 @@ describe("durable idea-to-feature workflow", () => {
     );
     expect(events).toContain("run.config_migrated");
 
-    engine.config.commands.test = "./gradlew test";
+    engine.config.commands.verification = [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }];
     state = { ...state, configurationHash: "not-the-current-hash", configVersion: CONFIG_VERSION };
     await engine.store.writeJson(state.runId, "state.json", state);
     state = await engine.advance(state.runId);
@@ -763,7 +765,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -838,9 +839,8 @@ describe("durable idea-to-feature workflow", () => {
         generateCommitMessages: false,
       },
       commands: {
-        test: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
+        verification: [{ id: "test", command: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"', timeoutMs: 600_000 }],
         passEnv: ["HARNESS_FORCE_RED"],
-        gates: [],
       },
     });
     const backend = createFakeBackend({
@@ -904,9 +904,8 @@ describe("durable idea-to-feature workflow", () => {
         generateCommitMessages: false,
       },
       commands: {
-        test: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
+        verification: [{ id: "test", command: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"', timeoutMs: 600_000 }],
         passEnv: ["HARNESS_FORCE_RED"],
-        gates: [],
       },
     });
     const backend = createFakeBackend({
@@ -1026,7 +1025,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -1107,7 +1105,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -1184,7 +1181,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -1259,7 +1255,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -1349,7 +1344,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -1433,7 +1427,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -1499,7 +1492,6 @@ describe("durable idea-to-feature workflow", () => {
             acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],
@@ -1638,7 +1630,6 @@ describe("durable idea-to-feature workflow", () => {
           affectedPaths: [],
           blockedBy: [],
           tdd: false,
-          testCommand: 'node -e "process.exit(0)"',
           status: "active",
           step: "implementing",
           attempts: { tests: 0, implementation: 1, review: 1 },
@@ -1715,7 +1706,6 @@ describe("durable idea-to-feature workflow", () => {
           affectedPaths: [],
           blockedBy: [],
           tdd: false,
-          testCommand: 'node -e "process.exit(0)"',
           status: "active",
           step: "implementing",
           attempts: { tests: 0, implementation: 1, review: 0 },
@@ -1749,7 +1739,7 @@ describe("durable idea-to-feature workflow", () => {
     await fixture.initGit();
     const config = fixtureConfig(fixture.root, {
       git: { enabled: true, baseBranch: "main" } as never,
-      commands: { test: 'node -e "process.exit(1)"', gates: [] } as never,
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(1)"', timeoutMs: 600_000 }] } as never,
     });
     const backend = createFakeBackend({
       "red-writer": async (request) => {
@@ -1801,8 +1791,7 @@ describe("durable idea-to-feature workflow", () => {
       git: { enabled: true, baseBranch: "main" } as never,
       workflow: { tdd: true, maxImplementationAttempts: 2 } as never,
       commands: {
-        test: 'node -e "process.exit(1)"',
-        gates: [],
+        verification: [{ id: "test", command: 'node -e "process.exit(1)"', timeoutMs: 600_000 }],
       } as never,
     });
     let implementerCalls = 0;
@@ -1884,7 +1873,7 @@ describe("durable idea-to-feature workflow", () => {
     const config = fixtureConfig(fixture.root, {
       git: { enabled: true, baseBranch: "main" } as never,
       workflow: { tdd: false } as never,
-      commands: { test: 'node -e "process.exit(0)"', gates: [] } as never,
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] } as never,
     });
     const backend = createFakeBackend({
       "red-writer": () => {

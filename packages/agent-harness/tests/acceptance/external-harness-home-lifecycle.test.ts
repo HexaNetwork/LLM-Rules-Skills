@@ -133,7 +133,7 @@ describe("external harness home E2E matrix", () => {
           graphify: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
         },
-        commands: { test: 'node -e "process.exit(0)"', gates: [] },
+        commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         agent: { provider: "cursor", promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 },
       },
     });
@@ -164,7 +164,6 @@ describe("external harness home E2E matrix", () => {
             acceptanceCriteria: ["file exists"],
             blockedBy: [],
             tdd: false,
-            testCommand: 'node -e "process.exit(0)"',
           },
         ],
         proposedInstalls: [],

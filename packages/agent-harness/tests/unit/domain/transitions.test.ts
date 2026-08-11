@@ -59,7 +59,6 @@ function task(overrides: Partial<BuildTask> & Pick<BuildTask, "id">): BuildTask 
     affectedPaths: [],
     blockedBy: [],
     tdd: true,
-    testCommand: 'node -e "process.exit(0)"',
     status: "pending",
     step: "pending",
     attempts: { tests: 0, implementation: 0, review: 0 },
@@ -245,7 +244,7 @@ describe("domain transitions", () => {
         proposedInstalls: [],
       },
       NOW,
-      { tdd: true, testCommand: 'node -e "process.exit(0)"' },
+      { tdd: true },
     );
     expect(plan.events.map((event) => event.type)).toEqual(["tasks.materialized"]);
     expect(plan.state.phase).toBe("executing");

@@ -101,11 +101,22 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     appliesTo: "new_runs",
   },
   {
-    key: "commands.test",
+    key: "commands.verification",
     category: "Testing",
-    label: "Default test command",
+    label: "Verification commands",
     description:
-      "Repository-owned command used when a task has no narrower test command. Configure this for your test runner.",
+      "One command per line, executed in order both before planning and after implementation.",
+    type: "string-list",
+    maximumItems: 20,
+    maximumItemLength: 10_000,
+    appliesTo: "new_runs",
+  },
+  {
+    key: "commands.testTargetTemplate",
+    category: "Testing",
+    label: "Targeted-test template",
+    description:
+      "Optional repository-owned command containing {filter}; tasks provide only the filter value.",
     type: "string",
     maximum: 10_000,
     appliesTo: "new_runs",
@@ -170,7 +181,8 @@ export function projectSettings(config: HarnessConfig, configPath?: string): Rec
       "workflow.staleAnswerMinutes": config.workflow.staleAnswerMinutes,
       "workflow.grillQuestionsPerBatch": config.workflow.grillQuestionsPerBatch,
       "workflow.testPathPatterns": config.workflow.testPathPatterns,
-      "commands.test": config.commands.test,
+      "commands.verification": config.commands.verification.map((item) => item.command),
+      "commands.testTargetTemplate": config.commands.testTargetTemplate ?? "",
       "git.autoCommitPreflight": config.git.autoCommitPreflight,
       "git.preflightCommitOrder": config.git.preflightCommitOrder,
       "git.ignoredArtifactPatterns": config.git.ignoredArtifactPatterns,
@@ -295,7 +307,19 @@ export async function handleSettingsRoutes(
       "workflow.testPathPatterns",
       500,
     );
-    const testCommand = optionalString(values["commands.test"], "commands.test", 10_000);
+    const verificationCommands = optionalStringArray(
+      values["commands.verification"],
+      "commands.verification",
+      10_000,
+    );
+    if (verificationCommands && verificationCommands.length > 20) {
+      throw new HttpError(400, "commands.verification may contain at most 20 commands");
+    }
+    const testTargetTemplate = optionalString(
+      values["commands.testTargetTemplate"],
+      "commands.testTargetTemplate",
+      10_000,
+    );
     if (maxGrillQuestionsPerEpisode == null) {
       throw new HttpError(400, "workflow.maxGrillQuestionsPerEpisode is required");
     }
@@ -309,7 +333,18 @@ export async function handleSettingsRoutes(
         ...(grillQuestionsPerBatch != null ? { grillQuestionsPerBatch } : {}),
         ...(testPathPatterns != null ? { testPathPatterns } : {}),
       },
-      ...(testCommand != null ? { commands: { test: testCommand } } : {}),
+      ...(verificationCommands != null
+        ? {
+            commands: {
+              verification: verificationCommands.map((command, index) => ({
+                id: `verify-${index + 1}`,
+                command,
+                timeoutMs: projectConfig.commands.verification[index]?.timeoutMs ?? 10 * 60 * 1000,
+              })),
+              ...(testTargetTemplate ? { testTargetTemplate } : {}),
+            },
+          }
+        : {}),
       ...(autoCommitPreflight != null ||
       preflightCommitOrder != null ||
       ignoredArtifactPatterns != null

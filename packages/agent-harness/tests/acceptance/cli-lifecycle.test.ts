@@ -96,7 +96,6 @@ describe("CLI acceptance lifecycle", () => {
               acceptanceCriteria: ["Works"],
               blockedBy: [],
               tdd: false,
-              testCommand: 'node -e "process.exit(0)"',
             },
           ],
           proposedInstalls: [],

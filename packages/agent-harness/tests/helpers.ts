@@ -51,7 +51,7 @@ export async function confirmGrillAndAdvance(
   options: {
     /** When true, auto-retry a baseline failure with an exit-0 command. */
     clearBaselineFailure?: boolean;
-    testCommand?: string;
+    verificationCommand?: string;
     /** When false, stop at planReady instead of auto-approving the plan. Default true. */
     autoConfirmPlan?: boolean;
   } = {},
@@ -66,7 +66,7 @@ export async function confirmGrillAndAdvance(
   }
   if (options.clearBaselineFailure && state.verificationBaselineReady) {
     state = await engine.retryVerificationBaseline(runId, {
-      testCommand: options.testCommand ?? 'node -e "process.exit(0)"',
+      verificationCommand: options.verificationCommand ?? 'node -e "process.exit(0)"',
     });
     if (!state.verificationBaselineReady) {
       state = await engine.advance(runId);
@@ -95,17 +95,17 @@ export async function confirmVerificationAndAdvance(
   options: Parameters<HarnessEngine["confirmVerification"]>[1] & {
     /** When true, auto-retry a baseline failure with an exit-0 command. */
     clearBaselineFailure?: boolean;
-    testCommand?: string;
+    verificationCommand?: string;
     /** When false, stop at planReady instead of auto-approving the plan. Default true. */
     autoConfirmPlan?: boolean;
   } = {},
 ): Promise<RunState> {
-  const { clearBaselineFailure, testCommand, autoConfirmPlan, ...confirmOptions } = options;
+  const { clearBaselineFailure, verificationCommand, autoConfirmPlan, ...confirmOptions } = options;
   let state = await engine.confirmVerification(runId, confirmOptions);
   state = await engine.advance(runId);
   if (clearBaselineFailure && state.verificationBaselineReady) {
     state = await engine.retryVerificationBaseline(runId, {
-      testCommand: testCommand ?? 'node -e "process.exit(0)"',
+      verificationCommand: verificationCommand ?? 'node -e "process.exit(0)"',
     });
     if (!state.verificationBaselineReady) {
       state = await engine.advance(runId);

@@ -221,7 +221,13 @@ export function buildFixtureConfig(
       contextResults: 6,
       contextCharacters: 12_000,
     },
-    commands: { test: 'node -e "process.exit(0)"', gates: [] },
+    commands: {
+      verification: [{
+        id: "test",
+        command: 'node -e "process.exit(0)"',
+        timeoutMs: 10 * 60 * 1000,
+      }],
+    },
     git: {
       enabled: false,
       baseBranch: "main",

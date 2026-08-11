@@ -35,7 +35,6 @@ export {
   writeRunWorkspace,
 } from "./config/io.js";
 export {
-  applyLiveProjectPolicy,
   isLegacyGuidanceSourcePath,
   normalizeFrozenRunConfig,
   stripLegacyGuidanceSources,

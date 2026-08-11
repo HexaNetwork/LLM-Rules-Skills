@@ -183,7 +183,12 @@ export class RecoveryService {
         grillQuestionsPerBatch: frozen.workflow.grillQuestionsPerBatch,
         testPathPatterns: frozen.workflow.testPathPatterns,
       },
-      commands: { test: frozen.commands.test },
+      commands: {
+        verification: frozen.commands.verification,
+        ...(frozen.commands.testTargetTemplate
+          ? { testTargetTemplate: frozen.commands.testTargetTemplate }
+          : {}),
+      },
       git: {
         autoCommitPreflight: frozen.git.autoCommitPreflight,
         preflightCommitOrder: frozen.git.preflightCommitOrder,

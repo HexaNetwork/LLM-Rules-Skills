@@ -16,7 +16,14 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  * Bumped when the frozen run-config shape or configuration-hash algorithm changes
  * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
  */
-export const CONFIG_VERSION = 10;
+export const CONFIG_VERSION = 11;
+
+export const VerificationCommandSchema = z.object({
+  id: z.string().min(1),
+  command: z.string().min(1),
+  timeoutMs: z.number().int().positive().default(10 * 60 * 1000),
+});
+export type VerificationCommand = z.infer<typeof VerificationCommandSchema>;
 
 /** Environment paths / workspace identity — omitted from configurationHash. */
 const CONFIG_HASH_OMIT_PATHS = new Set([
@@ -217,22 +224,21 @@ export const HarnessConfigSchema = z.object({
     })),
   commands: z
     .object({
-      test: z.string().min(1).default("npm test -- --run"),
+      /** Authoritative ordered commands used at baseline and after implementation. */
+      verification: z.array(VerificationCommandSchema).min(1),
+      /** Config-owned targeted-test command. `{filter}` is replaced by the task filter. */
+      testTargetTemplate: z.string().min(1).optional(),
       // Child processes intentionally start with a minimal environment. Projects
       // can opt individual non-secret variables back in when their test/build
       // command needs them.
       passEnv: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).default([]),
-      gates: z
-        .array(
-          z.object({
-            id: z.string().min(1),
-            command: z.string().min(1),
-            timeoutMs: z.number().int().positive().default(10 * 60 * 1000),
-          }),
-        )
-        .default([]),
     })
-    .default({}),
+    .strict()
+    .default({
+      verification: [
+        { id: "test", command: "npm test -- --run", timeoutMs: 10 * 60 * 1000 },
+      ],
+    }),
   git: z
     .object({
       enabled: z.boolean().default(true),
@@ -358,7 +364,8 @@ export const ProjectSettingsPatchSchema = z
       .optional(),
     commands: z
       .object({
-        test: z.string().min(1).optional(),
+        verification: z.array(VerificationCommandSchema).min(1).optional(),
+        testTargetTemplate: z.string().min(1).optional(),
       })
       .strict()
       .optional(),
@@ -396,7 +403,8 @@ export const RunPolicyPatchSchema = z
       .optional(),
     commands: z
       .object({
-        test: z.string().min(1).optional(),
+        verification: z.array(VerificationCommandSchema).min(1).optional(),
+        testTargetTemplate: z.string().min(1).optional(),
       })
       .strict()
       .optional(),

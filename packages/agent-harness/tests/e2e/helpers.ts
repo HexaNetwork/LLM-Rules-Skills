@@ -103,7 +103,6 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
           acceptanceCriteria: ["Greeting is casual"],
           blockedBy: [],
           tdd: false,
-          testCommand: 'node -e "process.exit(0)"',
         },
       ],
     },
@@ -164,8 +163,7 @@ export async function withE2EHarness(
         ...(options.config?.workflow ?? {}),
       },
       commands: {
-        test: 'node -e "process.exit(0)"',
-        gates: [],
+        verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }],
         ...(options.config?.commands ?? {}),
       },
       git: {
@@ -363,8 +361,10 @@ async function writeFixtureConfigYaml(configPath: string, config: HarnessConfig)
       grillQuestionsPerBatch: config.workflow.grillQuestionsPerBatch,
     },
     commands: {
-      test: config.commands.test,
-      gates: config.commands.gates,
+      verification: config.commands.verification,
+      ...(config.commands.testTargetTemplate
+        ? { testTargetTemplate: config.commands.testTargetTemplate }
+        : {}),
     },
     git: {
       enabled: config.git.enabled,

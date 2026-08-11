@@ -234,7 +234,8 @@ export function buildAgentActivity(records: InvocationRecord[]): AgentActivity {
     });
   }
 
-  providerContexts.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  // Newest provider contexts first so live monitoring surfaces latest activity.
+  providerContexts.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 
   return {
     providerContexts,

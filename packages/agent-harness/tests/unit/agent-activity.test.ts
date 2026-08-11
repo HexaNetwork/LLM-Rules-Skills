@@ -82,8 +82,8 @@ describe("buildAgentActivity", () => {
     ]);
     expect(activity.providerContexts).toHaveLength(2);
     expect(activity.providerContexts.map((item) => item.id)).toEqual([
-      "synthetic:a",
       "synthetic:b",
+      "synthetic:a",
     ]);
   });
 
@@ -159,7 +159,7 @@ describe("buildAgentActivity", () => {
     expect(activity.providerContexts[0]!.endedAt).toBeUndefined();
   });
 
-  it("orders contexts chronologically and labels historical triggers", () => {
+  it("orders contexts newest-first and labels historical triggers", () => {
     const activity = buildAgentActivity([
       record({
         path: "sessions/later.json",
@@ -174,8 +174,8 @@ describe("buildAgentActivity", () => {
         startedAt: "2026-08-10T20:00:00.000Z",
       }),
     ]);
-    expect(activity.providerContexts.map((item) => item.id)).toEqual(["a", "b"]);
-    expect(activity.providerContexts[0]!.invocations[0]!.triggerSummary).toBe(
+    expect(activity.providerContexts.map((item) => item.id)).toEqual(["b", "a"]);
+    expect(activity.providerContexts[1]!.invocations[0]!.triggerSummary).toBe(
       HISTORICAL_TRIGGER_SUMMARY,
     );
   });

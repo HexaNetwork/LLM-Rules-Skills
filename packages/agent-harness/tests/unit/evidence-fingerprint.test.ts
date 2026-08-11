@@ -3,6 +3,7 @@ import {
   evaluateRepairProgress,
   evidenceFingerprint,
   failureCategoryFromEvidence,
+  classifyRunnableRed,
 } from "../../src/application/evidence-fingerprint.js";
 import type { CommandEvidence } from "../../src/domain.js";
 
@@ -104,7 +105,7 @@ describe("failureCategoryFromEvidence", () => {
     ).toBe("config");
   });
 
-  it("classifies test compilation diagnostics as test-repair", () => {
+  it("classifies test SyntaxError diagnostics as test-repair", () => {
     expect(
       failureCategoryFromEvidence(
         evidence({
@@ -113,5 +114,66 @@ describe("failureCategoryFromEvidence", () => {
         }),
       ),
     ).toBe("test-repair");
+  });
+
+  it("classifies missing production symbols under test sources as verification", () => {
+    expect(
+      failureCategoryFromEvidence(
+        evidence({
+          stdout: "",
+          stderr: [
+            "tests/GreeterTest.java:12: error: cannot find symbol",
+            "  symbol:   class Greeter",
+            "  location: class GreeterTest",
+            "Compilation failed",
+          ].join("\n"),
+        }),
+      ),
+    ).toBe("verification");
+  });
+});
+
+describe("classifyRunnableRed", () => {
+  it("accepts assertion failures as runnable red", () => {
+    expect(
+      classifyRunnableRed(
+        evidence({
+          stdout:
+            "GreeterTest > greets FAILED\norg.opentest4j.AssertionFailedError: expected: <hi> but was: <null>",
+          stderr: "",
+          exitCode: 1,
+        }),
+      ),
+    ).toEqual({ runnable: true });
+  });
+
+  it("rejects compile-only missing-symbol failures", () => {
+    expect(
+      classifyRunnableRed(
+        evidence({
+          stdout: "",
+          stderr:
+            "> Task :compileTestJava FAILED\ncannot find symbol\n  symbol: class Greeter\nCompilation failed",
+          exitCode: 1,
+        }),
+      ),
+    ).toEqual({ runnable: false, reason: "compile_only" });
+  });
+
+  it("rejects missing command and empty suites", () => {
+    expect(
+      classifyRunnableRed(
+        evidence({ stderr: "gradlew: command not found", stdout: "", exitCode: 1 }),
+      ),
+    ).toEqual({ runnable: false, reason: "command_missing" });
+    expect(
+      classifyRunnableRed(evidence({ stdout: "No tests found", stderr: "", exitCode: 1 })),
+    ).toEqual({ runnable: false, reason: "no_tests" });
+  });
+
+  it("treats non-zero exit without compile markers as runnable (custom runners)", () => {
+    expect(classifyRunnableRed(evidence({ stdout: "", stderr: "", exitCode: 1 }))).toEqual({
+      runnable: true,
+    });
   });
 });

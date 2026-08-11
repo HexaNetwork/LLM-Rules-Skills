@@ -305,6 +305,49 @@ describe("operator controls", () => {
     await expect(engine.setTdd(runId, false, "active-task")).rejects.toThrow(/Cannot change TDD/);
   });
 
+  it("setRag and setGraphify rewrite frozen run policy independently", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      workflow: { tdd: true, rag: true } as never,
+      agent: { promptBuilder: false } as never,
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true },
+      },
+    });
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
+    await store.initialize();
+    const runId = "rag-graphify-run";
+    const hash = configurationHash(config);
+    await store.create({
+      ...createRunState(runId, "idea", new Date().toISOString(), hash, CONFIG_VERSION),
+      phase: "executing",
+      tasks: [],
+    });
+    await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
+    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+
+    await engine.setRag(runId, false);
+    const afterRag = (await store.readJson(runId, "config.json")) as {
+      workflow: { rag: boolean };
+      knowledge: { graphify: { enabled: boolean } };
+    };
+    expect(afterRag.workflow.rag).toBe(false);
+    expect(afterRag.knowledge.graphify.enabled).toBe(true);
+    expect(engine.config.workflow.rag).toBe(false);
+
+    await engine.setGraphify(runId, false);
+    const afterBoth = (await store.readJson(runId, "config.json")) as {
+      workflow: { rag: boolean };
+      knowledge: { graphify: { enabled: boolean } };
+    };
+    expect(afterBoth.workflow.rag).toBe(false);
+    expect(afterBoth.knowledge.graphify.enabled).toBe(false);
+    expect(engine.config.knowledge.graphify.enabled).toBe(false);
+
+    await expect(engine.setRag(runId, false)).resolves.toMatchObject({ runId });
+  });
+
   it("requires an approved fixer plan before clearing a blocked run", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, { agent: { promptBuilder: false } as never });

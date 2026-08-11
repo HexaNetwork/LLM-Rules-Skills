@@ -34,12 +34,77 @@ export function failureCategoryFromEvidence(
   if (!evidence) return fallback;
   const output = `${evidence.stdout}\n${evidence.stderr}`;
   if (/command not found|not recognized|ENOENT/i.test(output)) return "config";
-  if (/SyntaxError|TS\d+|cannot find module|Compilation failed/i.test(output)) {
+  // Missing production symbols (even when cited under test sources) belong to the implementer.
+  if (looksLikeMissingProductionSymbol(output)) return "verification";
+  if (/SyntaxError|TS\d+|Compilation failed/i.test(output)) {
+    return /tests?[\\/]|\.test\.|\.spec\./i.test(output) ? "test-repair" : "verification";
+  }
+  if (/cannot find module/i.test(output)) {
     return /tests?[\\/]|\.test\.|\.spec\./i.test(output) ? "test-repair" : "verification";
   }
   if (/baseline|known failure/i.test(output)) return "baseline";
   if (evidence.exitCode !== 0) return "verification";
   return fallback;
+}
+
+/** Compile diagnostics for missing production types/methods — not test-setup breakage. */
+function looksLikeMissingProductionSymbol(output: string): boolean {
+  if (!/cannot find symbol|cannot find type|error CS\d+|package .+ does not exist/i.test(output)) {
+    return false;
+  }
+  // Missing test helper / *Test type is still a test-repair concern.
+  if (
+    /cannot find symbol[\s\S]{0,240}symbol:\s+(?:class|interface|method|variable)\s+\w*(Test|Tests|Spec|Mock|Fake)\b/i.test(
+      output,
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export type RunnableRedClassification =
+  | { runnable: true }
+  | { runnable: false; reason: "command_missing" | "no_tests" | "compile_only" | "timeout" | "not_red" };
+
+/**
+ * TDD initial RED must be runnable: tests execute and fail on behavior,
+ * not on missing symbols / compile-only failures.
+ */
+export function classifyRunnableRed(evidence: CommandEvidence | undefined): RunnableRedClassification {
+  if (!evidence) return { runnable: false, reason: "not_red" };
+  const output = `${evidence.stdout}\n${evidence.stderr}`;
+  if (/command not found|not recognized|ENOENT/i.test(output)) {
+    return { runnable: false, reason: "command_missing" };
+  }
+  if (evidence.exitCode === 124 || /\btimed?\s*out\b/i.test(output)) {
+    return { runnable: false, reason: "timeout" };
+  }
+  if (/no tests found|no test files found|0 tests? (found|executed|run)/i.test(output)) {
+    return { runnable: false, reason: "no_tests" };
+  }
+  if (evidence.exitCode === 0) {
+    return { runnable: false, reason: "not_red" };
+  }
+  if (isCompileOnlyFailure(output)) {
+    return { runnable: false, reason: "compile_only" };
+  }
+  return { runnable: true };
+}
+
+function isCompileOnlyFailure(output: string): boolean {
+  const compileMarkers =
+    /compileTestJava|Compilation failed|cannot find symbol|error: cannot find|javac:|error CS\d+|TS\d+:|cannot find module|package .+ does not exist/i;
+  if (!compileMarkers.test(output)) return false;
+  // Assertion / behavioral failure patterns mean tests did execute.
+  if (
+    /AssertionError|assert(?:Equals|True|False|That)?\b|expected:|Expected:|FAIL\s+\S|✗|×|org\.opentest4j|JUnit|failed:\s*\d+/i.test(
+      output,
+    )
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export function failingTestIdsFromEvidence(evidence: CommandEvidence | undefined): string[] {

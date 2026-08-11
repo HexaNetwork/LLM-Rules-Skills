@@ -6,6 +6,7 @@ import { AgentRoleSchema, type AgentRole } from "../domain.js";
 const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
   "planner",
   "issue-slicer",
+  "red-writer",
   "test-writer",
   "implementer",
   "reviewer",
@@ -15,7 +16,7 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  * Bumped when the frozen run-config shape or configuration-hash algorithm changes
  * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
  */
-export const CONFIG_VERSION = 9;
+export const CONFIG_VERSION = 10;
 
 /** Environment paths / workspace identity — omitted from configurationHash. */
 const CONFIG_HASH_OMIT_PATHS = new Set([
@@ -69,6 +70,8 @@ const GuidanceAssignmentsSchema = z.object({
     skills: ["prd-to-issues", "domain-modeling", "improve-codebase-architecture"],
   }),
   "prompt-builder": GuidanceAssignmentSchema,
+  // Default keeps older assignment maps valid when this role is introduced.
+  "red-writer": GuidanceAssignmentSchema.default({ rules: [], skills: ["tdd"] }),
   "test-writer": GuidanceAssignmentSchema,
   implementer: GuidanceAssignmentSchema,
   reviewer: GuidanceAssignmentSchema,
@@ -89,6 +92,7 @@ export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsSch
     skills: ["prd-to-issues", "domain-modeling", "improve-codebase-architecture"],
   },
   "prompt-builder": { rules: [], skills: [] },
+  "red-writer": { rules: [], skills: ["tdd"] },
   "test-writer": { rules: [], skills: ["tdd"] },
   implementer: { rules: [], skills: ["tdd"] },
   reviewer: { rules: [], skills: ["code-review"] },
@@ -159,6 +163,8 @@ export const HarnessConfigSchema = z.object({
   workflow: z
     .object({
       tdd: z.boolean().default(true),
+      /** Document RAG into work packets; independent of Graphify and guidance. */
+      rag: z.boolean().default(true),
       // Hard spend ceilings enforced between steps; 0 = unlimited.
       maxRunTokens: z.number().int().nonnegative().default(0),
       maxRunCostUsd: z.number().nonnegative().default(0),
@@ -191,7 +197,7 @@ export const HarnessConfigSchema = z.object({
       graphifyCharacters: z.number().int().positive().default(3_000),
       // Per-task commit subjects use the deterministic fallback unless enabled.
       generateCommitMessages: z.boolean().default(false),
-      // Globs that mark paths as test-only for the test-writer legality check.
+      // Globs that mark paths as test files for red-writer / test-writer legality checks.
       testPathPatterns: z.array(z.string().min(1)).default([
         "tests/**",
         "test/**",
@@ -259,7 +265,7 @@ export const HarnessConfigSchema = z.object({
       chunkCharacters: z.number().int().positive().default(2_000),
       // Refuse weak lexical hits before hybrid fusion so embeddings cannot
       // resurrect near-zero accidental term matches into the packet.
-      relevanceFloor: z.number().min(0).max(1).default(0.55),
+      relevanceFloor: z.number().min(0).max(1).default(0.72),
       minLexicalScore: z.number().min(0).default(0.05),
       maxChunksPerSource: z.number().int().min(1).max(20).default(1),
       // Highest-ranked source may contribute this many chunks; others use maxChunksPerSource.
@@ -384,6 +390,7 @@ export const RunPolicyPatchSchema = z
         maxRunTokens: z.number().int().nonnegative().optional(),
         maxRunCostUsd: z.number().nonnegative().optional(),
         tdd: z.boolean().optional(),
+        rag: z.boolean().optional(),
       })
       .strict()
       .optional(),
@@ -398,6 +405,17 @@ export const RunPolicyPatchSchema = z
         autoCommitPreflight: z.boolean().optional(),
         preflightCommitOrder: PreflightCommitOrderSchema.optional(),
         ignoredArtifactPatterns: z.array(z.string().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
+    knowledge: z
+      .object({
+        graphify: z
+          .object({
+            enabled: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

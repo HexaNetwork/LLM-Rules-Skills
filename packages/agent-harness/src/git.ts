@@ -402,29 +402,37 @@ export class GitService {
   }
 
   /**
-   * Commit only verified RED test paths with checkpoint trailers (never Harness-Task).
-   * Idempotent when a checkpoint for the task is already at HEAD.
+   * Commit verified RED paths (tests and optional compile scaffolds) with checkpoint trailers.
+   * Idempotent when a checkpoint for the task is already at HEAD and no new dirty paths remain.
+   * Creates a new checkpoint when HEAD already has a checkpoint but additional allowed dirty paths appear.
    */
   async commitRedCheckpoint(args: {
     taskId: string;
     taskTitle: string;
-    testPaths: string[];
+    /** Paths to stage: test files and optional production scaffolds. */
+    paths: string[];
+    /** @deprecated Prefer `paths`. */
+    testPaths?: string[];
   }): Promise<{ sha: string; baseSha: string; paths: string[] } | undefined> {
     if (!this.config.git.enabled) return undefined;
-    const existing = await this.findRedCheckpoint(args.taskId);
-    if (existing && (await this.isHead(existing.sha))) {
-      return existing;
-    }
-    const baseSha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
-    const paths = [...new Set(args.testPaths.map(normalize))].filter(Boolean);
-    if (paths.length === 0) {
+    const requested = [...new Set((args.paths ?? args.testPaths ?? []).map(normalize))].filter(Boolean);
+    if (requested.length === 0) {
       throw new HarnessFailure(
-        `RED checkpoint for ${args.taskId} requires at least one test path`,
+        `RED checkpoint for ${args.taskId} requires at least one path`,
         "workspace",
         true,
       );
     }
+    const existing = await this.findRedCheckpoint(args.taskId);
     const dirty = new Set(await this.changedFiles());
+    const dirtyRequested = requested.filter((file) => dirty.has(file));
+    if (existing && (await this.isHead(existing.sha))) {
+      // Stale-checkpoint no-op only when there is nothing new to commit.
+      if (dirtyRequested.length === 0) {
+        return existing;
+      }
+    }
+    const paths = dirtyRequested.length > 0 ? dirtyRequested : requested;
     const missing = paths.filter((file) => !dirty.has(file));
     if (missing.length > 0) {
       throw new HarnessFailure(
@@ -433,6 +441,7 @@ export class GitService {
         true,
       );
     }
+    const baseSha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
     await this.stagePaths(paths);
     const subject = sanitizeSubject(`test: establish RED for ${args.taskTitle}`);
     const body = [`Harness-Checkpoint: red`, `Harness-Checkpoint-Task: ${args.taskId}`].join("\n");

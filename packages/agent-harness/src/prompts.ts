@@ -42,8 +42,15 @@ const ROLE_RULES: Record<AgentRole, string[]> = {
     "Preserve every acceptance criterion, constraint, selected guidance block, evidence block, and output contract.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
+  "red-writer": [
+    "Establish a runnable RED: targeted tests must compile, execute, and fail on assertions — not on missing symbols or compile-only errors.",
+    "You may add minimal compile scaffolds on the task's declared production seams (empty types, signatures, UnsupportedOperationException, or returns that keep asserts red).",
+    "Do not implement real behavior, do not make tests green, and do not commit.",
+    "Test public behavior at the agreed seam with independent expected values.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
+  ],
   "test-writer": [
-    "Edit tests only. Do not implement production behavior and do not commit.",
+    "Edit tests only. Do not implement production behavior, add production scaffolds, or commit.",
     "Test public behavior at the agreed seam with independent expected values.",
     "Return after creating a meaningful failing test.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",

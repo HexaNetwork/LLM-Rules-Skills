@@ -116,6 +116,7 @@ describe("Phase 5 scripted full lifecycle", () => {
                   title: "Ship greeting",
                   description: "Render the casual greeting.",
                   acceptanceCriteria: ["Greeting is casual"],
+                  affectedPaths: ["src/greet.ts"],
                   blockedBy: [],
                   tdd: true,
                   testCommand:
@@ -126,8 +127,11 @@ describe("Phase 5 scripted full lifecycle", () => {
         },
       },
           {
-            role: "test-writer",
-            output: { summary: "RED test", changedFiles: ["tests/greet.test.ts"] },
+            role: "red-writer",
+            output: {
+              summary: "Runnable RED with scaffold",
+              changedFiles: ["tests/greet.test.ts", "src/greet.ts"],
+            },
           },
           {
             role: "implementer",
@@ -223,7 +227,7 @@ describe("Phase 5 scripted full lifecycle", () => {
           "planner",
           "planner",
           "issue-slicer",
-          "test-writer",
+          "red-writer",
           "implementer",
           "reviewer",
         ]);
@@ -241,12 +245,18 @@ function withWorkspaceSideEffects(
     release: inner.release?.bind(inner),
     async run(request: AgentRequest) {
       const workspaceRoot = request.cwd;
-      if (request.role === "test-writer") {
+      if (request.role === "red-writer") {
         process.env.HARNESS_FORCE_RED = "1";
         await mkdir(path.join(workspaceRoot, "tests"), { recursive: true });
+        await mkdir(path.join(workspaceRoot, "src"), { recursive: true });
         await writeFile(
           path.join(workspaceRoot, "tests", "greet.test.ts"),
           'test("greets", () => { throw new Error("not implemented"); });\n',
+          "utf8",
+        );
+        await writeFile(
+          path.join(workspaceRoot, "src", "greet.ts"),
+          'export const greet = (): string => { throw new Error("not implemented"); };\n',
           "utf8",
         );
       }

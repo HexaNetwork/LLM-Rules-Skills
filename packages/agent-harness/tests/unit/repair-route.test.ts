@@ -17,6 +17,15 @@ describe("repairRoute", () => {
     ).toBe("config-fixer");
   });
 
+  it("routes Red writer illegal-path failures to config-fixer", () => {
+    expect(
+      repairRoute({
+        blockedKind: "internal",
+        failure: "Red writer changed paths outside tests and affectedPaths: src/sneaky.ts",
+      }),
+    ).toBe("config-fixer");
+  });
+
   it("routes config drift messages to config-fixer", () => {
     expect(
       repairRoute({

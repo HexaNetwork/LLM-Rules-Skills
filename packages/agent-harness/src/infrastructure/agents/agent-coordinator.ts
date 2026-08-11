@@ -47,6 +47,17 @@ type CausalMeta = {
   trigger?: InvocationTrigger;
 };
 
+/** Roles that get a tighter document context budget (soft diversity + lower limit). */
+const WORKER_RETRIEVAL_ROLES = new Set<AgentRole>([
+  "test-writer",
+  "red-writer",
+  "implementer",
+  "reviewer",
+  "fixer",
+  "config-fixer",
+  "message-writer",
+]);
+
 export class AgentCoordinator {
   constructor(
     private readonly config: HarnessConfig,
@@ -109,8 +120,14 @@ export class AgentCoordinator {
     } = {},
   ): Promise<AgentInvocation<T>> {
     const invocationId = randomUUID();
-    const retrievalEnabled = input.retrieval !== false;
-    const guidanceEnabled = retrievalEnabled && this.config.knowledge.guidance.enabled;
+    const invocationRetrieval = input.retrieval !== false;
+    // Guidance is independent of document RAG / Graphify retrieval.
+    const guidanceEnabled = invocationRetrieval && this.config.knowledge.guidance.enabled;
+    const ragEnabled = invocationRetrieval && this.config.workflow.rag;
+    const graphifyWanted =
+      invocationRetrieval &&
+      this.config.knowledge.graphify.enabled &&
+      this.config.knowledge.graphify.roles.includes(input.role);
     let guidanceAudit: Awaited<ReturnType<LocalKnowledgeBase["selectGuidanceWithAudit"]>> = {
       selected: [],
       missingAssignments: [],
@@ -132,30 +149,55 @@ export class AgentCoordinator {
       },
     };
 
-    if (retrievalEnabled) {
+    if (invocationRetrieval) {
       const knowledgeQuery = input.knowledgeQuery;
       if (!knowledgeQuery?.trim()) {
         throw new Error(`knowledgeQuery is required when retrieval is enabled for role ${input.role}`);
       }
       const knowledgeFallbackQuery = input.knowledgeFallbackQuery;
+      const pathHints = knownPaths(input.input);
+      const contextLimit = WORKER_RETRIEVAL_ROLES.has(input.role)
+        ? Math.min(this.config.workflow.contextResults, 4)
+        : this.config.workflow.contextResults;
+      const emptyRetrieval = (): typeof retrieval => ({
+        results: [],
+        audit: {
+          query: knowledgeQuery,
+          fallbackQuery: knowledgeFallbackQuery,
+          graphify: {
+            shapedQuery: "",
+            usedFallback: false,
+            included: false,
+            skippedReason: graphifyWanted ? "not-requested" : "disabled",
+          },
+          kept: [],
+          omitted: [],
+          skipped: "rag-disabled",
+        },
+      });
       [guidanceAudit, retrieval] = await Promise.all([
         guidanceEnabled
           ? this.knowledge.selectGuidanceWithAudit(knowledgeQuery, {
               role: input.role,
               assignment: this.config.knowledge.guidance.assignments?.[input.role],
-              knownPaths: knownPaths(input.input),
+              knownPaths: pathHints,
               runId: input.runId,
             })
-          : Promise.resolve({ selected: [], missingAssignments: [], omittedAlwaysApply: [], omittedOverrides: [] }),
-        this.knowledge.searchWithAudit(
-          knowledgeQuery,
-          this.config.workflow.contextResults,
-          {
-            repository: this.config.knowledge.graphify.roles.includes(input.role),
-            runId: input.runId,
-            fallbackQuery: knowledgeFallbackQuery,
-          },
-        ),
+          : Promise.resolve({
+              selected: [],
+              missingAssignments: [],
+              omittedAlwaysApply: [],
+              omittedOverrides: [],
+            }),
+        ragEnabled || graphifyWanted
+          ? this.knowledge.searchWithAudit(knowledgeQuery, contextLimit, {
+              repository: graphifyWanted,
+              documents: ragEnabled,
+              runId: input.runId,
+              fallbackQuery: knowledgeFallbackQuery,
+              pathHints,
+            })
+          : Promise.resolve(emptyRetrieval()),
       ]);
     } else {
       retrieval = {

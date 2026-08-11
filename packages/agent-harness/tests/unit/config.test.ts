@@ -26,6 +26,8 @@ describe("token-conscious defaults", () => {
     expect(config.workflow.maxGrillQuestionsPerEpisode).toBe(5);
     expect(config.workflow.staleAnswerMinutes).toBe(30);
     expect(config.knowledge.graphify.enabled).toBe(false);
+    expect(config.workflow.rag).toBe(true);
+    expect(config.workflow.tdd).toBe(true);
     expect(config.knowledge.graphify.roles).toContain("implementer");
     expect(config.knowledge.graphify.roles).not.toContain("message-writer");
     expect(config.knowledge.graphify.roles).not.toContain("reflector");
@@ -44,6 +46,7 @@ describe("token-conscious defaults", () => {
     expect(config.knowledge.guidance).toMatchObject({ enabled: true, maxResults: 6, maxCharacters: 6_000 });
     expect(config.knowledge.guidance.assignments).toEqual(DEFAULT_GUIDANCE_ASSIGNMENTS);
     expect(config.knowledge.guidance.assignments?.["test-writer"].skills).toEqual(["tdd"]);
+    expect(config.knowledge.guidance.assignments?.["red-writer"].skills).toEqual(["tdd"]);
     expect(HarnessConfigSchema.parse({
       knowledge: { guidance: { enabled: true } },
     }).knowledge.guidance.assignments).toEqual(DEFAULT_GUIDANCE_ASSIGNMENTS);
@@ -51,7 +54,7 @@ describe("token-conscious defaults", () => {
     expect(config.knowledge.embeddings.model).toBe("text-embedding-3-small");
     expect(config.knowledge.embeddings.minSimilarity).toBe(0.3);
     expect(config.knowledge.embeddings.minSemanticOnlySimilarity).toBe(0.45);
-    expect(config.knowledge.relevanceFloor).toBe(0.55);
+    expect(config.knowledge.relevanceFloor).toBe(0.72);
     expect(config.knowledge.minLexicalScore).toBe(0.05);
     expect(config.knowledge.maxChunksPerSource).toBe(1);
     expect(config.knowledge.maxForTopSource).toBe(2);
@@ -88,7 +91,7 @@ describe("token-conscious defaults", () => {
       ".swift",
     ]);
     expect(defaultConfigYaml()).toContain("promptBuilder: false");
-    expect(defaultConfigYaml()).toContain("relevanceFloor: 0.55");
+    expect(defaultConfigYaml()).toContain("relevanceFloor: 0.72");
     expect(defaultConfigYaml()).toContain("maxGrillQuestionsPerEpisode: 5");
     expect(defaultConfigYaml()).toContain("staleAnswerMinutes: 30");
     expect(defaultConfigYaml()).toContain("maxRunTokens: 0");
@@ -134,6 +137,7 @@ describe("token-conscious defaults", () => {
       planner: { rules: [], skills: [] },
       "issue-slicer": { rules: [], skills: [] },
       "prompt-builder": { rules: [], skills: [] },
+      "red-writer": { rules: [], skills: ["tdd"] },
       "test-writer": { rules: [], skills: ["tdd"] },
       implementer: { rules: ["no-legacy-fallback-code"], skills: [] },
       reviewer: { rules: [], skills: ["code-review"] },
@@ -207,7 +211,7 @@ version: 2
 repositoryRoot: .
 `) as unknown;
     const parsed = HarnessConfigSchema.parse(minimal);
-    expect(CONFIG_VERSION).toBe(9);
+    expect(CONFIG_VERSION).toBe(10);
     expect(parsed.agent.promptBuilder).toBe(false);
     expect(parsed.knowledge.guidance.enabled).toBe(true);
     expect(parsed.git.ignoredArtifactPatterns.length).toBeGreaterThan(0);

@@ -27,10 +27,24 @@ import {
   evidenceFingerprint,
   failingTestIdsFromEvidence,
   failureCategoryFromEvidence,
+  classifyRunnableRed,
   repairEdgeKey,
 } from "./evidence-fingerprint.js";
 import { normalizePathKey, taskForPacket, unique } from "./helpers.js";
 import { updateRunConfig } from "./update-run-config.js";
+
+function isAffectedPath(filePath: string, affectedPaths: readonly string[]): boolean {
+  const key = normalizePathKey(filePath);
+  return affectedPaths.some((allowed) => normalizePathKey(allowed) === key);
+}
+
+function isRedWriterAllowedPath(
+  filePath: string,
+  testPatterns: readonly string[],
+  affectedPaths: readonly string[],
+): boolean {
+  return isTestPath(filePath, testPatterns) || isAffectedPath(filePath, affectedPaths);
+}
 
 export class TaskExecutionService {
   constructor(private readonly ctx: ApplicationContext) {}
@@ -104,18 +118,19 @@ export class TaskExecutionService {
 
   async writeTests(state: RunState, task: BuildTask): Promise<RunState> {
     // A config repair can intentionally leave its project-settings file dirty.
-    // Capture that known baseline before the writer runs so the test-only guard
-    // attributes only paths introduced by this invocation to the test writer.
+    // Capture that known baseline before the writer runs so the path allowlist
+    // attributes only paths introduced by this invocation to the writer.
     const knownPaths = this.ctx.config.git.enabled
       ? new Set(await this.ctx.git.changedFiles())
       : undefined;
     const isRepair = Boolean(task.redCheckpointSha) && task.attempts.implementation > 0;
+    const role = isRepair ? "test-writer" : "red-writer";
     const result = await this.ctx.agents.invoke({
       runId: state.runId,
-      role: "test-writer",
+      role,
       objective: isRepair
         ? `Repair the failing behavioral tests for “${task.title}” without weakening acceptance criteria`
-        : `Write the next failing behavioral test for “${task.title}”`,
+        : `Establish runnable failing behavioral coverage for “${task.title}” (tests may include minimal compile scaffolds)`,
       input: {
         task: taskForPacket(task),
         priorCommandOutput: recentEvidenceOutput(task.evidence),
@@ -125,11 +140,20 @@ export class TaskExecutionService {
               redBaseSha: task.redBaseSha,
               repairMode: true,
             }
-          : {}),
+          : {
+              allowScaffoldsOnAffectedPaths: true,
+              affectedPaths: task.affectedPaths,
+            }),
       },
       expectedOutput: "{summary,changedFiles}",
       schema: WorkerOutputSchema,
-      constraints: ["Change tests only", "Do not implement production code"],
+      constraints: isRepair
+        ? ["Change tests only", "Do not implement production code", "Do not add production scaffolds"]
+        : [
+            "Reach a runnable RED (tests execute and fail on assertions)",
+            "Minimal compile scaffolds on declared affectedPaths are allowed",
+            "Do not implement real behavior or make tests green",
+          ],
       knowledgeQuery: [task.title, task.description, ...task.acceptanceCriteria].join(" "),
       knowledgeFallbackQuery: compactDomainSeed(
         state.idea,
@@ -148,7 +172,7 @@ export class TaskExecutionService {
           classification: isRepair ? "test-repair" : "initial",
           summary: isRepair
             ? "bounded test-writer repair from diagnostic evidence"
-            : "initial test writer for RED",
+            : "initial red-writer for runnable RED",
           evidenceFingerprint: task.evidenceFingerprint,
         },
       },
@@ -157,10 +181,16 @@ export class TaskExecutionService {
       ? (await this.ctx.git.changedFiles()).filter((file) => !knownPaths!.has(file))
       : result.changedFiles;
     const testPatterns = this.ctx.config.workflow.testPathPatterns;
-    const illegal = observedPaths.filter((file) => !isTestPath(file, testPatterns));
+    const illegal = isRepair
+      ? observedPaths.filter((file) => !isTestPath(file, testPatterns))
+      : observedPaths.filter(
+          (file) => !isRedWriterAllowedPath(file, testPatterns, task.affectedPaths),
+        );
     if (illegal.length > 0) {
       throw new HarnessFailure(
-        `Test writer changed non-test paths: ${illegal.join(", ")}`,
+        isRepair
+          ? `Test writer changed non-test paths: ${illegal.join(", ")}`
+          : `Red writer changed paths outside tests and affectedPaths: ${illegal.join(", ")}`,
         "config",
         false,
       );
@@ -169,15 +199,29 @@ export class TaskExecutionService {
       ...task.testPaths,
       ...observedPaths.filter((file) => isTestPath(file, testPatterns)),
     ]);
+    const scaffoldPaths = isRepair
+      ? []
+      : observedPaths.filter(
+          (file) =>
+            !isTestPath(file, testPatterns) && isAffectedPath(file, task.affectedPaths),
+        );
+    const checkpointCandidatePaths = unique([...observedPaths.filter((file) =>
+      isRepair
+        ? isTestPath(file, testPatterns)
+        : isRedWriterAllowedPath(file, testPatterns, task.affectedPaths),
+    )]);
     const evidence = await this.runTargetedTest(state.runId, task, "tdd:red");
     const attempts = { ...task.attempts, tests: task.attempts.tests + 1 };
     const commandOutput = `${evidence.stdout}\n${evidence.stderr}`;
     const commandNotLaunched = /command not found|not recognized/i.test(commandOutput);
+    const runnable = classifyRunnableRed(evidence);
     const meaningfulRed =
       evidence.exitCode !== 0 &&
       evidence.exitCode !== 124 &&
       !/no tests found|no test files found/i.test(commandOutput) &&
       !commandNotLaunched;
+    // Initial / continuation RED requires runnable red; repair keeps meaningful RED.
+    const acceptedRed = isRepair ? meaningfulRed : runnable.runnable;
     if (isRepair && meaningfulRed) {
       return this.acceptTestRepairCheckpoint(state, task, {
         attempts,
@@ -187,35 +231,41 @@ export class TaskExecutionService {
         observedPaths,
       });
     }
-    const exhausted = !meaningfulRed && attempts.tests >= this.ctx.config.workflow.maxTestAttempts;
+    const exhausted = !acceptedRed && attempts.tests >= this.ctx.config.workflow.maxTestAttempts;
     const redFailure = exhausted
       ? commandNotLaunched
         ? formatCommandNotLaunchedFailure(evidence.command, evidence.stderr, evidence.stdout)
-        : "Test writer could not produce a meaningful RED run"
+        : isRepair
+          ? "Test writer could not produce a meaningful RED run"
+          : `Red writer could not reach runnable RED${
+              !runnable.runnable ? ` (${runnable.reason})` : ""
+            }`
       : undefined;
     let updated: BuildTask = {
       ...task,
       attempts,
       testPaths,
-      changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
+      changedFiles: unique([...task.changedFiles, ...result.changedFiles, ...scaffoldPaths]),
       evidence: [...task.evidence, evidence],
-      step: meaningfulRed ? "red" : exhausted ? "failed" : "writing_tests",
+      step: acceptedRed ? "red" : exhausted ? "failed" : "writing_tests",
       status: exhausted ? "failed" : "active",
       failure: redFailure,
     };
-    if (meaningfulRed) {
-      updated = await this.establishRedCheckpoint(updated, observedPaths);
+    if (acceptedRed) {
+      updated = await this.establishRedCheckpoint(updated, checkpointCandidatePaths);
     }
     return this.updateTask(
       await this.ctx.withTreeFingerprint(state),
       updated,
-      meaningfulRed ? "task.red_observed" : "task.red_rejected",
-      meaningfulRed
+      acceptedRed ? "task.red_observed" : "task.red_rejected",
+      acceptedRed
         ? {
             redCheckpointSha: updated.redCheckpointSha,
             redBaseSha: updated.redBaseSha,
           }
-        : {},
+        : !runnable.runnable && !isRepair
+          ? { runnableRedReason: runnable.reason }
+          : {},
     );
   }
 
@@ -267,7 +317,13 @@ export class TaskExecutionService {
 
     const latestEvidence = task.evidence.at(-1);
     const category = failureCategoryFromEvidence(latestEvidence, "verification");
-    if (category === "test-repair" && task.tdd && task.redCheckpointSha) {
+    // First implement after RED: missing production symbols are the implementer's job.
+    if (
+      category === "test-repair" &&
+      task.tdd &&
+      task.redCheckpointSha &&
+      task.attempts.implementation > 0
+    ) {
       return this.routeToTestRepair(state, task, latestEvidence);
     }
 
@@ -741,6 +797,52 @@ export class TaskExecutionService {
     });
   }
 
+  async setRag(runId: string, rag: boolean): Promise<RunState> {
+    return this.ctx.store.withLock(runId, async () => {
+      let state = await this.ctx.store.load(runId);
+      if (terminal(state.phase)) {
+        throw new Error(`Run ${runId} is already ${state.phase}`);
+      }
+      if (this.ctx.config.workflow.rag === rag) {
+        return state;
+      }
+      const result = await updateRunConfig(
+        this.ctx,
+        state.runId,
+        state.configRevision ?? 0,
+        { workflow: { rag } },
+        { reason: "rag", detail: { rag } },
+        { alreadyLocked: true },
+      );
+      state = result.state;
+      await this.ctx.syncArtifacts(state);
+      return state;
+    });
+  }
+
+  async setGraphify(runId: string, enabled: boolean): Promise<RunState> {
+    return this.ctx.store.withLock(runId, async () => {
+      let state = await this.ctx.store.load(runId);
+      if (terminal(state.phase)) {
+        throw new Error(`Run ${runId} is already ${state.phase}`);
+      }
+      if (this.ctx.config.knowledge.graphify.enabled === enabled) {
+        return state;
+      }
+      const result = await updateRunConfig(
+        this.ctx,
+        state.runId,
+        state.configRevision ?? 0,
+        { knowledge: { graphify: { enabled } } },
+        { reason: "graphify", detail: { enabled } },
+        { alreadyLocked: true },
+      );
+      state = result.state;
+      await this.ctx.syncArtifacts(state);
+      return state;
+    });
+  }
+
   private async establishRedCheckpoint(
     task: BuildTask,
     candidatePaths: string[],
@@ -752,8 +854,19 @@ export class TaskExecutionService {
       };
     }
     const existing = await this.ctx.git.findRedCheckpoint(task.id);
+    const testPatterns = this.ctx.config.workflow.testPathPatterns;
+    const allowed = unique(
+      (candidatePaths.length > 0 ? candidatePaths : task.testPaths).filter((file) =>
+        isRedWriterAllowedPath(file, testPatterns, task.affectedPaths),
+      ),
+    );
     if (existing && task.redCheckpointSha === existing.sha) {
-      return task;
+      // Allow a new checkpoint when dirty allowed paths advanced past the current HEAD checkpoint.
+      const dirty = new Set(await this.ctx.git.changedFiles());
+      const dirtyAllowed = allowed.filter((file) => dirty.has(file));
+      if (dirtyAllowed.length === 0) {
+        return task;
+      }
     }
     if (existing && !task.redCheckpointSha) {
       return {
@@ -761,20 +874,14 @@ export class TaskExecutionService {
         redBaseSha: existing.baseSha,
         redCheckpointSha: existing.sha,
         redCheckpointNumber: (task.redCheckpointNumber ?? 0) + 1,
-        redCheckpointPaths: existing.paths.length > 0 ? existing.paths : candidatePaths,
+        redCheckpointPaths: existing.paths.length > 0 ? existing.paths : allowed,
         redCheckpointHistory: unique([...task.redCheckpointHistory, existing.sha]),
       };
     }
-    const testPatterns = this.ctx.config.workflow.testPathPatterns;
-    const paths = unique(
-      (candidatePaths.length > 0 ? candidatePaths : task.testPaths).filter((file) =>
-        isTestPath(file, testPatterns),
-      ),
-    );
     const committed = await this.ctx.git.commitRedCheckpoint({
       taskId: task.id,
       taskTitle: task.title,
-      testPaths: paths,
+      paths: allowed.length > 0 ? allowed : task.testPaths,
     });
     if (!committed) return task;
     return {
@@ -785,6 +892,10 @@ export class TaskExecutionService {
       redCheckpointPaths: committed.paths,
       redCheckpointHistory: unique([...task.redCheckpointHistory, committed.sha]),
       changedFiles: unique([...task.changedFiles, ...committed.paths]),
+      testPaths: unique([
+        ...task.testPaths,
+        ...committed.paths.filter((file) => isTestPath(file, testPatterns)),
+      ]),
     };
   }
 
@@ -793,7 +904,11 @@ export class TaskExecutionService {
     task: BuildTask,
     reportedChangedFiles: string[],
   ): Promise<{ state: RunState; task: BuildTask; restoredOnly: boolean }> {
-    const recorded = task.redCheckpointPaths.length > 0 ? task.redCheckpointPaths : task.testPaths;
+    const testPatterns = this.ctx.config.workflow.testPathPatterns;
+    // Integrity protects recorded test paths only — scaffolds may be replaced by the implementer.
+    const recordedAll =
+      task.redCheckpointPaths.length > 0 ? task.redCheckpointPaths : task.testPaths;
+    const recorded = recordedAll.filter((file) => isTestPath(file, testPatterns));
     if (recorded.length === 0) {
       return { state, task, restoredOnly: false };
     }

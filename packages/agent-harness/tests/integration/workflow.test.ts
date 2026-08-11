@@ -59,7 +59,7 @@ describe("durable idea-to-feature workflow", () => {
       commands: { test: 'node -e "process.exit(1)"', gates: [] } as never,
     });
     const backend = createFakeBackend({
-      "test-writer": async (request) => {
+      "red-writer": async (request) => {
         await mkdir(path.join(request.cwd, "tests"), { recursive: true });
         await writeFile(
           path.join(request.cwd, "tests", "new-behavior.test.ts"),
@@ -73,7 +73,7 @@ describe("durable idea-to-feature workflow", () => {
     const started = await engine.start("Preserve an approved setup change");
 
     // This models a persisted project-default repair. It is intentionally dirty
-    // in the run worktree, but known before the next test-writer invocation begins.
+    // in the run worktree, but known before the next red-writer invocation begins.
     await writeFile(
       path.join(engine.paths.workspaceRoot, "agent-harness.config.yaml"),
       "workflow:\n  testPathPatterns:\n    - tests/**\n",
@@ -864,7 +864,7 @@ describe("durable idea-to-feature workflow", () => {
             ],
         proposedInstalls: [],
       }),
-      "test-writer": () => {
+      "red-writer": () => {
         process.env.HARNESS_FORCE_RED = "1";
         return { summary: "wrote test", changedFiles: ["tests/greet.test.ts"] };
       },
@@ -930,7 +930,7 @@ describe("durable idea-to-feature workflow", () => {
             ],
         proposedInstalls: [],
       }),
-      "test-writer": () => {
+      "red-writer": () => {
         process.env.HARNESS_FORCE_RED = "1";
         return { summary: "wrote test", changedFiles: ["tests/greet.test.ts"] };
       },
@@ -1734,5 +1734,198 @@ describe("durable idea-to-feature workflow", () => {
     expect(cancelled.state.phase).toBe("cancelled");
     expect(released).toContain(sessionId);
     expect(cancelled.state.tasks[0]?.implementerSession).toBeUndefined();
+  });
+
+  it("rejects red-writer edits outside tests and affectedPaths", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      commands: { test: 'node -e "process.exit(1)"', gates: [] } as never,
+    });
+    const backend = createFakeBackend({
+      "red-writer": async (request) => {
+        await mkdir(path.join(request.cwd, "tests"), { recursive: true });
+        await mkdir(path.join(request.cwd, "src"), { recursive: true });
+        await writeFile(path.join(request.cwd, "tests", "ok.test.ts"), "export {};\n", "utf8");
+        await writeFile(path.join(request.cwd, "src", "sneaky.ts"), "export {};\n", "utf8");
+        return {
+          summary: "illegal scaffold",
+          changedFiles: ["tests/ok.test.ts", "src/sneaky.ts"],
+        };
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Reject illegal scaffold");
+    const state = await engine.store.load(started.runId);
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...state,
+      phase: "executing",
+      treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
+      tasks: [
+        {
+          id: "illegal-scaffold",
+          title: "Write RED",
+          description: "Coverage",
+          acceptanceCriteria: ["failing test"],
+          affectedPaths: ["src/greet.ts"],
+          blockedBy: [],
+          tdd: true,
+          status: "active",
+          step: "writing_tests",
+          attempts: { tests: 0, implementation: 0, review: 0 },
+          evidence: [],
+          testPaths: [],
+          changedFiles: [],
+        },
+      ],
+    });
+
+    const advanced = await engine.advance(started.runId);
+    expect(advanced.phase).toBe("blocked");
+    expect(advanced.failure).toMatch(/affectedPaths|Red writer/i);
+  });
+
+  it("does not route first implementing attempt to test-repair for missing production symbols", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: { tdd: true, maxImplementationAttempts: 2 } as never,
+      commands: {
+        test: 'node -e "process.exit(1)"',
+        gates: [],
+      } as never,
+    });
+    let implementerCalls = 0;
+    const backend = createFakeBackend({
+      implementer: async (request) => {
+        implementerCalls += 1;
+        await mkdir(path.join(request.cwd, "src"), { recursive: true });
+        await writeFile(
+          path.join(request.cwd, "src", "greet.ts"),
+          'export const greet = () => "hi";\n',
+          "utf8",
+        );
+        return { summary: "implemented", changedFiles: ["src/greet.ts"] };
+      },
+      "test-writer": () => {
+        throw new Error("test-writer must not run on first implementing attempt");
+      },
+      "red-writer": () => {
+        throw new Error("red-writer must not run during implementing");
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("No false repair");
+    const state = await engine.store.load(started.runId);
+    const missingSymbolEvidence = {
+      purpose: "tdd:red",
+      command: "npm test",
+      exitCode: 1,
+      passed: false,
+      stdout: "",
+      stderr: [
+        "tests/GreeterTest.java:12: error: cannot find symbol",
+        "  symbol:   class Greeter",
+        "  location: class GreeterTest",
+        "Compilation failed",
+      ].join("\n"),
+      durationMs: 10,
+      at: new Date().toISOString(),
+    };
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...state,
+      phase: "executing",
+      treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
+      tasks: [
+        {
+          id: "no-false-repair",
+          title: "Ship greeting",
+          description: "Render greeting",
+          acceptanceCriteria: ["greeting works"],
+          affectedPaths: ["src/greet.ts"],
+          blockedBy: [],
+          tdd: true,
+          status: "active",
+          step: "implementing",
+          attempts: { tests: 1, implementation: 0, review: 0 },
+          evidence: [missingSymbolEvidence],
+          testPaths: ["tests/greet.test.ts"],
+          redCheckpointSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          redBaseSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          redCheckpointPaths: ["tests/greet.test.ts"],
+          changedFiles: ["tests/greet.test.ts"],
+        },
+      ],
+    });
+
+    await engine.advance(started.runId);
+    const events = await readFile(
+      path.join(fixture.root, ".agent-harness", "runs", started.runId, "events.jsonl"),
+      "utf8",
+    );
+    expect(events).not.toContain("task.test_repair_routed");
+    expect(implementerCalls).toBe(1);
+  });
+
+  it("never invokes red-writer when task tdd is false", async () => {
+    const roles: string[] = [];
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: { tdd: false } as never,
+      commands: { test: 'node -e "process.exit(0)"', gates: [] } as never,
+    });
+    const backend = createFakeBackend({
+      "red-writer": () => {
+        roles.push("red-writer");
+        throw new Error("red-writer must not run when tdd is false");
+      },
+      "test-writer": () => {
+        roles.push("test-writer");
+        throw new Error("test-writer must not run when tdd is false");
+      },
+      implementer: (request) => {
+        roles.push(request.role);
+        return { summary: "done", changedFiles: ["src/greet.ts"] };
+      },
+      reviewer: (request) => {
+        roles.push(request.role);
+        return { approved: true, summary: "ok", findings: [] };
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("No TDD path");
+    const state = await engine.store.load(started.runId);
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...state,
+      phase: "executing",
+      treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
+      tasks: [
+        {
+          id: "no-tdd",
+          title: "Ship greeting",
+          description: "Render greeting",
+          acceptanceCriteria: ["done"],
+          affectedPaths: ["src/greet.ts"],
+          blockedBy: [],
+          tdd: false,
+          status: "pending",
+          step: "pending",
+          attempts: { tests: 0, implementation: 0, review: 0 },
+          evidence: [],
+          testPaths: [],
+          changedFiles: [],
+        },
+      ],
+    });
+
+    const advanced = await engine.advance(started.runId);
+    expect(roles).not.toContain("red-writer");
+    expect(roles).not.toContain("test-writer");
+    expect(roles).toContain("implementer");
+    expect(advanced.tasks[0]?.step).not.toBe("writing_tests");
   });
 });

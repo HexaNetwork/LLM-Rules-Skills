@@ -43,6 +43,7 @@ import {
   diversifyBySource,
   isVisibleForRun,
   isVisibleToProject,
+  pathAffinityBoost,
   rankHybridResults,
   rememberFifo,
   searchResultCacheKey,
@@ -306,9 +307,12 @@ export class LocalKnowledgeBase {
         },
       };
     }
+    const documentsEnabled = options.documents !== false;
     const activeProjectId = options.projectId ?? this.config.knowledge.projectId;
     const [chunks, repositoryLookup] = await Promise.all([
-      this.loadChunks(),
+      documentsEnabled
+        ? this.loadChunks()
+        : Promise.resolve([] as KnowledgeChunk[]),
       options.repository === false
         ? Promise.resolve({
             result: undefined,
@@ -336,6 +340,25 @@ export class LocalKnowledgeBase {
         score: 0,
         reason: "graphify-skipped",
       });
+    }
+    if (!documentsEnabled) {
+      const repositoryResult = repositoryLookup.result
+        ? toCurrentProjectResult(repositoryLookup.result, activeProjectId)
+        : undefined;
+      const results = repositoryResult ? [repositoryResult] : [];
+      graphifyAudit.included = Boolean(repositoryResult);
+      if (repositoryResult) graphifyAudit.skippedReason = undefined;
+      return {
+        results: capResultCharacters(results, options.maxCharacters),
+        audit: {
+          query,
+          fallbackQuery: options.fallbackQuery,
+          graphify: graphifyAudit,
+          kept: results.map(toKeptEntry),
+          omitted,
+          skipped: "rag-disabled",
+        },
+      };
     }
     const stateDirectory = normalizePath(this.config.stateDirectory);
     // Guidance is injected-only and never indexed; every chunk is a document.
@@ -368,6 +391,7 @@ export class LocalKnowledgeBase {
         documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
       }
     }
+    const pathHints = options.pathHints ?? [];
     const scoredLexical: IndexedSearchResult[] = allowedChunks
       .map((chunk) => {
         let score = 0;
@@ -381,6 +405,7 @@ export class LocalKnowledgeBase {
         }
         // Prefer the active project's conventions when lexical evidence is otherwise equal.
         if (score > 0 && chunk.scope === "project" && chunk.projectId === activeProjectId) score += 0.001;
+        if (score > 0) score += pathAffinityBoost(chunk.source, terms, pathHints);
         return {
           source: chunk.source,
           title: chunk.title,
@@ -463,7 +488,12 @@ export class LocalKnowledgeBase {
     const diversified = diversifyBySource(
       ranked,
       documentSlots,
-      { maxPerSource: maxChunksPerSource, maxForTopSource },
+      {
+        maxPerSource: maxChunksPerSource,
+        maxForTopSource,
+        // Soft diversity: do not pad weak secondary sources to fill slots.
+        newSourceScoreRatio: 0.85,
+      },
       omitted,
     );
     const merged = repositoryLookup.result

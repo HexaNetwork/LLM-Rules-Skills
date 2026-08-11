@@ -183,6 +183,7 @@ knowledge:
       planner: { rules: [], skills: [domain-modeling, improve-codebase-architecture] }
       prompt-builder: { rules: [], skills: [] }
       test-writer: { rules: [], skills: [tdd] }
+      red-writer: { rules: [], skills: [tdd] }
       implementer: { rules: [], skills: [tdd] }
       reviewer: { rules: [], skills: [code-review] }
       message-writer: { rules: [], skills: [] }
@@ -218,7 +219,7 @@ harness configs enable it by default. Install Graphify yourself
 `graphify-out/graph.json` with `graphify update` when the graph is missing.
 After each verified harness task commit that includes a source-file path, it
 runs `graphify update` again so the next task receives fresh structural
-context. Default Graphify roles are planner, test-writer, implementer, and
+context. Default Graphify roles are planner, red-writer, test-writer, implementer, and
 reviewer (not reflector/griller). Project-specific
 `knowledge.graphify.stopwords` merge over the built-in English and harness-meta
 lists. Enable `knowledge.graphify.updateOnRefresh` if a

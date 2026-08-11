@@ -35,7 +35,7 @@ describe("RED checkpoint commits", () => {
     const first = await service.commitRedCheckpoint({
       taskId: "greet",
       taskTitle: "Add greeting",
-      testPaths: ["tests/greet.test.ts"],
+      paths: ["tests/greet.test.ts"],
     });
     expect(first?.sha).toMatch(/^[a-f0-9]{40}$/);
     expect(first?.paths).toEqual(["tests/greet.test.ts"]);
@@ -59,9 +59,39 @@ describe("RED checkpoint commits", () => {
     const again = await service.commitRedCheckpoint({
       taskId: "greet",
       taskTitle: "Add greeting",
-      testPaths: ["tests/greet.test.ts"],
+      paths: ["tests/greet.test.ts"],
     });
     expect(again?.sha).toBe(first?.sha);
+  });
+
+  it("commits scaffolds with tests and advances when new dirty paths appear at HEAD checkpoint", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    const service = new GitService(fixtureConfig(root, { git: { enabled: true } as never }));
+    await mkdir(path.join(root, "tests"), { recursive: true });
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "tests", "greet.test.ts"), "expect(false).toBe(true);\n", "utf8");
+    await writeFile(
+      path.join(root, "src", "greet.ts"),
+      "export const greet = (): string => { throw new Error('todo'); };\n",
+      "utf8",
+    );
+
+    const first = await service.commitRedCheckpoint({
+      taskId: "greet",
+      taskTitle: "Add greeting",
+      paths: ["tests/greet.test.ts", "src/greet.ts"],
+    });
+    expect(first?.paths.sort()).toEqual(["src/greet.ts", "tests/greet.test.ts"]);
+
+    await writeFile(path.join(root, "tests", "greet2.test.ts"), "expect(1).toBe(2);\n", "utf8");
+    const second = await service.commitRedCheckpoint({
+      taskId: "greet",
+      taskTitle: "Add greeting",
+      paths: ["tests/greet.test.ts", "src/greet.ts", "tests/greet2.test.ts"],
+    });
+    expect(second?.sha).not.toBe(first?.sha);
+    expect(second?.paths).toEqual(["tests/greet2.test.ts"]);
   });
 
   it("restores recorded tests from the checkpoint without dropping production edits", async () => {
@@ -74,7 +104,7 @@ describe("RED checkpoint commits", () => {
     const checkpoint = await service.commitRedCheckpoint({
       taskId: "greet",
       taskTitle: "Add greeting",
-      testPaths: ["tests/greet.test.ts"],
+      paths: ["tests/greet.test.ts"],
     });
     expect(checkpoint).toBeTruthy();
 
@@ -105,7 +135,7 @@ describe("RED checkpoint commits", () => {
     const checkpoint = await service.commitRedCheckpoint({
       taskId: "greet",
       taskTitle: "Add greeting",
-      testPaths: ["tests/greet.test.ts"],
+      paths: ["tests/greet.test.ts"],
     });
     await writeFile(path.join(root, "src", "greet.ts"), "export const greet = () => 'hi';\n", "utf8");
 

@@ -1,8 +1,9 @@
 import path from "node:path";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { AgentCoordinator, createFakeBackend } from "../../src/agent.js";
+import type { RepositoryLookup } from "../../src/graphify.js";
 import { compactDomainSeed, LocalKnowledgeBase } from "../../src/knowledge.js";
 import { WorkerOutputSchema, createRunState } from "../../src/domain.js";
 import { RunStore } from "../../src/store.js";
@@ -180,5 +181,130 @@ describe("retrieval audit artifact", () => {
     expect(artifact.retrieval.graphify.included).toBe(false);
     expect(artifact.retrieval.omitted.some((item) => item.source === "docs/colors.md")).toBe(true);
     expect(artifact.budget).toBeDefined();
+  });
+
+  it("honors the RAG/Graphify independence matrix while keeping guidance", async () => {
+    const root = await fixtureRoot();
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    await writeFile(
+      path.join(root, "docs", "settlement.md"),
+      "# SettlementWindow\n\nSettlementWindow closes the ledger and records refunds.\n",
+      "utf8",
+    );
+    const sharedRoot = path.join(root, "guidance-shared");
+    await mkdir(path.join(sharedRoot, "General", "skills", "tdd"), { recursive: true });
+    await writeFile(
+      path.join(sharedRoot, "General", "skills", "tdd", "SKILL.md"),
+      "---\nname: tdd\ndescription: write tests first\n---\n\nPrefer red-green for SettlementWindow changes.\n",
+      "utf8",
+    );
+    const base = fixtureConfig(root);
+    const graphifyHit = {
+      source: "graphify:graphify-out/graph.json",
+      title: "Repository relationships (Graphify)",
+      excerpt: "SettlementWindow -> Ledger",
+      score: 1,
+    };
+    const lookup: RepositoryLookup = {
+      async refresh() {},
+      async rebuild() {
+        return true;
+      },
+      async search() {
+        return {
+          shapedQuery: "SettlementWindow",
+          usedFallback: false,
+          result: graphifyHit,
+        };
+      },
+    };
+
+    async function invokeWith(options: { rag: boolean; graphify: boolean }) {
+      const config = fixtureConfig(root, {
+        agent: { promptBuilder: false } as never,
+        workflow: { ...base.workflow, rag: options.rag } as never,
+        knowledge: {
+          ...base.knowledge,
+          graphify: { ...base.knowledge.graphify, enabled: options.graphify },
+          guidance: {
+            ...base.knowledge.guidance,
+            enabled: true,
+            sharedRoot,
+            assignments: {
+              ...base.knowledge.guidance.assignments,
+              implementer: { rules: [], skills: ["tdd"] },
+            },
+          },
+        },
+      });
+      const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
+      await store.initialize();
+      const knowledge = new LocalKnowledgeBase(config, lookup, undefined, { sharedRoot });
+      await knowledge.refresh();
+      const runId = `matrix-${options.rag ? "rag" : "norag"}-${options.graphify ? "g" : "nog"}`;
+      await store.create(createRunState(runId, "Build SettlementWindow", new Date().toISOString()));
+      const agents = new AgentCoordinator(
+        config,
+        createFakeBackend({
+          implementer: () => ({ summary: "done", changedFiles: [] }),
+        }),
+        store,
+        knowledge,
+      );
+      await agents.invoke({
+        runId,
+        role: "implementer",
+        objective: "Implement SettlementWindow refunds",
+        input: {
+          task: {
+            title: "SettlementWindow refunds",
+            description: "Close the ledger",
+            acceptanceCriteria: ["Refunds reuse the original ledger entry"],
+            affectedPaths: ["src/settlement.ts"],
+          },
+        },
+        expectedOutput: "{summary,changedFiles}",
+        schema: WorkerOutputSchema,
+        knowledgeQuery: "SettlementWindow refunds ledger",
+      });
+      const files = await store.listFiles(runId, "packets");
+      const packetPath = files.find(
+        (file) =>
+          file.endsWith(".json") &&
+          !file.endsWith(".retrieval.json") &&
+          !file.endsWith(".guidance.json"),
+      );
+      const retrievalPath = files.find((file) => file.endsWith(".retrieval.json"));
+      const packet = (await store.readJson(runId, packetPath!)) as {
+        guidance: unknown[];
+        context: Array<{ source: string }>;
+      };
+      const retrieval = (await store.readJson(runId, retrievalPath!)) as {
+        retrieval: { skipped?: string; graphify: { included: boolean } };
+      };
+      return { packet, retrieval };
+    }
+
+    const bothOn = await invokeWith({ rag: true, graphify: true });
+    expect(bothOn.packet.guidance.length).toBeGreaterThan(0);
+    expect(bothOn.packet.context.some((item) => item.source === "docs/settlement.md")).toBe(true);
+    expect(bothOn.packet.context.some((item) => item.source.startsWith("graphify:"))).toBe(true);
+
+    const docsOnly = await invokeWith({ rag: true, graphify: false });
+    expect(docsOnly.packet.guidance.length).toBeGreaterThan(0);
+    expect(docsOnly.packet.context.every((item) => !item.source.startsWith("graphify:"))).toBe(true);
+    expect(docsOnly.packet.context.some((item) => item.source === "docs/settlement.md")).toBe(true);
+
+    const graphifyOnly = await invokeWith({ rag: false, graphify: true });
+    expect(graphifyOnly.packet.guidance.length).toBeGreaterThan(0);
+    expect(graphifyOnly.packet.context.map((item) => item.source)).toEqual([
+      "graphify:graphify-out/graph.json",
+    ]);
+    expect(graphifyOnly.retrieval.retrieval.skipped).toBe("rag-disabled");
+
+    const bothOff = await invokeWith({ rag: false, graphify: false });
+    expect(bothOff.packet.guidance.length).toBeGreaterThan(0);
+    expect(bothOff.packet.context).toEqual([]);
+    expect(bothOff.retrieval.retrieval.skipped).toBe("rag-disabled");
   });
 });

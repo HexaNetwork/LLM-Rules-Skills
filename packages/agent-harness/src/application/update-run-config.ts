@@ -86,6 +86,22 @@ async function applyUpdateRunConfig(
       ? { commands: { ...frozen.commands, ...parsedPatch.commands } }
       : {}),
     ...(parsedPatch.git ? { git: { ...frozen.git, ...parsedPatch.git } } : {}),
+    ...(parsedPatch.knowledge
+      ? {
+          knowledge: {
+            ...frozen.knowledge,
+            ...parsedPatch.knowledge,
+            ...(parsedPatch.knowledge.graphify
+              ? {
+                  graphify: {
+                    ...frozen.knowledge.graphify,
+                    ...parsedPatch.knowledge.graphify,
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
   });
   const changedPaths = configurationPolicyDiff(frozen, nextConfig);
   if (changedPaths.length === 0) {
@@ -137,6 +153,7 @@ async function applyUpdateRunConfig(
   ctx.config.workflow = nextConfig.workflow;
   ctx.config.commands = nextConfig.commands;
   ctx.config.git = nextConfig.git;
+  ctx.config.knowledge = nextConfig.knowledge;
 
   return {
     state: persisted,

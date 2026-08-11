@@ -83,9 +83,11 @@ export const eventsScript = `    async function waitForJob(runId) {
                   ? 'Baseline passed — review the plan'
                   : 'Baseline passed — planning'))
             : (action === 'set_tdd' ? 'TDD updated'
+            : (action === 'set_rag' ? 'RAG updated'
+            : (action === 'set_graphify' ? 'Graphify updated'
             : (action === 'commit_preflight' ? 'Working tree committed — continuing'
             : (action === 'accept_tree' ? 'Current tree accepted — continuing'
-            : (action === 'retry' ? 'Retry started' : 'Action completed'))))))))));
+            : (action === 'retry' ? 'Retry started' : 'Action completed'))))))))))));
         toast(doneMsg);
       } catch (error) {
         state.pinScrollTop = false;
@@ -244,6 +246,10 @@ export const eventsScript = `    async function waitForJob(runId) {
             tdd: target.dataset.tdd === 'true',
             taskId: target.dataset.taskId || undefined
           });
+        } else if (target.dataset.action === 'set_rag') {
+          runAction('set_rag', { rag: target.dataset.rag === 'true' });
+        } else if (target.dataset.action === 'set_graphify') {
+          runAction('set_graphify', { graphify: target.dataset.graphify === 'true' });
         } else if (target.dataset.action === 'commit_preflight') {
           runAction(target.dataset.action, { order: target.dataset.preflightOrder });
         } else if (target.dataset.action === 'ignore_artifacts') {
@@ -269,7 +275,7 @@ export const eventsScript = `    async function waitForJob(runId) {
             var failureText = state.detail && state.detail.state ? String(state.detail.state.failure || '') : '';
             var configRepair =
               blockedKind === 'config' ||
-              /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths|Test command could not be launched/i.test(failureText);
+              /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths|Red writer changed paths outside tests and affectedPaths|Test command could not be launched/i.test(failureText);
             if (configRepair) guidance = 'Propose the smallest recommended repair that unblocks this harness configuration failure.';
             else { toast('Describe the recovery you want before asking the fixer to plan it', true); return; }
           }
@@ -571,7 +577,7 @@ export const eventsScript = `    async function waitForJob(runId) {
       submit.textContent = 'Starting reflect…';
       setNewRunFeedback('Creating the durable run and queuing the reflector…', false);
       try {
-        var body = { idea:$("idea").value, tdd:$("tdd").checked, graphify:$("graphify").checked, push:$("push").checked, openPullRequest:$("openPr").checked, smallModel:$("smallModel").value || undefined, capableModel:$("capableModel").value || undefined };
+        var body = { idea:$("idea").value, tdd:$("tdd").checked, rag:$("rag").checked, graphify:$("graphify").checked, push:$("push").checked, openPullRequest:$("openPr").checked, smallModel:$("smallModel").value || undefined, capableModel:$("capableModel").value || undefined };
         var baseBranchSelect = $("baseBranch");
         if (baseBranchSelect && !baseBranchSelect.disabled && baseBranchSelect.value) body.baseBranch = baseBranchSelect.value;
         var data = await api('/api/runs',{method:'POST',body:body});
@@ -633,6 +639,7 @@ export const eventsScript = `    async function waitForJob(runId) {
     function applyDefaults() {
       if (!state.bootstrap) return;
       $("tdd").checked = state.bootstrap.project.defaults.tdd;
+      $("rag").checked = state.bootstrap.project.defaults.rag !== false;
       $("push").checked = state.bootstrap.project.defaults.push;
       $("openPr").checked = state.bootstrap.project.defaults.openPullRequest;
       $("graphify").checked = state.bootstrap.project.graphify && state.bootstrap.project.graphify.enabled === true;

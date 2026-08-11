@@ -43,6 +43,8 @@ agent:
 
 workflow:
   tdd: true
+  # Document RAG into work packets (independent of Graphify / guidance).
+  rag: true
   # Hard spend ceilings (0 = unlimited); enforced between steps, never mid-step.
   maxRunTokens: 0
   maxRunCostUsd: 0
@@ -130,7 +132,7 @@ knowledge:
       scope: project
   chunkCharacters: 2000
   # Keep lexical hits within a band of the top score; refuse crumbs.
-  relevanceFloor: 0.55
+  relevanceFloor: 0.72
   minLexicalScore: 0.05
   maxChunksPerSource: 1
   # Top-ranked source may contribute two chunks; every other source one.
@@ -158,6 +160,9 @@ knowledge:
       prompt-builder:
         rules: []
         skills: []
+      red-writer:
+        rules: []
+        skills: [tdd]
       test-writer:
         rules: []
         skills: [tdd]

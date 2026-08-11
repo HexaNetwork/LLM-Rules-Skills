@@ -322,6 +322,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .option("--repository <path>", "registered repository path")
     .option("--home <path>", "harness home override")
     .option("--tdd <mode>", "override TDD for this run: on or off")
+    .option("--rag <mode>", "override document RAG for this run: on or off")
     .option("--base-branch <name>", "override local base branch for this run")
     .option("--no-advance", "create artifacts without launching agents")
     .action(
@@ -333,11 +334,17 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         repository?: string;
         home?: string;
         tdd?: string;
+        rag?: string;
         baseBranch?: string;
         advance: boolean;
       }) => {
         const resolved = await resolvedProjectConfig(options);
-        const config = await applyRunOverrides(resolved.config, options.tdd, options.baseBranch);
+        const config = await applyRunOverrides(
+          resolved.config,
+          options.tdd,
+          options.baseBranch,
+          options.rag,
+        );
         const engine = new HarnessEngine(config, {
           backend: dependencies.createBackend(),
           ...(resolved.lookup && !resolved.legacy
@@ -887,9 +894,10 @@ async function resolvedConfig(
   configPath: string | undefined,
   tdd: string | undefined,
   baseBranch?: string,
+  rag?: string,
 ): Promise<HarnessConfig> {
   const { config } = await resolvedProjectConfig({ config: configPath });
-  return applyRunOverrides(config, tdd, baseBranch);
+  return applyRunOverrides(config, tdd, baseBranch, rag);
 }
 
 async function resolvedProjectConfig(options: {
@@ -926,11 +934,16 @@ async function applyRunOverrides(
   config: HarnessConfig,
   tdd: string | undefined,
   baseBranch?: string,
+  rag?: string,
 ): Promise<HarnessConfig> {
   let next = config;
   if (tdd != null) {
     if (tdd !== "on" && tdd !== "off") throw new Error("--tdd must be 'on' or 'off'");
     next = { ...next, workflow: { ...next.workflow, tdd: tdd === "on" } };
+  }
+  if (rag != null) {
+    if (rag !== "on" && rag !== "off") throw new Error("--rag must be 'on' or 'off'");
+    next = { ...next, workflow: { ...next.workflow, rag: rag === "on" } };
   }
   if (baseBranch != null) {
     if (!next.git.enabled) {

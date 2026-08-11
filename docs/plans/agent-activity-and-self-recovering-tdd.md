@@ -4,7 +4,7 @@
 **Scope:** `packages/agent-harness`  
 **Primary outcomes:** replace the misleading session-card grid; preserve strict RED/GREEN evidence; recover from bounded implementation and test defects without circular model calls.
 
-**Implementation notes (2026-08-10):** Delivery slices 1–7 are in the harness. Remaining polish: full temporary-worktree counterfactual RED isolation (current accept path validates meaningful RED in-place), dedicated Playwright coverage for the Agent activity timeline, and stricter per-invocation token circuit-breaker enforcement beyond UI warnings / `maxContextTurns`.
+**Implementation notes (2026-08-10):** Delivery slices 1–7 are in the harness. Runnable RED writer (`red-writer`) plus scaffolds-on-`affectedPaths`, runnable-red gate, and first-implement false-repair fix are in place. Remaining polish: full temporary-worktree counterfactual RED isolation (current accept path validates meaningful RED in-place), dedicated Playwright coverage for the Agent activity timeline, and stricter per-invocation token circuit-breaker enforcement beyond UI warnings / `maxContextTurns`.
 
 ## Problem
 
@@ -20,7 +20,7 @@ Use these terms consistently in persisted records, API responses, UI copy, and d
 - **Invocation** — one harness request sent to a provider context. The existing `sessionId` is the durable invocation-record ID and remains readable for backward compatibility.
 - **Schema attempt** — a structured-output repair within one logical invocation (`attempt`).
 - **Step** — a provider tool/reasoning activity recorded in `*.steps.jsonl`.
-- **RED checkpoint** — a harness-owned Git commit containing only verified failing test changes.
+- **RED checkpoint** — a harness-owned Git commit containing verified failing tests and optional minimal compile scaffolds on declared production seams.
 
 The UI hierarchy is:
 
@@ -133,10 +133,10 @@ The overview replaces “model sessions” with separate metrics for provider co
 
 ### B1. Commit verified RED tests immediately
 
-After the test writer returns and the targeted command produces a meaningful RED:
+After the **red-writer** returns and the targeted command produces a **runnable RED** (tests compile, execute, and fail on assertions — not compile-only / missing-symbol failures):
 
-1. Validate that every newly changed path is a configured test path.
-2. Stage only those exact test paths.
+1. Validate that every newly changed path is a configured test path **or** a declared `affectedPaths` scaffold.
+2. Stage those exact paths (tests + optional scaffolds).
 3. Commit them with a deterministic message and trailers:
 
    ```text
@@ -146,10 +146,12 @@ After the test writer returns and the targeted command produces a meaningful RED
    Harness-Checkpoint-Task: <task id>
    ```
 
-4. Persist `redBaseSha`, `redCheckpointSha`, `redCheckpointNumber`, and the committed test paths on the task.
+4. Persist `redBaseSha`, `redCheckpointSha`, `redCheckpointNumber`, and the committed paths on the task.
 5. Re-stamp the tree fingerprint and move to `red`.
 
-This makes `git changedFiles()` after the checkpoint a valid indication of post-RED edits. The integrity check should nevertheless compare the recorded paths directly against `redCheckpointSha`; it must not depend only on broad porcelain status.
+`test-writer` remains a separate role for **test-repair only** (tests only; no production scaffolds). When `task.tdd === false`, the harness never enters `writing_tests` and never invokes `red-writer`.
+
+This makes `git changedFiles()` after the checkpoint a valid indication of post-RED edits. The integrity check compares **recorded test paths** directly against `redCheckpointSha` (scaffolds are fair game for the implementer); it must not depend only on broad porcelain status.
 
 Do not put the existing `Harness-Task` trailer on a checkpoint: `isTaskCommitted()` currently uses that trailer to identify the final task commit. If the process crashes after the Git commit but before state persistence, recovery finds `Harness-Checkpoint: red` plus `Harness-Checkpoint-Task` and attaches the commit idempotently instead of creating another checkpoint.
 
@@ -207,7 +209,8 @@ Route from observed evidence rather than a generic failed step:
 | command did not launch / wrong host entrypoint | deterministic config repair; no model retry |
 | recorded test changed after RED | restore from RED checkpoint; no model retry |
 | production compile or behavioral assertion failure | implementer repair |
-| diagnostic points only to test compilation/setup | test-repair candidate |
+| missing production symbols before any implementation attempt | implementer (never test-repair on `implementation === 0`) |
+| diagnostic points only to test compilation/setup **after** an implementation attempt | test-repair candidate (`test-writer`) |
 | unchanged known baseline failures | proceed or block according to baseline policy; no implementer retry |
 | malformed worker JSON | bounded schema repair inside the same logical invocation |
 | repeated evidence fingerprint | stop as `no_progress` |
@@ -242,13 +245,13 @@ Counterfactual RED does not prove that every expected value is correct, so norma
 ## State-machine sketch
 
 ```text
-writing_tests
-  └─ meaningful RED
-       └─ commit RED checkpoint
+writing_tests (tdd only; red-writer)
+  └─ runnable RED
+       └─ commit RED checkpoint (tests + optional scaffolds)
             └─ implementing
                  ├─ recorded test changed → restore → evaluate progress
                  ├─ implementation failure → implementer repair
-                 ├─ test-repair candidate → bounded test writer
+                 ├─ test-repair candidate (after impl attempt) → bounded test-writer
                  │    ├─ counterfactual RED accepted → new checkpoint → implementing
                  │    └─ rejected/repeated → no_progress or blocked
                  └─ targeted GREEN
@@ -271,9 +274,10 @@ Each slice must ship with unit/integration tests and one scripted TDD lifecycle.
 
 - The dashboard distinguishes provider contexts, invocations, schema attempts, and steps.
 - Three implementer invocations sharing one `providerSessionId` render as one context with three turns.
-- A verified RED produces exactly one idempotent checkpoint commit containing only test paths.
+- A verified runnable RED produces exactly one idempotent checkpoint commit containing test paths and optional compile scaffolds; integrity restores tests only.
 - An implementer edit to a recorded test is restored before GREEN and does not consume an implementation attempt by itself.
 - Identical deterministic evidence can never launch the same or alternating repair roles repeatedly.
+- First implementing after RED never routes to test-repair for missing production symbols (`implementation === 0`).
 - A repaired test must demonstrate RED against the pre-implementation production baseline before it becomes authoritative.
 - Successful tasks publish as one atomic task commit while retaining checkpoint provenance in artifacts and trailers.
 - Historical run artifacts remain readable.

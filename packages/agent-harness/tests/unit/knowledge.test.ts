@@ -315,7 +315,7 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/java.mdc":
         "---\ndescription: Java implementation guidance\nglobs: src/**/*.java\n---\n\nUse Java braces.",
       "General/skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: Test-first behavior\nroles: [test-writer]\n---\n\nWrite a failing behavioral test first.",
+        "---\nname: tdd\ndescription: Test-first behavior\nroles: [red-writer, test-writer]\n---\n\nWrite a failing behavioral test first.",
     });
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
       sharedRoot,
@@ -328,12 +328,17 @@ describe("LocalKnowledgeBase", () => {
     const testWriting = await knowledge.selectGuidance("write a behavioral test", {
       role: "test-writer",
     });
+    const redWriting = await knowledge.selectGuidance("establish runnable red", {
+      role: "red-writer",
+    });
 
     expect(implementation.map((item) => item.source)).toEqual(["General/rules/typescript.mdc"]);
     expect(implementation[0]).toMatchObject({ kind: "rule" });
     expect(implementation[0]?.reason).toContain("path matches");
     expect(testWriting.map((item) => item.source)).toEqual(["General/skills/tdd/SKILL.md"]);
     expect(testWriting[0]).toMatchObject({ kind: "skill" });
+    expect(redWriting.map((item) => item.source)).toEqual(["General/skills/tdd/SKILL.md"]);
+    expect(redWriting[0]).toMatchObject({ kind: "skill" });
   });
 
   it("prioritizes relevant always-apply guidance, respects budgets, and keeps guidance out of search", async () => {
@@ -464,13 +469,13 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/no-legacy-fallback-code.mdc":
         "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nglobal authorization fallback text.",
       "General/skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: authorization tests\nroles: [test-writer]\n---\n\nglobal authorization test skill.",
+        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer, test-writer]\n---\n\nglobal authorization test skill.",
     });
     await writeGuidanceFiles(projectRoot, {
       "rules/no-legacy-fallback-code.mdc":
         "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nproject authorization fallback text.",
       "skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: authorization tests\nroles: [test-writer]\n---\n\nproject authorization test skill.",
+        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer, test-writer]\n---\n\nproject authorization test skill.",
     });
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
       projectRoot,
@@ -699,6 +704,84 @@ describe("LocalKnowledgeBase", () => {
 
     expect(results.map((result) => result.source)).toEqual(["docs/settlement.md"]);
     expect(results).toHaveLength(1);
+  });
+
+  it("keeps Sign Cache ranking on dungeon-sign-cache instead of crowding with unrelated docs", async () => {
+    const root = await fixtureRoot();
+    await mkdir(path.join(root, "docs", "issues"), { recursive: true });
+    await mkdir(path.join(root, "docs", "adr"), { recursive: true });
+    await mkdir(path.join(root, "docs", "prd"), { recursive: true });
+    await mkdir(path.join(root, "docs", "features"), { recursive: true });
+    await writeFile(
+      path.join(root, "docs", "features", "dungeon-sign-cache.md"),
+      "# Dungeon Sign Cache\n\nThe Sign Cache stores rendered dungeon signs and invalidates entries when a room changes.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "docs", "issues", "player-profiles.md"),
+      "# Issue: player profiles\n\nTrack display names for the player roster and cosmetic badges.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "docs", "adr", "0001-event-log.md"),
+      "# ADR: event log\n\nPrefer an append-only event log for settlement and refunds.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "docs", "prd", "quiet-greeting.md"),
+      "# PRD: QuietGreetingBanner\n\nShip a quiet greeting banner next to SettlementWindow.\n",
+      "utf8",
+    );
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root));
+    await knowledge.refresh();
+
+    const results = await knowledge.search("Sign Cache dungeon signs", 6, {
+      repository: false,
+      pathHints: ["src/features/dungeon-sign-cache.ts"],
+    });
+
+    expect(results.map((result) => result.source)).toEqual([
+      "docs/features/dungeon-sign-cache.md",
+    ]);
+  });
+
+  it("supports documents-off Graphify-only search", async () => {
+    const root = await fixtureRoot();
+    await writeFile(
+      path.join(root, "docs", "settlement.md"),
+      "# SettlementWindow\n\nSettlementWindow closes the ledger.\n",
+      "utf8",
+    );
+    const lookup: RepositoryLookup = {
+      async refresh() {},
+      async rebuild() {
+        return true;
+      },
+      async search() {
+        return {
+          shapedQuery: "SettlementWindow",
+          usedFallback: false,
+          result: {
+            source: "graphify:graphify-out/graph.json",
+            title: "Repository relationships (Graphify)",
+            excerpt: "SettlementWindow -> Ledger",
+            score: 1,
+          },
+        };
+      },
+    };
+    const knowledge = new LocalKnowledgeBase(fixtureConfig(root), lookup);
+    await knowledge.refresh();
+
+    const { results, audit } = await knowledge.searchWithAudit("SettlementWindow", 4, {
+      documents: false,
+      repository: true,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.source).toBe("graphify:graphify-out/graph.json");
+    expect(audit.skipped).toBe("rag-disabled");
+    expect(audit.graphify.included).toBe(true);
   });
 
   it("diversifies results so one noisy source cannot fill every slot", async () => {

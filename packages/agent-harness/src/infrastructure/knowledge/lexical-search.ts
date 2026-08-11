@@ -22,6 +22,42 @@ export function scoreText(value: string, terms: string[]): number {
   return score;
 }
 
+/** Distinctive query tokens that also appear in a path get a ranking boost. */
+export function pathAffinityBoost(
+  source: string,
+  terms: string[],
+  pathHints: string[] = [],
+): number {
+  const pathTerms = new Set(tokenize(source.replace(/[\\/._-]+/g, " ")));
+  let boost = 0;
+  for (const term of terms) {
+    // Short tokens are too generic for path affinity (e.g. "md", "ts", "to").
+    if (term.length < 4) continue;
+    if (pathTerms.has(term)) boost += 0.35;
+  }
+  if (pathHints.length === 0) return Number(boost.toFixed(6));
+  const normalizedSource = normalizePath(source).toLocaleLowerCase();
+  for (const hint of pathHints) {
+    const normalizedHint = normalizePath(hint).toLocaleLowerCase();
+    if (!normalizedHint) continue;
+    if (
+      normalizedSource === normalizedHint ||
+      normalizedSource.endsWith(`/${normalizedHint}`) ||
+      normalizedHint.endsWith(`/${normalizedSource}`) ||
+      normalizedSource.includes(normalizedHint) ||
+      normalizedHint.includes(normalizedSource)
+    ) {
+      boost += 0.2;
+      continue;
+    }
+    const hintTerms = tokenize(hint.replace(/[\\/._-]+/g, " "));
+    if (hintTerms.some((term) => term.length >= 4 && pathTerms.has(term))) {
+      boost += 0.1;
+    }
+  }
+  return Number(boost.toFixed(6));
+}
+
 export function isVisibleToProject(
   chunk: Pick<KnowledgeChunk, "scope" | "projectId" | "visibility">,
   activeProjectId: string,
@@ -88,10 +124,17 @@ export function rankHybridResults(
 export function diversifyBySource(
   results: SearchResult[],
   limit: number,
-  options: { maxPerSource: number; maxForTopSource: number },
+  options: {
+    maxPerSource: number;
+    maxForTopSource: number;
+    /** Require new sources to score at least this fraction of the top score. */
+    newSourceScoreRatio?: number;
+  },
   omitted: RetrievalOmission[],
 ): SearchResult[] {
   const topSource = results[0]?.source;
+  const topScore = results[0]?.score ?? 0;
+  const newSourceRatio = options.newSourceScoreRatio ?? 0;
   const counts = new Map<string, number>();
   const kept: SearchResult[] = [];
   for (const result of results) {
@@ -101,6 +144,22 @@ export function diversifyBySource(
         title: result.title,
         score: result.score,
         reason: "limit",
+      });
+      continue;
+    }
+    const seenSource = counts.has(result.source);
+    if (
+      !seenSource &&
+      counts.size > 0 &&
+      newSourceRatio > 0 &&
+      topScore > 0 &&
+      result.score < topScore * newSourceRatio
+    ) {
+      omitted.push({
+        source: result.source,
+        title: result.title,
+        score: result.score,
+        reason: "diversity-gap",
       });
       continue;
     }

@@ -219,4 +219,12 @@ export class HarnessEngine {
     return this.execution.setTdd(runId, tdd, taskId);
   }
 
+  setRag(runId: string, rag: boolean): Promise<RunState> {
+    return this.execution.setRag(runId, rag);
+  }
+
+  setGraphify(runId: string, enabled: boolean): Promise<RunState> {
+    return this.execution.setGraphify(runId, enabled);
+  }
+
 }

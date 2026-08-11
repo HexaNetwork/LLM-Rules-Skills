@@ -80,6 +80,7 @@ export async function handleRunsRoutes(
         },
         defaults: {
           tdd: projectConfig.workflow.tdd,
+          rag: projectConfig.workflow.rag,
           push: projectConfig.git.push,
           openPullRequest: projectConfig.git.openPullRequest,
         },
@@ -110,6 +111,7 @@ export async function handleRunsRoutes(
     const idea = requiredString(body.idea, "idea", 100_000);
     const runId = optionalString(body.runId, "runId", 100) ?? randomUUID();
     const tdd = optionalBoolean(body.tdd, "tdd") ?? projectConfig.workflow.tdd;
+    const rag = optionalBoolean(body.rag, "rag") ?? projectConfig.workflow.rag;
     const push = optionalBoolean(body.push, "push") ?? projectConfig.git.push;
     const openPullRequest =
       optionalBoolean(body.openPullRequest, "openPullRequest") ??
@@ -121,7 +123,7 @@ export async function handleRunsRoutes(
     const baseBranch = await resolveBaseBranchOverride(projectConfig, baseBranchOverride);
     const runConfig = HarnessConfigSchema.parse({
       ...projectConfig,
-      workflow: { ...projectConfig.workflow, tdd },
+      workflow: { ...projectConfig.workflow, tdd, rag },
       git: {
         ...projectConfig.git,
         baseBranch,
@@ -241,6 +243,13 @@ export async function handleRunsRoutes(
           maxContextTurns: runConfig.workflow.maxContextTurns,
         }
       : undefined;
+    const retrievalPolicy = runConfig
+      ? {
+          tdd: runConfig.workflow.tdd,
+          rag: runConfig.workflow.rag,
+          graphify: runConfig.knowledge.graphify.enabled,
+        }
+      : undefined;
     const deliveryWorkspace = workspace
       ? {
           kind: workspace.kind,
@@ -263,6 +272,7 @@ export async function handleRunsRoutes(
       signature,
       ...(git ? { git } : {}),
       ...(ceilings ? { ceilings } : {}),
+      ...(retrievalPolicy ? { retrievalPolicy } : {}),
       ...(deliveryWorkspace ? { workspace: deliveryWorkspace } : {}),
     });
     return true;
@@ -495,6 +505,14 @@ export async function handleRunsRoutes(
       if (tdd == null) throw new HttpError(400, "tdd must be a boolean");
       const taskId = optionalString(body.taskId, "taskId", 200);
       ctx.jobs.enqueue(runId, action, () => engine.setTdd(runId, tdd, taskId));
+    } else if (action === "set_rag") {
+      const rag = optionalBoolean(body.rag, "rag");
+      if (rag == null) throw new HttpError(400, "rag must be a boolean");
+      ctx.jobs.enqueue(runId, action, () => engine.setRag(runId, rag));
+    } else if (action === "set_graphify") {
+      const enabled = optionalBoolean(body.graphify, "graphify");
+      if (enabled == null) throw new HttpError(400, "graphify must be a boolean");
+      ctx.jobs.enqueue(runId, action, () => engine.setGraphify(runId, enabled));
     } else if (action === "stop") {
       // Stop must not wait behind the work it is pausing after (same as cancel).
       const state = await engine.requestStop(runId);

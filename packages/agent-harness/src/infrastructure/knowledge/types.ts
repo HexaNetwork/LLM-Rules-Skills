@@ -60,6 +60,8 @@ export type KnowledgeClassification = {
 
 export type KnowledgeSearchOptions = {
   repository?: boolean;
+  /** When false, skip document lexical/semantic search (Graphify-only path). Default true. */
+  documents?: boolean;
   projectId?: string;
   includeProjects?: string[];
   maxCharacters?: number;
@@ -67,6 +69,8 @@ export type KnowledgeSearchOptions = {
   runId?: string;
   /** Domain seed tried when Graphify shaping of `query` is empty/generic. */
   fallbackQuery?: string;
+  /** Paths from the invocation (affectedPaths / changedFiles) for ranking affinity. */
+  pathHints?: string[];
 };
 
 export type SearchResult = {
@@ -89,6 +93,7 @@ export type RetrievalOmission = {
     | "below-floor"
     | "per-source-cap"
     | "limit"
+    | "diversity-gap"
     | "graphify-skipped"
     | "character-budget";
 };

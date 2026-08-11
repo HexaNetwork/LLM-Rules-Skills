@@ -470,6 +470,22 @@ export const renderRunScript = `    function renderSidebar() {
       return '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runTddToggle"' + (enabled ? " checked" : "") + '> <strong>' + (enabled ? "Enabled" : "Disabled") + '</strong></label><div class="faint" style="margin-top:4px">Applies to the run default and pending tasks</div>';
     }
 
+    function renderRunRetrievalToggles() {
+      var s = state.detail && state.detail.state;
+      var locked = !s || ["completed","cancelled"].includes(s.phase);
+      var policy = (state.detail && state.detail.retrievalPolicy) || {};
+      var ragOn = policy.rag !== false;
+      var graphifyOn = !!policy.graphify;
+      if (locked) {
+        return '<div class="tags" style="margin-top:8px">' +
+          '<span class="tag">RAG ' + (ragOn ? "on" : "off") + '</span>' +
+          '<span class="tag">Graphify ' + (graphifyOn ? "on" : "off") + '</span></div>';
+      }
+      return '<div class="tags" style="margin-top:8px">' +
+        '<button type="button" class="tag" data-action="set_rag" data-rag="' + (ragOn ? "false" : "true") + '" title="Toggle document RAG for the next agent step">RAG ' + (ragOn ? "on" : "off") + ' · click</button>' +
+        '<button type="button" class="tag" data-action="set_graphify" data-graphify="' + (graphifyOn ? "false" : "true") + '" title="Toggle Graphify for the next agent step">Graphify ' + (graphifyOn ? "on" : "off") + ' · click</button></div>';
+    }
+
     function renderInstallLogPanel() {
       var entries = (state.detail && state.detail.installLog) || [];
       if (!entries.length) return '';
@@ -652,7 +668,7 @@ export const renderRunScript = `    function renderSidebar() {
         }
         var fixer = s.fixerRecovery;
         var fixerControls = '';
-        var isConfigBlock = s.blockedKind === 'config' || /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths|Test command could not be launched/i.test(String(s.failure || ''));
+        var isConfigBlock = s.blockedKind === 'config' || /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths|Red writer changed paths outside tests and affectedPaths|Test command could not be launched/i.test(String(s.failure || ''));
         if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
           var repairDetails = formatConfigRepair(fixer.plan.configPatch || {});
           var persistButton = canEditSettings
@@ -708,7 +724,8 @@ export const renderRunScript = `    function renderSidebar() {
       if (worktreePath) {
         html += '<div class="muted repo-label">Worktree' + copyPathBtn(worktreePath, "Copy worktree path") + '</div><div style="margin:4px 0 10px"><code title="' + attr(worktreePath) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(worktreePath) + '</code></div>';
       }
-      html += '<div class="muted">TDD</div><div style="margin-top:4px">' + renderRunTddControl(s) + '</div></div>';
+      html += '<div class="muted">TDD</div><div style="margin-top:4px">' + renderRunTddControl(s) + '</div>';
+      html += '<div class="muted" style="margin-top:10px">Retrieval</div>' + renderRunRetrievalToggles() + '</div>';
       html += renderInstallLogPanel();
       html += '</div>';
       $("tabBody").innerHTML = html;

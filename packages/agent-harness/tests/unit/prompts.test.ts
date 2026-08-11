@@ -158,8 +158,21 @@ describe("prompt rendering", () => {
     );
   });
 
+  it("describes runnable RED and scaffolds for red-writer, tests-only for test-writer", () => {
+    expect(renderPrompt({ ...packet, role: "red-writer" })).toContain(
+      "Establish a runnable RED",
+    );
+    expect(renderPrompt({ ...packet, role: "red-writer" })).toContain(
+      "minimal compile scaffolds",
+    );
+    expect(renderPrompt({ ...packet, role: "test-writer" })).toContain("Edit tests only");
+    expect(renderPrompt({ ...packet, role: "test-writer" })).toContain(
+      "Do not implement production behavior, add production scaffolds, or commit",
+    );
+  });
+
   it("requires schema-validated workers to return one raw JSON object after the work packet", () => {
-    for (const role of ["test-writer", "implementer"] as const) {
+    for (const role of ["red-writer", "test-writer", "implementer"] as const) {
       const rendered = renderPrompt({ ...packet, role });
       const workPacketIndex = rendered.indexOf("WORK PACKET");
       const noMarkdownIndex = rendered.indexOf(

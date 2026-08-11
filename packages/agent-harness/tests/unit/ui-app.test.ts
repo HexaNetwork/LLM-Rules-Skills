@@ -132,6 +132,11 @@ describe("dashboard document", () => {
     expect(html).toContain("Installs observed");
     expect(html).toContain("harnessSoundsMuted");
     expect(html).toContain("set_tdd");
+    expect(html).toContain("set_rag");
+    expect(html).toContain("set_graphify");
+    expect(html).toContain("Document RAG");
+    expect(html).toContain('id="rag"');
+    expect(html).toContain("RAG ' + (ragOn ? \"on\" : \"off\")");
     expect(html).toContain("resolve_installs");
     expect(html).toContain("Grilling complete");
     expect(html).toContain("Send feedback to griller");

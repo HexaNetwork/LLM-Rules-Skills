@@ -337,9 +337,10 @@ export const BuildTaskSchema = z.object({
     review: z.number().int().nonnegative(),
   }),
   evidence: z.array(CommandEvidenceSchema).default([]),
-  // Test files written by the test-writer; implementer edits to these are blocked.
+  // Test files from RED / test-repair; implementer edits to these are blocked.
   testPaths: z.array(z.string()).default([]),
-  // Paths committed into the authoritative RED checkpoint (may equal testPaths).
+  // Paths committed into the RED checkpoint (tests + optional compile scaffolds).
+  // Integrity restores recorded test paths only; scaffolds are fair game for the implementer.
   redCheckpointPaths: z.array(z.string()).default([]),
   changedFiles: z.array(z.string()).default([]),
   reviewSummary: z.string().optional(),
@@ -543,6 +544,7 @@ export const AgentRoleSchema = z.enum([
   "planner",
   "issue-slicer",
   "prompt-builder",
+  "red-writer",
   "test-writer",
   "implementer",
   "reviewer",

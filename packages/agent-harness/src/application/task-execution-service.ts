@@ -239,10 +239,6 @@ export class TaskExecutionService {
     const fullInput = {
       task: taskForPacket(task),
       priorCommandOutput: recentEvidenceOutput(task.evidence),
-      reviewFeedback: task.reviewSummary,
-      completionFeedback: task.failure?.startsWith("RED done coverage assessment")
-        ? task.failure
-        : undefined,
       round: pendingRoundNumber(task.tddLoop),
       atVerifiedGreen: task.tddLoop?.atVerifiedGreen ?? false,
       ...(repairMode
@@ -262,17 +258,11 @@ export class TaskExecutionService {
         : `Add the next coherent failing test batch for “${task.title}” (tests only; no commands)`,
       input: fullInput,
       continuationInput: reuseContext
-          ? {
+        ? {
             round: pendingRoundNumber(task.tddLoop),
             atVerifiedGreen: task.tddLoop?.atVerifiedGreen ?? false,
-            reviewFeedback: task.reviewSummary,
-            completionFeedback: task.failure?.startsWith("RED done coverage assessment")
-              ? task.failure
-              : undefined,
             instruction: task.tddLoop?.atVerifiedGreen
-              ? task.failure?.startsWith("RED done coverage assessment")
-                ? `${task.failure} Add the minimum missing tests, or correct the assessment if a non-test verification mode fully satisfies the criterion. Do not run commands.`
-                : "The accumulated suite is verified GREEN. Default to done. Continue only for a named uncovered acceptance criterion or a distinct high-risk defect not detected by existing tests. Do not run commands."
+              ? "The accumulated suite is verified GREEN. Default to done. Continue only for a named uncovered acceptance criterion or a distinct high-risk defect not detected by existing tests. Do not run commands."
               : "Add the minimum discriminating test for the current uncovered behavior. Do not run commands.",
           }
         : undefined,
@@ -429,31 +419,8 @@ export class TaskExecutionService {
       output: result,
       tddLoop: loop,
       dirtyPaths: observedPaths,
-      acceptanceCriteriaCount: task.acceptanceCriteria.length,
     });
     if (!doneGuard.ok) {
-      if (doneGuard.reason.startsWith("RED done coverage assessment")) {
-        if (task.failure?.startsWith("RED done coverage assessment")) {
-          throw new HarnessFailure(
-            `${doneGuard.reason}; RED repeated an incomplete done declaration after correction feedback`,
-            "contract",
-            false,
-          );
-        }
-        const updated: BuildTask = {
-          ...task,
-          attempts,
-          step: "writing_tests",
-          status: "active",
-          failure: doneGuard.reason,
-        };
-        return this.updateTask(
-          await this.ctx.withTreeFingerprint(state),
-          updated,
-          "task.red_done_rejected",
-          { reason: doneGuard.reason },
-        );
-      }
       throw new HarnessFailure(doneGuard.reason, "contract", true);
     }
     const updated: BuildTask = {
@@ -884,6 +851,7 @@ export class TaskExecutionService {
           step: "writing_tests",
           status: "active",
           failure: undefined,
+          reviewSummary: undefined,
         };
         return this.updateTask(
           await this.ctx.withTreeFingerprint(state),
@@ -1100,9 +1068,7 @@ export class TaskExecutionService {
     const blocking = review.findings.filter((finding) => finding.severity === "blocking");
     const approved = review.approved && blocking.length === 0;
     const attempts = { ...task.attempts, review: task.attempts.review + 1 };
-    // maxReviewAttempts is a repair-cycle budget. The current reviewer call discovers
-    // whether another repair is needed; only prior failed reviews consume that budget.
-    const reviewBudget = task.attempts.review < this.ctx.config.workflow.maxReviewAttempts;
+    const reviewBudget = attempts.review < this.ctx.config.workflow.maxReviewAttempts;
     const maxAttempts = this.ctx.config.workflow.maxImplementationAttempts;
     const route = reviewRepairRoute(review.findings);
     const reviewSummary = [

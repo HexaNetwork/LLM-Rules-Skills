@@ -67,6 +67,33 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
   {
     role: "planner",
     output: {
+      summary: "One high-level plan",
+      problemStatement: "Users need a casual greeting.",
+      solution: "Ship a greeting feature with a chosen tone.",
+      approach: "Add a small greeting module, then wire it into the UI.",
+      constraints: ["Keep scope narrow"],
+      outOfScope: ["Localization"],
+      openQuestions: [],
+    },
+  },
+  {
+    role: "planner",
+    output: {
+      summary: "Greeting PRD",
+      problemStatement: "Users need a casual greeting.",
+      solution: "Ship a greeting feature with a chosen tone.",
+      userStories: [
+        "As a user, I want a casual greeting, so that the product feels friendly",
+      ],
+      implementationDecisions: ["Add a greeting module"],
+      testingDecisions: ["Test public greeting behavior"],
+      outOfScope: ["Localization"],
+      furtherNotes: "",
+    },
+  },
+  {
+    role: "issue-slicer",
+    output: {
       summary: "One task",
       tasks: [
         {
@@ -260,6 +287,13 @@ export async function confirmVerificationSettings(page: Page): Promise<void> {
     timeout: 20_000,
   });
   await page.getByRole("button", { name: /confirm verification/i }).click();
+}
+
+export async function approveHighLevelPlan(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: /approve plan/i })).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.getByRole("button", { name: /approve plan/i }).click();
 }
 
 export async function apiJson<T>(

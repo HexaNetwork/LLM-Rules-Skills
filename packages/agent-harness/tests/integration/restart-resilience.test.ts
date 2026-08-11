@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { HarnessEngine } from "../../src/engine.js";
-import { confirmGrillAndAdvance } from "../helpers.js";
+import {
+  confirmGrillAndAdvance,
+  HIGH_LEVEL_PLAN,
+  PRD_OUTPUT
+} from "../helpers.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 import { createScriptedBackend } from "../testkit/scripted-backend.js";
@@ -78,9 +82,12 @@ describe("Phase 5 restart resilience", () => {
               ],
             },
           },
-          {
-            role: "planner",
-            output: {
+          { role: "planner", output: HIGH_LEVEL_PLAN },
+      { role: "planner", output: PRD_OUTPUT },
+      {
+        role: "issue-slicer",
+        output: {
+
               summary: "One task",
               tasks: [
                 {
@@ -93,8 +100,9 @@ describe("Phase 5 restart resilience", () => {
                   testCommand: 'node -e "process.exit(0)"',
                 },
               ],
-            },
-          },
+          proposedInstalls: [],
+        },
+      },
           {
             role: "implementer",
             output: { summary: "Built", changedFiles: ["src/greet.ts"] },

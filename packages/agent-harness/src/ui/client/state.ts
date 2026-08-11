@@ -16,6 +16,8 @@ export const stateScript = `  (function () {
       reflectDrafts: {},
       noteText: "", noteAsUnknown: false,
       grillFeedbackText: "",
+      planFeedbackText: "",
+      planDraft: {},
       verificationDraft: {},
       verificationBaselineDraft: {},
       elapsedTimer: null,

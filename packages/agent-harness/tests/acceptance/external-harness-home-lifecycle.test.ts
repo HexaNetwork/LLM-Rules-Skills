@@ -12,7 +12,10 @@ import { HarnessConfigSchema } from "../../src/config.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import { git } from "../testkit/git.js";
-import { passingCommandRunner } from "../helpers.js";
+import {
+  passingCommandRunner,
+  createPlannerPrdSequence
+} from "../helpers.js";
 import { runCli } from "./helpers.js";
 
 const tempRoots: string[] = [];
@@ -149,7 +152,9 @@ describe("external harness home E2E matrix", () => {
         summary: "No open questions",
         resolutions: [],
       }),
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
@@ -162,6 +167,7 @@ describe("external harness home E2E matrix", () => {
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: async (request) => {
         observedCwds.push(request.cwd);
@@ -196,6 +202,10 @@ describe("external harness home E2E matrix", () => {
       });
       state = await engine.advance(runId);
     }
+    if (state.planReady) {
+      state = await engine.confirmPlan(runId);
+      state = await engine.advance(runId);
+    }
     for (let i = 0; i < 20 && state.phase !== "completed" && state.phase !== "blocked"; i += 1) {
       if (state.phase === "awaiting_input" && state.activeQuestionId) {
         state = await engine.answer(runId, state.activeQuestionId, "ok");
@@ -207,6 +217,9 @@ describe("external harness home E2E matrix", () => {
         state = await engine.confirmVerification(runId, {
           patch: state.verificationReady.proposedPatch,
         });
+      }
+      if (state.planReady) {
+        state = await engine.confirmPlan(runId);
       }
       state = await engine.advance(runId);
     }

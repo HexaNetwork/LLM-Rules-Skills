@@ -1,3 +1,4 @@
+import { HIGH_LEVEL_PLAN, PRD_OUTPUT } from "../helpers.js";
 import { describe, expect, it } from "vitest";
 import type { AgentRequest } from "../../src/agent.js";
 import { createScriptedBackend } from "../testkit/scripted-backend.js";
@@ -43,9 +44,12 @@ describe("createScriptedBackend", () => {
           ],
         },
       },
+      { role: "planner", output: HIGH_LEVEL_PLAN },
+      { role: "planner", output: PRD_OUTPUT },
       {
-        role: "planner",
+        role: "issue-slicer",
         output: {
+
           summary: "One task",
           tasks: [
             {
@@ -58,6 +62,7 @@ describe("createScriptedBackend", () => {
               testCommand: 'node -e "process.exit(0)"',
             },
           ],
+          proposedInstalls: [],
         },
       },
       {
@@ -86,6 +91,8 @@ describe("createScriptedBackend", () => {
       "reflector",
       "griller",
       "planner",
+      "planner",
+      "issue-slicer",
       "test-writer",
       "implementer",
       "reviewer",
@@ -99,6 +106,8 @@ describe("createScriptedBackend", () => {
       "reflector",
       "griller",
       "planner",
+      "planner",
+      "issue-slicer",
       "test-writer",
       "implementer",
       "reviewer",

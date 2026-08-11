@@ -132,6 +132,7 @@ describe("token-conscious defaults", () => {
       reflector: { rules: [], skills: [] },
       griller: { rules: [], skills: [] },
       planner: { rules: [], skills: [] },
+      "issue-slicer": { rules: [], skills: [] },
       "prompt-builder": { rules: [], skills: [] },
       "test-writer": { rules: [], skills: ["tdd"] },
       implementer: { rules: ["no-legacy-fallback-code"], skills: [] },

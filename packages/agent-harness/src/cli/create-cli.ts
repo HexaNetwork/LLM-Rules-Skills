@@ -428,6 +428,31 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     );
 
   program
+    .command("confirm-plan")
+    .description("Approve the high-level plan (runs PRD + slicing), or reopen with feedback")
+    .requiredOption("--run-id <id>", "run id")
+    .option("--feedback <text>", "non-empty feedback discards the plan and reopens planning")
+    .option("--config <path>", "config path")
+    .option("--no-advance", "confirm without launching to-prd / issue-slicer")
+    .action(
+      async (options: {
+        runId: string;
+        feedback?: string;
+        config?: string;
+        advance: boolean;
+      }) => {
+        const engine = await openRunEngine(
+          options.config,
+          options.runId,
+          dependencies.createBackend,
+        );
+        let state = await engine.confirmPlan(options.runId, { feedback: options.feedback });
+        if (options.advance) state = await engine.advance(options.runId);
+        printState(state);
+      },
+    );
+
+  program
     .command("confirm-verification")
     .description("Confirm or edit verification settings before planning")
     .requiredOption("--run-id <id>", "run id")
@@ -1016,6 +1041,15 @@ function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {
     );
     console.log(
       `Or reopen with: agent-harness confirm-grill --run-id ${state.runId} --feedback "…"`,
+    );
+  }
+  if (state.phase === "awaiting_input" && state.planReady) {
+    console.log(`High-level plan ready: ${state.planReady.summary}`);
+    console.log(
+      `Approve with: agent-harness confirm-plan --run-id ${state.runId}`,
+    );
+    console.log(
+      `Or reopen with: agent-harness confirm-plan --run-id ${state.runId} --feedback "…"`,
     );
   }
   if (state.phase === "awaiting_input" && state.verificationReady) {

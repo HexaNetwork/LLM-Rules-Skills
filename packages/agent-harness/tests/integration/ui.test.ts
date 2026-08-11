@@ -9,7 +9,11 @@ import { createRunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { GitService } from "../../src/git.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
-import { fixtureConfig, fixtureRoot } from "../helpers.js";
+import {
+  fixtureConfig,
+  fixtureRoot,
+  createPlannerPrdSequence
+} from "../helpers.js";
 
 const exec = promisify(execFile);
 
@@ -650,7 +654,9 @@ describe("central dashboard", () => {
           { id: "tone", question: GRILL_QUESTION.prompt, answer: "Quiet", summary: "Quiet" },
         ],
       }),
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
@@ -663,6 +669,7 @@ describe("central dashboard", () => {
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/dashboard.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -699,6 +706,13 @@ describe("central dashboard", () => {
       body: { action: "confirm_verification", keepCurrent: true },
     });
     expect(confirmedVerification.status).toBe(202);
+    detail = await waitForPhase(ui, runId, "awaiting_input");
+    expect(detail.state.planReady?.summary).toBeTruthy();
+    const confirmedPlan = await request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: { action: "confirm_plan" },
+    });
+    expect(confirmedPlan.status).toBe(202);
     detail = await waitForPhase(ui, runId, "completed");
     expect(detail.state.tasks[0]?.status).toBe("done");
   });
@@ -901,7 +915,9 @@ describe("central dashboard", () => {
           questions: [GRILL_QUESTION],
         };
       },
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+
+      "issue-slicer": () => ({
         summary: "One UI task",
         tasks: [
           {
@@ -914,6 +930,7 @@ describe("central dashboard", () => {
             testCommand: "node -e \"process.exit(0)\"",
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/dashboard.ts"] }),
       reviewer: () => ({ approved: true, summary: "Verified", findings: [] }),
@@ -984,6 +1001,13 @@ describe("central dashboard", () => {
       body: { action: "confirm_verification", keepCurrent: true },
     });
     expect(confirmedVerification.status).toBe(202);
+    detail = await waitForPhase(ui, runId, "awaiting_input");
+    expect(detail.state.planReady?.summary).toBeTruthy();
+    const confirmedPlan = await request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: { action: "confirm_plan" },
+    });
+    expect(confirmedPlan.status).toBe(202);
     detail = await waitForPhase(ui, runId, "completed");
 
     expect(detail.state.tasks[0]?.status).toBe("done");
@@ -1348,6 +1372,8 @@ async function waitForPhase(
     activeQuestionId?: string;
     reflectBrief?: { draft?: string; confirmed?: string };
     grillReady?: { summary?: string; readyAt?: string };
+    verificationReady?: { summary?: string };
+    planReady?: { summary?: string; readyAt?: string };
     questions: Array<{
       id: string;
       purpose?: string;

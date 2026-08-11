@@ -4,10 +4,11 @@ import {
   type BuildTask,
   type GrillOutput,
   type GrillResolution,
+  type HighLevelPlan,
   type HumanQuestionDraft,
+  type IssueSlicerOutput,
   type OpenUnknown,
   type OpenUnknownDraft,
-  type PlannerOutput,
   type ProposedInstall,
   type Question,
   type QuestionPurpose,
@@ -291,9 +292,37 @@ export function applyGrillOutput(
   };
 }
 
+export function applyHighLevelPlan(
+  state: RunState,
+  plan: HighLevelPlan,
+  now: string,
+): TransitionResult {
+  assertCanAdvance(state);
+  if (hasOpenQuestionBatch(state)) {
+    throw new Error("Only one active question batch is allowed");
+  }
+  return {
+    state: {
+      ...state,
+      plan,
+      planReady: { summary: plan.summary, readyAt: now },
+      planFeedback: undefined,
+      phase: "awaiting_input",
+      updatedAt: now,
+    },
+    events: [
+      {
+        type: "plan.created",
+        detail: { summary: plan.summary },
+        at: now,
+      },
+    ],
+  };
+}
+
 export function applyPlan(
   state: RunState,
-  output: PlannerOutput,
+  output: IssueSlicerOutput,
   now: string,
   config: PlanTransitionConfig,
 ): TransitionResult {
@@ -322,11 +351,12 @@ export function applyPlan(
     },
     events: [
       {
-        type: "plan.created",
+        type: "tasks.materialized",
         detail: {
           tasks: tasks.length,
           tdd: tasks.filter((task) => task.tdd).length,
           proposedInstalls: proposedInstalls.length,
+          summary: output.summary,
         },
         at: now,
       },

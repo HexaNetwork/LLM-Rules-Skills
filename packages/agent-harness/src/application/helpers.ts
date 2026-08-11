@@ -40,6 +40,10 @@ export function pendingGrillReady(state: RunState): RunState["grillReady"] | und
   return state.grillReady;
 }
 
+export function pendingPlanReady(state: RunState): RunState["planReady"] | undefined {
+  return state.planReady;
+}
+
 export function pendingVerificationReady(
   state: RunState,
 ): RunState["verificationReady"] | undefined {

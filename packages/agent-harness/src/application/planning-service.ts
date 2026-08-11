@@ -6,11 +6,19 @@ import {
 } from "../config.js";
 import { commandEvidence } from "../commands.js";
 import {
+  applyHighLevelPlan,
   applyPlan,
-  PlannerOutputSchema,
+  HighLevelPlanSchema,
+  ISSUE_SLICER_EXPECTED_OUTPUT,
+  IssueSlicerOutputSchema,
+  PLANNER_EXPECTED_OUTPUT,
+  PRD_EXPECTED_OUTPUT,
+  PrdSchema,
   ProjectProfilerOutputSchema,
   VerificationSettingsPatchSchema,
   type CommandEvidence,
+  type HighLevelPlan,
+  type PlannerEpisode,
   type RunState,
   type VerificationSettingsPatch,
   type VerificationSettingsSnapshot,
@@ -21,6 +29,7 @@ import type { ApplicationContext } from "./application-context.js";
 import { applyFrozenConfigRepair } from "./frozen-config-repair.js";
 import {
   pendingInstallApprovals,
+  pendingPlanReady,
   pendingVerificationBaselineReady,
   pendingVerificationReady,
 } from "./helpers.js";
@@ -52,14 +61,26 @@ export class PlanningService {
       branchName = await this.ctx.git.ensureRunBranch(state.runId);
     }
 
-    // Idempotent resume: a prior plan.created may have persisted tasks before a
-    // post-planner workspace block. Do not re-invoke the planner.
+    // Idempotent resume: tasks already materialized — do not re-slice.
     if (state.tasks.length > 0) {
       const phase = pendingInstallApprovals(state).length > 0 ? "awaiting_input" : "executing";
       return this.ctx.store.record(
         { ...state, branchName: branchName ?? state.branchName, phase },
         "plan.resumed",
         { tasks: state.tasks.length, pendingInstalls: pendingInstallApprovals(state).length },
+      );
+    }
+
+    // Resume while the plan review gate is open: do not re-plan.
+    if (pendingPlanReady(state)) {
+      return this.ctx.store.record(
+        {
+          ...state,
+          branchName: branchName ?? state.branchName,
+          phase: "awaiting_input",
+        },
+        "plan.resumed",
+        { summary: state.planReady!.summary },
       );
     }
 
@@ -104,25 +125,125 @@ export class PlanningService {
       working = baseline.state;
     }
 
-    const output = await this.ctx.agents.invoke({
+    // Plan approved (no planReady) but PRD not yet authored.
+    if (working.plan && !working.prd) {
+      return this.authorPrd(working);
+    }
+
+    // PRD present but tasks not yet sliced.
+    if (working.prd && working.tasks.length === 0) {
+      return this.sliceIssues(working);
+    }
+
+    return this.authorHighLevelPlan(working);
+  }
+
+  /**
+   * Approve or reopen the high-level plan gate.
+   * Approve applies optional edits and leaves phase=planning so advance runs to-prd + slicer.
+   * Feedback clears the plan and reopens planning for a cold planner restart.
+   */
+  async confirmPlan(
+    runId: string,
+    options: { feedback?: string; plan?: HighLevelPlan } = {},
+  ): Promise<RunState> {
+    return this.ctx.withMutatingRunLock(runId, "confirmPlan", async () => {
+      let state = await this.ctx.store.load(runId);
+      const pending = pendingPlanReady(state);
+      if (state.phase !== "awaiting_input" || !pending) {
+        throw new Error(`Run ${runId} is not awaiting plan confirmation`);
+      }
+      const feedback = options.feedback?.trim() ?? "";
+      if (feedback) {
+        state = await this.closePlannerEpisode(state, "planner.episode_released");
+        state = await this.ctx.store.record(
+          {
+            ...state,
+            planReady: undefined,
+            plan: undefined,
+            prd: undefined,
+            tasks: [],
+            proposedInstalls: [],
+            planFeedback: feedback,
+            phase: "planning",
+          },
+          "plan.reopened",
+          { feedback },
+        );
+        await this.ctx.syncArtifacts(state);
+        return state;
+      }
+
+      const plan = options.plan
+        ? HighLevelPlanSchema.parse(options.plan)
+        : state.plan
+          ? HighLevelPlanSchema.parse(state.plan)
+          : undefined;
+      if (!plan) {
+        throw new Error(`Run ${runId} has no plan to confirm`);
+      }
+
+      state = await this.ctx.store.record(
+        {
+          ...state,
+          plan,
+          planReady: undefined,
+          planFeedback: undefined,
+          phase: "planning",
+        },
+        "plan.confirmed",
+        { summary: plan.summary, edited: Boolean(options.plan) },
+      );
+      await this.ctx.syncArtifacts(state);
+      return state;
+    });
+  }
+
+  async closePlannerEpisode(
+    state: RunState,
+    event = "planner.episode_closed",
+  ): Promise<RunState> {
+    const episode = state.plannerEpisode;
+    if (!episode || episode.closedAt) return state;
+    await this.ctx.agents.releaseProviderSession(episode.providerSessionId).catch(() => undefined);
+    const now = new Date().toISOString();
+    const closed: PlannerEpisode = {
+      ...episode,
+      updatedAt: now,
+      closedAt: now,
+    };
+    return this.ctx.store.record({ ...state, plannerEpisode: closed }, event, {
+      episode: episode.number,
+    });
+  }
+
+  private async authorHighLevelPlan(state: RunState): Promise<RunState> {
+    const feedback = state.planFeedback?.trim();
+    const coldStart = !state.plannerEpisode || Boolean(state.plannerEpisode.closedAt);
+    let working = state;
+    if (coldStart) {
+      working = await this.startPlannerEpisode(working, Boolean(feedback));
+    }
+
+    const episode = working.plannerEpisode;
+    const invocation = await this.ctx.agents.invokeInEpisode({
       runId: working.runId,
       role: "planner",
       objective:
-        "Turn the confirmed brief and grill resolutions into dependency-ordered tracer-bullet implementation tickets",
+        "Turn the confirmed brief and grill resolutions into a high-level implementation plan for operator review",
       input: {
         confirmedBrief: working.reflectBrief?.confirmed,
         resolutions: working.grillResolutions,
-        defaultTdd: this.ctx.config.workflow.tdd,
-        defaultTestCommand: this.ctx.config.commands.test,
+        ...(feedback ? { planFeedback: feedback } : {}),
       },
-      expectedOutput:
-        "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,tdd?,testCommand?}],proposedInstalls?:[{id,manager,packages,reason,command?}]}",
-      schema: PlannerOutputSchema,
+      expectedOutput: PLANNER_EXPECTED_OUTPUT,
+      schema: HighLevelPlanSchema,
       knowledgeQuery: [
         working.reflectBrief?.confirmed,
         compactDomainSeed(
           working.reflectBrief?.confirmed,
           ...working.grillResolutions.flatMap((item) => [item.question, item.answer, item.summary]),
+          feedback,
         ),
       ]
         .filter(Boolean)
@@ -131,21 +252,158 @@ export class PlanningService {
         working.reflectBrief?.confirmed,
         ...working.grillResolutions.flatMap((item) => [item.question, item.answer, item.summary]),
       ),
+      providerSessionId: episode?.providerSessionId,
+      previousGuidanceFingerprint: episode?.guidanceFingerprint,
       signal: this.ctx.signalFor(working.runId),
     });
-    const now = new Date().toISOString();
-    const transition = applyPlan(working, output, now, {
-      tdd: this.ctx.config.workflow.tdd,
-      testCommand: this.ctx.config.commands.test,
-      branchName: working.branchName,
-    });
 
-    // Planner sessions can still dirty the tree; persist the plan first so a
-    // workspace block does not discard it, then refuse to enter executing.
+    const now = new Date().toISOString();
+    working = {
+      ...working,
+      plannerEpisode: {
+        number: episode?.number ?? 1,
+        providerSessionId: invocation.providerSessionId,
+        guidanceFingerprint: invocation.guidanceFingerprint ?? episode?.guidanceFingerprint,
+        startedAt: episode?.startedAt ?? now,
+        updatedAt: now,
+      },
+      planFeedback: undefined,
+    };
+
+    const transition = applyHighLevelPlan(working, invocation.value, now);
+
+    // Persist the plan first so a dirty-tree block does not discard the gate.
     if (this.ctx.config.git.enabled) {
       const dirty = await this.ctx.git.changedFiles();
       if (dirty.length > 0) {
         await this.ctx.store.persistTransition(working.runId, {
+          state: { ...transition.state, phase: "awaiting_input" },
+          events: transition.events,
+        });
+        throw new HarnessFailure(
+          `Refusing to start on a dirty working tree. Commit or stash first: ${dirty.join(", ")}`,
+          "workspace",
+          true,
+        );
+      }
+    }
+
+    const persisted = await this.ctx.store.persistTransition(working.runId, transition);
+    await this.ctx.syncArtifacts(persisted);
+    return persisted;
+  }
+
+  private async authorPrd(state: RunState): Promise<RunState> {
+    const plan = state.plan;
+    if (!plan) throw new Error("Cannot author PRD without an approved plan");
+    const episode = state.plannerEpisode;
+    if (!episode?.providerSessionId || episode.closedAt) {
+      throw new Error("Cannot author PRD without a retained planner provider session");
+    }
+
+    const invocation = await this.ctx.agents.invokeInEpisode({
+      runId: state.runId,
+      role: "planner",
+      objective:
+        "Expand the approved high-level plan into a local PRD (problem, solution, user stories, decisions)",
+      input: {
+        approvedPlan: plan,
+        confirmedBrief: state.reflectBrief?.confirmed,
+        resolutions: state.grillResolutions,
+      },
+      expectedOutput: PRD_EXPECTED_OUTPUT,
+      schema: PrdSchema,
+      knowledgeQuery: [
+        plan.summary,
+        plan.problemStatement,
+        plan.solution,
+        plan.approach,
+        compactDomainSeed(state.reflectBrief?.confirmed),
+      ]
+        .filter(Boolean)
+        .join(" "),
+      knowledgeFallbackQuery: compactDomainSeed(plan.summary, plan.approach),
+      providerSessionId: episode.providerSessionId,
+      previousGuidanceFingerprint: episode.guidanceFingerprint,
+      signal: this.ctx.signalFor(state.runId),
+    });
+
+    const now = new Date().toISOString();
+    let next = await this.ctx.store.record(
+      {
+        ...state,
+        prd: invocation.value,
+        plannerEpisode: {
+          ...episode,
+          providerSessionId: invocation.providerSessionId ?? episode.providerSessionId,
+          guidanceFingerprint: invocation.guidanceFingerprint ?? episode.guidanceFingerprint,
+          updatedAt: now,
+        },
+        phase: "planning",
+      },
+      "prd.created",
+      { summary: invocation.value.summary },
+    );
+    await this.ctx.syncArtifacts(next);
+    next = await this.closePlannerEpisode(next, "planner.episode_released");
+
+    if (this.ctx.config.git.enabled) {
+      const dirty = await this.ctx.git.changedFiles();
+      if (dirty.length > 0) {
+        throw new HarnessFailure(
+          `Refusing to start on a dirty working tree. Commit or stash first: ${dirty.join(", ")}`,
+          "workspace",
+          true,
+        );
+      }
+    }
+
+    return next;
+  }
+
+  private async sliceIssues(state: RunState): Promise<RunState> {
+    const prd = state.prd;
+    if (!prd) throw new Error("Cannot slice issues without a PRD");
+
+    const output = await this.ctx.agents.invoke({
+      runId: state.runId,
+      role: "issue-slicer",
+      objective:
+        "Turn the local PRD into dependency-ordered tracer-bullet implementation tickets",
+      input: {
+        prd,
+        plan: state.plan,
+        confirmedBrief: state.reflectBrief?.confirmed,
+        resolutions: state.grillResolutions,
+        defaultTdd: this.ctx.config.workflow.tdd,
+        defaultTestCommand: this.ctx.config.commands.test,
+      },
+      expectedOutput: ISSUE_SLICER_EXPECTED_OUTPUT,
+      schema: IssueSlicerOutputSchema,
+      knowledgeQuery: [
+        prd.summary,
+        prd.problemStatement,
+        prd.solution,
+        ...prd.userStories,
+        compactDomainSeed(state.reflectBrief?.confirmed),
+      ]
+        .filter(Boolean)
+        .join(" "),
+      knowledgeFallbackQuery: compactDomainSeed(prd.summary, ...prd.userStories),
+      signal: this.ctx.signalFor(state.runId),
+    });
+
+    const now = new Date().toISOString();
+    const transition = applyPlan(state, output, now, {
+      tdd: this.ctx.config.workflow.tdd,
+      testCommand: this.ctx.config.commands.test,
+      branchName: state.branchName,
+    });
+
+    if (this.ctx.config.git.enabled) {
+      const dirty = await this.ctx.git.changedFiles();
+      if (dirty.length > 0) {
+        await this.ctx.store.persistTransition(state.runId, {
           state: { ...transition.state, phase: "planning" },
           events: transition.events,
         });
@@ -157,7 +415,30 @@ export class PlanningService {
       }
     }
 
-    return this.ctx.store.persistTransition(working.runId, transition);
+    const persisted = await this.ctx.store.persistTransition(state.runId, transition);
+    await this.ctx.syncArtifacts(persisted);
+    return persisted;
+  }
+
+  private async startPlannerEpisode(state: RunState, forceFresh: boolean): Promise<RunState> {
+    const episode = state.plannerEpisode;
+    if (episode && !episode.closedAt) {
+      await this.ctx.agents.releaseProviderSession(episode.providerSessionId).catch(() => undefined);
+    }
+    const now = new Date().toISOString();
+    const nextNumber = (episode?.number ?? 0) + 1;
+    return this.ctx.store.record(
+      {
+        ...state,
+        plannerEpisode: {
+          number: nextNumber,
+          startedAt: now,
+          updatedAt: now,
+        },
+      },
+      "planner.episode_started",
+      { episode: nextNumber, forceFresh },
+    );
   }
 
   /**

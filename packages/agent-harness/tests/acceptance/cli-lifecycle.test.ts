@@ -1,3 +1,4 @@
+import { HIGH_LEVEL_PLAN, PRD_OUTPUT } from "../helpers.js";
 import path from "node:path";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
@@ -80,9 +81,12 @@ describe("CLI acceptance lifecycle", () => {
           ],
         },
       },
+      { role: "planner", output: HIGH_LEVEL_PLAN },
+      { role: "planner", output: PRD_OUTPUT },
       {
-        role: "planner",
+        role: "issue-slicer",
         output: {
+
           summary: "One task",
           tasks: [
             {
@@ -95,6 +99,7 @@ describe("CLI acceptance lifecycle", () => {
               testCommand: 'node -e "process.exit(0)"',
             },
           ],
+          proposedInstalls: [],
         },
       },
       { role: "implementer", output: { summary: "Built", changedFiles: ["src/greet.ts"] } },
@@ -179,6 +184,23 @@ describe("CLI acceptance lifecycle", () => {
         deps,
       );
       expect(confirmedVerification.code).toBe(0);
+
+      const planStatus = await runCli(
+        ["status", "--run-id", runId, "--config", configPath, "--json"],
+        deps,
+      );
+      const planState = JSON.parse(planStatus.stdout.join("\n")) as {
+        phase: string;
+        planReady?: { summary?: string };
+      };
+      expect(planState.phase).toBe("awaiting_input");
+      expect(planState.planReady?.summary).toBeTruthy();
+
+      const confirmedPlan = await runCli(
+        ["confirm-plan", "--run-id", runId, "--config", configPath],
+        deps,
+      );
+      expect(confirmedPlan.code).toBe(0);
 
       const continued = await runCli(
         ["continue", "--run-id", runId, "--config", configPath],

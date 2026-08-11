@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend, type AgentRequest } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
+import { createPlannerPrdSequence, HIGH_LEVEL_PLAN } from "../helpers.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 import { git as runGit } from "../testkit/git.js";
 
@@ -16,21 +17,6 @@ const REFLECT_OUTPUT = {
   outOfScope: ["localization"],
   assumptions: ["English only"],
   unknowns: ["formal vs casual"],
-};
-
-const PLAN_OUTPUT = {
-  summary: "One task",
-  tasks: [
-    {
-      id: "greet",
-      title: "Ship greeting",
-      description: "Render greeting.",
-      acceptanceCriteria: ["Works"],
-      blockedBy: [] as string[],
-      tdd: false,
-      testCommand: 'node -e "process.exit(0)"',
-    },
-  ],
 };
 
 describe("plan() workspace guard", () => {
@@ -54,6 +40,7 @@ describe("plan() workspace guard", () => {
     await fixture.initGit();
 
     const requests: AgentRequest[] = [];
+    const seq = createPlannerPrdSequence(HIGH_LEVEL_PLAN);
     const backend = createFakeBackend({
       reflector: () => REFLECT_OUTPUT,
       griller: () => ({
@@ -63,7 +50,7 @@ describe("plan() workspace guard", () => {
       }),
       planner: (request) => {
         requests.push(request);
-        return PLAN_OUTPUT;
+        return seq.planner();
       },
     });
 
@@ -94,6 +81,7 @@ describe("plan() workspace guard", () => {
 
     let plannerCalls = 0;
     let worktreeRoot = "";
+    const seq = createPlannerPrdSequence(HIGH_LEVEL_PLAN);
     const backend = createFakeBackend({
       reflector: () => REFLECT_OUTPUT,
       griller: () => ({
@@ -109,7 +97,7 @@ describe("plan() workspace guard", () => {
           `{"lockfileVersion":${plannerCalls}}\n`,
           "utf8",
         );
-        return PLAN_OUTPUT;
+        return seq.planner();
       },
     });
 
@@ -119,11 +107,13 @@ describe("plan() workspace guard", () => {
 
     const blocked = await engine.advance(runId);
     expect(blocked.phase).toBe("blocked");
-    expect(blocked.blockedFrom).toBe("planning");
+    // High-level plan persists as planReady (awaiting_input) before the dirty-tree failure is recorded.
+    expect(blocked.blockedFrom).toBe("awaiting_input");
     expect(blocked.blockedKind).toBe("workspace");
     expect(blocked.failure).toContain("package-lock.json");
-    expect(blocked.tasks).toHaveLength(1);
-    expect(blocked.tasks[0]?.title).toBe("Ship greeting");
+    expect(blocked.planReady?.summary).toBe(HIGH_LEVEL_PLAN.summary);
+    expect(blocked.plan?.summary).toBe(HIGH_LEVEL_PLAN.summary);
+    expect(blocked.tasks).toHaveLength(0);
     expect(plannerCalls).toBe(1);
 
     const events = (await engine.store.readText(runId, "events.jsonl"))
@@ -137,17 +127,18 @@ describe("plan() workspace guard", () => {
     await runGit(worktreeRoot, "commit", "-m", "chore: accept planner side effect");
 
     await engine.retry(runId);
-    // Resume skips re-planning; with no implementer the run blocks once executing starts.
+    // Retry restores awaiting_input + planReady; advance does not re-invoke the planner.
     const resumed = await engine.advance(runId);
     expect(plannerCalls).toBe(1);
-    expect(resumed.tasks).toHaveLength(1);
+    expect(resumed.phase).toBe("awaiting_input");
+    expect(resumed.planReady?.summary).toBe(HIGH_LEVEL_PLAN.summary);
+    expect(resumed.tasks).toHaveLength(0);
 
     const after = (await engine.store.readText(runId, "events.jsonl"))
       .trim()
       .split(/\r?\n/)
       .map((line) => JSON.parse(line) as { type: string });
     expect(after.filter((event) => event.type === "plan.created")).toHaveLength(1);
-    expect(after.some((event) => event.type === "plan.resumed")).toBe(true);
   });
 });
 

@@ -148,6 +148,49 @@ export const GrillReadyGateSchema = z.object({
 });
 export type GrillReadyGate = z.infer<typeof GrillReadyGateSchema>;
 
+/** Retained planner provider session for high-level plan → to-prd continuation. */
+export const PlannerEpisodeSchema = z.object({
+  number: z.number().int().positive(),
+  providerSessionId: z.string().min(1).optional(),
+  guidanceFingerprint: z.string().optional(),
+  startedAt: z.string(),
+  updatedAt: z.string(),
+  closedAt: z.string().optional(),
+});
+export type PlannerEpisode = z.infer<typeof PlannerEpisodeSchema>;
+
+/** Operator gate after the planner returns a high-level plan; absent when not pending. */
+export const PlanReadyGateSchema = z.object({
+  summary: z.string().min(1),
+  readyAt: z.string(),
+});
+export type PlanReadyGate = z.infer<typeof PlanReadyGateSchema>;
+
+/** High-level plan the operator reviews before PRD + issue slicing. */
+export const HighLevelPlanSchema = z.object({
+  summary: z.string().min(1),
+  problemStatement: z.string().min(1),
+  solution: z.string().min(1),
+  approach: z.string().min(1),
+  constraints: z.array(z.string()).default([]),
+  outOfScope: z.array(z.string()).default([]),
+  openQuestions: z.array(z.string()).default([]),
+});
+export type HighLevelPlan = z.infer<typeof HighLevelPlanSchema>;
+
+/** Local PRD authored from the retained planner session after plan approval. */
+export const PrdSchema = z.object({
+  summary: z.string().min(1),
+  problemStatement: z.string().min(1),
+  solution: z.string().min(1),
+  userStories: z.array(z.string().min(1)).min(1),
+  implementationDecisions: z.array(z.string().min(1)).default([]),
+  testingDecisions: z.array(z.string().min(1)).default([]),
+  outOfScope: z.array(z.string()).default([]),
+  furtherNotes: z.string().default(""),
+});
+export type Prd = z.infer<typeof PrdSchema>;
+
 /** Verification-only settings patch (commands.test + workflow.testPathPatterns). */
 export const VerificationSettingsPatchSchema = z
   .object({
@@ -421,8 +464,14 @@ export const RunStateSchema = z.object({
   // Unprompted human input the griller has not yet consumed.
   operatorNotes: z.array(OperatorNoteSchema).default([]),
   tasks: z.array(BuildTaskSchema).default([]),
-  // Planner-proposed dependency installs gated before executing.
+  // Issue-slicer-proposed dependency installs gated before executing.
   proposedInstalls: z.array(ProposedInstallSchema).default([]),
+  // High-level plan (operator-edited copy is what to-prd consumes).
+  plan: HighLevelPlanSchema.optional(),
+  // Local PRD authored after plan approval (synced to prd.md).
+  prd: PrdSchema.optional(),
+  // Feedback that reopens planning; consumed on the next planner invoke.
+  planFeedback: z.string().optional(),
   activeQuestionId: z.string().optional(),
   branchName: z.string().optional(),
   pullRequestUrl: z.string().optional(),
@@ -440,6 +489,9 @@ export const RunStateSchema = z.object({
   grillEpisode: GrillEpisodeSchema.optional(),
   // Set when grilling finished; cleared by confirmGrill (continue or reopen).
   grillReady: GrillReadyGateSchema.optional(),
+  plannerEpisode: PlannerEpisodeSchema.optional(),
+  // Set when the planner finished a high-level plan; cleared by confirmPlan.
+  planReady: PlanReadyGateSchema.optional(),
   // Set when project-profiler proposes verification settings; cleared on confirm.
   verificationReady: VerificationReadyGateSchema.optional(),
   // Set once the operator confirms verification; skips re-proposal on resume.
@@ -487,6 +539,7 @@ export const AgentRoleSchema = z.enum([
   "reflector",
   "griller",
   "planner",
+  "issue-slicer",
   "prompt-builder",
   "test-writer",
   "implementer",
@@ -531,7 +584,18 @@ export const GrillOutputSchema = z.discriminatedUnion("status", [
 ]);
 export type GrillOutput = z.infer<typeof GrillOutputSchema>;
 
-export const PlannerOutputSchema = z.object({
+/** @deprecated Prefer HighLevelPlanSchema; retained as an alias for the planner deliverable. */
+export const PlannerOutputSchema = HighLevelPlanSchema;
+export type PlannerOutput = HighLevelPlan;
+
+export const PLANNER_EXPECTED_OUTPUT =
+  "{summary,problemStatement,solution,approach,constraints?,outOfScope?,openQuestions?}";
+
+export const PRD_EXPECTED_OUTPUT =
+  "{summary,problemStatement,solution,userStories:[string],implementationDecisions?,testingDecisions?,outOfScope?,furtherNotes?}";
+
+/** Fresh issue-slicer output: executable BuildTasks (+ optional installs). */
+export const IssueSlicerOutputSchema = z.object({
   summary: z.string().min(1),
   tasks: z
     .array(
@@ -560,7 +624,10 @@ export const PlannerOutputSchema = z.object({
     )
     .default([]),
 });
-export type PlannerOutput = z.infer<typeof PlannerOutputSchema>;
+export type IssueSlicerOutput = z.infer<typeof IssueSlicerOutputSchema>;
+
+export const ISSUE_SLICER_EXPECTED_OUTPUT =
+  "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,tdd?,testCommand?}],proposedInstalls?:[{id,manager,packages,reason,command?}]}";
 
 export const PromptBuilderOutputSchema = z.object({
   prompt: z.string().min(1),

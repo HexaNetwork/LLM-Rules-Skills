@@ -1,7 +1,7 @@
 import type { HarnessConfig } from "../src/config.js";
 import type { CommandResult } from "../src/commands.js";
 import type { HarnessEngine } from "../src/engine.js";
-import type { RunState } from "../src/domain.js";
+import type { HighLevelPlan, RunState } from "../src/domain.js";
 import type { CommandRunner } from "../src/application/dependencies.js";
 import {
   buildFixtureConfig,
@@ -13,6 +13,12 @@ export type { ProjectFixture } from "./testkit/project-fixture.js";
 export { createScriptedBackend } from "./testkit/scripted-backend.js";
 export type { ScriptedStep } from "./testkit/scripted-backend.js";
 export { git } from "./testkit/git.js";
+export {
+  HIGH_LEVEL_PLAN,
+  PRD_OUTPUT,
+  SLICER_ONE_TASK,
+  createPlannerPrdSequence,
+} from "./fixtures/plan-pipeline.js";
 
 /** Deterministic command runner that always exits 0 (keeps baseline flowing in suites). */
 export function passingCommandRunner(
@@ -34,7 +40,10 @@ export function passingCommandRunner(
   };
 }
 
-/** Clear the grillReady gate and advance into planning / the next grilling turn. */
+/**
+ * Clear the grillReady gate and advance through verification into the planReady gate
+ * (or through plan confirmation when autoConfirmPlan is true — default).
+ */
 export async function confirmGrillAndAdvance(
   engine: HarnessEngine,
   runId: string,
@@ -43,6 +52,8 @@ export async function confirmGrillAndAdvance(
     /** When true, auto-retry a baseline failure with an exit-0 command. */
     clearBaselineFailure?: boolean;
     testCommand?: string;
+    /** When false, stop at planReady instead of auto-approving the plan. Default true. */
+    autoConfirmPlan?: boolean;
   } = {},
 ): Promise<RunState> {
   await engine.confirmGrill(runId, feedback ? { feedback } : {});
@@ -61,7 +72,20 @@ export async function confirmGrillAndAdvance(
       state = await engine.advance(runId);
     }
   }
+  if (options.autoConfirmPlan !== false && state.planReady && !feedback) {
+    state = await confirmPlanAndAdvance(engine, runId);
+  }
   return state;
+}
+
+/** Approve the high-level plan and advance through to-prd + issue-slicer. */
+export async function confirmPlanAndAdvance(
+  engine: HarnessEngine,
+  runId: string,
+  options: { feedback?: string; plan?: HighLevelPlan } = {},
+): Promise<RunState> {
+  await engine.confirmPlan(runId, options);
+  return engine.advance(runId);
 }
 
 /** Accept the verification gate and continue advancing. */
@@ -72,9 +96,11 @@ export async function confirmVerificationAndAdvance(
     /** When true, auto-retry a baseline failure with an exit-0 command. */
     clearBaselineFailure?: boolean;
     testCommand?: string;
+    /** When false, stop at planReady instead of auto-approving the plan. Default true. */
+    autoConfirmPlan?: boolean;
   } = {},
 ): Promise<RunState> {
-  const { clearBaselineFailure, testCommand, ...confirmOptions } = options;
+  const { clearBaselineFailure, testCommand, autoConfirmPlan, ...confirmOptions } = options;
   let state = await engine.confirmVerification(runId, confirmOptions);
   state = await engine.advance(runId);
   if (clearBaselineFailure && state.verificationBaselineReady) {
@@ -84,6 +110,9 @@ export async function confirmVerificationAndAdvance(
     if (!state.verificationBaselineReady) {
       state = await engine.advance(runId);
     }
+  }
+  if (autoConfirmPlan !== false && state.planReady) {
+    state = await confirmPlanAndAdvance(engine, runId);
   }
   return state;
 }

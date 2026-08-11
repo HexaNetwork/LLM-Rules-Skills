@@ -1,4 +1,11 @@
-import type { BuildTask, GrillResolution, OpenUnknown, RunState } from "./domain.js";
+import type {
+  BuildTask,
+  GrillResolution,
+  HighLevelPlan,
+  OpenUnknown,
+  Prd,
+  RunState,
+} from "./domain.js";
 import { RunStore } from "./store.js";
 
 export interface TrackerPort {
@@ -29,6 +36,12 @@ export class LocalTracker implements TrackerPort {
       paths.push(
         await this.store.writeText(state.runId, "unknowns.md", renderUnknowns(state.openUnknowns)),
       );
+    }
+    if (state.plan) {
+      paths.push(await this.store.writeText(state.runId, "plan.md", renderPlan(state.plan)));
+    }
+    if (state.prd) {
+      paths.push(await this.store.writeText(state.runId, "prd.md", renderPrd(state.prd)));
     }
     for (const task of state.tasks) {
       paths.push(
@@ -105,6 +118,80 @@ ${section("Parked", groups.parked)}
 ${section("Dropped (griller stopped tracking)", groups.dropped)}
 
 ${section("Resolved", groups.resolved)}
+`;
+}
+
+function renderPlan(plan: HighLevelPlan): string {
+  const list = (items: string[]): string =>
+    items.length ? items.map((item) => `- ${item}`).join("\n") : "_None._";
+  return `# High-level plan
+
+**Summary:** ${plan.summary}
+
+## Problem statement
+
+${plan.problemStatement}
+
+## Solution
+
+${plan.solution}
+
+## Approach
+
+${plan.approach}
+
+## Constraints
+
+${list(plan.constraints)}
+
+## Out of scope
+
+${list(plan.outOfScope)}
+
+## Open questions
+
+${list(plan.openQuestions)}
+`;
+}
+
+function renderPrd(prd: Prd): string {
+  const list = (items: string[]): string =>
+    items.length ? items.map((item) => `- ${item}`).join("\n") : "_None._";
+  const numbered = (items: string[]): string =>
+    items.length
+      ? items.map((item, index) => `${index + 1}. ${item}`).join("\n")
+      : "_None._";
+  return `# PRD
+
+**Summary:** ${prd.summary}
+
+## Problem Statement
+
+${prd.problemStatement}
+
+## Solution
+
+${prd.solution}
+
+## User Stories
+
+${numbered(prd.userStories)}
+
+## Implementation Decisions
+
+${list(prd.implementationDecisions)}
+
+## Testing Decisions
+
+${list(prd.testingDecisions)}
+
+## Out of Scope
+
+${list(prd.outOfScope)}
+
+## Further Notes
+
+${prd.furtherNotes.trim() || "_None._"}
 `;
 }
 

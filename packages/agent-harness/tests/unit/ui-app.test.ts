@@ -139,6 +139,10 @@ describe("dashboard document", () => {
     expect(html).toContain("confirm_grill");
     expect(html).toContain("Grilling complete — review before planning");
     expect(html).toContain("!s.grillReady");
+    expect(html).toContain("Review high-level plan");
+    expect(html).toContain("Approve plan");
+    expect(html).toContain("confirm_plan");
+    expect(html).toContain("planReady");
     expect(html).toContain("Confirm verification settings");
     expect(html).toContain("confirm_verification");
     expect(html).toContain("confirmVerificationBtn");

@@ -1,11 +1,12 @@
 import type { HarnessConfig, PreflightCommitOrder } from "./config.js";
-import type { ReflectOutput, RunState, RunWorkspace, VerificationSettingsPatch } from "./domain.js";
+import type { ReflectOutput, RunState, RunWorkspace, VerificationSettingsPatch, HighLevelPlan } from "./domain.js";
 import { isTestPath, reconcileUnknowns } from "./domain.js";
 import { ApplicationContext } from "./application/application-context.js";
 import type { HarnessDependencies } from "./application/dependencies.js";
 import { runCancellationRegistry } from "./application/cancellation-registry.js";
 import {
   pendingGrillReady,
+  pendingPlanReady,
   taskForPacket,
   type CancelResult,
   type CleanupResult,
@@ -20,7 +21,7 @@ import { TaskExecutionService } from "./application/task-execution-service.js";
 
 export type { HarnessDependencies } from "./application/dependencies.js";
 export type { CancelResult, CleanupResult, MigrateWorkspaceResult } from "./application/helpers.js";
-export { pendingGrillReady, taskForPacket } from "./application/helpers.js";
+export { pendingGrillReady, pendingPlanReady, taskForPacket } from "./application/helpers.js";
 export { isTestPath, reconcileUnknowns };
 export { openRunHarness } from "./application/run-engine-factory.js";
 
@@ -127,6 +128,13 @@ export class HarnessEngine {
 
   confirmGrill(runId: string, options?: { feedback?: string }): Promise<RunState> {
     return this.interview.confirmGrill(runId, options);
+  }
+
+  confirmPlan(
+    runId: string,
+    options?: { feedback?: string; plan?: HighLevelPlan },
+  ): Promise<RunState> {
+    return this.planning.confirmPlan(runId, options);
   }
 
   confirmVerification(

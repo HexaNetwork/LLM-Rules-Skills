@@ -5,7 +5,13 @@ import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { createRunState } from "../../src/domain.js";
 import { RunStore } from "../../src/store.js";
-import { fixtureConfig, fixtureRoot } from "../helpers.js";
+import {
+  createPlannerPrdSequence,
+  fixtureConfig,
+  fixtureRoot,
+  HIGH_LEVEL_PLAN,
+  SLICER_ONE_TASK,
+} from "../helpers.js";
 
 const REFLECT_OUTPUT = {
   proposedTitle: "Add greeting tone",
@@ -52,6 +58,7 @@ const PLAN_WITH_INSTALLS = {
 describe("operator controls", () => {
   it("gates on proposed installs then enters executing after deny-all", async () => {
     const root = await fixtureRoot();
+    const planner = createPlannerPrdSequence(HIGH_LEVEL_PLAN);
     const backend = createFakeBackend({
       reflector: () => REFLECT_OUTPUT,
       griller: () => ({
@@ -59,7 +66,8 @@ describe("operator controls", () => {
         summary: "Ready",
         resolutions: [],
       }),
-      planner: () => PLAN_WITH_INSTALLS,
+      planner: planner.planner,
+      "issue-slicer": () => PLAN_WITH_INSTALLS,
     });
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
@@ -85,6 +93,12 @@ describe("operator controls", () => {
     });
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
+    expect(state.planReady?.summary).toBeTruthy();
+    expect(state.tasks).toHaveLength(0);
+
+    state = await engine.confirmPlan(state.runId);
+    state = await engine.advance(state.runId);
+    expect(state.phase).toBe("awaiting_input");
     expect(state.proposedInstalls).toHaveLength(1);
     expect(state.tasks).toHaveLength(2);
 
@@ -94,6 +108,75 @@ describe("operator controls", () => {
     });
     expect(state.proposedInstalls[0]?.decision).toBe("denied");
     expect(state.phase).toBe("executing");
+  });
+
+  it("edit+approve plan and feedback replan keep tasks absent until slicer", async () => {
+    const root = await fixtureRoot();
+    const planner = createPlannerPrdSequence({
+      ...HIGH_LEVEL_PLAN,
+      summary: "Revised plan",
+    });
+    const retainedSessions: string[] = [];
+    const backend = createFakeBackend({
+      reflector: () => REFLECT_OUTPUT,
+      griller: () => ({
+        status: "ready_to_plan",
+        summary: "Ready",
+        resolutions: [],
+      }),
+      planner: (request) => {
+        if (request.providerSessionId) retainedSessions.push(request.providerSessionId);
+        return planner.planner(request);
+      },
+      "issue-slicer": (request) => {
+        expect(request.providerSessionId).toBeUndefined();
+        return SLICER_ONE_TASK;
+      },
+    });
+    const config = fixtureConfig(root, {
+      workflow: { tdd: false } as never,
+      agent: { promptBuilder: false } as never,
+    });
+    const engine = new HarnessEngine(config, { backend });
+    let state = await engine.start("Ship greeting");
+    state = await engine.advance(state.runId);
+    state = await engine.answerMany(state.runId, [
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
+    ]);
+    state = await engine.advance(state.runId);
+    state = await engine.confirmGrill(state.runId);
+    state = await engine.advance(state.runId);
+    state = await engine.confirmVerification(state.runId, {
+      patch: state.verificationReady!.proposedPatch,
+    });
+    state = await engine.advance(state.runId);
+    expect(state.planReady).toBeTruthy();
+
+    state = await engine.confirmPlan(state.runId, {
+      feedback: "Tighten the approach",
+    });
+    expect(state.planReady).toBeUndefined();
+    expect(state.plan).toBeUndefined();
+    expect(state.tasks).toHaveLength(0);
+    expect(state.phase).toBe("planning");
+
+    state = await engine.advance(state.runId);
+    expect(state.planReady).toBeTruthy();
+    expect(state.tasks).toHaveLength(0);
+
+    state = await engine.confirmPlan(state.runId, {
+      plan: {
+        ...HIGH_LEVEL_PLAN,
+        summary: "Edited by operator",
+        approach: "Operator-edited approach",
+      },
+    });
+    expect(state.plan?.summary).toBe("Edited by operator");
+    state = await engine.advance(state.runId);
+    expect(state.prd).toBeTruthy();
+    expect(state.tasks).toHaveLength(1);
+    expect(state.plannerEpisode?.closedAt).toBeTruthy();
+    expect(retainedSessions.length).toBeGreaterThan(0);
   });
 
   it("requestStop sets stoppedAfterTaskAt when no task is active", async () => {

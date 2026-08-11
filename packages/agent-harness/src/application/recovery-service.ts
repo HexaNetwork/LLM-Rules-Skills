@@ -99,7 +99,18 @@ export class RecoveryService {
       ...state,
       phase: "cancelled",
     });
-    const cancelled = await this.interview.closeGrillEpisode(withoutSessions);
+    let cancelled = await this.interview.closeGrillEpisode(withoutSessions);
+    const plannerEpisode = cancelled.plannerEpisode;
+    if (plannerEpisode && !plannerEpisode.closedAt) {
+      await this.ctx.agents
+        .releaseProviderSession(plannerEpisode.providerSessionId)
+        .catch(() => undefined);
+      const now = new Date().toISOString();
+      cancelled = {
+        ...cancelled,
+        plannerEpisode: { ...plannerEpisode, updatedAt: now, closedAt: now },
+      };
+    }
     const recorded = await this.ctx.store.record(cancelled, "run.cancelled");
     await this.ctx.clearCancelRequest(state.runId);
     return recorded;

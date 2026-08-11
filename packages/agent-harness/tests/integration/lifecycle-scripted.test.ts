@@ -3,7 +3,11 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentBackend, AgentRequest } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
-import { confirmGrillAndAdvance } from "../helpers.js";
+import {
+  confirmGrillAndAdvance,
+  HIGH_LEVEL_PLAN,
+  PRD_OUTPUT
+} from "../helpers.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
 import { git as runGit } from "../testkit/git.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
@@ -99,9 +103,12 @@ describe("Phase 5 scripted full lifecycle", () => {
               ],
             },
           },
-          {
-            role: "planner",
-            output: {
+          { role: "planner", output: HIGH_LEVEL_PLAN },
+      { role: "planner", output: PRD_OUTPUT },
+      {
+        role: "issue-slicer",
+        output: {
+
               summary: "One task",
               tasks: [
                 {
@@ -115,8 +122,9 @@ describe("Phase 5 scripted full lifecycle", () => {
                     'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
                 },
               ],
-            },
-          },
+          proposedInstalls: [],
+        },
+      },
           {
             role: "test-writer",
             output: { summary: "RED test", changedFiles: ["tests/greet.test.ts"] },
@@ -213,6 +221,8 @@ describe("Phase 5 scripted full lifecycle", () => {
           "griller",
           "project-profiler",
           "planner",
+          "planner",
+          "issue-slicer",
           "test-writer",
           "implementer",
           "reviewer",

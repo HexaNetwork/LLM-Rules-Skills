@@ -16,7 +16,16 @@ import {
 import { HarnessEngine } from "../../src/engine.js";
 import { GitService } from "../../src/git.js";
 import { createRunState, type RunState } from "../../src/domain.js";
-import { confirmGrillAndAdvance, createProjectFixture, fixtureConfig, fixtureRoot } from "../helpers.js";
+import {
+  confirmGrillAndAdvance,
+  createPlannerPrdSequence,
+  createProjectFixture,
+  fixtureConfig,
+  fixtureRoot,
+  HIGH_LEVEL_PLAN,
+  PRD_OUTPUT,
+  SLICER_ONE_TASK
+} from "../helpers.js";
 
 const REFLECT_OUTPUT = {
   proposedTitle: "Add greeting tone",
@@ -131,24 +140,32 @@ describe("durable idea-to-feature workflow", () => {
           questions: [FIRST_GRILL_QUESTION],
         };
       },
-      planner: (request) => {
-        requests.push(request);
-        expect(request.prompt).toContain("Confirmed");
+      ...(() => {
+        const seq = createPlannerPrdSequence();
         return {
-          summary: "One task",
-          tasks: [
-            {
-              id: "greet",
-              title: "Ship greeting",
-              description: "Render the casual greeting.",
-              acceptanceCriteria: ["Greeting is casual"],
-              blockedBy: [],
-              tdd: false,
-              testCommand: 'node -e "process.exit(0)"',
-            },
-          ],
+          planner: (request) => {
+            requests.push(request);
+            const text = `${request.prompt}\n${request.continuationPrompt ?? ""}`;
+            expect(text).toMatch(/Confirmed|approved high-level plan|PRD/i);
+            return seq.planner(request);
+          },
+          "issue-slicer": () => ({
+            summary: "One task",
+        tasks: [
+          {
+            id: "greet",
+            title: "Ship greeting",
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
+            blockedBy: [],
+            tdd: false,
+            testCommand: 'node -e "process.exit(0)"',
+          },
+        ],
+        proposedInstalls: [],
+          }),
         };
-      },
+      })(),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "Looks good", findings: [] }),
       "message-writer": () => ({ subject: "feat: add greeting", body: "Verified." }),
@@ -217,19 +234,21 @@ describe("durable idea-to-feature workflow", () => {
           openUnknowns: [],
         };
       },
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -305,19 +324,21 @@ describe("durable idea-to-feature workflow", () => {
           resolutions: [],
         };
       },
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -378,19 +399,21 @@ describe("durable idea-to-feature workflow", () => {
           questions: [FIRST_GRILL_QUESTION],
         };
       },
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -729,19 +752,21 @@ describe("durable idea-to-feature workflow", () => {
           },
         ],
       }),
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -825,19 +850,19 @@ describe("durable idea-to-feature workflow", () => {
         summary: "Ready",
         resolutions: [],
       }),
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
-        tasks: [
-          {
-            id: "greet",
-            title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
-            blockedBy: [],
-            tdd: true,
-            testCommand: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
-          },
-        ],
+            tasks: [
+              {
+                id: "greet",
+                title: "Ship greeting",
+                description: "Render the casual greeting.",
+                acceptanceCriteria: ["Greeting is casual"],
+                blockedBy: [],
+              },
+            ],
+        proposedInstalls: [],
       }),
       "test-writer": () => {
         process.env.HARNESS_FORCE_RED = "1";
@@ -891,19 +916,19 @@ describe("durable idea-to-feature workflow", () => {
         summary: "Ready",
         resolutions: [],
       }),
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
-        tasks: [
-          {
-            id: "greet",
-            title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
-            blockedBy: [],
-            tdd: true,
-            testCommand: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
-          },
-        ],
+            tasks: [
+              {
+                id: "greet",
+                title: "Ship greeting",
+                description: "Render the casual greeting.",
+                acceptanceCriteria: ["Greeting is casual"],
+                blockedBy: [],
+              },
+            ],
+        proposedInstalls: [],
       }),
       "test-writer": () => {
         process.env.HARNESS_FORCE_RED = "1";
@@ -929,6 +954,9 @@ describe("durable idea-to-feature workflow", () => {
     state = await engine.confirmVerification(state.runId, {
       patch: state.verificationReady!.proposedPatch,
     });
+    state = await engine.advance(state.runId);
+    expect(state.planReady?.summary).toBeTruthy();
+    state = await engine.confirmPlan(state.runId);
     state = await engine.advance(state.runId);
     const task = state.tasks[0];
     expect(task?.evidence.some((entry) => entry.purpose === "guard:test-tamper")).toBe(true);
@@ -979,19 +1007,21 @@ describe("durable idea-to-feature workflow", () => {
         expect(prompt).toContain("Plain");
         return { status: "ready_to_plan", summary: "All set", resolutions: [], openUnknowns: [] };
       },
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -1058,19 +1088,21 @@ describe("durable idea-to-feature workflow", () => {
           openUnknowns: [{ id: "skip", title: "Skip decision", impact: "minor" }],
         };
       },
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -1133,19 +1165,21 @@ describe("durable idea-to-feature workflow", () => {
           openUnknowns: [{ id: "clarify", title: "Clarify decision", impact: "minor" }],
         };
       },
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -1206,19 +1240,21 @@ describe("durable idea-to-feature workflow", () => {
           ],
         };
       },
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -1294,19 +1330,21 @@ describe("durable idea-to-feature workflow", () => {
           openUnknowns: [],
         };
       },
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -1376,19 +1414,21 @@ describe("durable idea-to-feature workflow", () => {
           openUnknowns: [],
         };
       },
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: () => ({ summary: "Built", changedFiles: ["src/greet.ts"] }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -1440,19 +1480,21 @@ describe("durable idea-to-feature workflow", () => {
         summary: "Ready",
         resolutions: [],
       }),
-      planner: () => ({
+      planner: createPlannerPrdSequence().planner,
+      "issue-slicer": () => ({
         summary: "One task",
         tasks: [
           {
             id: "greet",
             title: "Ship greeting",
-            description: "Render greeting.",
-            acceptanceCriteria: ["Works"],
+            description: "Render the casual greeting.",
+            acceptanceCriteria: ["Greeting is casual"],
             blockedBy: [],
             tdd: false,
             testCommand: 'node -e "process.exit(0)"',
           },
         ],
+        proposedInstalls: [],
       }),
       implementer: (request) => {
         implementerRequests.push(request);

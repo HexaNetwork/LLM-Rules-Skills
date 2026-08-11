@@ -436,7 +436,27 @@ export const renderRunScript = `    function renderSidebar() {
         if (selected == null) selected = "accept";
         return '<div class="install-item"><div class="item-head"><div><strong>' + esc(item.manager) + '</strong> <span class="pkg">' + esc((item.packages || []).join(" ")) + '</span></div></div><div class="muted" style="margin:6px 0 10px">' + esc(item.reason) + '</div><div style="display:flex;gap:14px;flex-wrap:wrap"><label><input type="radio" name="install-' + attr(item.id) + '" data-install-id="' + attr(item.id) + '" value="accept"' + (selected === "accept" ? " checked" : "") + '> Accept</label><label><input type="radio" name="install-' + attr(item.id) + '" data-install-id="' + attr(item.id) + '" value="deny"' + (selected === "deny" ? " checked" : "") + '> Deny</label></div></div>';
       }).join("");
-      return '<div class="card question-card" id="installApprovalCard"><div class="card-label">Approve dependency installs</div><p class="muted">The planner proposed these installs before implementation. Accept or deny each item, then continue.</p>' + rows + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" class="btn" id="acceptAllInstallsBtn">Accept all</button><button type="button" class="btn" id="denyAllInstallsBtn">Deny all</button><button type="button" class="btn primary" id="submitInstallsBtn">Continue</button></div></div>';
+      return '<div class="card question-card" id="installApprovalCard"><div class="card-label">Approve dependency installs</div><p class="muted">The issue slicer proposed these installs before implementation. Accept or deny each item, then continue.</p>' + rows + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" class="btn" id="acceptAllInstallsBtn">Accept all</button><button type="button" class="btn" id="denyAllInstallsBtn">Deny all</button><button type="button" class="btn primary" id="submitInstallsBtn">Continue</button></div></div>';
+    }
+
+    function renderPlanReady(gate, plan) {
+      var draft = state.planDraft || {};
+      var summary = draft.summary != null ? draft.summary : (plan && plan.summary) || gate.summary || "";
+      var problemStatement = draft.problemStatement != null ? draft.problemStatement : (plan && plan.problemStatement) || "";
+      var solution = draft.solution != null ? draft.solution : (plan && plan.solution) || "";
+      var approach = draft.approach != null ? draft.approach : (plan && plan.approach) || "";
+      var constraints = draft.constraints != null ? draft.constraints : ((plan && plan.constraints) || []).join("\\n");
+      var outOfScope = draft.outOfScope != null ? draft.outOfScope : ((plan && plan.outOfScope) || []).join("\\n");
+      var openQuestions = draft.openQuestions != null ? draft.openQuestions : ((plan && plan.openQuestions) || []).join("\\n");
+      return '<div class="card question-card" id="planReadyCard"><div class="card-label">Review high-level plan</div><p class="muted">Edit the plan if needed, then approve. Approving runs local PRD authoring and issue slicing automatically. Feedback discards edits and asks the planner to try again.</p><div class="resolution" style="margin:10px 0 12px"><strong>Gate summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div><form id="planReadyForm"><label class="muted" for="planSummary">Summary</label><textarea id="planSummary" rows="2" style="width:100%;margin:4px 0 10px">' + esc(summary) + '</textarea><label class="muted" for="planProblemStatement">Problem statement</label><textarea id="planProblemStatement" rows="3" style="width:100%;margin:4px 0 10px">' + esc(problemStatement) + '</textarea><label class="muted" for="planSolution">Solution</label><textarea id="planSolution" rows="3" style="width:100%;margin:4px 0 10px">' + esc(solution) + '</textarea><label class="muted" for="planApproach">Approach</label><textarea id="planApproach" rows="4" style="width:100%;margin:4px 0 10px">' + esc(approach) + '</textarea><label class="muted" for="planConstraints">Constraints (one per line)</label><textarea id="planConstraints" rows="3" style="width:100%;margin:4px 0 10px">' + esc(constraints) + '</textarea><label class="muted" for="planOutOfScope">Out of scope (one per line)</label><textarea id="planOutOfScope" rows="3" style="width:100%;margin:4px 0 10px">' + esc(outOfScope) + '</textarea><label class="muted" for="planOpenQuestions">Open questions (one per line)</label><textarea id="planOpenQuestions" rows="2" style="width:100%;margin:4px 0 10px">' + esc(openQuestions) + '</textarea><label class="muted" for="planFeedbackText">Optional feedback</label><textarea id="planFeedbackText" placeholder="Something the planner missed or got wrong…">' + esc(state.planFeedbackText) + '</textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" class="btn" id="sendPlanFeedbackBtn">Send feedback to planner</button><button type="button" class="btn primary" id="approvePlanBtn">Approve plan</button></div></form></div>';
+    }
+
+    function renderPrdReadonly(prd) {
+      if (!prd) return "";
+      var stories = (prd.userStories || []).map(function (item, index) {
+        return '<li>' + esc(item) + '</li>';
+      }).join("");
+      return '<div class="card"><div class="card-label">Local PRD</div><div class="muted" style="margin-bottom:8px">' + esc(prd.summary || "") + '</div><div class="resolution"><strong>Problem</strong><div class="muted" style="margin-top:4px">' + esc(prd.problemStatement || "") + '</div></div><div class="resolution" style="margin-top:10px"><strong>Solution</strong><div class="muted" style="margin-top:4px">' + esc(prd.solution || "") + '</div></div>' + (stories ? '<div class="resolution" style="margin-top:10px"><strong>User stories</strong><ol style="margin:6px 0 0;padding-left:20px">' + stories + '</ol></div>' : '') + '</div>';
     }
 
     function renderGrillReady(gate) {
@@ -501,6 +521,8 @@ export const renderRunScript = `    function renderSidebar() {
                     ? "Confirming verification and running the baseline"
                     : jobAction === "retry_verification_baseline"
                       ? "Retrying the verification baseline"
+                  : jobAction === "confirm_plan"
+                    ? "Authoring PRD and slicing issues"
                   : "An agent or deterministic command is working";
         if (jobDetail) thinkingDetail = jobDetail;
         if (activityText) thinkingDetail = activityText;
@@ -513,6 +535,8 @@ export const renderRunScript = `    function renderSidebar() {
           html += renderVerificationReady(s.verificationReady);
         } else if (s.verificationBaselineReady) {
           html += renderVerificationBaselineReady(s.verificationBaselineReady);
+        } else if (s.planReady) {
+          html += renderPlanReady(s.planReady, s.plan);
         } else if (pendingInstalls.length) {
           html += renderInstallApproval(pendingInstalls);
         } else if (s.grillReady) {
@@ -524,6 +548,9 @@ export const renderRunScript = `    function renderSidebar() {
             else html += renderQuestionBatch(s, q);
           }
         }
+      }
+      if (s.prd && !s.planReady) {
+        html += renderPrdReadonly(s.prd);
       }
       if (s.stoppedAfterTaskAt) {
         html += '<div class="card"><div class="alert warning"><div><strong>Stopped after task</strong><div class="muted" style="margin-top:5px">The current task finished and the next frontier task was not started. Resume continues from here. Cancel remains available to abort immediately.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';

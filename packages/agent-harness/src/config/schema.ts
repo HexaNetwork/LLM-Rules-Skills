@@ -5,6 +5,7 @@ import { AgentRoleSchema, type AgentRole } from "../domain.js";
 /** Structural Graphify lookup is valuable for workers that edit or review code. */
 const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
   "planner",
+  "issue-slicer",
   "test-writer",
   "implementer",
   "reviewer",
@@ -63,6 +64,10 @@ const GuidanceAssignmentsSchema = z.object({
   reflector: GuidanceAssignmentSchema,
   griller: GuidanceAssignmentSchema,
   planner: GuidanceAssignmentSchema,
+  "issue-slicer": GuidanceAssignmentSchema.default({
+    rules: [],
+    skills: ["prd-to-issues", "domain-modeling", "improve-codebase-architecture"],
+  }),
   "prompt-builder": GuidanceAssignmentSchema,
   "test-writer": GuidanceAssignmentSchema,
   implementer: GuidanceAssignmentSchema,
@@ -78,7 +83,11 @@ const GuidanceAssignmentsSchema = z.object({
 export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsSchema> = {
   reflector: { rules: [], skills: ["domain-modeling"] },
   griller: { rules: [], skills: ["grill-me", "domain-modeling"] },
-  planner: { rules: [], skills: ["domain-modeling", "improve-codebase-architecture"] },
+  planner: { rules: [], skills: ["domain-modeling", "improve-codebase-architecture", "to-prd"] },
+  "issue-slicer": {
+    rules: [],
+    skills: ["prd-to-issues", "domain-modeling", "improve-codebase-architecture"],
+  },
   "prompt-builder": { rules: [], skills: [] },
   "test-writer": { rules: [], skills: ["tdd"] },
   implementer: { rules: [], skills: ["tdd"] },

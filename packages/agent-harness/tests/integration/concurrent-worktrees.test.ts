@@ -5,7 +5,10 @@ import { createFakeBackend } from "../../src/agent.js";
 import { migrateRunWorkspace } from "../../src/domain/workspace.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
-import { confirmGrillAndAdvance } from "../helpers.js";
+import {
+  confirmGrillAndAdvance,
+  createPlannerPrdSequence
+} from "../helpers.js";
 import {
   createProjectFixture,
   type ProjectFixture,
@@ -247,7 +250,9 @@ describe("concurrent worktree runs (Slice 6)", () => {
               },
             ],
           }),
-          planner: () => ({
+          planner: createPlannerPrdSequence().planner,
+
+          "issue-slicer": () => ({
             summary: "One task",
             tasks: [
               {
@@ -259,6 +264,7 @@ describe("concurrent worktree runs (Slice 6)", () => {
                 tdd: false,
               },
             ],
+            proposedInstalls: [],
           }),
           implementer: async (request) => {
             await mkdir(path.join(request.cwd, "src"), { recursive: true });

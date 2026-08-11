@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   answerCasualGrill,
+  approveHighLevelPlan,
   confirmReflectBrief,
   confirmVerificationSettings,
   continueToPlanning,
@@ -21,6 +22,7 @@ test("happy path: reflect → grill → plan → complete with artifacts", async
       await answerCasualGrill(page);
       await continueToPlanning(page);
       await confirmVerificationSettings(page);
+      await approveHighLevelPlan(page);
       await waitForRunStatus(page, /completed/i);
 
       const runId = await selectedRunId(page);

@@ -10,7 +10,7 @@ import {
 } from "../../../config.js";
 import { openRunHarness } from "../../../application/run-engine-factory.js";
 import { HarnessEngine } from "../../../engine.js";
-import { VerificationSettingsPatchSchema } from "../../../domain.js";
+import { HighLevelPlanSchema, VerificationSettingsPatchSchema } from "../../../domain.js";
 import { GitService, pathToIgnoredArtifactGlob } from "../../../git.js";
 import { prepareGraphifyForRun } from "../../../graphify.js";
 import type { UiAppContext } from "../context.js";
@@ -438,6 +438,16 @@ export async function handleRunsRoutes(
       const feedback = optionalString(body.feedback, "feedback", 20_000);
       ctx.jobs.enqueue(runId, action, async () => {
         await engine.confirmGrill(runId, { feedback });
+        await engine.advance(runId);
+      });
+    } else if (action === "confirm_plan") {
+      const feedback = optionalString(body.feedback, "feedback", 20_000);
+      let plan: ReturnType<typeof HighLevelPlanSchema.parse> | undefined;
+      if (body.plan != null) {
+        plan = HighLevelPlanSchema.parse(body.plan);
+      }
+      ctx.jobs.enqueue(runId, action, async () => {
+        await engine.confirmPlan(runId, { feedback, plan });
         await engine.advance(runId);
       });
     } else if (action === "confirm_verification") {

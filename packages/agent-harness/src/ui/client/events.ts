@@ -37,12 +37,12 @@ export const eventsScript = `    async function waitForJob(runId) {
         // Reflect confirm / grill batch can queue a long agent job; scroll before
         // waiting so the thinking strip at the top is visible while it works.
         if (action === 'answer') scrollMainToTop();
-        if (action === 'resolve_installs' || action === 'confirm_grill') scrollMainToTop();
+        if (action === 'resolve_installs' || action === 'confirm_grill' || action === 'confirm_plan') scrollMainToTop();
         if (action === 'commit_preflight' || action === 'accept_tree' || action === 'retry') scrollMainToTop();
         var result = await waitForJob(state.selected);
         await bootstrap(true);
         if (action === 'answer') scrollMainToTop();
-        if (action === 'resolve_installs' || action === 'confirm_grill' || action === 'confirm_verification') scrollMainToTop();
+        if (action === 'resolve_installs' || action === 'confirm_grill' || action === 'confirm_plan' || action === 'confirm_verification') scrollMainToTop();
         if (action === 'retry_verification_baseline') scrollMainToTop();
         state.pinScrollTop = false;
         if (!result.ok) {
@@ -51,6 +51,7 @@ export const eventsScript = `    async function waitForJob(runId) {
           return;
         }
         var landedGrillReady = !!(state.detail && state.detail.state && state.detail.state.grillReady);
+        var landedPlanReady = !!(state.detail && state.detail.state && state.detail.state.planReady);
         var landedVerification = !!(state.detail && state.detail.state && state.detail.state.verificationReady);
         var landedBaseline = !!(state.detail && state.detail.state && state.detail.state.verificationBaselineReady);
         var doneMsg = action === 'answer'
@@ -62,19 +63,29 @@ export const eventsScript = `    async function waitForJob(runId) {
               ? 'Feedback sent — grilling resumed'
               : (landedVerification
                 ? 'Confirm verification settings before planning'
-                : 'Continuing to planning'))
+                : (landedPlanReady
+                  ? 'Review the high-level plan'
+                  : 'Continuing to planning')))
+            : (action === 'confirm_plan'
+              ? (extra && extra.feedback
+                ? 'Feedback sent — planning resumed'
+                : 'Plan approved — authoring PRD and slicing issues')
             : (action === 'confirm_verification'
               ? (landedBaseline
                 ? 'Baseline tests failed — fix the command and retry'
-                : 'Verification confirmed — planning')
+                : (landedPlanReady
+                  ? 'Verification confirmed — review the plan'
+                  : 'Verification confirmed — planning'))
             : (action === 'retry_verification_baseline'
               ? (landedBaseline
                 ? 'Baseline still failing — inspect evidence and retry'
-                : 'Baseline passed — planning')
+                : (landedPlanReady
+                  ? 'Baseline passed — review the plan'
+                  : 'Baseline passed — planning'))
             : (action === 'set_tdd' ? 'TDD updated'
             : (action === 'commit_preflight' ? 'Working tree committed — continuing'
             : (action === 'accept_tree' ? 'Current tree accepted — continuing'
-            : (action === 'retry' ? 'Retry started' : 'Action completed')))))))));
+            : (action === 'retry' ? 'Retry started' : 'Action completed'))))))))));
         toast(doneMsg);
       } catch (error) {
         state.pinScrollTop = false;
@@ -308,6 +319,38 @@ export const eventsScript = `    async function waitForJob(runId) {
         state.grillFeedbackText = '';
         runAction('confirm_grill', { feedback: grillFeedback });
       }
+      if (target.id === 'approvePlanBtn') {
+        var planDraft = state.planDraft || {};
+        var planSource = (state.detail && state.detail.state && state.detail.state.plan) || {};
+        function planLines(value, fallback) {
+          var raw = value != null ? value : (fallback || []);
+          if (Array.isArray(raw)) return raw;
+          return String(raw).split(/\\r?\\n/).map(function (line) { return line.trim(); }).filter(Boolean);
+        }
+        var planBody = {
+          summary: (planDraft.summary != null ? planDraft.summary : (planSource.summary || '')).trim(),
+          problemStatement: (planDraft.problemStatement != null ? planDraft.problemStatement : (planSource.problemStatement || '')).trim(),
+          solution: (planDraft.solution != null ? planDraft.solution : (planSource.solution || '')).trim(),
+          approach: (planDraft.approach != null ? planDraft.approach : (planSource.approach || '')).trim(),
+          constraints: planLines(planDraft.constraints, planSource.constraints),
+          outOfScope: planLines(planDraft.outOfScope, planSource.outOfScope),
+          openQuestions: planLines(planDraft.openQuestions, planSource.openQuestions)
+        };
+        if (!planBody.summary || !planBody.problemStatement || !planBody.solution || !planBody.approach) {
+          toast('Summary, problem statement, solution, and approach are required', true);
+          return;
+        }
+        state.planDraft = {};
+        state.planFeedbackText = '';
+        runAction('confirm_plan', { plan: planBody });
+      }
+      if (target.id === 'sendPlanFeedbackBtn') {
+        var planFeedback = (state.planFeedbackText || '').trim();
+        if (!planFeedback) { toast('Feedback is required to reopen the planner', true); return; }
+        state.planFeedbackText = '';
+        state.planDraft = {};
+        runAction('confirm_plan', { feedback: planFeedback });
+      }
       if (target.id === 'confirmVerificationBtn' || target.id === 'keepCurrentVerificationBtn') {
         var keepCurrent = target.id === 'keepCurrentVerificationBtn';
         var gate = state.detail && state.detail.state && state.detail.state.verificationReady;
@@ -443,6 +486,20 @@ export const eventsScript = `    async function waitForJob(runId) {
       }
       if (event.target.id === 'noteText') state.noteText = event.target.value;
       if (event.target.id === 'grillFeedbackText') state.grillFeedbackText = event.target.value;
+      if (event.target.id === 'planFeedbackText') state.planFeedbackText = event.target.value;
+      if (event.target.id === 'planSummary' || event.target.id === 'planProblemStatement' || event.target.id === 'planSolution' || event.target.id === 'planApproach' || event.target.id === 'planConstraints' || event.target.id === 'planOutOfScope' || event.target.id === 'planOpenQuestions') {
+        state.planDraft = state.planDraft || {};
+        var planField = {
+          planSummary: 'summary',
+          planProblemStatement: 'problemStatement',
+          planSolution: 'solution',
+          planApproach: 'approach',
+          planConstraints: 'constraints',
+          planOutOfScope: 'outOfScope',
+          planOpenQuestions: 'openQuestions'
+        }[event.target.id];
+        if (planField) state.planDraft[planField] = event.target.value;
+      }
       if (event.target.id === 'verificationTestCommand') {
         state.verificationDraft = state.verificationDraft || {};
         state.verificationDraft.testCommand = event.target.value;

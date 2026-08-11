@@ -2,7 +2,13 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { HarnessEngine } from "../../src/engine.js";
-import { confirmGrillAndAdvance, passingCommandRunner } from "../helpers.js";
+import {
+  confirmGrillAndAdvance,
+  confirmPlanAndAdvance,
+  HIGH_LEVEL_PLAN,
+  passingCommandRunner,
+  PRD_OUTPUT,
+} from "../helpers.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 import { createScriptedBackend } from "../testkit/scripted-backend.js";
 
@@ -72,9 +78,12 @@ describe("verification gate integration", () => {
           },
         },
       },
+      { role: "planner", output: HIGH_LEVEL_PLAN },
+      { role: "planner", output: PRD_OUTPUT },
       {
-        role: "planner",
+        role: "issue-slicer",
         output: {
+
           summary: "One task",
           tasks: [
             {
@@ -86,6 +95,7 @@ describe("verification gate integration", () => {
               tdd: false,
             },
           ],
+          proposedInstalls: [],
         },
       },
       {
@@ -139,12 +149,15 @@ describe("verification gate integration", () => {
 
     state = await engine.advance(state.runId);
     expect(state.verificationBaselinePassedAt).toBeTruthy();
-    const plannerCall = scripted.calls.find((call) => call.role === "planner");
-    expect(plannerCall).toBeTruthy();
-    const plannerPayload = JSON.stringify(plannerCall?.input);
-    expect(plannerPayload).toContain("npm run test:unit");
-    expect(plannerPayload).toContain("confirmedBrief");
-    expect(plannerPayload).not.toMatch(/"idea"\s*:/);
+    expect(state.planReady?.summary).toBeTruthy();
+    expect(state.tasks).toHaveLength(0);
+    state = await confirmPlanAndAdvance(engine, state.runId);
+    const slicerCall = scripted.calls.find((call) => call.role === "issue-slicer");
+    expect(slicerCall).toBeTruthy();
+    const slicerPayload = JSON.stringify(slicerCall?.input);
+    expect(slicerPayload).toContain("npm run test:unit");
+    expect(slicerPayload).toContain("confirmedBrief");
+    expect(slicerPayload).not.toMatch(/"idea"\s*:/);
     expect(state.tasks[0]?.id).toBe("greet");
   });
 
@@ -164,9 +177,12 @@ describe("verification gate integration", () => {
         role: "griller",
         output: { status: "ready_to_plan", summary: "Ready", resolutions: [] },
       },
+      { role: "planner", output: HIGH_LEVEL_PLAN },
+      { role: "planner", output: PRD_OUTPUT },
       {
-        role: "planner",
+        role: "issue-slicer",
         output: {
+
           summary: "One task",
           tasks: [
             {
@@ -178,6 +194,7 @@ describe("verification gate integration", () => {
               tdd: false,
             },
           ],
+          proposedInstalls: [],
         },
       },
       {
@@ -226,9 +243,12 @@ describe("verification gate integration", () => {
           configPatch: { commands: { test: "failing-baseline" } },
         },
       },
+      { role: "planner", output: HIGH_LEVEL_PLAN },
+      { role: "planner", output: PRD_OUTPUT },
       {
-        role: "planner",
+        role: "issue-slicer",
         output: {
+
           summary: "One task",
           tasks: [
             {
@@ -240,6 +260,7 @@ describe("verification gate integration", () => {
               tdd: false,
             },
           ],
+          proposedInstalls: [],
         },
       },
     ]);
@@ -285,6 +306,8 @@ describe("verification gate integration", () => {
     });
     expect(state.verificationBaselinePassedAt).toBeTruthy();
     state = await engine.advance(state.runId);
+    expect(state.planReady?.summary).toBeTruthy();
+    state = await confirmPlanAndAdvance(engine, state.runId);
     expect(state.tasks[0]?.id).toBe("greet");
   });
 });

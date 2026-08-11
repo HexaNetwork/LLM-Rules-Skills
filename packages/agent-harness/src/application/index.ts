@@ -75,6 +75,7 @@ export {
 export { ApplicationContext } from "./application-context.js";
 export {
   pendingGrillReady,
+  pendingPlanReady,
   taskForPacket,
   type CancelResult,
   type CleanupResult,

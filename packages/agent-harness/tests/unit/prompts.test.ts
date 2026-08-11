@@ -118,10 +118,19 @@ describe("prompt rendering", () => {
     expect(renderPrompt(reflectPacket)).toContain("concise imperative feature title");
   });
 
-  it("asks the planner to propose installs without installing them", () => {
+  it("asks the planner for a high-level plan without tasks or installs", () => {
     const plannerPacket: WorkPacket = { ...packet, role: "planner" };
-    expect(renderPrompt(plannerPacket)).toContain("proposedInstalls");
-    expect(renderPrompt(plannerPacket)).toContain("do not install them yourself");
+    expect(renderPrompt(plannerPacket)).toContain("high-level plan only");
+    expect(renderPrompt(plannerPacket)).toContain("Do not emit a task list");
+    expect(renderPrompt(plannerPacket)).toContain(
+      "Do not emit a task list, BuildTasks, acceptance criteria tickets, or proposedInstalls.",
+    );
+  });
+
+  it("asks the issue-slicer to propose installs without installing them", () => {
+    const slicerPacket: WorkPacket = { ...packet, role: "issue-slicer" };
+    expect(renderPrompt(slicerPacket)).toContain("proposedInstalls");
+    expect(renderPrompt(slicerPacket)).toContain("do not install them yourself");
   });
 
   it("instructs grillers to return per-question resolutionSummaries", () => {
@@ -144,7 +153,9 @@ describe("prompt rendering", () => {
 
   it("tells the planner not to edit the working tree", () => {
     const plannerPacket: WorkPacket = { ...packet, role: "planner" };
-    expect(renderPrompt(plannerPacket)).toContain("Do not edit the working tree. Produce the task list only.");
+    expect(renderPrompt(plannerPacket)).toContain(
+      "Do not edit the working tree. Produce a high-level plan only — not executable tickets.",
+    );
   });
 
   it("requires schema-validated workers to return one raw JSON object after the work packet", () => {

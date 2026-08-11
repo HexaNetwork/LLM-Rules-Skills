@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { AgentCoordinator, createFakeBackend } from "../../src/agent.js";
 import {
-  PlannerOutputSchema,
+  HighLevelPlanSchema,
   WorkerOutputSchema,
   createRunState,
   type DomainArtifacts,
@@ -102,15 +102,12 @@ describe("AgentCoordinator domainArtifacts injection", () => {
       createFakeBackend({
         planner: () => ({
           summary: "Planned",
-          tasks: [
-            {
-              id: "t1",
-              title: "Ship",
-              description: "Do the work",
-              acceptanceCriteria: ["done"],
-              blockedBy: [],
-            },
-          ],
+          problemStatement: "Need a feature",
+          solution: "Ship it",
+          approach: "Vertical slice",
+          constraints: [],
+          outOfScope: [],
+          openQuestions: [],
         }),
       }),
       store,
@@ -122,8 +119,8 @@ describe("AgentCoordinator domainArtifacts injection", () => {
       role: "planner",
       objective: "Plan domain feature",
       input: { destination: "Ship feature" },
-      expectedOutput: "{summary,tasks}",
-      schema: PlannerOutputSchema,
+      expectedOutput: "{summary,problemStatement,solution,approach}",
+      schema: HighLevelPlanSchema,
       knowledgeQuery: "domain feature glossary",
       retrieval: false,
       buildPrompt: false,

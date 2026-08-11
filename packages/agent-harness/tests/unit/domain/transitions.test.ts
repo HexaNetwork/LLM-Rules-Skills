@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyGrillOutput,
+  applyHighLevelPlan,
   applyPlan,
   applyQuestionAnswers,
   applyReflectOutput,
@@ -210,8 +211,26 @@ describe("domain transitions", () => {
     );
     expect(grillReady.events.map((event) => event.type)).toEqual(["grill.ready"]);
 
-    const plan = applyPlan(
+    const highLevel = applyHighLevelPlan(
       { ...grillReady.state, phase: "planning", grillReady: undefined },
+      {
+        summary: "One plan",
+        problemStatement: "Need greeting",
+        solution: "Ship greeting",
+        approach: "Small module first",
+        constraints: [],
+        outOfScope: [],
+        openQuestions: [],
+      },
+      NOW,
+    );
+    expect(highLevel.events.map((event) => event.type)).toEqual(["plan.created"]);
+    expect(highLevel.state.phase).toBe("awaiting_input");
+    expect(highLevel.state.planReady?.summary).toBe("One plan");
+    expect(highLevel.state.tasks).toHaveLength(0);
+
+    const plan = applyPlan(
+      { ...highLevel.state, phase: "planning", planReady: undefined },
       {
         summary: "One task",
         tasks: [
@@ -228,7 +247,7 @@ describe("domain transitions", () => {
       NOW,
       { tdd: true, testCommand: 'node -e "process.exit(0)"' },
     );
-    expect(plan.events.map((event) => event.type)).toEqual(["plan.created"]);
+    expect(plan.events.map((event) => event.type)).toEqual(["tasks.materialized"]);
     expect(plan.state.phase).toBe("executing");
   });
 });

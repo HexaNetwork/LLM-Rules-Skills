@@ -7,9 +7,12 @@ import { HarnessEngine } from "../../src/engine.js";
 import { VerificationSettingsPatchSchema } from "../../src/domain.js";
 import {
   confirmGrillAndAdvance,
+  confirmPlanAndAdvance,
+  createPlannerPrdSequence,
   fixtureConfig,
   fixtureRoot,
   passingCommandRunner,
+  SLICER_ONE_TASK,
 } from "../helpers.js";
 
 const REFLECT_OUTPUT = {
@@ -24,19 +27,13 @@ const REFLECT_OUTPUT = {
   unknowns: [],
 };
 
-const PLAN = {
-  summary: "Plan",
-  tasks: [
-    {
-      id: "one",
-      title: "First",
-      description: "Do first",
-      acceptanceCriteria: ["ok"],
-      blockedBy: [] as string[],
-      tdd: false,
-    },
-  ],
-};
+function planPipelineHandlers() {
+  const seq = createPlannerPrdSequence();
+  return {
+    planner: seq.planner,
+    "issue-slicer": () => SLICER_ONE_TASK,
+  };
+}
 
 describe("verification settings gate", () => {
   it("proposes → awaiting_input → confirm → planning, and skips re-proposal after confirm", async () => {
@@ -59,7 +56,7 @@ describe("verification settings gate", () => {
           },
         };
       },
-      planner: () => PLAN,
+      ...planPipelineHandlers(),
     });
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
@@ -112,6 +109,9 @@ describe("verification settings gate", () => {
 
     state = await engine.advance(state.runId);
     expect(state.verificationBaselinePassedAt).toBeTruthy();
+    expect(state.planReady?.summary).toBeTruthy();
+    expect(state.tasks).toHaveLength(0);
+    state = await confirmPlanAndAdvance(engine, state.runId);
     expect(state.tasks).toHaveLength(1);
     expect(profilerCalls).toBe(1);
   });
@@ -129,7 +129,7 @@ describe("verification settings gate", () => {
         summary: "Suggested change",
         configPatch: { commands: { test: "pytest" } },
       }),
-      planner: () => PLAN,
+      ...planPipelineHandlers(),
     });
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
@@ -155,6 +155,8 @@ describe("verification settings gate", () => {
     expect(engine.config.commands.test).toBe("npm test");
     state = await engine.advance(state.runId);
     expect(state.verificationBaselinePassedAt).toBeTruthy();
+    expect(state.planReady?.summary).toBeTruthy();
+    state = await confirmPlanAndAdvance(engine, state.runId);
     expect(state.tasks).toHaveLength(1);
   });
 
@@ -197,7 +199,7 @@ describe("verification settings gate", () => {
           configPatch: { commands: { test: "npm test -- --run" } },
         };
       },
-      planner: () => PLAN,
+      ...planPipelineHandlers(),
     });
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
@@ -252,7 +254,7 @@ describe("verification settings gate", () => {
           },
         };
       },
-      planner: () => PLAN,
+      ...planPipelineHandlers(),
     });
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
@@ -285,7 +287,7 @@ describe("verification settings gate", () => {
         summary: "Ready",
         resolutions: [],
       }),
-      planner: () => PLAN,
+      ...planPipelineHandlers(),
     });
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
@@ -321,7 +323,7 @@ describe("verification settings gate", () => {
         summary: "Broken command",
         configPatch: { commands: { test: "failing-baseline" } },
       }),
-      planner: () => PLAN,
+      ...planPipelineHandlers(),
     });
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
@@ -384,6 +386,8 @@ describe("verification settings gate", () => {
     expect(state.phase).toBe("planning");
 
     state = await engine.advance(state.runId);
+    expect(state.planReady?.summary).toBeTruthy();
+    state = await confirmPlanAndAdvance(engine, state.runId);
     expect(state.tasks).toHaveLength(1);
   });
 
@@ -400,7 +404,7 @@ describe("verification settings gate", () => {
         summary: "Empty suite",
         configPatch: { commands: { test: "vitest run" } },
       }),
-      planner: () => PLAN,
+      ...planPipelineHandlers(),
     });
     const config = fixtureConfig(root, {
       workflow: { tdd: false } as never,
@@ -435,6 +439,8 @@ describe("verification settings gate", () => {
     state = await engine.advance(state.runId);
     expect(state.verificationBaselineReady).toBeUndefined();
     expect(state.verificationBaselinePassedAt).toBeTruthy();
+    expect(state.planReady?.summary).toBeTruthy();
+    state = await confirmPlanAndAdvance(engine, state.runId);
     expect(state.tasks).toHaveLength(1);
   });
 });

@@ -71,8 +71,12 @@ describe("dashboard document", () => {
     expect(html).toContain("indexOf('graphify:') === 0 ? 'structural'");
     expect(html).toContain("Start from branch");
     expect(html).toContain('id="baseBranch"');
+    expect(html).toContain("Creates the run worktree from this local branch tip");
+    expect(html).toContain("Does not switch or clean the project folder");
     expect(html).toContain("fillBaseBranchSelect");
     expect(html).toContain("body.baseBranch = baseBranchSelect.value");
+    expect(html).not.toContain("Control checkout is dirty");
+    expect(html).not.toContain("run.control_checkout_notice");
     expect(html).toContain("Dashboard work does not continue automatically after a restart");
     expect(html).toContain("Confirm feature understanding");
     expect(html).toContain("Our recommendation:");

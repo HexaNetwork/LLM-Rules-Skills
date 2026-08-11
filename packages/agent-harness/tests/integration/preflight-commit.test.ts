@@ -242,7 +242,7 @@ describe("start() with dirty control checkout (worktree semantics)", () => {
 
     const raw = await engine.store.readText("auto-commit-run", "events.jsonl");
     expect(raw).toContain("run.worktree_created");
-    expect(raw).toContain("run.control_checkout_notice");
+    expect(raw).not.toContain("run.control_checkout_notice");
     expect(raw).not.toContain("run.preflight_committed");
   });
 

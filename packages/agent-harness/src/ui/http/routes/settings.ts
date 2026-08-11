@@ -115,7 +115,7 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     category: "Git",
     label: "Auto-commit a dirty tree before a run (legacy)",
     description:
-      "Legacy-shared runs only. New worktree runs always start from the committed base branch; a dirty control checkout is a non-blocking notice and is never imported. This setting has no effect on worktree starts.",
+      "Legacy-shared runs only. New worktree runs always start from the committed base branch; a dirty control checkout is ignored (no notice) and never imported. This setting has no effect on worktree starts.",
     type: "boolean",
     appliesTo: "new_runs",
   },

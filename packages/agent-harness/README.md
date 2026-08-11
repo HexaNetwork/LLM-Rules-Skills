@@ -246,7 +246,7 @@ At start the harness resolves `git.baseBranch` to an immutable `baseSha`, runs `
 
 ### Dirty control checkout
 
-A dirty operator checkout is **not** a blocker for ordinary new worktree runs. The run starts from the **committed** base only; uncommitted control-checkout changes are never imported. When the control tree is dirty, start records `run.control_checkout_notice` and the CLI/dashboard surface a non-blocking notice. Commit changes yourself if you need them in a run (an import-uncommitted operation is deliberately not implemented yet).
+A dirty operator checkout is **not** a blocker for ordinary new worktree runs. The run starts from the **committed** base only; uncommitted control-checkout changes are never imported and are **not** warned about at start. Commit changes yourself only if you need those edits in a *future* base (an import-uncommitted operation is deliberately not implemented yet).
 
 `git.autoCommitPreflight` and `git.preflightCommitOrder` apply only to **legacy-shared** runs (no `workspace.json` / pre-worktree resumes). New worktree runs do not offer branch-then-commit / commit-then-branch controls.
 

@@ -520,12 +520,6 @@ export const renderRunScript = `    function renderSidebar() {
       } else if (!state.detail.job && !["completed","cancelled","awaiting_input","blocked"].includes(s.phase) && !s.stopAfterTask) {
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">Dashboard work does not continue automatically after a restart. Resume queues the next transition and refreshes the document index first.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }
-      var controlNotice = (state.detail.events || []).slice().reverse().find(function (event) {
-        return event.type === "run.control_checkout_notice";
-      });
-      if (controlNotice && controlNotice.detail && controlNotice.detail.message && !["completed","cancelled"].includes(s.phase)) {
-        html += '<div class="card"><div class="alert warning"><div><strong>Control checkout is dirty</strong><div class="muted" style="margin-top:5px">' + esc(String(controlNotice.detail.message)) + '</div></div></div></div>';
-      }
       var workspaceMeta = state.detail.workspace || {};
       if (!state.detail.job && workspaceMeta.kind === "legacy-shared") {
         html += '<div class="card"><div class="alert"><div><strong>Legacy shared checkout</strong><div class="muted" style="margin-top:5px">This run still uses the shared repository lock and old branch/preflight semantics. Migrate only when the tree is clean.</div></div><button class="btn" data-action="migrate_workspace">Migrate to worktree</button></div></div>';

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { CONFIG_VERSION, configurationHash, writeRunWorkspace } from "../config.js";
 import { createRunState, type RunState } from "../domain.js";
 import { classifyFailure } from "../errors.js";
@@ -126,22 +125,6 @@ export class RunLifecycleService {
       },
     );
 
-    const dirtyPaths = await controlCheckoutDirtyPaths(this.ctx.paths.controlRoot);
-    if (dirtyPaths.length > 0) {
-      const shown = dirtyPaths.slice(0, 10);
-      const more =
-        dirtyPaths.length > shown.length ? ` (+${dirtyPaths.length - shown.length} more)` : "";
-      state = await this.ctx.store.record(state, "run.control_checkout_notice", {
-        dirty: true,
-        includedInRun: false,
-        pathCount: dirtyPaths.length,
-        message:
-          "Control checkout has uncommitted changes that are not included in this run. " +
-          `The run starts from the committed base ${workspace.baseBranch ?? "branch"}` +
-          (workspace.baseSha ? ` @ ${workspace.baseSha.slice(0, 12)}` : "") +
-          `. Dirty paths: ${shown.join(", ")}${more}. Commit those changes yourself if you need them in a run.`,
-      });
-    }
     return state;
   }
 
@@ -157,34 +140,4 @@ export class RunLifecycleService {
     });
   }
 
-}
-
-/** Porcelain paths in the operator control checkout (not the run worktree). */
-async function controlCheckoutDirtyPaths(controlRoot: string): Promise<string[]> {
-  const result = await new Promise<{ exitCode: number; stdout: string }>((resolve, reject) => {
-    const child = spawn(
-      "git",
-      ["status", "--porcelain=v1", "--untracked-files=all", "-z"],
-      {
-        cwd: controlRoot,
-        shell: false,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    let stdout = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout = `${stdout}${chunk.toString("utf8")}`.slice(-200_000);
-    });
-    child.once("error", reject);
-    child.once("close", (code) => resolve({ exitCode: code ?? 1, stdout }));
-  });
-  if (result.exitCode !== 0 || !result.stdout) return [];
-  const paths: string[] = [];
-  for (const entry of result.stdout.split("\0")) {
-    if (entry.length < 4) continue;
-    const filePath = entry.slice(3).replace(/\0.*/, "").trim();
-    if (filePath) paths.push(filePath.replaceAll("\\", "/"));
-  }
-  return paths;
 }

@@ -359,7 +359,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           ? await readFile(path.resolve(options.idea.slice(1)), "utf8")
           : options.idea;
         let state = await engine.start(idea, options.runId ?? randomUUID());
-        await printControlCheckoutNotice(engine, state.runId);
         if (options.advance) state = await engine.advance(state.runId);
         printState(state);
       },
@@ -1004,26 +1003,6 @@ function printLockRemoval(
     );
   } else {
     console.log(`Breaking ${kind} lock (unparseable body, age=${ageSeconds}): ${info.path}`);
-  }
-}
-
-async function printControlCheckoutNotice(
-  engine: HarnessEngine,
-  runId: string,
-): Promise<void> {
-  try {
-    const raw = await engine.store.readText(runId, "events.jsonl");
-    const notice = raw
-      .trim()
-      .split(/\r?\n/)
-      .map((line) => JSON.parse(line) as { type: string; detail?: { message?: string } })
-      .reverse()
-      .find((event) => event.type === "run.control_checkout_notice");
-    if (notice?.detail?.message) {
-      console.log(`Notice: ${notice.detail.message}`);
-    }
-  } catch {
-    // Best-effort operator notice only.
   }
 }
 

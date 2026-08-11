@@ -1058,7 +1058,7 @@ describe("central dashboard", () => {
     };
     expect(detailBody.workspace?.kind).toBe("git-worktree");
     expect(detailBody.events?.some((event) => event.type === "run.control_checkout_notice")).toBe(
-      true,
+      false,
     );
   });
 

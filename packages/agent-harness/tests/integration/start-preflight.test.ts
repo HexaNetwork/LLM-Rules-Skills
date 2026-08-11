@@ -41,10 +41,8 @@ describe("run-start git preflight", () => {
       .trim()
       .split(/\r?\n/)
       .map((line) => JSON.parse(line) as { type: string; detail: Record<string, unknown> });
-    const notice = events.find((event) => event.type === "run.control_checkout_notice");
-    expect(notice?.detail.dirty).toBe(true);
-    expect(notice?.detail.includedInRun).toBe(false);
-    expect(String(notice?.detail.message ?? "")).toMatch(/not included|committed base/i);
+    expect(events.some((event) => event.type === "run.control_checkout_notice")).toBe(false);
+    expect(events.some((event) => event.type === "run.worktree_created")).toBe(true);
   });
 
   it("starts detached at baseSha without creating a delivery branch or switching control", async () => {

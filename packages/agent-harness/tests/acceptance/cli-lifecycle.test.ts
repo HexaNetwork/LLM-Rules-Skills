@@ -200,7 +200,7 @@ describe("CLI acceptance lifecycle", () => {
     });
   });
 
-  it("cancel, unlock --repo, dirty-control notice, and cleanup work against real fixture files", async () => {
+  it("cancel, unlock --repo, dirty control start, and cleanup work against real fixture files", async () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 },
@@ -235,7 +235,7 @@ describe("CLI acceptance lifecycle", () => {
     await withDiagnosticArtifacts({ testName: "acceptance-cancel-unlock-cleanup", fixture }, async () => {
       const deps = { createBackend: () => scripted.backend };
 
-      // Dirty control checkout is a non-blocking notice for worktree runs.
+      // Dirty control checkout is ignored for worktree runs (no notice).
       const noticeId = "acceptance-dirty-notice";
       const noticed = await runCli(
         [
@@ -253,7 +253,8 @@ describe("CLI acceptance lifecycle", () => {
         deps,
       );
       expect(noticed.code).toBe(0);
-      expect(noticed.stdout.join("\n")).toMatch(/Notice:|not included|committed base/i);
+      expect(noticed.stdout.join("\n")).not.toMatch(/^Notice:/m);
+      expect(noticed.stdout.join("\n")).not.toMatch(/control checkout has uncommitted/i);
       expect(noticed.stdout.join("\n")).not.toMatch(/phase: blocked|blockedFrom/i);
 
       const refuseCommit = await runCli(

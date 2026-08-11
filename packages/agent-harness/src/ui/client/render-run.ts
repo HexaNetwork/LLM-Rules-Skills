@@ -1033,7 +1033,7 @@ export const renderRunScript = `    function renderSidebar() {
         html += '<div class="empty">No execution steps recorded yet.</div></div>';
         return html;
       }
-      timeline.forEach(function (entry) {
+      timeline.slice().reverse().forEach(function (entry) {
         var seq = sequenceLabel(entry.sequence);
         var time = timelineClock(entry.occurredAt);
         if (entry.type === 'invocation') {
@@ -1057,22 +1057,36 @@ export const renderRunScript = `    function renderSidebar() {
           var selfIndex = siblings.findIndex(function (item) { return item.path === invocation.path; });
           if (selfIndex >= 0) repaired = schemaRepairFollowed(siblings, selfIndex);
           var result = invocationResultLabel(invocation);
-          html += '<article class="activity-row invocation ' + timelineRoleClass(invocation.role) + (warnReason ? ' warn' : '') + '" data-testid="activity-row">';
+          var invocationStatus = (invocation.outcome && invocation.outcome.status) || invocation.status || '';
+          var rowSummary = taskTitle || (result && result !== invocationStatus ? result : trigger);
+          var rowResult = taskTitle
+            ? result
+            : invocationStatus;
+          var invocationRowKey = 'invocation-' + (entry.sequence != null ? entry.sequence : invocation.path || invocation.sessionId || 'unknown');
+          var invocationExpanded = !!state.expandedTimelineRows[invocationRowKey];
+          html += '<article class="activity-row invocation ' + timelineRoleClass(invocation.role) + (warnReason ? ' warn' : '') + (invocationExpanded ? ' open' : '') + '" data-testid="activity-row">';
+          html += '<button type="button" class="activity-row-toggle" data-toggle-timeline-row="' + attr(invocationRowKey) + '" aria-expanded="' + (invocationExpanded ? 'true' : 'false') + '">';
           html += '<div class="activity-row-main">';
           html += '<span class="activity-seq">' + esc(seq) + '</span>';
           html += '<span class="activity-time faint">' + esc(time) + '</span>';
           html += '<strong class="activity-role">' + esc(role) + '</strong>';
-          html += '<span class="activity-task">' + esc(taskTitle || invocation.taskId || '—') + '</span>';
-          html += '<span class="tag">' + esc(kind) + '</span>';
-          html += '<span class="context-badge ' + badgeClass + '">' + esc(badge) + '</span>';
-          html += '<span class="activity-result">' + esc(result) + '</span>';
-          html += '<span class="faint">' + esc(tokens) + esc(invCached) + renderUsageWarningIcon(warnReason) + '</span>';
-          html += '</div>';
-          html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
-          if (outcomeSummary(invocation)) html += '<div class="muted" style="margin-top:3px">' + esc(outcomeSummary(invocation)) + '</div>';
-          if (invocation.error) html += '<div class="' + (repaired ? 'muted' : 'fail') + '" style="margin-top:4px">' + (repaired ? '<strong>Repaired contract error:</strong> ' : '') + esc(invocation.error) + '</div>';
-          if (repaired) html += '<div style="margin-top:6px"><span class="badge completed">repaired</span></div>';
-          html += renderInvocationInspectButton(invocation, turn, contextTotals[providerKey] || turn, badge.indexOf('REUSED') === 0 ? 'REUSED CONTEXT' : 'NEW CONTEXT', repaired);
+          html += '<span class="activity-task">' + esc(rowSummary) + '</span>';
+          html += '<span class="activity-result">' + esc(rowResult) + '</span>';
+          html += '<span class="activity-chevron" aria-hidden="true">›</span>';
+          html += '</div></button>';
+          if (invocationExpanded) {
+            html += '<div class="activity-row-detail">';
+            html += '<div class="activity-detail-meta"><span class="tag">' + esc(kind) + '</span>';
+            html += '<span class="context-badge ' + badgeClass + '">' + esc(badge) + '</span>';
+            html += '<span>' + esc(tokens) + esc(invCached) + renderUsageWarningIcon(warnReason) + '</span>';
+            if (repaired) html += '<span class="badge completed">repaired</span>';
+            html += '</div>';
+            html += '<div><strong>Trigger:</strong> ' + esc(trigger) + '</div>';
+            if (outcomeSummary(invocation)) html += '<div><strong>Outcome:</strong> ' + esc(outcomeSummary(invocation)) + '</div>';
+            if (invocation.error) html += '<div class="' + (repaired ? 'muted' : 'fail') + '">' + (repaired ? '<strong>Repaired contract error:</strong> ' : '<strong>Error:</strong> ') + esc(invocation.error) + '</div>';
+            html += renderInvocationInspectButton(invocation, turn, contextTotals[providerKey] || turn, badge.indexOf('REUSED') === 0 ? 'REUSED CONTEXT' : 'NEW CONTEXT', repaired);
+            html += '</div>';
+          }
           html += '</article>';
           return;
         }
@@ -1080,17 +1094,18 @@ export const renderRunScript = `    function renderSidebar() {
         var expanded = !!state.expandedTimelineRows[rowKey];
         var status = entry.status || '';
         html += '<article class="activity-row transition ' + transitionRoleClass(entry) + (expanded ? ' open' : '') + '" data-testid="activity-row">';
-        html += '<button type="button" class="activity-row-toggle" data-toggle-timeline-row="' + attr(rowKey) + '">';
+        html += '<button type="button" class="activity-row-toggle" data-toggle-timeline-row="' + attr(rowKey) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '">';
         html += '<div class="activity-row-main">';
         html += '<span class="activity-seq">' + esc(seq) + '</span>';
         html += '<span class="activity-time faint">' + esc(time) + '</span>';
         html += '<strong class="activity-role">' + esc(entry.event === 'routing' ? 'Routing' : entry.event === 'task.gates_passed' || entry.event === 'task.gates_failed' ? 'Verification' : 'Harness') + '</strong>';
         html += '<span class="activity-task">' + esc(entry.summary || entry.event || 'transition') + '</span>';
-        if (entry.from || entry.to) html += '<span class="tag">' + esc((entry.from || '?') + ' → ' + (entry.to || '?')) + '</span>';
-        if (status) html += '<span class="badge ' + attr(status === 'passed' || status === 'completed' ? 'completed' : status === 'failed' || status === 'blocking' ? 'failed' : status) + '">' + esc(status) + '</span>';
+        html += '<span class="activity-result">' + esc(entry.from || entry.to ? ((entry.from || '?') + ' → ' + (entry.to || '?')) : status) + '</span>';
+        html += '<span class="activity-chevron" aria-hidden="true">›</span>';
         html += '</div></button>';
         if (expanded) {
-          html += '<div class="activity-row-detail muted">';
+          html += '<div class="activity-row-detail">';
+          if (status) html += '<div class="activity-detail-meta"><span class="badge ' + attr(status === 'passed' || status === 'completed' ? 'completed' : status === 'failed' || status === 'blocking' ? 'failed' : status) + '">' + esc(status) + '</span></div>';
           if (entry.taskId) html += '<div>Task: ' + esc(taskTitleForId(entry.taskId) || entry.taskId) + '</div>';
           if (entry.round != null) html += '<div>Round: ' + esc(String(entry.round)) + '</div>';
           if (entry.eventSequence != null) html += '<div>Event sequence: ' + esc(String(entry.eventSequence)) + '</div>';
@@ -1114,10 +1129,10 @@ export const renderRunScript = `    function renderSidebar() {
       }
       var mode = activityViewMode();
       var html = '<div class="activity-view" data-testid="agent-activity">';
-      html += '<div class="activity-view-switch" role="tablist" aria-label="Activity view">';
+      html += '<div class="activity-view-head"><div class="activity-view-switch" role="tablist" aria-label="Activity view">';
       html += '<button type="button" class="btn small' + (mode === 'sequence' ? ' primary' : '') + '" data-activity-view="sequence" data-testid="activity-view-sequence">Execution sequence</button>';
       html += '<button type="button" class="btn small' + (mode === 'contexts' ? ' primary' : '') + '" data-activity-view="contexts" data-testid="activity-view-contexts">Provider contexts</button>';
-      html += '</div>';
+      html += '</div><div class="activity-view-help">' + (mode === 'sequence' ? 'Latest first · select an event to see its trigger, usage, and details.' : 'Select a context to see its invocations.') + '</div></div>';
       if (mode === 'contexts') html += renderProviderContextActivity(contexts);
       else html += renderExecutionSequence(timeline, contexts);
       html += '</div>';

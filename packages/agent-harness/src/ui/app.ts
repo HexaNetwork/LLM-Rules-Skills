@@ -260,24 +260,35 @@ export function renderDashboard(): string {
     .event-time { color:var(--faint); font-size:11px; margin-top:2px; }
     .activity-timeline { display:grid; gap:12px; }
     .activity-view { display:grid; gap:12px; }
-    .activity-view-switch { display:flex; flex-wrap:wrap; gap:8px; }
-    .activity-sequence { display:grid; gap:8px; }
-    .activity-row { border:1px solid var(--line-soft); background:var(--surface); border-radius:12px; padding:12px 14px; min-width:0; }
-    .activity-row.warn { background:rgba(255,180,80,.06); }
-    .activity-row-main { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-    .activity-row-toggle { display:block; width:100%; text-align:left; background:transparent; border:0; color:inherit; padding:0; cursor:pointer; }
-    .activity-row-detail { margin-top:10px; display:grid; gap:6px; }
-    .activity-seq { font-variant-numeric:tabular-nums; font-weight:700; color:var(--faint); min-width:1.6em; }
-    .activity-time { font-variant-numeric:tabular-nums; }
-    .activity-role { font-weight:750; }
-    .activity-task { color:var(--muted); }
-    .activity-result { font-weight:650; }
-    .activity-row.role-red { border-left:3px solid #d9897a; }
-    .activity-row.role-green { border-left:3px solid #8fbf7a; }
-    .activity-row.role-review { border-left:3px solid #7aa0c4; }
-    .activity-row.role-verify { border-left:3px solid #c4b07a; }
-    .activity-row.role-routing { border-left:3px solid #a08fc4; }
-    .activity-row.role-transition, .activity-row.role-other { border-left:3px solid var(--line); }
+    .activity-view-head { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+    .activity-view-switch { display:inline-flex; gap:3px; padding:3px; border:1px solid var(--line-soft); border-radius:10px; background:#0e1115; }
+    .activity-view-switch .btn { border:0; background:transparent; color:var(--muted); box-shadow:none; }
+    .activity-view-switch .btn:hover { transform:none; color:var(--text); }
+    .activity-view-switch .btn.primary { background:var(--surface-3); color:var(--text); }
+    .activity-view-help { color:var(--faint); font-size:11px; }
+    .activity-sequence { display:grid; gap:0; border:1px solid var(--line-soft); border-radius:12px; background:#0e1115; overflow:hidden; }
+    .activity-row { position:relative; min-width:0; background:transparent; border-bottom:1px solid var(--line-soft); }
+    .activity-row:last-child { border-bottom:0; }
+    .activity-row:hover, .activity-row.open { background:var(--surface); }
+    .activity-row.warn { background:rgba(255,180,80,.045); }
+    .activity-row-main { display:grid; grid-template-columns:28px 66px minmax(84px,110px) minmax(180px,1fr) auto 16px; gap:10px; align-items:center; min-width:0; }
+    .activity-row-toggle { display:block; width:100%; text-align:left; background:transparent; border:0; color:inherit; padding:10px 12px; cursor:pointer; }
+    .activity-row-detail { margin:0 12px 12px 116px; padding:10px 12px; border-left:1px solid var(--line); display:grid; gap:7px; color:var(--muted); font-size:12px; }
+    .activity-row-detail .btn { justify-self:start; margin-top:3px; }
+    .activity-detail-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; color:var(--faint); font-size:11px; }
+    .activity-seq { font-variant-numeric:tabular-nums; font-size:11px; font-weight:700; color:var(--faint); }
+    .activity-time { font-variant-numeric:tabular-nums; font-size:11px; }
+    .activity-role { font-size:12px; font-weight:750; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .activity-task { color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .activity-result { color:var(--muted); font-size:11px; font-weight:650; white-space:nowrap; max-width:150px; overflow:hidden; text-overflow:ellipsis; }
+    .activity-chevron { color:var(--faint); font-size:11px; transition:transform .12s ease; }
+    .activity-row.open .activity-chevron { transform:rotate(90deg); }
+    .activity-row:before { content:""; position:absolute; left:0; top:8px; bottom:8px; width:2px; border-radius:2px; background:var(--line); }
+    .activity-row.role-red:before { background:#d9897a; }
+    .activity-row.role-green:before { background:#8fbf7a; }
+    .activity-row.role-review:before { background:#7aa0c4; }
+    .activity-row.role-verify:before { background:#c4b07a; }
+    .activity-row.role-routing:before { background:#a08fc4; }
     .activity-context { border:1px solid var(--line-soft); background:var(--surface); border-radius:13px; padding:0; min-width:0; overflow:hidden; }
     .activity-context-head { display:block; width:100%; text-align:left; background:transparent; border:0; color:inherit; padding:15px; cursor:pointer; }
     .activity-context-head:hover { background:var(--surface-2); }
@@ -381,6 +392,9 @@ export function renderDashboard(): string {
       .card.third, .card.half, .card.two-thirds { grid-column:span 12; }
       .knowledge-layout { grid-template-columns:1fr; }
       .guidance-layout { grid-template-columns:1fr; }
+      .activity-row-main { grid-template-columns:24px 58px minmax(80px,100px) minmax(140px,1fr) 16px; }
+      .activity-result { display:none; }
+      .activity-row-detail { margin-left:104px; }
     }
     @media (max-width: 600px) {
       .topbar { height:62px; }
@@ -389,6 +403,11 @@ export function renderDashboard(): string {
       .answer-row { display:grid; }
       .columns { grid-template-columns:1fr; }
       .content { padding-left:13px; padding-right:13px; }
+      .activity-view-head { align-items:flex-start; }
+      .activity-view-help { width:100%; }
+      .activity-row-main { grid-template-columns:24px minmax(76px,96px) minmax(0,1fr) 16px; gap:8px; }
+      .activity-time { display:none; }
+      .activity-row-detail { margin-left:48px; }
     }
   </style>
 </head>

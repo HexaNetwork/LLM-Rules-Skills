@@ -96,12 +96,16 @@ describe("dashboard document", () => {
     expect(html).toContain("Agent activity");
     expect(html).toContain("activity-timeline");
     expect(html).toContain("activity-sequence");
+    expect(html).toContain("activity-view-help");
+    expect(html).toContain("Latest first · select an event to see its trigger, usage, and details.");
     expect(html).toContain("Execution sequence");
     expect(html).toContain("Provider contexts");
     expect(html).toContain('data-activity-view="sequence"');
     expect(html).toContain('data-testid="activity-view-sequence"');
+    expect(html).toContain('aria-expanded="');
     expect(html).toContain("activityView");
     expect(html).toContain("function renderExecutionSequence");
+    expect(html).toContain("timeline.slice().reverse().forEach");
     expect(html).toContain("function renderProviderContextActivity");
     expect(html).toContain("function activeTddStatusLine(s)");
     expect(html).toContain("function renderTaskTddDetails(task, taskKey)");

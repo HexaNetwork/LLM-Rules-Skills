@@ -26,6 +26,9 @@ export const stateScript = `  (function () {
       installSelections: {},
       guidancePacks: [],
       guidanceRole: null,
+      activityView: "sequence",
+      expandedContexts: {},
+      expandedTimelineRows: {},
       // After reflect confirm / grill batch submit, keep the viewport at the top
       // until the operator scrolls away or the follow-on job finishes — so a
       // silent poll cannot restore the deep pre-submit offset mid-flight.

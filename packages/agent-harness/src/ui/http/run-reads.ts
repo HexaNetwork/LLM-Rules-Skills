@@ -1,10 +1,12 @@
 import {
   buildAgentActivity,
   parseInvocationRecord,
+  type ActivityEventInput,
   type AgentActivity,
   type InvocationRecord,
 } from "../../application/agent-activity.js";
-import type { RunState, WorkPacket } from "../../domain.js";
+import type { RunEvent, RunState, WorkPacket } from "../../domain.js";
+import { RunEventSchema } from "../../domain.js";
 import { renderPrompt, renderPromptBuilderPrompt } from "../../prompts.js";
 import type { RunStore } from "../../store.js";
 import type { UiJob } from "../run-job-service.js";
@@ -128,8 +130,43 @@ export async function readSessionSummaries(store: RunStore, runId: string): Prom
   return sessions.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
 }
 
+/**
+ * Full events.jsonl for activity timeline correlation. Unlike readEvents (UI
+ * feed), this does not truncate — ordering must include early task transitions.
+ */
+export async function readActivityEvents(
+  store: RunStore,
+  runId: string,
+): Promise<ActivityEventInput[]> {
+  try {
+    const raw = await store.readText(runId, "events.jsonl");
+    const events: ActivityEventInput[] = [];
+    for (const line of raw.split(/\r?\n/).filter(Boolean)) {
+      try {
+        const parsed = RunEventSchema.parse(JSON.parse(line) as unknown) as RunEvent;
+        events.push({
+          sequence: parsed.sequence,
+          type: parsed.type,
+          at: parsed.at,
+          detail: parsed.detail,
+        });
+      } catch {
+        // Skip torn or legacy lines; never fail the whole activity payload.
+      }
+    }
+    return events;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
 export async function readAgentActivity(store: RunStore, runId: string): Promise<AgentActivity> {
-  return buildAgentActivity(await readInvocationRecords(store, runId));
+  const [records, events] = await Promise.all([
+    readInvocationRecords(store, runId),
+    readActivityEvents(store, runId),
+  ]);
+  return buildAgentActivity(records, events);
 }
 
 export async function readSessionDetail(

@@ -411,6 +411,18 @@ export const eventsScript = `    async function waitForJob(runId) {
         renderRun();
         return;
       }
+      if (target.dataset.toggleTimelineRow) {
+        if (!state.expandedTimelineRows) state.expandedTimelineRows = {};
+        var timelineKey = target.dataset.toggleTimelineRow;
+        state.expandedTimelineRows[timelineKey] = !state.expandedTimelineRows[timelineKey];
+        renderRun();
+        return;
+      }
+      if (target.dataset.activityView) {
+        state.activityView = target.dataset.activityView === 'contexts' ? 'contexts' : 'sequence';
+        renderRun();
+        return;
+      }
       if (target.dataset.session) {
         openSession(target.dataset.session, {
           contextTurn: target.dataset.contextTurn,

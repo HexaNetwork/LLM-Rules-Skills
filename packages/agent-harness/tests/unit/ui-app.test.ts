@@ -95,6 +95,14 @@ describe("dashboard document", () => {
     expect(html).toContain("provider contexts · invocations");
     expect(html).toContain("Agent activity");
     expect(html).toContain("activity-timeline");
+    expect(html).toContain("activity-sequence");
+    expect(html).toContain("Execution sequence");
+    expect(html).toContain("Provider contexts");
+    expect(html).toContain('data-activity-view="sequence"');
+    expect(html).toContain('data-testid="activity-view-sequence"');
+    expect(html).toContain("activityView");
+    expect(html).toContain("function renderExecutionSequence");
+    expect(html).toContain("function renderProviderContextActivity");
     expect(html).toContain("function activeTddStatusLine(s)");
     expect(html).toContain("function renderTaskTddDetails(task, taskKey)");
     expect(html).toContain("green-implementer");

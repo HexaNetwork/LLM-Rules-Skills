@@ -259,6 +259,25 @@ export function renderDashboard(): string {
     .event-name { font-weight:650; }
     .event-time { color:var(--faint); font-size:11px; margin-top:2px; }
     .activity-timeline { display:grid; gap:12px; }
+    .activity-view { display:grid; gap:12px; }
+    .activity-view-switch { display:flex; flex-wrap:wrap; gap:8px; }
+    .activity-sequence { display:grid; gap:8px; }
+    .activity-row { border:1px solid var(--line-soft); background:var(--surface); border-radius:12px; padding:12px 14px; min-width:0; }
+    .activity-row.warn { background:rgba(255,180,80,.06); }
+    .activity-row-main { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    .activity-row-toggle { display:block; width:100%; text-align:left; background:transparent; border:0; color:inherit; padding:0; cursor:pointer; }
+    .activity-row-detail { margin-top:10px; display:grid; gap:6px; }
+    .activity-seq { font-variant-numeric:tabular-nums; font-weight:700; color:var(--faint); min-width:1.6em; }
+    .activity-time { font-variant-numeric:tabular-nums; }
+    .activity-role { font-weight:750; }
+    .activity-task { color:var(--muted); }
+    .activity-result { font-weight:650; }
+    .activity-row.role-red { border-left:3px solid #d9897a; }
+    .activity-row.role-green { border-left:3px solid #8fbf7a; }
+    .activity-row.role-review { border-left:3px solid #7aa0c4; }
+    .activity-row.role-verify { border-left:3px solid #c4b07a; }
+    .activity-row.role-routing { border-left:3px solid #a08fc4; }
+    .activity-row.role-transition, .activity-row.role-other { border-left:3px solid var(--line); }
     .activity-context { border:1px solid var(--line-soft); background:var(--surface); border-radius:13px; padding:0; min-width:0; overflow:hidden; }
     .activity-context-head { display:block; width:100%; text-align:left; background:transparent; border:0; color:inherit; padding:15px; cursor:pointer; }
     .activity-context-head:hover { background:var(--surface-2); }

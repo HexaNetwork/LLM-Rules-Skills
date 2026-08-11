@@ -869,15 +869,78 @@ export const renderRunScript = `    function renderSidebar() {
       return '';
     }
 
-    function renderAgentActivity() {
-      var activity = state.detail.agentActivity;
-      var contexts = (activity && activity.providerContexts) || [];
-      if (!contexts.length) {
-        $("tabBody").innerHTML = '<div class="empty">No provider contexts have launched yet.</div>';
-        return;
+    function activityViewMode() {
+      return state.activityView === 'contexts' ? 'contexts' : 'sequence';
+    }
+
+    function timelineClock(value) {
+      if (!value) return '—';
+      var iso = String(value);
+      if (iso.length >= 19 && iso.charAt(10) === 'T') return iso.slice(11, 19);
+      try {
+        return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(value));
+      } catch (error) {
+        return '—';
       }
+    }
+
+    function sequenceLabel(sequence) {
+      return String(sequence || 0).padStart(2, '0');
+    }
+
+    function invocationResultLabel(invocation) {
+      var outcome = invocation.outcome || {};
+      if (outcome.status) return outcome.status;
+      if (invocation.status === 'failed') return 'failed';
+      if (invocation.status === 'cancelled') return 'cancelled';
+      if (invocation.status === 'running') return 'running';
+      if (invocation.handoff && invocation.handoff.summary) {
+        var summary = String(invocation.handoff.summary);
+        return summary.length > 48 ? summary.slice(0, 45) + '…' : summary;
+      }
+      return invocation.status || '—';
+    }
+
+    function taskTitleForId(taskId) {
+      if (!taskId || !state.detail || !state.detail.state || !state.detail.state.tasks) return '';
+      var task = state.detail.state.tasks.find(function (item) { return item.id === taskId; });
+      return task ? task.title : '';
+    }
+
+    function contextUsageByProviderId() {
+      var map = {};
+      var contexts = (state.detail && state.detail.agentActivity && state.detail.agentActivity.providerContexts) || [];
+      contexts.forEach(function (context) {
+        if (context.id) map[context.id] = context.usage || {};
+      });
+      return map;
+    }
+
+    function schemaRepairFollowed(invocations, index) {
+      var invocation = invocations[index];
+      if (!invocation || invocation.status !== 'failed') return false;
+      return invocations.slice(index + 1).some(function (candidate) {
+        return candidate.invocationId && candidate.invocationId === invocation.invocationId && candidate.invocationKind === 'schema-repair' && candidate.status === 'completed';
+      });
+    }
+
+    function outcomeSummary(invocation) {
+      var outcome = invocation && invocation.outcome;
+      if (!outcome) return '';
+      var parts = [];
+      if (outcome.summary) parts.push(outcome.summary);
+      if (outcome.blockingCount) parts.push(outcome.blockingCount + ' blocking');
+      if (outcome.repairRoute) parts.push('route ' + outcome.repairRoute);
+      return parts.join(' · ');
+    }
+
+    function renderInvocationInspectButton(invocation, contextTurn, contextTotal, badge, repaired) {
+      return '<button class="btn small" data-session="' + attr(invocation.path) + '" data-context-turn="' + attr(String(contextTurn || 1)) + '" data-context-total="' + attr(String(contextTotal || 1)) + '" data-context-badge="' + attr(badge) + '"' + (repaired ? ' data-display-status="repaired"' : '') + '>Inspect invocation</button>';
+    }
+
+    function renderProviderContextActivity(contexts) {
       if (!state.expandedContexts) state.expandedContexts = {};
-      var html = '<div class="activity-timeline" data-testid="agent-activity">';
+      var html = '<div class="activity-timeline" data-testid="agent-activity-contexts">';
       contexts.forEach(function (context, contextIndex) {
         var key = context.id || ('ctx-' + contextIndex);
         var expanded = !!state.expandedContexts[key];
@@ -893,7 +956,7 @@ export const renderRunScript = `    function renderSidebar() {
         var taskTitle = '';
         var taskId = '';
         (context.invocations || []).some(function (inv) {
-          if (!inv.taskId || !state.detail.state || !state.detail.state.tasks) return false;
+          if (!inv.taskId || !state.detail || !state.detail.state || !state.detail.state.tasks) return false;
           var task = state.detail.state.tasks.find(function (item) { return item.id === inv.taskId; });
           if (task) { taskTitle = task.title; taskId = task.id; return true; }
           return false;
@@ -913,9 +976,7 @@ export const renderRunScript = `    function renderSidebar() {
             var turn = invocation.contextTurn || 1;
             var badge = invocation.providerSessionReused === true || turn > 1 ? 'REUSED CONTEXT' : 'NEW CONTEXT';
             var kind = invocation.invocationKind || 'invocation';
-            var repaired = invocation.status === 'failed' && (context.invocations || []).slice(invocationIndex + 1).some(function (candidate) {
-              return candidate.invocationId && candidate.invocationId === invocation.invocationId && candidate.invocationKind === 'schema-repair' && candidate.status === 'completed';
-            });
+            var repaired = schemaRepairFollowed(context.invocations || [], invocationIndex);
             var trigger = invocation.triggerSummary || (invocation.trigger && invocation.trigger.summary) || 'Reason unavailable for historical invocation';
             var warnReason = invocationUsageWarning(invocation, usage);
             var invUsage = invocation.usage || {};
@@ -932,7 +993,7 @@ export const renderRunScript = `    function renderSidebar() {
             html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
             if (warnReason) html += '<div class="activity-warn-reason" style="margin-top:4px">' + esc(warnReason) + '</div>';
             if (invocation.error) html += '<div class="' + (repaired ? 'muted' : 'fail') + '" style="margin-top:4px">' + (repaired ? '<strong>Repaired contract error:</strong> ' : '') + esc(invocation.error) + '</div>';
-            html += '<button class="btn small" data-session="' + attr(invocation.path) + '" data-context-turn="' + attr(String(turn)) + '" data-context-total="' + attr(String(context.invocationCount || 0)) + '" data-context-badge="' + attr(badge) + '"' + (repaired ? ' data-display-status="repaired"' : '') + '>Inspect invocation</button>';
+            html += renderInvocationInspectButton(invocation, turn, context.invocationCount || 0, badge, repaired);
             html += '</div>';
           });
           html += '</div>';
@@ -940,6 +1001,124 @@ export const renderRunScript = `    function renderSidebar() {
         html += '</article>';
       });
       html += '</div>';
+      return html;
+    }
+
+    function timelineRoleClass(role) {
+      if (role === 'red-writer') return 'role-red';
+      if (role === 'implementer') return 'role-green';
+      if (role === 'reviewer') return 'role-review';
+      return 'role-other';
+    }
+
+    function transitionRoleClass(entry) {
+      if (entry.event === 'routing') return 'role-routing';
+      if (entry.event === 'task.gates_passed' || entry.event === 'task.gates_failed') return 'role-verify';
+      return 'role-transition';
+    }
+
+    function renderExecutionSequence(timeline, contexts) {
+      if (!state.expandedTimelineRows) state.expandedTimelineRows = {};
+      var usageByContext = contextUsageByProviderId();
+      var contextTotals = {};
+      (contexts || []).forEach(function (context) {
+        contextTotals[context.id] = context.invocationCount || (context.invocations || []).length;
+      });
+      var html = '<div class="activity-sequence" data-testid="agent-activity-sequence">';
+      if (!timeline.length) {
+        html += '<div class="empty">No execution steps recorded yet.</div></div>';
+        return html;
+      }
+      timeline.forEach(function (entry) {
+        var seq = sequenceLabel(entry.sequence);
+        var time = timelineClock(entry.occurredAt);
+        if (entry.type === 'invocation') {
+          var invocation = entry.invocation || {};
+          var turn = invocation.contextTurn || 1;
+          var badge = invocation.providerSessionReused === true || turn > 1 ? 'REUSED CONTEXT · turn ' + turn : 'NEW CONTEXT';
+          var badgeClass = invocation.providerSessionReused === true || turn > 1 ? 'reused' : 'new';
+          var kind = invocation.invocationKind || 'invocation';
+          var role = displayActivityRole(invocation.role, invocation.taskId);
+          var taskTitle = taskTitleForId(invocation.taskId);
+          var trigger = invocation.triggerSummary || (invocation.trigger && invocation.trigger.summary) || 'Reason unavailable for historical invocation';
+          var providerKey = invocation.providerSessionId || ('synthetic:' + invocation.sessionId);
+          var warnReason = invocationUsageWarning(invocation, usageByContext[providerKey] || usageByContext['synthetic:' + invocation.sessionId]);
+          var invUsage = invocation.usage || {};
+          var tokens = formatTokenCount(invUsage.totalTokens || 0);
+          var invCached = invUsage.cacheReadTokens ? (' · ' + formatTokenCount(invUsage.cacheReadTokens) + ' cached') : '';
+          var repaired = false;
+          var siblings = ((contexts || []).find(function (context) {
+            return context.id === invocation.providerSessionId || context.id === ('synthetic:' + invocation.sessionId);
+          }) || {}).invocations || [];
+          var selfIndex = siblings.findIndex(function (item) { return item.path === invocation.path; });
+          if (selfIndex >= 0) repaired = schemaRepairFollowed(siblings, selfIndex);
+          var result = invocationResultLabel(invocation);
+          html += '<article class="activity-row invocation ' + timelineRoleClass(invocation.role) + (warnReason ? ' warn' : '') + '" data-testid="activity-row">';
+          html += '<div class="activity-row-main">';
+          html += '<span class="activity-seq">' + esc(seq) + '</span>';
+          html += '<span class="activity-time faint">' + esc(time) + '</span>';
+          html += '<strong class="activity-role">' + esc(role) + '</strong>';
+          html += '<span class="activity-task">' + esc(taskTitle || invocation.taskId || '—') + '</span>';
+          html += '<span class="tag">' + esc(kind) + '</span>';
+          html += '<span class="context-badge ' + badgeClass + '">' + esc(badge) + '</span>';
+          html += '<span class="activity-result">' + esc(result) + '</span>';
+          html += '<span class="faint">' + esc(tokens) + esc(invCached) + (warnReason ? ' <span class="activity-warn-icon" title="' + attr(warnReason) + '">⚠</span>' : '') + '</span>';
+          html += '</div>';
+          html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
+          if (outcomeSummary(invocation)) html += '<div class="muted" style="margin-top:3px">' + esc(outcomeSummary(invocation)) + '</div>';
+          if (warnReason) html += '<div class="activity-warn-reason" style="margin-top:4px">' + esc(warnReason) + '</div>';
+          if (invocation.error) html += '<div class="' + (repaired ? 'muted' : 'fail') + '" style="margin-top:4px">' + (repaired ? '<strong>Repaired contract error:</strong> ' : '') + esc(invocation.error) + '</div>';
+          if (repaired) html += '<div style="margin-top:6px"><span class="badge completed">repaired</span></div>';
+          html += renderInvocationInspectButton(invocation, turn, contextTotals[providerKey] || turn, badge.indexOf('REUSED') === 0 ? 'REUSED CONTEXT' : 'NEW CONTEXT', repaired);
+          html += '</article>';
+          return;
+        }
+        var rowKey = 'transition-' + (entry.eventSequence != null ? entry.eventSequence : entry.sequence) + '-' + (entry.event || 'event');
+        var expanded = !!state.expandedTimelineRows[rowKey];
+        var status = entry.status || '';
+        html += '<article class="activity-row transition ' + transitionRoleClass(entry) + (expanded ? ' open' : '') + '" data-testid="activity-row">';
+        html += '<button type="button" class="activity-row-toggle" data-toggle-timeline-row="' + attr(rowKey) + '">';
+        html += '<div class="activity-row-main">';
+        html += '<span class="activity-seq">' + esc(seq) + '</span>';
+        html += '<span class="activity-time faint">' + esc(time) + '</span>';
+        html += '<strong class="activity-role">' + esc(entry.event === 'routing' ? 'Routing' : entry.event === 'task.gates_passed' || entry.event === 'task.gates_failed' ? 'Verification' : 'Harness') + '</strong>';
+        html += '<span class="activity-task">' + esc(entry.summary || entry.event || 'transition') + '</span>';
+        if (entry.from || entry.to) html += '<span class="tag">' + esc((entry.from || '?') + ' → ' + (entry.to || '?')) + '</span>';
+        if (status) html += '<span class="badge ' + attr(status === 'passed' || status === 'completed' ? 'completed' : status === 'failed' || status === 'blocking' ? 'failed' : status) + '">' + esc(status) + '</span>';
+        html += '</div></button>';
+        if (expanded) {
+          html += '<div class="activity-row-detail muted">';
+          if (entry.taskId) html += '<div>Task: ' + esc(taskTitleForId(entry.taskId) || entry.taskId) + '</div>';
+          if (entry.round != null) html += '<div>Round: ' + esc(String(entry.round)) + '</div>';
+          if (entry.eventSequence != null) html += '<div>Event sequence: ' + esc(String(entry.eventSequence)) + '</div>';
+          if (entry.event) html += '<div>Event: <code>' + esc(entry.event) + '</code></div>';
+          if (entry.detail) html += '<pre>' + esc(JSON.stringify(entry.detail, null, 2).slice(0, 4000)) + '</pre>';
+          html += '</div>';
+        }
+        html += '</article>';
+      });
+      html += '</div>';
+      return html;
+    }
+
+    function renderAgentActivity() {
+      var activity = state.detail.agentActivity;
+      var contexts = (activity && activity.providerContexts) || [];
+      var timeline = (activity && activity.timeline) || [];
+      if (!contexts.length && !timeline.length) {
+        $("tabBody").innerHTML = '<div class="empty">No provider contexts have launched yet.</div>';
+        return;
+      }
+      var mode = activityViewMode();
+      var html = '<div class="activity-view" data-testid="agent-activity">';
+      html += '<div class="activity-view-switch" role="tablist" aria-label="Activity view">';
+      html += '<button type="button" class="btn small' + (mode === 'sequence' ? ' primary' : '') + '" data-activity-view="sequence" data-testid="activity-view-sequence">Execution sequence</button>';
+      html += '<button type="button" class="btn small' + (mode === 'contexts' ? ' primary' : '') + '" data-activity-view="contexts" data-testid="activity-view-contexts">Provider contexts</button>';
+      html += '</div>';
+      if (mode === 'contexts') html += renderProviderContextActivity(contexts);
+      else html += renderExecutionSequence(timeline, contexts);
+      html += '</div>';
       $("tabBody").innerHTML = html;
     }
+
 `;

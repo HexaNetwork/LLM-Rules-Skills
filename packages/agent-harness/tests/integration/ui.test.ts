@@ -578,6 +578,218 @@ describe("central dashboard", () => {
     }
   });
 
+  it("reports chronological execution sequence with retained RED contexts interleaved", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root);
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Chronological activity", "chrono-activity-run", false);
+    const runId = started.runId;
+
+    const sessions = [
+      {
+        path: "sessions/red-1.json",
+        body: {
+          sessionId: "red-1",
+          role: "red-writer",
+          model: "composer",
+          status: "completed",
+          attempt: 0,
+          startedAt: "2026-08-11T10:31:04.000Z",
+          endedAt: "2026-08-11T10:33:00.000Z",
+          providerSessionId: "red-ctx",
+          providerSessionReused: false,
+          taskId: "task-1",
+          invocationKind: "initial",
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          outcome: { status: "done" },
+          trigger: { event: "task.writing_tests", classification: "initial", summary: "initial" },
+        },
+      },
+      {
+        path: "sessions/review-1.json",
+        body: {
+          sessionId: "review-1",
+          role: "reviewer",
+          model: "composer",
+          status: "completed",
+          attempt: 0,
+          startedAt: "2026-08-11T10:34:22.000Z",
+          endedAt: "2026-08-11T10:35:00.000Z",
+          providerSessionId: "review-ctx",
+          taskId: "task-1",
+          invocationKind: "initial",
+          usage: { inputTokens: 20, outputTokens: 8, totalTokens: 28 },
+          outcome: { status: "blocking", blockingCount: 1, repairRoute: "production" },
+        },
+      },
+      {
+        path: "sessions/green-1.json",
+        body: {
+          sessionId: "green-1",
+          role: "implementer",
+          model: "composer",
+          status: "completed",
+          attempt: 0,
+          startedAt: "2026-08-11T10:39:48.000Z",
+          endedAt: "2026-08-11T10:41:00.000Z",
+          providerSessionId: "green-ctx",
+          taskId: "task-1",
+          invocationKind: "review-repair",
+          usage: { inputTokens: 30, outputTokens: 10, totalTokens: 40 },
+          outcome: { status: "green" },
+          trigger: {
+            event: "task.implementation_repair_needed",
+            classification: "review-repair",
+            summary: "final repair",
+          },
+        },
+      },
+      {
+        path: "sessions/red-2.json",
+        body: {
+          sessionId: "red-2",
+          role: "red-writer",
+          model: "composer",
+          status: "completed",
+          attempt: 0,
+          startedAt: "2026-08-11T10:45:11.000Z",
+          endedAt: "2026-08-11T10:45:50.000Z",
+          providerSessionId: "red-ctx",
+          providerSessionReused: true,
+          taskId: "task-1",
+          invocationKind: "continuation",
+          usage: { inputTokens: 12, outputTokens: 6, totalTokens: 18 },
+          outcome: { status: "continue" },
+          trigger: {
+            event: "task.writing_tests",
+            classification: "continuation",
+            summary: "continuation",
+          },
+        },
+      },
+      {
+        path: "sessions/review-2.json",
+        body: {
+          sessionId: "review-2",
+          role: "reviewer",
+          model: "composer",
+          status: "completed",
+          attempt: 0,
+          startedAt: "2026-08-11T10:46:04.000Z",
+          endedAt: "2026-08-11T10:46:40.000Z",
+          providerSessionId: "review-ctx-2",
+          taskId: "task-1",
+          invocationKind: "initial",
+          usage: { inputTokens: 22, outputTokens: 9, totalTokens: 31 },
+          outcome: { status: "blocking", blockingCount: 1, repairRoute: "test-coverage" },
+        },
+      },
+    ] as const;
+
+    for (const session of sessions) {
+      await engine.store.writeJson(runId, session.path, session.body);
+    }
+
+    const events = [
+      { sequence: 10, type: "task.gates_passed", at: "2026-08-11T10:34:18.000Z", detail: { taskId: "task-1" } },
+      {
+        sequence: 11,
+        type: "task.review_failed",
+        at: "2026-08-11T10:34:23.000Z",
+        detail: { taskId: "task-1", reviewRepairRoute: "production" },
+      },
+      {
+        sequence: 12,
+        type: "task.green_observed",
+        at: "2026-08-11T10:40:00.000Z",
+        detail: { taskId: "task-1", finalRepair: true },
+      },
+      { sequence: 13, type: "task.gates_passed", at: "2026-08-11T10:46:02.000Z", detail: { taskId: "task-1" } },
+      {
+        sequence: 14,
+        type: "task.review_failed",
+        at: "2026-08-11T10:46:05.000Z",
+        detail: { taskId: "task-1", reviewRepairRoute: "test-coverage" },
+      },
+    ];
+    await engine.store.writeText(
+      runId,
+      "events.jsonl",
+      `${events.map((item) => JSON.stringify(item)).join("\n")}\n`,
+    );
+
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+    const response = await request(ui, `/api/runs/${runId}`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      agentActivity: {
+        timeline: Array<
+          | {
+              type: "invocation";
+              sequence: number;
+              invocation: {
+                role?: string;
+                sessionId?: string;
+                contextTurn?: number;
+                providerSessionId?: string;
+              };
+            }
+          | { type: "transition"; sequence: number; event: string; summary: string; from?: string; to?: string }
+        >;
+        providerContexts: Array<{ id: string; invocations: Array<{ sessionId: string; contextTurn: number }> }>;
+        totals: { invocations: number; providerContexts: number };
+      };
+    };
+
+    const labels = body.agentActivity.timeline.map((entry) =>
+      entry.type === "invocation"
+        ? `${entry.invocation.role}:${entry.invocation.sessionId}`
+        : `${entry.event}:${entry.summary}`,
+    );
+    expect(labels).toEqual([
+      "red-writer:red-1",
+      "task.gates_passed:Final gates",
+      "reviewer:review-1",
+      "routing:production → GREEN",
+      "implementer:green-1",
+      "routing:GREEN → RED reassessment",
+      "red-writer:red-2",
+      "task.gates_passed:Final gates",
+      "reviewer:review-2",
+      "routing:GREEN → RED reassessment",
+    ]);
+
+    const redContext = body.agentActivity.providerContexts.find((item) => item.id === "red-ctx");
+    expect(redContext?.invocations.map((item) => item.contextTurn)).toEqual([1, 2]);
+    const redTimeline = body.agentActivity.timeline.filter(
+      (entry) => entry.type === "invocation" && entry.invocation.providerSessionId === "red-ctx",
+    );
+    expect(redTimeline).toHaveLength(2);
+    expect(redTimeline[0]!.sequence + 1).not.toBe(redTimeline[1]!.sequence);
+
+    const productionRouteIndex = body.agentActivity.timeline.findIndex(
+      (entry) => entry.type === "transition" && entry.summary === "production → GREEN",
+    );
+    const greenIndex = body.agentActivity.timeline.findIndex(
+      (entry) => entry.type === "invocation" && entry.invocation.sessionId === "green-1",
+    );
+    const reviewIndex = body.agentActivity.timeline.findIndex(
+      (entry) => entry.type === "invocation" && entry.invocation.sessionId === "review-1",
+    );
+    expect(reviewIndex).toBeGreaterThan(-1);
+    expect(productionRouteIndex).toBe(reviewIndex + 1);
+    expect(greenIndex).toBe(productionRouteIndex + 1);
+    expect(body.agentActivity.totals.invocations).toBe(5);
+
+    const dashboard = await request(ui, "/");
+    const html = await dashboard.text();
+    expect(html).toContain('data-testid="activity-view-sequence"');
+    expect(html).toContain("Execution sequence");
+    expect(html).toContain("Provider contexts");
+    expect(html).toContain("activityView");
+  });
+
   it("changes the poll signature when only activity.json changes", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);

@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import type {
-  InvocationKind,
-  InvocationTrigger,
+import {
+  outcomeFromParsedOutput,
+  type InvocationKind,
+  type InvocationTrigger,
 } from "../../application/agent-activity.js";
 import { resolveHarnessHome } from "../../application/harness-home.js";
 import { resolveHarnessPaths, type HarnessPaths } from "../../application/paths.js";
@@ -506,6 +507,7 @@ export class AgentCoordinator {
         }
 
         await activity.clear();
+        const outcome = outcomeFromParsedOutput(role, parsed);
         await this.store.writeJson(runId, `sessions/${sessionId}.json`, {
           sessionId,
           invocationId: packet.invocationId,
@@ -522,6 +524,7 @@ export class AgentCoordinator {
           endedAt: new Date().toISOString(),
           usage: usageRecord(result),
           output: harvestedRaw,
+          ...(outcome ? { outcome } : {}),
           handoff: {
             summary:
               typeof parsed === "object" && parsed && "summary" in parsed

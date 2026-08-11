@@ -126,13 +126,33 @@ describe("Phase 5 scripted full lifecycle", () => {
           {
             role: "red-writer",
             output: {
-              summary: "Runnable RED with scaffold",
-              changedFiles: ["tests/greet.test.ts", "src/greet.ts"],
+              status: "continue",
+              summary: "Test-only RED batch",
+              changedFiles: ["tests/greet.test.ts"],
+              behaviorsAdded: ["greeting fails until implemented"],
+              edgeCasesAdded: [],
             },
           },
           {
             role: "implementer",
-            output: { summary: "GREEN", changedFiles: ["src/greet.ts"] },
+            output: { status: "green", summary: "GREEN", changedFiles: ["src/greet.ts"] },
+          },
+          {
+            role: "red-writer",
+            output: {
+              status: "done",
+              summary: "Coverage complete",
+              changedFiles: [],
+              acceptanceCoverage: [
+                {
+                  criterionIndex: 0,
+                  covered: true,
+                  testPaths: ["tests/greet.test.ts"],
+                  rationale: "Greeting behavior is covered",
+                },
+              ],
+              edgeCaseRationale: "No further edge cases required for this fixture",
+            },
           },
           {
             role: "reviewer",
@@ -166,10 +186,12 @@ describe("Phase 5 scripted full lifecycle", () => {
 
         expect(state.phase).toBe("completed");
         expect(state.tasks[0]?.status).toBe("done");
-        expect(state.tasks[0]?.evidence.some((item) => item.purpose === "tdd:red")).toBe(true);
+        expect(state.tasks[0]?.evidence.some((item) => item.purpose === "tdd:red")).toBe(false);
+        expect(state.tasks[0]?.evidence.some((item) => item.purpose === "tdd:green")).toBe(true);
         expect(state.tasks[0]?.evidence.some((item) => item.passed)).toBe(true);
         expect(state.tasks[0]?.redCheckpointSha).toMatch(/^[a-f0-9]{40}$/);
         expect(state.tasks[0]?.redBaseSha).toMatch(/^[a-f0-9]{40}$/);
+        expect(state.tasks[0]?.tddLoop?.atVerifiedGreen).toBe(true);
         // Delivery branch is created at publication from the confirmed title + short run id.
         expect(state.branchName).toMatch(/^harness\/add-greeting-tone-[a-z0-9]{1,8}$/);
 
@@ -226,6 +248,7 @@ describe("Phase 5 scripted full lifecycle", () => {
           "issue-slicer",
           "red-writer",
           "implementer",
+          "red-writer",
           "reviewer",
         ]);
       },
@@ -243,19 +266,23 @@ function withWorkspaceSideEffects(
     async run(request: AgentRequest) {
       const workspaceRoot = request.cwd;
       if (request.role === "red-writer") {
-        process.env.HARNESS_FORCE_RED = "1";
-        await mkdir(path.join(workspaceRoot, "tests"), { recursive: true });
-        await mkdir(path.join(workspaceRoot, "src"), { recursive: true });
-        await writeFile(
-          path.join(workspaceRoot, "tests", "greet.test.ts"),
-          'test("greets", () => { throw new Error("not implemented"); });\n',
-          "utf8",
-        );
-        await writeFile(
-          path.join(workspaceRoot, "src", "greet.ts"),
-          'export const greet = (): string => { throw new Error("not implemented"); };\n',
-          "utf8",
-        );
+        const output = await inner.run(request);
+        const status =
+          output.output &&
+          typeof output.output === "object" &&
+          "status" in output.output
+            ? (output.output as { status?: string }).status
+            : undefined;
+        if (status === "continue") {
+          process.env.HARNESS_FORCE_RED = "1";
+          await mkdir(path.join(workspaceRoot, "tests"), { recursive: true });
+          await writeFile(
+            path.join(workspaceRoot, "tests", "greet.test.ts"),
+            'test("greets", () => { throw new Error("not implemented"); });\n',
+            "utf8",
+          );
+        }
+        return output;
       }
       if (request.role === "implementer") {
         delete process.env.HARNESS_FORCE_RED;

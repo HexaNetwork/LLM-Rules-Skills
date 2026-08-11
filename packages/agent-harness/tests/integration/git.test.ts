@@ -75,6 +75,109 @@ describe("diffForPaths", () => {
 });
 
 describe("reviewTask packet", () => {
+  it("builds the TDD review diff from redBaseSha..worktree including checkpointed tests", async () => {
+    const root = await fixtureRoot();
+    await initGitRepo(root);
+    await mkdir(path.join(root, "tests"), { recursive: true });
+    await mkdir(path.join(root, "src"), { recursive: true });
+    const baseSha = (await git(root, "rev-parse", "HEAD")).trim();
+    await writeFile(path.join(root, "tests", "round-1.test.ts"), "export const t1 = 1;\n", "utf8");
+    await git(root, "add", "tests/round-1.test.ts");
+    await git(root, "commit", "-m", "red checkpoint 1");
+    await writeFile(path.join(root, "src", "feature.ts"), "export const feature = true;\n", "utf8");
+
+    let reviewerInput: Record<string, unknown> | undefined;
+    const config = fixtureConfig(root, {
+      agent: { promptBuilder: false } as never,
+      workflow: { ...fixtureConfig(root).workflow, tdd: true },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
+      git: { enabled: true } as never,
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
+      },
+    });
+    const backend = createFakeBackend({
+      reviewer: (request) => {
+        const match = request.prompt.match(/\{[\s\S]*"changedFiles"[\s\S]*\}/);
+        if (match) {
+          try {
+            reviewerInput = JSON.parse(match[0]) as Record<string, unknown>;
+          } catch {
+            /* ignore */
+          }
+        }
+        return { approved: true, summary: "ok", findings: [] };
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const task = pendingTask("t1", "Ship feature");
+    task.tdd = true;
+    task.status = "active";
+    task.step = "reviewing";
+    task.redBaseSha = baseSha;
+    task.changedFiles = ["tests/round-1.test.ts", "src/feature.ts"];
+    task.tddLoop = {
+      round: 2,
+      atVerifiedGreen: true,
+      completedRounds: [
+        {
+          number: 1,
+          outcome: "implemented",
+          testPathsAdded: ["tests/round-1.test.ts"],
+          behaviorsAdded: ["feature"],
+          edgeCasesAdded: [],
+          targetedEvidencePurpose: "tdd:green",
+          completedAt: new Date().toISOString(),
+        },
+      ],
+      coverage: {
+        behaviors: ["feature"],
+        edgeCases: [],
+        finalAssessment: {
+          acceptanceCriteria: [
+            {
+              criterionIndex: 0,
+              covered: true,
+              testPaths: ["tests/round-1.test.ts"],
+              rationale: "covered",
+            },
+          ],
+          edgeCaseRationale: "ok",
+        },
+      },
+    };
+    let state = await seedExecutingRun(engine, config, "review-red-base", [task]);
+
+    state = await engine.advance(state.runId);
+    const packetFiles = await engine.store.listFiles(state.runId, "packets");
+    const reviewerPacketPath = packetFiles.find(
+      (name) => name.endsWith(".json") && !name.includes(".guidance.") && !name.includes(".retrieval."),
+    );
+    expect(reviewerPacketPath).toBeTruthy();
+    const packet = (await engine.store.readJson(state.runId, reviewerPacketPath!)) as {
+      role: string;
+      input: {
+        diff?: string;
+        changedFiles?: string[];
+        coverageAssessment?: unknown;
+        completedRounds?: unknown[];
+        reviewDiffBase?: string;
+      };
+    };
+    expect(packet.role).toBe("reviewer");
+    expect(packet.input.reviewDiffBase).toBe(baseSha);
+    expect(packet.input.changedFiles).toEqual(
+      expect.arrayContaining(["tests/round-1.test.ts", "src/feature.ts"]),
+    );
+    expect(packet.input.diff).toContain("round-1.test.ts");
+    expect(packet.input.diff).toContain("feature.ts");
+    expect(packet.input.coverageAssessment).toBeTruthy();
+    expect(packet.input.completedRounds).toHaveLength(1);
+    void reviewerInput;
+  });
+
   it("passes diff and diffOmittedFiles to the reviewer", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
@@ -147,7 +250,13 @@ describe("reviewTask packet", () => {
       reviewer: () => ({
         approved: false,
         summary: "needs work",
-        findings: [{ severity: "blocking" as const, message: "tighten the edge case" }],
+        findings: [
+          {
+            severity: "blocking" as const,
+            kind: "production" as const,
+            message: "tighten the edge case",
+          },
+        ],
       }),
       implementer: () => ({ summary: "repaired", changedFiles: ["src/new-file.ts"] }),
     });

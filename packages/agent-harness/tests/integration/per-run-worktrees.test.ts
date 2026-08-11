@@ -501,16 +501,33 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
       taskId: "t1",
       taskTitle: "Ship one",
       testPaths: ["tests/a.test.ts"],
+      round: 1,
     });
     expect(checkpoint?.sha).toMatch(/^[a-f0-9]{40}$/);
+    expect(checkpoint?.round).toBe(1);
     expect(await engine.git.currentBranch()).toBeUndefined();
+    expect(await runGit(wt, "log", "-1", "--format=%B")).toContain("Harness-Checkpoint-Round: 1");
 
     await writeFile(path.join(wt, "src", "a.ts"), "export const a = 1;\n", "utf8");
+    await writeFile(path.join(wt, "tests", "b.test.ts"), "RED2\n", "utf8");
+    const second = await engine.git.commitRedCheckpoint({
+      taskId: "t1",
+      taskTitle: "Ship one",
+      paths: ["tests/b.test.ts"],
+      round: 2,
+    });
+    expect(second?.sha).not.toBe(checkpoint?.sha);
+    expect(await engine.git.changedFiles()).toContain("src/a.ts");
+    const recovered = await engine.git.findRedCheckpoint("t1");
+    expect(recovered?.sha).toBe(second?.sha);
+    expect(recovered?.baseSha).toBe(checkpoint?.baseSha);
+
+    await writeFile(path.join(wt, "src", "b.ts"), "export const b = 2;\n", "utf8");
     const sha = await engine.git.squashCheckpointsIntoTaskCommit({
       taskId: "t1",
       message: { subject: "feat: ship one", body: "done" },
-      reportedPaths: ["tests/a.test.ts", "src/a.ts"],
-      redCheckpointShas: [checkpoint!.sha],
+      reportedPaths: ["tests/a.test.ts", "tests/b.test.ts", "src/a.ts", "src/b.ts"],
+      redCheckpointShas: [checkpoint!.sha, second!.sha],
       baseSha,
     });
     expect(sha).toMatch(/^[a-f0-9]{40}$/);
@@ -518,6 +535,11 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
     expect((await fixture.git("branch", "--list", "harness/*")).trim()).toBe("");
     const count = (await runGit(wt, "rev-list", "--count", `${baseSha}..HEAD`)).trim();
     expect(Number(count)).toBe(1);
+    const names = await runGit(wt, "show", "--pretty=", "--name-only", "HEAD");
+    expect(names).toContain("tests/a.test.ts");
+    expect(names).toContain("tests/b.test.ts");
+    expect(names).toContain("src/a.ts");
+    expect(names).toContain("src/b.ts");
   });
 
   it("creates a title-slugged delivery branch at publish and pushes to a bare remote", async () => {

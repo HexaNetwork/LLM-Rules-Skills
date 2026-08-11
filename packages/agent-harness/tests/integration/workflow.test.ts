@@ -15,13 +15,20 @@ import {
 } from "../../src/config.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { GitService } from "../../src/git.js";
+import {
+  evidenceFingerprint,
+  failingTestIdsFromEvidence,
+  failureCategoryFromEvidence,
+} from "../../src/application/evidence-fingerprint.js";
 import { createRunState, type RunState } from "../../src/domain.js";
+import { migrateRunWorkspace } from "../../src/domain/workspace.js";
 import {
   confirmGrillAndAdvance,
   createPlannerPrdSequence,
   createProjectFixture,
   fixtureConfig,
   fixtureRoot,
+  git as runGit,
   HIGH_LEVEL_PLAN,
   PRD_OUTPUT,
   SLICER_ONE_TASK
@@ -66,7 +73,13 @@ describe("durable idea-to-feature workflow", () => {
           "export {};\n",
           "utf8",
         );
-        return { summary: "Added a failing test.", changedFiles: ["tests/new-behavior.test.ts"] };
+        return {
+          status: "continue",
+          summary: "Added a failing test.",
+          changedFiles: ["tests/new-behavior.test.ts"],
+          behaviorsAdded: ["new behavior is covered"],
+          edgeCasesAdded: [],
+        };
       },
     });
     const engine = new HarnessEngine(config, { backend });
@@ -866,11 +879,18 @@ describe("durable idea-to-feature workflow", () => {
       }),
       "red-writer": () => {
         process.env.HARNESS_FORCE_RED = "1";
-        return { summary: "wrote test", changedFiles: ["tests/greet.test.ts"] };
+        return {
+          status: "continue",
+          summary: "wrote test",
+          changedFiles: ["tests/greet.test.ts"],
+          behaviorsAdded: ["greeting fails until implemented"],
+          edgeCasesAdded: [],
+        };
       },
       implementer: () => {
         delete process.env.HARNESS_FORCE_RED;
         return {
+          status: "green",
           summary: "weakened test",
           changedFiles: ["src/greet.ts", "tests/greet.test.ts"],
         };
@@ -931,9 +951,16 @@ describe("durable idea-to-feature workflow", () => {
       }),
       "red-writer": () => {
         process.env.HARNESS_FORCE_RED = "1";
-        return { summary: "wrote test", changedFiles: ["tests/greet.test.ts"] };
+        return {
+          status: "continue",
+          summary: "wrote test",
+          changedFiles: ["tests/greet.test.ts"],
+          behaviorsAdded: ["greeting fails until implemented"],
+          edgeCasesAdded: [],
+        };
       },
       implementer: () => ({
+        status: "green",
         summary: "touched test while still red",
         changedFiles: ["src/greet.ts", "tests/greet.test.ts"],
       }),
@@ -1506,7 +1533,13 @@ describe("durable idea-to-feature workflow", () => {
           return {
             approved: false,
             summary: "Needs a null check",
-            findings: [{ severity: "blocking", message: "Handle null input" }],
+            findings: [
+              {
+                severity: "blocking",
+                kind: "production",
+                message: "Handle null input",
+              },
+            ],
           };
         }
         return { approved: true, summary: "ok", findings: [] };
@@ -1545,13 +1578,15 @@ describe("durable idea-to-feature workflow", () => {
     expect(implementerRequests[0]?.providerSessionId).toBeUndefined();
     expect(implementerRequests[1]?.providerSessionId).toBe(implementerSessionIds[0]);
     expect(implementerRequests[1]?.continuationPrompt).toContain("Handle null input");
-    expect(implementerRequests[1]?.continuationPrompt).toContain("New authoritative input");
+    expect(implementerRequests[1]?.continuationPrompt).toContain(
+      "The only new authoritative input since the previous turn is:",
+    );
 
     for (const reviewerId of reviewerSessionIds) {
       expect(reviewerId).not.toBe(implementerSessionIds[0]);
     }
     expect(released).toContain(implementerSessionIds[0]);
-    expect(state.tasks[0]?.implementerSession).toBeUndefined();
+    expect(state.tasks[0]?.tddLoop?.greenImplementerSession).toBeUndefined();
   });
 
   it("cold-starts the implementer when a run resumes without in-process session handles", async () => {
@@ -1637,10 +1672,12 @@ describe("durable idea-to-feature workflow", () => {
           testPaths: [],
           changedFiles: ["src/greet.ts"],
           reviewSummary: "Needs a null check\n- Handle null input",
-          implementerSession: {
-            providerSessionId: "impl-stale",
-            guidanceFingerprint: "fp",
-            turns: 1,
+          tddLoop: {
+            greenImplementerSession: {
+              providerSessionId: "impl-stale",
+              guidanceFingerprint: "fp",
+              turns: 1,
+            },
           },
         },
       ],
@@ -1661,12 +1698,12 @@ describe("durable idea-to-feature workflow", () => {
     expect(implementerPrompts[0]?.prompt).toContain("Ship greeting");
   });
 
-  it("releases implementer sessions for all tasks on cancel", async () => {
+  it("releases both task worker sessions for all tasks on cancel", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       workflow: {
         ...fixtureConfig(root).workflow,
-        tdd: false,
+        tdd: true,
         maxReviewAttempts: 2,
         generateCommitMessages: false,
       },
@@ -1687,7 +1724,8 @@ describe("durable idea-to-feature workflow", () => {
     };
 
     const hash = configurationHash(config);
-    const sessionId = "impl-to-release";
+    const greenSessionId = "impl-to-release";
+    const redSessionId = "red-to-release";
     let state: RunState = {
       ...createRunState("cancel-sessions", "idea", new Date().toISOString(), hash, CONFIG_VERSION),
       phase: "executing",
@@ -1705,16 +1743,22 @@ describe("durable idea-to-feature workflow", () => {
           acceptanceCriteria: ["Works"],
           affectedPaths: [],
           blockedBy: [],
-          tdd: false,
+          tdd: true,
           status: "active",
           step: "implementing",
           attempts: { tests: 0, implementation: 1, review: 0 },
           evidence: [],
           testPaths: [],
           changedFiles: ["src/greet.ts"],
-          implementerSession: {
-            providerSessionId: sessionId,
-            turns: 1,
+          tddLoop: {
+            redWriterSession: {
+              providerSessionId: redSessionId,
+              turns: 2,
+            },
+            greenImplementerSession: {
+              providerSessionId: greenSessionId,
+              turns: 1,
+            },
           },
         },
       ],
@@ -1730,11 +1774,13 @@ describe("durable idea-to-feature workflow", () => {
 
     const cancelled = await engine.cancel(state.runId);
     expect(cancelled.state.phase).toBe("cancelled");
-    expect(released).toContain(sessionId);
-    expect(cancelled.state.tasks[0]?.implementerSession).toBeUndefined();
+    expect(released).toContain(greenSessionId);
+    expect(released).toContain(redSessionId);
+    expect(cancelled.state.tasks[0]?.tddLoop?.greenImplementerSession).toBeUndefined();
+    expect(cancelled.state.tasks[0]?.tddLoop?.redWriterSession).toBeUndefined();
   });
 
-  it("rejects red-writer edits outside tests and affectedPaths", async () => {
+  it("rejects every non-test RED edit", async () => {
     const fixture = await createProjectFixture();
     await fixture.initGit();
     const config = fixtureConfig(fixture.root, {
@@ -1748,13 +1794,16 @@ describe("durable idea-to-feature workflow", () => {
         await writeFile(path.join(request.cwd, "tests", "ok.test.ts"), "export {};\n", "utf8");
         await writeFile(path.join(request.cwd, "src", "sneaky.ts"), "export {};\n", "utf8");
         return {
-          summary: "illegal scaffold",
+          status: "continue",
+          summary: "illegal production edit",
           changedFiles: ["tests/ok.test.ts", "src/sneaky.ts"],
+          behaviorsAdded: ["sneaky production path"],
+          edgeCasesAdded: [],
         };
       },
     });
     const engine = new HarnessEngine(config, { backend });
-    const started = await engine.start("Reject illegal scaffold");
+    const started = await engine.start("Reject non-test RED edit");
     const state = await engine.store.load(started.runId);
     await engine.store.writeJson(started.runId, "state.json", {
       ...state,
@@ -1762,7 +1811,7 @@ describe("durable idea-to-feature workflow", () => {
       treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
       tasks: [
         {
-          id: "illegal-scaffold",
+          id: "illegal-non-test",
           title: "Write RED",
           description: "Coverage",
           acceptanceCriteria: ["failing test"],
@@ -1781,10 +1830,10 @@ describe("durable idea-to-feature workflow", () => {
 
     const advanced = await engine.advance(started.runId);
     expect(advanced.phase).toBe("blocked");
-    expect(advanced.failure).toMatch(/affectedPaths|Red writer/i);
+    expect(advanced.failure).toMatch(/non-test paths|Red writer/i);
   });
 
-  it("does not route first implementing attempt to test-repair for missing production symbols", async () => {
+  it("invokes implementer on first implementing attempt even for missing-symbol evidence", async () => {
     const fixture = await createProjectFixture();
     await fixture.initGit();
     const config = fixtureConfig(fixture.root, {
@@ -1804,10 +1853,7 @@ describe("durable idea-to-feature workflow", () => {
           'export const greet = () => "hi";\n',
           "utf8",
         );
-        return { summary: "implemented", changedFiles: ["src/greet.ts"] };
-      },
-      "test-writer": () => {
-        throw new Error("test-writer must not run on first implementing attempt");
+        return { status: "green", summary: "implemented", changedFiles: ["src/greet.ts"] };
       },
       "red-writer": () => {
         throw new Error("red-writer must not run during implementing");
@@ -1817,7 +1863,7 @@ describe("durable idea-to-feature workflow", () => {
     const started = await engine.start("No false repair");
     const state = await engine.store.load(started.runId);
     const missingSymbolEvidence = {
-      purpose: "tdd:red",
+      purpose: "tdd:green",
       command: "npm test",
       exitCode: 1,
       passed: false,
@@ -1853,6 +1899,20 @@ describe("durable idea-to-feature workflow", () => {
           redBaseSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           redCheckpointPaths: ["tests/greet.test.ts"],
           changedFiles: ["tests/greet.test.ts"],
+          tddLoop: {
+            round: 1,
+            atVerifiedGreen: false,
+            pendingRound: {
+              number: 1,
+              mode: "feature",
+              redCheckpointSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              testPathsAdded: ["tests/greet.test.ts"],
+              behaviorsAdded: ["greets"],
+              edgeCasesAdded: [],
+              implementerAttempts: 0,
+              startedAt: new Date().toISOString(),
+            },
+          },
         },
       ],
     });
@@ -1863,7 +1923,10 @@ describe("durable idea-to-feature workflow", () => {
       "utf8",
     );
     expect(events).not.toContain("task.test_repair_routed");
-    expect(implementerCalls).toBe(1);
+    expect(events).not.toContain("tdd:resume-check");
+    // Verification always fails; per-round budget (maxImplementationAttempts: 2) drives retries.
+    expect(implementerCalls).toBeGreaterThanOrEqual(1);
+    expect(implementerCalls).toBeLessThanOrEqual(2);
   });
 
   it("never invokes red-writer when task tdd is false", async () => {
@@ -1879,10 +1942,6 @@ describe("durable idea-to-feature workflow", () => {
       "red-writer": () => {
         roles.push("red-writer");
         throw new Error("red-writer must not run when tdd is false");
-      },
-      "test-writer": () => {
-        roles.push("test-writer");
-        throw new Error("test-writer must not run when tdd is false");
       },
       implementer: (request) => {
         roles.push(request.role);
@@ -1921,8 +1980,1409 @@ describe("durable idea-to-feature workflow", () => {
 
     const advanced = await engine.advance(started.runId);
     expect(roles).not.toContain("red-writer");
-    expect(roles).not.toContain("test-writer");
     expect(roles).toContain("implementer");
     expect(advanced.tasks[0]?.step).not.toBe("writing_tests");
+  });
+
+  it("completes three RED/GREEN rounds with exactly two provider session IDs", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: {
+        tdd: true,
+        maxImplementationAttempts: 3,
+        maxTestAttempts: 5,
+        generateCommitMessages: false,
+      } as never,
+      commands: {
+        verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }],
+      } as never,
+      agent: { promptBuilder: false } as never,
+    });
+
+    let redCalls = 0;
+    let greenCalls = 0;
+    const sessionByRole = new Map<string, string>();
+    const backend: AgentBackend = {
+      async run(request) {
+        const existing = request.providerSessionId;
+        const providerSessionId = existing ?? `${request.role}-session`;
+        if (!existing) sessionByRole.set(request.role, providerSessionId);
+        const providerSessionReused = Boolean(existing);
+
+        if (request.role === "red-writer") {
+          redCalls += 1;
+          const workspaceRoot = request.cwd;
+          if (redCalls <= 3) {
+            const testFile = `tests/round-${redCalls}.test.ts`;
+            await mkdir(path.join(workspaceRoot, "tests"), { recursive: true });
+            await writeFile(path.join(workspaceRoot, testFile), `export {};\n// round ${redCalls}\n`, "utf8");
+            return {
+              output: {
+                status: "continue",
+                summary: `RED batch ${redCalls}`,
+                changedFiles: [testFile],
+                behaviorsAdded: [`behavior ${redCalls}`],
+                edgeCasesAdded: redCalls === 2 ? [`edge ${redCalls}`] : [],
+              },
+              providerSessionId,
+              providerRunId: `red-run-${redCalls}`,
+              providerSessionReused,
+              submittedPrompt: providerSessionReused
+                ? request.continuationPrompt ?? request.prompt
+                : request.prompt,
+            };
+          }
+          return {
+            output: {
+              status: "done",
+              summary: "Coverage complete after three rounds",
+              changedFiles: [],
+              acceptanceCoverage: [
+                {
+                  criterionIndex: 0,
+                  covered: true,
+                  testPaths: [
+                    "tests/round-1.test.ts",
+                    "tests/round-2.test.ts",
+                    "tests/round-3.test.ts",
+                  ],
+                  rationale: "All primary behaviors covered",
+                },
+              ],
+              edgeCaseRationale: "Boundary cases covered in round 2",
+            },
+            providerSessionId,
+            providerRunId: `red-run-${redCalls}`,
+            providerSessionReused,
+            submittedPrompt: providerSessionReused
+              ? request.continuationPrompt ?? request.prompt
+              : request.prompt,
+          };
+        }
+
+        if (request.role === "implementer") {
+          greenCalls += 1;
+          if (greenCalls >= 2 && !providerSessionReused) {
+            throw new Error(`GREEN round ${greenCalls} must reuse the green session`);
+          }
+          if (greenCalls === 3) {
+            return {
+              output: {
+                status: "already_green",
+                summary: "GREEN round 3 already covered",
+                changedFiles: [],
+              },
+              providerSessionId,
+              providerRunId: `green-run-${greenCalls}`,
+              providerSessionReused,
+              submittedPrompt: providerSessionReused
+                ? request.continuationPrompt ?? request.prompt
+                : request.prompt,
+            };
+          }
+          const srcFile = `src/round-${greenCalls}.ts`;
+          await mkdir(path.join(request.cwd, "src"), { recursive: true });
+          await writeFile(path.join(request.cwd, srcFile), `export const n = ${greenCalls};\n`, "utf8");
+          return {
+            output: {
+              status: "green",
+              summary: `GREEN round ${greenCalls}`,
+              changedFiles: [srcFile],
+            },
+            providerSessionId,
+            providerRunId: `green-run-${greenCalls}`,
+            providerSessionReused,
+            submittedPrompt: providerSessionReused
+              ? request.continuationPrompt ?? request.prompt
+              : request.prompt,
+          };
+        }
+
+        if (request.role === "reviewer") {
+          return {
+            output: { approved: true, summary: "ok", findings: [] },
+            providerSessionId: "reviewer-session",
+            providerRunId: "review-run",
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+
+        throw new Error(`Unexpected role ${request.role}`);
+      },
+      async release() {},
+    };
+
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Three-round TDD loop");
+    const loaded = await engine.store.load(started.runId);
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...loaded,
+      phase: "executing",
+      treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
+      reflectBrief: {
+        draft: "d",
+        confirmed: "Confirmed brief",
+        confirmedAt: new Date().toISOString(),
+      },
+      tasks: [
+        {
+          id: "three-round",
+          title: "Ship greeting",
+          description: "Multi-round TDD",
+          acceptanceCriteria: ["greeting works"],
+          affectedPaths: ["src/greet.ts"],
+          blockedBy: [],
+          tdd: true,
+          status: "active",
+          step: "writing_tests",
+          attempts: { tests: 0, implementation: 0, review: 0 },
+          evidence: [],
+          testPaths: [],
+          changedFiles: [],
+        },
+      ],
+    });
+
+    const advanced = await engine.advance(started.runId);
+    expect(advanced.phase).toBe("completed");
+    expect(redCalls).toBe(4); // 3 continue + done
+    expect(greenCalls).toBe(3);
+    expect(advanced.tasks[0]?.tddLoop?.completedRounds).toHaveLength(3);
+    expect(advanced.tasks[0]?.tddLoop?.completedRounds.map((round) => round.outcome)).toEqual([
+      "implemented",
+      "implemented",
+      "already-covered",
+    ]);
+    expect(advanced.tasks[0]?.evidence.filter((item) => item.purpose === "tdd:green")).toHaveLength(
+      3,
+    );
+
+    const workerSessions = [...sessionByRole.entries()]
+      .filter(([role]) => role === "red-writer" || role === "implementer")
+      .map(([, id]) => id);
+    expect(new Set(workerSessions).size).toBe(2);
+    expect(sessionByRole.get("red-writer")).toBe("red-writer-session");
+    expect(sessionByRole.get("implementer")).toBe("implementer-session");
+
+    const events = await readFile(
+      path.join(fixture.root, ".agent-harness", "runs", started.runId, "events.jsonl"),
+      "utf8",
+    );
+    expect(events).toContain("task.tdd_round_started");
+    expect(events).toContain("task.tdd_round_completed");
+    expect(events).toContain("task.green_already_covered");
+    expect(events).toContain("task.tdd_done_declared");
+
+    // Phase 5 exit: one final task commit, oldest redBaseSha, cumulative paths, no lost files.
+    const task = advanced.tasks[0]!;
+    expect(task.redBaseSha).toMatch(/^[a-f0-9]{40}$/);
+    expect(task.redCheckpointHistory).toHaveLength(3);
+    expect(task.redCheckpointPaths).toEqual(
+      expect.arrayContaining([
+        "tests/round-1.test.ts",
+        "tests/round-2.test.ts",
+        "tests/round-3.test.ts",
+      ]),
+    );
+    expect(task.redCheckpointPaths).toHaveLength(3);
+    const workspace = migrateRunWorkspace(
+      await engine.store.readJson(started.runId, "workspace.json"),
+      { controlRoot: fixture.root },
+    );
+    const worktree = workspace.worktreePath!;
+    const commitCount = (
+      await runGit(worktree, "rev-list", "--count", `${workspace.baseSha}..HEAD`)
+    ).trim();
+    expect(Number(commitCount)).toBe(1);
+    const log = await runGit(worktree, "log", "-1", "--format=%B");
+    expect(log).toContain(`Harness-Task: ${task.id}`);
+    expect(log).toContain(`Harness-Red-Checkpoints: ${task.redCheckpointHistory.join(",")}`);
+    const names = await runGit(worktree, "show", "--pretty=", "--name-only", "HEAD");
+    expect(names).toContain("tests/round-1.test.ts");
+    expect(names).toContain("tests/round-2.test.ts");
+    expect(names).toContain("tests/round-3.test.ts");
+    expect(names).toContain("src/round-1.ts");
+    expect(names).toContain("src/round-2.ts");
+    // Oldest base stays distinct from the newest checkpoint tip.
+    expect(task.redBaseSha).not.toBe(task.redCheckpointSha);
+  });
+
+  it("restores a round-one test when the implementer tampers it during round three", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: {
+        tdd: true,
+        maxImplementationAttempts: 3,
+        maxTestAttempts: 5,
+        generateCommitMessages: false,
+      } as never,
+      commands: {
+        verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }],
+      } as never,
+      agent: { promptBuilder: false } as never,
+    });
+
+    let redCalls = 0;
+    let greenCalls = 0;
+    const backend: AgentBackend = {
+      async run(request) {
+        const providerSessionId = request.providerSessionId ?? `${request.role}-session`;
+        const providerSessionReused = Boolean(request.providerSessionId);
+
+        if (request.role === "red-writer") {
+          redCalls += 1;
+          if (redCalls <= 3) {
+            const testFile = `tests/round-${redCalls}.test.ts`;
+            await mkdir(path.join(request.cwd, "tests"), { recursive: true });
+            await writeFile(
+              path.join(request.cwd, testFile),
+              `// original round ${redCalls}\nexport {};\n`,
+              "utf8",
+            );
+            return {
+              output: {
+                status: "continue",
+                summary: `RED batch ${redCalls}`,
+                changedFiles: [testFile],
+                behaviorsAdded: [`behavior ${redCalls}`],
+                edgeCasesAdded: [],
+              },
+              providerSessionId,
+              providerRunId: `red-run-${redCalls}`,
+              providerSessionReused,
+              submittedPrompt: providerSessionReused
+                ? request.continuationPrompt ?? request.prompt
+                : request.prompt,
+            };
+          }
+          return {
+            output: {
+              status: "done",
+              summary: "Coverage complete",
+              changedFiles: [],
+              acceptanceCoverage: [
+                {
+                  criterionIndex: 0,
+                  covered: true,
+                  testPaths: [
+                    "tests/round-1.test.ts",
+                    "tests/round-2.test.ts",
+                    "tests/round-3.test.ts",
+                  ],
+                  rationale: "covered",
+                },
+              ],
+              edgeCaseRationale: "n/a",
+            },
+            providerSessionId,
+            providerRunId: `red-run-${redCalls}`,
+            providerSessionReused,
+            submittedPrompt: providerSessionReused
+              ? request.continuationPrompt ?? request.prompt
+              : request.prompt,
+          };
+        }
+
+        if (request.role === "implementer") {
+          greenCalls += 1;
+          await mkdir(path.join(request.cwd, "src"), { recursive: true });
+          const srcFile = `src/round-${greenCalls}.ts`;
+          await writeFile(path.join(request.cwd, srcFile), `export const n = ${greenCalls};\n`, "utf8");
+          const changedFiles = [srcFile];
+          if (greenCalls === 3) {
+            // Cumulative integrity: tamper a round-one test during round three.
+            await writeFile(
+              path.join(request.cwd, "tests", "round-1.test.ts"),
+              "// TAMPERED in round 3\nexport {};\n",
+              "utf8",
+            );
+            changedFiles.push("tests/round-1.test.ts");
+          }
+          return {
+            output: {
+              status: "green",
+              summary: `GREEN round ${greenCalls}`,
+              changedFiles,
+            },
+            providerSessionId,
+            providerRunId: `green-run-${greenCalls}`,
+            providerSessionReused,
+            submittedPrompt: providerSessionReused
+              ? request.continuationPrompt ?? request.prompt
+              : request.prompt,
+          };
+        }
+
+        if (request.role === "reviewer") {
+          return {
+            output: { approved: true, summary: "ok", findings: [] },
+            providerSessionId: "reviewer-session",
+            providerRunId: "review-run",
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+
+        throw new Error(`Unexpected role ${request.role}`);
+      },
+      async release() {},
+    };
+
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Cumulative integrity");
+    const loaded = await engine.store.load(started.runId);
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...loaded,
+      phase: "executing",
+      treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
+      reflectBrief: {
+        draft: "d",
+        confirmed: "Confirmed brief",
+        confirmedAt: new Date().toISOString(),
+      },
+      tasks: [
+        {
+          id: "cumul-integrity",
+          title: "Ship greeting",
+          description: "Multi-round TDD with tamper",
+          acceptanceCriteria: ["greeting works"],
+          affectedPaths: ["src/greet.ts"],
+          blockedBy: [],
+          tdd: true,
+          status: "active",
+          step: "writing_tests",
+          attempts: { tests: 0, implementation: 0, review: 0 },
+          evidence: [],
+          testPaths: [],
+          changedFiles: [],
+        },
+      ],
+    });
+
+    const advanced = await engine.advance(started.runId);
+    expect(advanced.phase).toBe("completed");
+    expect(advanced.tasks[0]?.redCheckpointPaths).toEqual(
+      expect.arrayContaining([
+        "tests/round-1.test.ts",
+        "tests/round-2.test.ts",
+        "tests/round-3.test.ts",
+      ]),
+    );
+
+    const events = await readFile(
+      path.join(fixture.root, ".agent-harness", "runs", started.runId, "events.jsonl"),
+      "utf8",
+    );
+    expect(events).toContain("test_integrity.restored");
+
+    const workspace = migrateRunWorkspace(
+      await engine.store.readJson(started.runId, "workspace.json"),
+      { controlRoot: fixture.root },
+    );
+    const worktree = workspace.worktreePath!;
+    const roundOne = await readFile(path.join(worktree, "tests", "round-1.test.ts"), "utf8");
+    expect(roundOne).toContain("original round 1");
+    expect(roundOne).not.toContain("TAMPERED");
+    expect(await readFile(path.join(worktree, "src", "round-3.ts"), "utf8")).toContain(
+      "export const n = 3",
+    );
+    const commitCount = (
+      await runGit(worktree, "rev-list", "--count", `${workspace.baseSha}..HEAD`)
+    ).trim();
+    expect(Number(commitCount)).toBe(1);
+  });
+
+  it("routes test_issue to the retained red-writer then resumes the same green session", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: { tdd: true, maxImplementationAttempts: 3, generateCommitMessages: false } as never,
+      commands: {
+        verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }],
+      } as never,
+      agent: { promptBuilder: false } as never,
+    });
+
+    let redCalls = 0;
+    let greenCalls = 0;
+    let redSession: string | undefined;
+    let greenSession: string | undefined;
+    const backend: AgentBackend = {
+      async run(request) {
+        const providerSessionId =
+          request.providerSessionId ??
+          (request.role === "red-writer" ? "red-shared" : "green-shared");
+        if (request.role === "red-writer") {
+          redCalls += 1;
+          if (!redSession) redSession = providerSessionId;
+          expect(providerSessionId).toBe(redSession);
+          if (redCalls === 1) {
+            await mkdir(path.join(request.cwd, "tests"), { recursive: true });
+            await writeFile(
+              path.join(request.cwd, "tests", "greet.test.ts"),
+              "export {};\n// broken\n",
+              "utf8",
+            );
+            return {
+              output: {
+                status: "continue",
+                summary: "initial red",
+                changedFiles: ["tests/greet.test.ts"],
+                behaviorsAdded: ["greets"],
+                edgeCasesAdded: [],
+              },
+              providerSessionId,
+              providerRunId: `red-${redCalls}`,
+              providerSessionReused: Boolean(request.providerSessionId),
+              submittedPrompt: request.prompt,
+            };
+          }
+          if (redCalls === 2) {
+            await writeFile(
+              path.join(request.cwd, "tests", "greet.test.ts"),
+              "export {};\n// repaired\n",
+              "utf8",
+            );
+            return {
+              output: {
+                status: "continue",
+                summary: "repaired test",
+                changedFiles: ["tests/greet.test.ts"],
+                behaviorsAdded: ["greets"],
+                edgeCasesAdded: [],
+              },
+              providerSessionId,
+              providerRunId: `red-${redCalls}`,
+              providerSessionReused: Boolean(request.providerSessionId),
+              submittedPrompt: request.continuationPrompt ?? request.prompt,
+            };
+          }
+          return {
+            output: {
+              status: "done",
+              summary: "done after repair round",
+              changedFiles: [],
+              acceptanceCoverage: [
+                {
+                  criterionIndex: 0,
+                  covered: true,
+                  testPaths: ["tests/greet.test.ts"],
+                  rationale: "covered",
+                },
+              ],
+              edgeCaseRationale: "n/a",
+            },
+            providerSessionId,
+            providerRunId: `red-${redCalls}`,
+            providerSessionReused: Boolean(request.providerSessionId),
+            submittedPrompt: request.continuationPrompt ?? request.prompt,
+          };
+        }
+        if (request.role === "implementer") {
+          greenCalls += 1;
+          if (!greenSession) greenSession = providerSessionId;
+          expect(providerSessionId).toBe(greenSession);
+          if (greenCalls === 1) {
+            return {
+              output: {
+                status: "test_issue",
+                summary: "defective assertion",
+                changedFiles: [],
+                testPath: "tests/greet.test.ts",
+                reason: "asserts the wrong seam",
+                evidence: "expected A, test demands B",
+              },
+              providerSessionId,
+              providerRunId: `green-${greenCalls}`,
+              providerSessionReused: Boolean(request.providerSessionId),
+              submittedPrompt: request.prompt,
+            };
+          }
+          await mkdir(path.join(request.cwd, "src"), { recursive: true });
+          await writeFile(path.join(request.cwd, "src", "greet.ts"), "export {};\n", "utf8");
+          return {
+            output: {
+              status: "green",
+              summary: "implemented after repair",
+              changedFiles: ["src/greet.ts"],
+            },
+            providerSessionId,
+            providerRunId: `green-${greenCalls}`,
+            providerSessionReused: Boolean(request.providerSessionId),
+            submittedPrompt: request.continuationPrompt ?? request.prompt,
+          };
+        }
+        if (request.role === "reviewer") {
+          return {
+            output: { approved: true, summary: "ok", findings: [] },
+            providerSessionId: "rev",
+            providerRunId: "rev-1",
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+        throw new Error(`Unexpected role ${request.role}`);
+      },
+      async release() {},
+    };
+
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Test issue repair");
+    const loaded = await engine.store.load(started.runId);
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...loaded,
+      phase: "executing",
+      treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
+      reflectBrief: {
+        draft: "d",
+        confirmed: "Confirmed",
+        confirmedAt: new Date().toISOString(),
+      },
+      tasks: [
+        {
+          id: "repair-loop",
+          title: "Ship greeting",
+          description: "Repair path",
+          acceptanceCriteria: ["works"],
+          affectedPaths: ["src/greet.ts"],
+          blockedBy: [],
+          tdd: true,
+          status: "active",
+          step: "writing_tests",
+          attempts: { tests: 0, implementation: 0, review: 0 },
+          evidence: [],
+          testPaths: [],
+          changedFiles: [],
+        },
+      ],
+    });
+
+    // Drive until after first GREEN completion (writing_tests again), then stop by failing next red.
+    const advanced = await engine.advance(started.runId);
+    // After green pass the loop returns to writing_tests and will call red again for done/continue.
+    // Provide done on the third red call by extending the backend above — but redCalls===2 is repair.
+    // If advance continues, redCalls===3 needs a done response. Extend: treat redCalls>=3 as done.
+    expect(redCalls).toBeGreaterThanOrEqual(2);
+    expect(greenCalls).toBeGreaterThanOrEqual(2);
+    expect(redSession).toBe("red-shared");
+    expect(greenSession).toBe("green-shared");
+
+    const events = await readFile(
+      path.join(fixture.root, ".agent-harness", "runs", started.runId, "events.jsonl"),
+      "utf8",
+    );
+    expect(events).toContain("task.test_issue_reported");
+    expect(events).toContain("task.test_issue_repaired");
+    expect(advanced.tasks[0]?.tddLoop?.completedRounds.length ?? 0).toBeGreaterThanOrEqual(1);
+  });
+
+  it("retries failed GREEN in-round without tripping the repeated-transition breaker", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: { tdd: true, maxImplementationAttempts: 3, generateCommitMessages: false } as never,
+      commands: {
+        verification: [
+          {
+            id: "test",
+            command: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"',
+            timeoutMs: 600_000,
+          },
+        ],
+        passEnv: ["HARNESS_FORCE_RED"],
+      } as never,
+      agent: { promptBuilder: false } as never,
+    });
+
+    let greenCalls = 0;
+    const greenSessions: string[] = [];
+    const backend: AgentBackend = {
+      async run(request) {
+        if (request.role === "implementer") {
+          greenCalls += 1;
+          const providerSessionId = request.providerSessionId ?? "green-retry-session";
+          greenSessions.push(providerSessionId);
+          // Fail targeted verification twice, then pass.
+          if (greenCalls < 3) process.env.HARNESS_FORCE_RED = "1";
+          else delete process.env.HARNESS_FORCE_RED;
+          await mkdir(path.join(request.cwd, "src"), { recursive: true });
+          await writeFile(
+            path.join(request.cwd, "src", `greet-${greenCalls}.ts`),
+            `export const n = ${greenCalls};\n`,
+            "utf8",
+          );
+          return {
+            output: {
+              status: "green",
+              summary: `attempt ${greenCalls}`,
+              changedFiles: [`src/greet-${greenCalls}.ts`],
+            },
+            providerSessionId,
+            providerRunId: `g-${greenCalls}`,
+            providerSessionReused: Boolean(request.providerSessionId),
+            submittedPrompt: request.continuationPrompt ?? request.prompt,
+          };
+        }
+        if (request.role === "red-writer") {
+          return {
+            output: {
+              status: "done",
+              summary: "done after green retries",
+              changedFiles: [],
+              acceptanceCoverage: [
+                {
+                  criterionIndex: 0,
+                  covered: true,
+                  testPaths: ["tests/greet.test.ts"],
+                  rationale: "covered",
+                },
+              ],
+              edgeCaseRationale: "n/a",
+            },
+            providerSessionId: request.providerSessionId ?? "red-session",
+            providerRunId: "red-1",
+            providerSessionReused: Boolean(request.providerSessionId),
+            submittedPrompt: request.prompt,
+          };
+        }
+        if (request.role === "reviewer") {
+          return {
+            output: { approved: true, summary: "ok", findings: [] },
+            providerSessionId: "rev",
+            providerRunId: "rev-1",
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+        throw new Error(`Unexpected role ${request.role}`);
+      },
+      async release() {},
+    };
+
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("GREEN retries");
+    const loaded = await engine.store.load(started.runId);
+    await mkdir(path.join(engine.paths.workspaceRoot, "tests"), { recursive: true });
+    await writeFile(
+      path.join(engine.paths.workspaceRoot, "tests", "greet.test.ts"),
+      "export {};\n",
+      "utf8",
+    );
+    const git = new GitService(config, engine.paths);
+    const checkpoint = await git.commitRedCheckpoint({
+      taskId: "green-retry",
+      taskTitle: "Ship greeting",
+      paths: ["tests/greet.test.ts"],
+    });
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...loaded,
+      phase: "executing",
+      treeFingerprint: await git.treeFingerprint(),
+      reflectBrief: {
+        draft: "d",
+        confirmed: "Confirmed",
+        confirmedAt: new Date().toISOString(),
+      },
+      tasks: [
+        {
+          id: "green-retry",
+          title: "Ship greeting",
+          description: "Retry green",
+          acceptanceCriteria: ["works"],
+          affectedPaths: ["src/greet.ts"],
+          blockedBy: [],
+          tdd: true,
+          status: "active",
+          step: "implementing",
+          attempts: { tests: 1, implementation: 0, review: 0 },
+          evidence: [],
+          testPaths: ["tests/greet.test.ts"],
+          redCheckpointSha: checkpoint!.sha,
+          redBaseSha: checkpoint!.baseSha,
+          redCheckpointPaths: ["tests/greet.test.ts"],
+          redCheckpointHistory: [checkpoint!.sha],
+          changedFiles: ["tests/greet.test.ts"],
+          tddLoop: {
+            round: 1,
+            atVerifiedGreen: false,
+            pendingRound: {
+              number: 1,
+              mode: "feature",
+              redCheckpointSha: checkpoint!.sha,
+              testPathsAdded: ["tests/greet.test.ts"],
+              behaviorsAdded: ["greets"],
+              edgeCasesAdded: [],
+              implementerAttempts: 0,
+              startedAt: new Date().toISOString(),
+            },
+            redWriterSession: { providerSessionId: "red-session", turns: 1 },
+          },
+        },
+      ],
+    });
+
+    const advanced = await engine.advance(started.runId);
+    expect(advanced.phase).not.toBe("blocked");
+    expect(advanced.failure ?? "").not.toMatch(/Repeated workflow transition/i);
+    expect(greenCalls).toBe(3);
+    expect(new Set(greenSessions).size).toBe(1);
+    expect(advanced.tasks[0]?.tddLoop?.completedRounds).toHaveLength(1);
+    delete process.env.HARNESS_FORCE_RED;
+  });
+
+  it("budgets final gate repair with finalRepairAttempts and returns to RED reassessment", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: {
+        tdd: true,
+        maxImplementationAttempts: 3,
+        maxReviewAttempts: 2,
+        generateCommitMessages: false,
+      } as never,
+      commands: {
+        verification: [
+          {
+            id: "test",
+            command: 'node -e "process.exit(Number(process.env.HARNESS_FORCE_VERIFY_FAIL||0))"',
+            timeoutMs: 600_000,
+          },
+        ],
+        passEnv: ["HARNESS_FORCE_VERIFY_FAIL"],
+      } as never,
+      agent: { promptBuilder: false } as never,
+    });
+
+    let redCalls = 0;
+    let greenCalls = 0;
+    const greenReuse: boolean[] = [];
+    const released: string[] = [];
+    const backend: AgentBackend = {
+      async run(request) {
+        const providerSessionId = request.providerSessionId ?? `${request.role}-session`;
+        if (request.role === "red-writer") {
+          redCalls += 1;
+          return {
+            output: {
+              status: "done",
+              summary: "coverage complete",
+              changedFiles: [],
+              acceptanceCoverage: [
+                {
+                  criterionIndex: 0,
+                  covered: true,
+                  testPaths: ["tests/greet.test.ts"],
+                  rationale: "covered",
+                },
+              ],
+              edgeCaseRationale: "boundaries covered",
+            },
+            providerSessionId,
+            providerRunId: `red-${redCalls}`,
+            providerSessionReused: Boolean(request.providerSessionId),
+            submittedPrompt: request.prompt,
+          };
+        }
+        if (request.role === "implementer") {
+          greenCalls += 1;
+          greenReuse.push(Boolean(request.providerSessionId));
+          // Clear the force-fail so targeted GREEN and later final gates can pass.
+          delete process.env.HARNESS_FORCE_VERIFY_FAIL;
+          return {
+            output: {
+              status: "green",
+              summary: "final repair",
+              changedFiles: ["src/greet.ts"],
+            },
+            providerSessionId,
+            providerRunId: `green-${greenCalls}`,
+            providerSessionReused: Boolean(request.providerSessionId),
+            submittedPrompt: request.prompt,
+          };
+        }
+        if (request.role === "reviewer") {
+          return {
+            output: { approved: true, summary: "ok", findings: [] },
+            providerSessionId: "review-session",
+            providerRunId: "review-1",
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+        throw new Error(`Unexpected role ${request.role}`);
+      },
+      async release(providerSessionId) {
+        released.push(providerSessionId);
+      },
+    };
+
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Final repair budget");
+    const loaded = await engine.store.load(started.runId);
+    process.env.HARNESS_FORCE_VERIFY_FAIL = "1";
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...loaded,
+      phase: "executing",
+      treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
+      reflectBrief: {
+        draft: "d",
+        confirmed: "Confirmed brief",
+        confirmedAt: new Date().toISOString(),
+      },
+      tasks: [
+        {
+          id: "final-repair",
+          title: "Ship greeting",
+          description: "Final repair",
+          acceptanceCriteria: ["greeting works"],
+          affectedPaths: ["src/greet.ts"],
+          blockedBy: [],
+          tdd: true,
+          status: "active",
+          step: "verifying",
+          // Cumulative counter already exhausted if it were the budget.
+          attempts: { tests: 4, implementation: 9, review: 0 },
+          evidence: [],
+          testPaths: ["tests/greet.test.ts"],
+          changedFiles: ["tests/greet.test.ts", "src/greet.ts"],
+          tddLoop: {
+            round: 2,
+            atVerifiedGreen: true,
+            finalRepairPending: false,
+            finalRepairAttempts: 0,
+            completedRounds: [
+              {
+                number: 1,
+                outcome: "implemented",
+                testPathsAdded: ["tests/greet.test.ts"],
+                behaviorsAdded: ["greets"],
+                edgeCasesAdded: [],
+                targetedEvidencePurpose: "tdd:green",
+                completedAt: new Date().toISOString(),
+              },
+            ],
+            coverage: {
+              behaviors: ["greets"],
+              edgeCases: [],
+              finalAssessment: {
+                acceptanceCriteria: [
+                  {
+                    criterionIndex: 0,
+                    covered: true,
+                    testPaths: ["tests/greet.test.ts"],
+                    rationale: "covered",
+                  },
+                ],
+                edgeCaseRationale: "ok",
+              },
+            },
+            redWriterSession: { providerSessionId: "red-session", turns: 2 },
+            greenImplementerSession: { providerSessionId: "green-session", turns: 3 },
+          },
+        },
+      ],
+    });
+
+    const state = await engine.advance(started.runId);
+    const events = await readFile(
+      path.join(fixture.root, ".agent-harness", "runs", started.runId, "events.jsonl"),
+      "utf8",
+    );
+    expect(events).toContain("task.gates_failed");
+    expect(events).toContain('"finalRepairAttempts":1');
+    expect(events).toContain('"finalRepair":true');
+    expect(greenCalls).toBeGreaterThanOrEqual(1);
+    expect(greenReuse[0]).toBe(true);
+    // Cumulative attempts.implementation must not prevent the dedicated budget.
+    expect(state.tasks[0]?.attempts.implementation).toBeGreaterThanOrEqual(9);
+    expect(state.tasks[0]?.tddLoop?.finalRepairAttempts).toBe(1);
+    // Successful final repair clears the marker before RED reassessment.
+    expect(state.tasks[0]?.tddLoop?.finalRepairPending).toBe(false);
+    expect(events).toContain("task.green_observed");
+    void released;
+    delete process.env.HARNESS_FORCE_VERIFY_FAIL;
+  });
+
+  it("routes review test-coverage findings to RED and production findings to GREEN", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: {
+        tdd: true,
+        maxImplementationAttempts: 3,
+        maxReviewAttempts: 3,
+        generateCommitMessages: false,
+      } as never,
+      commands: {
+        verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }],
+      } as never,
+      agent: { promptBuilder: false } as never,
+    });
+
+    let reviewCalls = 0;
+    const backend: AgentBackend = {
+      async run(request) {
+        if (request.role === "reviewer") {
+          reviewCalls += 1;
+          if (reviewCalls === 1) {
+            return {
+              output: {
+                approved: false,
+                summary: "missing edge case",
+                findings: [
+                  {
+                    severity: "blocking",
+                    kind: "test-coverage",
+                    message: "Add null-input coverage",
+                  },
+                ],
+              },
+              providerSessionId: "review-session",
+              providerRunId: `review-${reviewCalls}`,
+              providerSessionReused: false,
+              submittedPrompt: request.prompt,
+            };
+          }
+          if (reviewCalls === 2) {
+            return {
+              output: {
+                approved: false,
+                summary: "production bug",
+                findings: [
+                  {
+                    severity: "blocking",
+                    kind: "production",
+                    message: "Null dereference in greet",
+                  },
+                ],
+              },
+              providerSessionId: "review-session",
+              providerRunId: `review-${reviewCalls}`,
+              providerSessionReused: false,
+              submittedPrompt: request.prompt,
+            };
+          }
+          return {
+            output: { approved: true, summary: "ok", findings: [] },
+            providerSessionId: "review-session",
+            providerRunId: `review-${reviewCalls}`,
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+        if (request.role === "red-writer") {
+          return {
+            output: {
+              status: "done",
+              summary: "still done",
+              changedFiles: [],
+              acceptanceCoverage: [
+                {
+                  criterionIndex: 0,
+                  covered: true,
+                  testPaths: ["tests/greet.test.ts"],
+                  rationale: "covered",
+                },
+              ],
+              edgeCaseRationale: "ok",
+            },
+            providerSessionId: request.providerSessionId ?? "red-session",
+            providerRunId: "red-1",
+            providerSessionReused: Boolean(request.providerSessionId),
+            submittedPrompt: request.prompt,
+          };
+        }
+        if (request.role === "implementer") {
+          return {
+            output: {
+              status: "green",
+              summary: "fixed",
+              changedFiles: ["src/greet.ts"],
+            },
+            providerSessionId: request.providerSessionId ?? "green-session",
+            providerRunId: "green-1",
+            providerSessionReused: Boolean(request.providerSessionId),
+            submittedPrompt: request.prompt,
+          };
+        }
+        throw new Error(`Unexpected role ${request.role}`);
+      },
+      async release() {},
+    };
+
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Review finding routing");
+    const loaded = await engine.store.load(started.runId);
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...loaded,
+      phase: "executing",
+      treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
+      reflectBrief: {
+        draft: "d",
+        confirmed: "Confirmed brief",
+        confirmedAt: new Date().toISOString(),
+      },
+      tasks: [
+        {
+          id: "review-route",
+          title: "Ship greeting",
+          description: "Review routing",
+          acceptanceCriteria: ["greeting works"],
+          affectedPaths: ["src/greet.ts"],
+          blockedBy: [],
+          tdd: true,
+          status: "active",
+          step: "reviewing",
+          attempts: { tests: 2, implementation: 8, review: 0 },
+          evidence: [],
+          testPaths: ["tests/greet.test.ts"],
+          changedFiles: ["tests/greet.test.ts", "src/greet.ts"],
+          tddLoop: {
+            round: 2,
+            atVerifiedGreen: true,
+            finalRepairAttempts: 0,
+            finalRepairPending: false,
+            completedRounds: [
+              {
+                number: 1,
+                outcome: "implemented",
+                testPathsAdded: ["tests/greet.test.ts"],
+                behaviorsAdded: ["greets"],
+                edgeCasesAdded: [],
+                targetedEvidencePurpose: "tdd:green",
+                completedAt: new Date().toISOString(),
+              },
+            ],
+            coverage: {
+              behaviors: ["greets"],
+              edgeCases: [],
+              finalAssessment: {
+                acceptanceCriteria: [
+                  {
+                    criterionIndex: 0,
+                    covered: true,
+                    testPaths: ["tests/greet.test.ts"],
+                    rationale: "covered",
+                  },
+                ],
+                edgeCaseRationale: "ok",
+              },
+            },
+            redWriterSession: { providerSessionId: "red-session", turns: 1 },
+            greenImplementerSession: { providerSessionId: "green-session", turns: 1 },
+          },
+        },
+      ],
+    });
+
+    await engine.advance(started.runId);
+    const events = await readFile(
+      path.join(fixture.root, ".agent-harness", "runs", started.runId, "events.jsonl"),
+      "utf8",
+    );
+    expect(events).toContain('"reviewRepairRoute":"test-coverage"');
+    expect(events).toContain('"reviewRepairRoute":"production"');
+    expect(reviewCalls).toBeGreaterThanOrEqual(2);
+    // Production route budgets with finalRepairAttempts / finalRepairPending.
+    expect(events).toContain('"finalRepairPending":true');
+    expect(events).toMatch(/"finalRepairAttempts":[1-9]/);
+  });
+
+  it("rotates RED and GREEN context independently and releases only that role", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: {
+        tdd: true,
+        maxContextTurns: 2,
+        maxImplementationAttempts: 3,
+        generateCommitMessages: false,
+      } as never,
+      commands: {
+        verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }],
+      } as never,
+      agent: { promptBuilder: false } as never,
+    });
+
+    const released: string[] = [];
+    const redRequests: Array<{ reused: boolean; providerSessionId?: string }> = [];
+    const greenRequests: Array<{ reused: boolean; providerSessionId?: string }> = [];
+    let redCalls = 0;
+    const backend: AgentBackend = {
+      async run(request) {
+        if (request.role === "red-writer") {
+          redCalls += 1;
+          redRequests.push({
+            reused: Boolean(request.providerSessionId),
+            providerSessionId: request.providerSessionId,
+          });
+          const providerSessionId = request.providerSessionId ?? `red-fresh-${redCalls}`;
+          if (redCalls === 1) {
+            await mkdir(path.join(request.cwd, "tests"), { recursive: true });
+            await writeFile(
+              path.join(request.cwd, "tests", "a.test.ts"),
+              "export {};\n",
+              "utf8",
+            );
+            return {
+              output: {
+                status: "continue",
+                summary: "batch",
+                changedFiles: ["tests/a.test.ts"],
+                behaviorsAdded: ["a"],
+                edgeCasesAdded: [],
+              },
+              providerSessionId,
+              providerRunId: `red-${redCalls}`,
+              providerSessionReused: Boolean(request.providerSessionId),
+              submittedPrompt: request.prompt,
+            };
+          }
+          return {
+            output: {
+              status: "done",
+              summary: "done",
+              changedFiles: [],
+              acceptanceCoverage: [
+                {
+                  criterionIndex: 0,
+                  covered: true,
+                  testPaths: ["tests/a.test.ts"],
+                  rationale: "ok",
+                },
+              ],
+              edgeCaseRationale: "ok",
+            },
+            providerSessionId,
+            providerRunId: `red-${redCalls}`,
+            providerSessionReused: Boolean(request.providerSessionId),
+            submittedPrompt: request.prompt,
+          };
+        }
+        if (request.role === "implementer") {
+          greenRequests.push({
+            reused: Boolean(request.providerSessionId),
+            providerSessionId: request.providerSessionId,
+          });
+          await mkdir(path.join(request.cwd, "src"), { recursive: true });
+          await writeFile(path.join(request.cwd, "src", "a.ts"), "export {};\n", "utf8");
+          return {
+            output: {
+              status: "green",
+              summary: "ok",
+              changedFiles: ["src/a.ts"],
+            },
+            providerSessionId: request.providerSessionId ?? "green-session",
+            providerRunId: "green-1",
+            providerSessionReused: Boolean(request.providerSessionId),
+            submittedPrompt: request.prompt,
+          };
+        }
+        if (request.role === "reviewer") {
+          return {
+            output: { approved: true, summary: "ok", findings: [] },
+            providerSessionId: "review-session",
+            providerRunId: "review-1",
+            providerSessionReused: false,
+            submittedPrompt: request.prompt,
+          };
+        }
+        throw new Error(`Unexpected role ${request.role}`);
+      },
+      async release(providerSessionId) {
+        released.push(providerSessionId);
+      },
+    };
+
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("Context rotation");
+    const loaded = await engine.store.load(started.runId);
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...loaded,
+      phase: "executing",
+      treeFingerprint: await new GitService(config, engine.paths).treeFingerprint(),
+      reflectBrief: {
+        draft: "d",
+        confirmed: "Confirmed brief",
+        confirmedAt: new Date().toISOString(),
+      },
+      tasks: [
+        {
+          id: "rotate",
+          title: "Ship greeting",
+          description: "Rotate context",
+          acceptanceCriteria: ["works"],
+          affectedPaths: ["src/a.ts"],
+          blockedBy: [],
+          tdd: true,
+          status: "active",
+          step: "writing_tests",
+          attempts: { tests: 0, implementation: 0, review: 0 },
+          evidence: [],
+          testPaths: [],
+          changedFiles: [],
+          // RED already at the turn limit; GREEN stays under it.
+          tddLoop: {
+            round: 1,
+            atVerifiedGreen: false,
+            redWriterSession: { providerSessionId: "red-stale", turns: 2 },
+            greenImplementerSession: { providerSessionId: "green-keep", turns: 1 },
+          },
+        },
+      ],
+    });
+
+    const state = await engine.advance(started.runId);
+    const events = await readFile(
+      path.join(fixture.root, ".agent-harness", "runs", started.runId, "events.jsonl"),
+      "utf8",
+    );
+    expect(events).toContain("task.tdd_context_rotated");
+    expect(events).toContain('"role":"red-writer"');
+    // RED rotated (stale released, first request cold-starts); GREEN reused independently.
+    expect(released).toContain("red-stale");
+    expect(redRequests[0]?.reused).toBe(false);
+    expect(greenRequests[0]?.providerSessionId).toBe("green-keep");
+    expect(greenRequests[0]?.reused).toBe(true);
+    // Terminal completion releases remaining worker sessions (including green-keep).
+    expect(released).toContain("green-keep");
+    expect(state.tasks[0]?.tddLoop?.redWriterSession).toBeUndefined();
+    expect(state.tasks[0]?.tddLoop?.greenImplementerSession).toBeUndefined();
+  });
+
+  it("releases both worker sessions on no-progress failure", async () => {
+    const fixture = await createProjectFixture();
+    await fixture.initGit();
+    const config = fixtureConfig(fixture.root, {
+      git: { enabled: true, baseBranch: "main" } as never,
+      workflow: {
+        tdd: true,
+        maxImplementationAttempts: 3,
+        generateCommitMessages: false,
+      } as never,
+      commands: {
+        verification: [{ id: "test", command: 'node -e "process.exit(1)"', timeoutMs: 600_000 }],
+      } as never,
+      agent: { promptBuilder: false } as never,
+    });
+
+    const released: string[] = [];
+    const backend: AgentBackend = {
+      async run() {
+        throw new Error("Agent should not run when progress gate blocks");
+      },
+      async release(providerSessionId) {
+        released.push(providerSessionId);
+      },
+    };
+
+    const engine = new HarnessEngine(config, { backend });
+    const started = await engine.start("No progress release");
+    const loaded = await engine.store.load(started.runId);
+    await mkdir(path.join(engine.paths.workspaceRoot, "tests"), { recursive: true });
+    await writeFile(
+      path.join(engine.paths.workspaceRoot, "tests", "greet.test.ts"),
+      "export {};\n",
+      "utf8",
+    );
+    const gitService = new GitService(config, engine.paths);
+    const checkpoint = await gitService.commitRedCheckpoint({
+      taskId: "no-progress",
+      taskTitle: "Ship greeting",
+      paths: ["tests/greet.test.ts"],
+      round: 1,
+    });
+    const evidence = {
+      purpose: "tdd:green",
+      command: "test",
+      exitCode: 1,
+      passed: false,
+      stdout: "",
+      stderr: "fail",
+      durationMs: 1,
+      at: new Date().toISOString(),
+    };
+    const reviewSummary = "still broken";
+    const fingerprint = evidenceFingerprint({
+      taskId: "no-progress",
+      step: "implementing",
+      sourceTreeState: await gitService.treeFingerprint(),
+      redCheckpointSha: checkpoint!.sha,
+      failingTestIds: failingTestIdsFromEvidence(evidence),
+      failureCategory: failureCategoryFromEvidence(evidence, "verification"),
+      reviewFinding: reviewSummary,
+      frozenConfigHash: String(config.workflow.maxImplementationAttempts),
+    });
+
+    await engine.store.writeJson(started.runId, "state.json", {
+      ...loaded,
+      phase: "executing",
+      treeFingerprint: await gitService.treeFingerprint(),
+      reflectBrief: {
+        draft: "d",
+        confirmed: "Confirmed brief",
+        confirmedAt: new Date().toISOString(),
+      },
+      tasks: [
+        {
+          id: "no-progress",
+          title: "Ship greeting",
+          description: "No progress",
+          acceptanceCriteria: ["works"],
+          affectedPaths: ["src/greet.ts"],
+          blockedBy: [],
+          tdd: true,
+          status: "active",
+          // Fresh implementing entry with prior review feedback trips the progress gate.
+          step: "implementing",
+          attempts: { tests: 1, implementation: 1, review: 1 },
+          evidence: [evidence],
+          evidenceFingerprint: fingerprint,
+          seenEvidenceFingerprints: [fingerprint],
+          seenRepairEdges: [`${fingerprint}:implementer->implementer`],
+          reviewSummary,
+          testPaths: ["tests/greet.test.ts"],
+          redCheckpointSha: checkpoint!.sha,
+          redBaseSha: checkpoint!.baseSha,
+          redCheckpointPaths: ["tests/greet.test.ts"],
+          redCheckpointHistory: [checkpoint!.sha],
+          changedFiles: ["tests/greet.test.ts"],
+          tddLoop: {
+            round: 1,
+            atVerifiedGreen: false,
+            pendingRound: {
+              number: 1,
+              mode: "feature",
+              redCheckpointSha: checkpoint!.sha,
+              testPathsAdded: ["tests/greet.test.ts"],
+              behaviorsAdded: ["greets"],
+              edgeCasesAdded: [],
+              // Zero so this is not treated as an in-round retry (progress gate applies).
+              implementerAttempts: 0,
+              startedAt: new Date().toISOString(),
+            },
+            redWriterSession: { providerSessionId: "red-session", turns: 1 },
+            greenImplementerSession: { providerSessionId: "green-session", turns: 1 },
+          },
+        },
+      ],
+    });
+
+    const state = await engine.advance(started.runId);
+    expect(state.tasks[0]?.status).toBe("failed");
+    expect(state.tasks[0]?.step).toBe("failed");
+    expect(released).toEqual(expect.arrayContaining(["red-session", "green-session"]));
+    expect(state.tasks[0]?.tddLoop?.redWriterSession).toBeUndefined();
+    expect(state.tasks[0]?.tddLoop?.greenImplementerSession).toBeUndefined();
   });
 });

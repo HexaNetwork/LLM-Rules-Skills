@@ -6,8 +6,7 @@ import {
   describeWorkspaceDivergence,
   diffWorkspaceEvidence,
   formatWorkspaceDivergenceMessage,
-  isLegacyTreeFingerprint,
-} from "../../src/domain/workspace.js";
+  isLegacyTreeFingerprint} from "../../src/domain/workspace.js";
 
 function evidence(overrides: Partial<{
   headSha: string;
@@ -20,8 +19,7 @@ function evidence(overrides: Partial<{
     indexTreeSha: "b".repeat(40),
     statusDigest: "c".repeat(64),
     changedPaths: ["src/a.ts"],
-    ...overrides,
-  });
+    ...overrides});
 }
 
 describe("boundWorkspaceChangedPaths", () => {
@@ -44,8 +42,7 @@ describe("diffWorkspaceEvidence", () => {
       index: false,
       workingFiles: false,
       changedPaths: [],
-      omittedCount: 0,
-    });
+      omittedCount: 0});
   });
 
   it("detects HEAD, index, and working-file components separately", () => {
@@ -73,8 +70,7 @@ describe("diffWorkspaceEvidence", () => {
       head: false,
       index: false,
       workingFiles: true,
-      changedPaths: ["external.txt"],
-    });
+      changedPaths: ["external.txt"]});
   });
 });
 
@@ -84,8 +80,7 @@ describe("formatWorkspaceDivergenceMessage", () => {
     const observed = evidence({
       headSha: "d".repeat(40),
       statusDigest: "f".repeat(64),
-      changedPaths: ["external-edit.txt", "src/a.ts"],
-    });
+      changedPaths: ["external-edit.txt", "src/a.ts"]});
     const diff = diffWorkspaceEvidence(previous, observed);
     const message = formatWorkspaceDivergenceMessage(diff, observed);
     expect(message).toMatch(/Workspace diverged in this run's worktree/i);

@@ -5,8 +5,7 @@ import {
   GrillOutputSchema,
   QuestionSchema,
   ReflectOutputSchema,
-  RunStateSchema,
-} from "../../src/domain.js";
+  RunStateSchema} from "../../src/domain.js";
 
 describe("human question contracts", () => {
   const question = {
@@ -16,25 +15,20 @@ describe("human question contracts", () => {
       {
         id: "quiet",
         label: "Quiet",
-        description: "Restrained presentation supports focused work.",
-      },
+        description: "Restrained presentation supports focused work."},
       {
         id: "energetic",
         label: "Energetic",
-        description: "Stronger emphasis makes progress more prominent.",
-      },
-    ],
+        description: "Stronger emphasis makes progress more prominent."}],
     recommendedOptionId: "quiet",
-    recommendation: "Use quiet because this is a long-running work surface.",
-  };
+    recommendation: "Use quiet because this is a long-running work surface."};
 
   it("requires a valid recommendation for grill questions", () => {
     expect(
       GrillOutputSchema.parse({
         status: "needs_input",
         summary: "Need a tone decision",
-        questions: [question],
-      }).status,
+        questions: [question]}).status,
     ).toBe("needs_input");
   });
 
@@ -43,8 +37,7 @@ describe("human question contracts", () => {
       status: "needs_input",
       summary: "Need several decisions",
       questions: [question, { ...question, prompt: "A second, independent question?" }],
-      openUnknowns: [{ id: "tone", title: "Tone", whyItMatters: "Sets voice", impact: "shaping" }],
-    });
+      openUnknowns: [{ id: "tone", title: "Tone", whyItMatters: "Sets voice", impact: "shaping" }]});
     if (parsed.status !== "needs_input") throw new Error("expected needs_input");
     expect(parsed.questions).toHaveLength(2);
     expect(parsed.openUnknowns[0]?.id).toBe("tone");
@@ -55,8 +48,7 @@ describe("human question contracts", () => {
       GrillOutputSchema.parse({
         status: "needs_input",
         summary: "Too many",
-        questions: Array.from({ length: 7 }, () => question),
-      }),
+        questions: Array.from({ length: 7 }, () => question)}),
     ).toThrow();
   });
 
@@ -65,8 +57,7 @@ describe("human question contracts", () => {
       GrillOutputSchema.parse({
         status: "needs_input",
         summary: "Need a tone decision",
-        questions: [{ ...question, recommendedOptionId: "missing" }],
-      }),
+        questions: [{ ...question, recommendedOptionId: "missing" }]}),
     ).toThrow(/recommended option/i);
   });
 
@@ -74,8 +65,7 @@ describe("human question contracts", () => {
     const needsInput = GrillOutputSchema.parse({
       status: "needs_input",
       summary: "Need a tone decision",
-      questions: [question],
-    });
+      questions: [question]});
     expect(needsInput.resolutionSummaries).toEqual([]);
 
     const ready = GrillOutputSchema.parse({
@@ -86,10 +76,7 @@ describe("human question contracts", () => {
           id: "q1",
           question: "Tone?",
           answer: "Quiet",
-          summary: "Use quiet tone",
-        },
-      ],
-    });
+          summary: "Use quiet tone"}]});
     expect(ready.resolutionSummaries).toEqual([]);
   });
 
@@ -99,14 +86,11 @@ describe("human question contracts", () => {
       summary: "Batch incorporated",
       resolutionSummaries: [
         { questionId: "q1", summary: "Settled tone" },
-        { questionId: "q2", summary: "Settled length" },
-      ],
-      resolutions: [],
-    });
+        { questionId: "q2", summary: "Settled length" }],
+      resolutions: []});
     expect(parsed.resolutionSummaries).toEqual([
       { questionId: "q1", summary: "Settled tone" },
-      { questionId: "q2", summary: "Settled length" },
-    ]);
+      { questionId: "q2", summary: "Settled length" }]);
   });
 
   it("stores reflect drafts on open questions", () => {
@@ -116,8 +100,7 @@ describe("human question contracts", () => {
       prompt: "Confirm the restatement",
       draftAnswer: "Feature brief body",
       status: "open",
-      askedAt: new Date().toISOString(),
-    });
+      askedAt: new Date().toISOString()});
     expect(parsed.draftAnswer).toBe("Feature brief body");
     expect(parsed.purpose).toBe("reflect");
   });
@@ -132,8 +115,7 @@ describe("human question contracts", () => {
       inScope: ["editable brief"],
       outOfScope: ["wayfinding"],
       assumptions: ["HITL continues in the dashboard"],
-      unknowns: ["PRD generation later"],
-    });
+      unknowns: ["PRD generation later"]});
     expect(parsed.proposedTitle).toBe("Add editable reflect");
     expect(parsed.restatement).toContain("editable reflect");
   });
@@ -147,8 +129,7 @@ describe("human question contracts", () => {
       inScope: [],
       outOfScope: [],
       assumptions: [],
-      unknowns: [],
-    });
+      unknowns: []});
     expect(parsed.proposedTitle).toBeUndefined();
   });
 
@@ -158,8 +139,7 @@ describe("human question contracts", () => {
       purpose: "grill",
       prompt: "Skipped for now",
       status: "parked",
-      askedAt: new Date().toISOString(),
-    });
+      askedAt: new Date().toISOString()});
     expect(parsed.status).toBe("parked");
   });
 });

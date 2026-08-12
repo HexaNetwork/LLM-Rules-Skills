@@ -12,8 +12,7 @@ const reflectOutput = (overrides: Partial<ReflectOutput> = {}): ReflectOutput =>
   outOfScope: [],
   assumptions: [],
   unknowns: [],
-  ...overrides,
-});
+  ...overrides});
 
 describe("summarizeRun title", () => {
   const now = "2026-01-01T00:00:00.000Z";
@@ -25,8 +24,7 @@ describe("summarizeRun title", () => {
       structured: reflectOutput({ proposedTitle: "Draft title" }),
       confirmed: "confirmed brief",
       confirmedStructured: reflectOutput({ proposedTitle: "Confirmed title" }),
-      confirmedAt: now,
-    };
+      confirmedAt: now};
 
     const summary = summarizeRun(state);
     expect(summary.title).toBe("Confirmed title");
@@ -37,8 +35,7 @@ describe("summarizeRun title", () => {
     const state = createRunState("draft-title-run", "Raw idea", now);
     state.reflectBrief = {
       draft: "draft brief",
-      structured: reflectOutput({ proposedTitle: "Draft title" }),
-    };
+      structured: reflectOutput({ proposedTitle: "Draft title" })};
 
     expect(summarizeRun(state).title).toBe("Draft title");
   });
@@ -47,8 +44,7 @@ describe("summarizeRun title", () => {
     const state = createRunState("legacy-title-run", "Raw idea", now);
     state.reflectBrief = {
       draft: "draft brief",
-      structured: reflectOutput({ proposedTitle: undefined }),
-    };
+      structured: reflectOutput({ proposedTitle: undefined })};
     delete state.reflectBrief.structured!.proposedTitle;
 
     expect(summarizeRun(state).title).toBeUndefined();

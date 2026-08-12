@@ -6,8 +6,7 @@ import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 import {
   createProjectFixture,
-  type ProjectFixture,
-} from "../testkit/project-fixture.js";
+  type ProjectFixture} from "../testkit/project-fixture.js";
 
 const REFLECT_OUTPUT = {
   proposedTitle: "Add greeting tone",
@@ -18,8 +17,7 @@ const REFLECT_OUTPUT = {
   inScope: ["tone choice", "greeting copy"],
   outOfScope: ["localization"],
   assumptions: ["English only"],
-  unknowns: ["formal vs casual"],
-};
+  unknowns: ["formal vs casual"]};
 
 describe("repository lock", () => {
   let fixture: ProjectFixture | undefined;
@@ -65,14 +63,11 @@ describe("repository lock", () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
-        workflow: { tdd: false } as never,
+        workflow: { } as never,
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
-          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        },
-      },
-    });
+          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
 
     let releaseA!: () => void;
@@ -98,18 +93,14 @@ describe("repository lock", () => {
           startedA();
           await aHold;
           return REFLECT_OUTPUT;
-        },
-      }),
-    });
+        }})});
     const engineB = new HarnessEngine(fixture.config, {
       backend: createFakeBackend({
         reflector: async () => {
           startedB();
           await bHold;
           return REFLECT_OUTPUT;
-        },
-      }),
-    });
+        }})});
 
     const runA = await engineA.start("Idea A", "run-a", false, false);
     const runB = await engineB.start("Idea B", "run-b", false, false);
@@ -129,8 +120,7 @@ describe("repository lock", () => {
   it("serializes legacy-shared advances with the repository lock", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { tdd: false } as never,
-    });
+      workflow: { } as never});
 
     let releaseReflect!: () => void;
     let reflecting!: () => void;
@@ -146,8 +136,7 @@ describe("repository lock", () => {
         reflecting();
         await reflectHold;
         return REFLECT_OUTPUT;
-      },
-    });
+      }});
     const engine = new HarnessEngine(config, { backend });
 
     const runA = await engine.start("Idea A", "run-a", false, false);
@@ -156,14 +145,12 @@ describe("repository lock", () => {
       version: 1,
       kind: "legacy-shared",
       controlRoot: root,
-      createdAt: new Date().toISOString(),
-    });
+      createdAt: new Date().toISOString()});
     await engine.store.writeJson(runB.runId, "workspace.json", {
       version: 1,
       kind: "legacy-shared",
       controlRoot: root,
-      createdAt: new Date().toISOString(),
-    });
+      createdAt: new Date().toISOString()});
 
     const first = engine.advance(runA.runId);
     await reflectStarted;
@@ -185,18 +172,14 @@ describe("repository lock", () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
-        workflow: { tdd: false } as never,
+        workflow: { } as never,
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
-          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        },
-      },
-    });
+          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const backend = createFakeBackend({
-      reflector: () => REFLECT_OUTPUT,
-    });
+      reflector: () => REFLECT_OUTPUT});
     const engine = new HarnessEngine(fixture.config, { backend });
     const started = await engine.start("Idea", "run-awaiting", false, false);
 
@@ -208,11 +191,9 @@ describe("repository lock", () => {
   it("allows answerMany while another holder keeps the repository lock", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { tdd: false } as never,
-    });
+      workflow: { } as never});
     const backend = createFakeBackend({
-      reflector: () => REFLECT_OUTPUT,
-    });
+      reflector: () => REFLECT_OUTPUT});
     const engine = new HarnessEngine(config, { backend });
     let state = await engine.start("Idea", "run-answer", false, false);
     state = await engine.advance(state.runId);
@@ -238,8 +219,7 @@ describe("repository lock", () => {
     await ready;
 
     state = await engine.answerMany(state.runId, [
-      { questionId: question!.id, answer: "Confirmed brief: casual greeting." },
-    ]);
+      { questionId: question!.id, answer: "Confirmed brief: casual greeting." }]);
     expect(state.phase).toBe("grilling");
     expect(state.questions.find((item) => item.id === question!.id)?.status).toBe("answered");
 

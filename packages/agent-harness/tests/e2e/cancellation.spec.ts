@@ -6,12 +6,10 @@ import {
   selectedRunId,
   startNewRun,
   waitForRunStatus,
-  withE2EHarness,
-} from "./helpers.js";
+  withE2EHarness} from "./helpers.js";
 
 test("cancellation: cancel while reflector is active ends cancelled with no job", async ({
-  page,
-}) => {
+  page}) => {
   let release!: () => void;
   let reflecting!: () => void;
   const startedReflect = new Promise<void>((resolve) => {
@@ -25,9 +23,7 @@ test("cancellation: cancel while reflector is active ends cancelled with no job"
     {
       role: "reflector",
       waitFor: hold,
-      output: REFLECT_OUTPUT,
-    },
-  ]);
+      output: REFLECT_OUTPUT}]);
 
   // Notify when the deferred step is entered (queue shift happens before waitFor).
   const originalRun = scripted.backend.run.bind(scripted.backend);
@@ -43,9 +39,7 @@ test("cancellation: cancel while reflector is active ends cancelled with no job"
       backend: scripted.backend,
       steps: [],
       config: {
-        agent: { timeoutMs: 30_000, promptBuilder: false, schemaRepairAttempts: 0 },
-      },
-    },
+        agent: { timeoutMs: 30_000, promptBuilder: false, schemaRepairAttempts: 0 }}},
     async ({ page, fixture, ui }) => {
       await startNewRun(page, "Cancel while reflecting");
       await startedReflect;

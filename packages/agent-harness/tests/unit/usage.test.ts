@@ -15,8 +15,7 @@ describe("reportedTotal", () => {
       reportedTotal({
         inputTokens: 320_653,
         outputTokens: 6_217,
-        totalTokens: 598_134,
-      }),
+        totalTokens: 598_134}),
     ).toBe(326_870);
   });
 
@@ -41,10 +40,7 @@ describe("run usage accrual and cost ceiling", () => {
         guidance: {
           ...fixtureConfig(root).knowledge.guidance,
           enabled: true,
-          assignments: undefined,
-        },
-      },
-    });
+          assignments: undefined}}});
     let observedRequest: Parameters<AgentBackend["run"]>[0] | undefined;
     const backend: AgentBackend = {
       async run(request) {
@@ -52,17 +48,14 @@ describe("run usage accrual and cost ceiling", () => {
         return {
           output: {
             summary: "Recognize the nested test directory.",
-            configPatch: { workflow: { testPathPatterns: ["tests/**", "**/src/main/test/**"] } },
-          },
+            configPatch: { workflow: { testPathPatterns: ["tests/**", "**/src/main/test/**"] } }},
           providerSessionId: "config-fixer-agent",
           providerRunId: "config-fixer-run",
           inputTokens: 100,
           outputTokens: 20,
           cacheReadTokens: 60,
-          totalTokens: 120,
-        };
-      },
-    };
+          totalTokens: 120};
+      }};
     const engine = new HarnessEngine(config, { backend });
     const hash = configurationHash(config);
     const runId = "config-fixer-usage";
@@ -72,8 +65,7 @@ describe("run usage accrual and cost ceiling", () => {
       blockedFrom: "executing",
       blockedKind: "config",
       blockedRetriable: false,
-      failure: "Test writer changed non-test paths: app/src/main/test/ThingTest.java",
-    };
+      failure: "Test writer changed non-test paths: app/src/main/test/ThingTest.java"};
     await engine.store.initialize();
     await engine.store.create(state);
     await engine.store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
@@ -86,8 +78,7 @@ describe("run usage accrual and cost ceiling", () => {
       cacheReadTokens: 60,
       totalTokens: 120,
       invocations: 1,
-      sessionsRead: 1,
-    });
+      sessionsRead: 1});
     expect(observedRequest?.allowTools).toBe(false);
     expect(observedRequest?.prompt).not.toContain("SELECTED GUIDANCE");
     expect(observedRequest?.prompt).toContain("Return exactly one raw JSON object");
@@ -98,11 +89,8 @@ describe("run usage accrual and cost ceiling", () => {
     const config = fixtureConfig(root, {
       workflow: {
         ...fixtureConfig(root).workflow,
-        maxRunTokens: 100,
-        tdd: false,
-      },
-      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
-    });
+        maxRunTokens: 100},
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] }});
     let implementerCalls = 0;
     const backend = createFakeBackend({
       implementer: () => {
@@ -110,8 +98,7 @@ describe("run usage accrual and cost ceiling", () => {
         return { summary: "built", changedFiles: [`src/a${implementerCalls}.ts`] };
       },
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
-      "message-writer": () => ({ subject: "feat: a", body: "" }),
-    });
+      "message-writer": () => ({ subject: "feat: a", body: "" })});
     const engine = new HarnessEngine(config, { backend });
     const tasks: BuildTask[] = [1, 2].map((index) => ({
       id: `t${index}`,
@@ -120,36 +107,31 @@ describe("run usage accrual and cost ceiling", () => {
       acceptanceCriteria: ["works"],
       affectedPaths: [],
       blockedBy: [],
-      tdd: false,
       status: "pending" as const,
       step: "pending" as const,
-      attempts: { tests: 0, implementation: 0, review: 0 },
+      attempts: { implementation: 0, review: 0 },
       evidence: [],
       testPaths: [],
-      changedFiles: [],
-    }));
+      changedFiles: []}));
     let state: RunState = {
       ...createRunState("token-ceiling", "idea", new Date().toISOString(), "hash", CONFIG_VERSION),
       phase: "executing",
       tasks,
       reflectBrief: { draft: "d", confirmed: "confirmed", confirmedAt: new Date().toISOString() },
-      configurationHash: configurationHash(config),
-    };
+      configurationHash: configurationHash(config)};
     await engine.store.initialize();
     await engine.store.create(state);
     await engine.store.writeJson(state.runId, "state.json", state);
     await engine.store.writeJson(state.runId, "config.json", {
       ...config,
-      configVersion: CONFIG_VERSION,
-    });
+      configVersion: CONFIG_VERSION});
     // Pretend a prior step already spent past the ceiling.
     await engine.store.writeJson(state.runId, "sessions/prior.json", {
       sessionId: "prior",
       role: "implementer",
       model: "capable-model",
       status: "completed",
-      usage: { inputTokens: 80, outputTokens: 40, totalTokens: 120 },
-    });
+      usage: { inputTokens: 80, outputTokens: 40, totalTokens: 120 }});
 
     state = await engine.advance(state.runId);
 
@@ -172,25 +154,19 @@ describe("run usage accrual and cost ceiling", () => {
             inputPerMillion: 1,
             outputPerMillion: 2,
             cacheReadPerMillion: 0.1,
-            cacheWritePerMillion: 1.25,
-          },
-        },
-      },
-    });
+            cacheWritePerMillion: 1.25}}}});
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
     const hash = configurationHash(config);
     let state: RunState = {
       ...createRunState("usage-idempotent", "idea", new Date().toISOString(), hash, CONFIG_VERSION),
       phase: "executing",
-      configurationHash: hash,
-    };
+      configurationHash: hash};
     await engine.store.initialize();
     await engine.store.create(state);
     await engine.store.writeJson(state.runId, "state.json", state);
     await engine.store.writeJson(state.runId, "config.json", {
       ...config,
-      configVersion: CONFIG_VERSION,
-    });
+      configVersion: CONFIG_VERSION});
     await engine.store.writeJson(state.runId, "sessions/a.json", {
       sessionId: "a",
       role: "implementer",
@@ -202,20 +178,17 @@ describe("run usage accrual and cost ceiling", () => {
         cacheReadTokens: 200_000,
         cacheWriteTokens: 50_000,
         totalTokens: 2_000_000, // provider double-count — ignored when components present
-      },
-    });
+      }});
     await engine.store.writeJson(state.runId, "sessions/b.json", {
       sessionId: "b",
       role: "reviewer",
       model: "capable-model",
       status: "completed",
-      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-    });
+      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 }});
 
     const ctx = new ApplicationContext(config, {
       backend: createFakeBackend({}),
-      store: engine.store,
-    });
+      store: engine.store});
     const first = await accrueRunUsage(ctx, await engine.store.load(state.runId));
     const second = await accrueRunUsage(ctx, first);
 
@@ -236,16 +209,12 @@ describe("run usage accrual and cost ceiling", () => {
       workflow: {
         ...fixtureConfig(root).workflow,
         maxRunTokens: 100,
-        testPathPatterns: frozenPatterns,
-      },
-    });
+        testPathPatterns: frozenPatterns}});
     const liveConfig = {
       ...config,
       workflow: {
         ...config.workflow,
-        testPathPatterns: ["modules/**/src/test/**"],
-      },
-    };
+        testPathPatterns: ["modules/**/src/test/**"]}};
     const engine = new HarnessEngine(liveConfig, { backend: createFakeBackend({}) });
     const hash = configurationHash(config);
     let state: RunState = {
@@ -254,15 +223,13 @@ describe("run usage accrual and cost ceiling", () => {
       blockedFrom: "executing",
       blockedKind: "budget",
       blockedRetriable: false,
-      failure: "Run exceeded maxRunTokens: observed 120 > limit 100",
-    };
+      failure: "Run exceeded maxRunTokens: observed 120 > limit 100"};
     await engine.store.initialize();
     await engine.store.create(state);
     await engine.store.writeJson(state.runId, "state.json", state);
     await engine.store.writeJson(state.runId, "config.json", {
       ...config,
-      configVersion: CONFIG_VERSION,
-    });
+      configVersion: CONFIG_VERSION});
 
     state = await engine.retry(state.runId, { force: true, maxRunTokens: 500 });
 
@@ -285,31 +252,25 @@ describe("run usage accrual and cost ceiling", () => {
         capable: "capable-model",
         roles: {},
         pricing: {
-          "priced-model": { inputPerMillion: 10, outputPerMillion: 20 },
-        },
-      },
-    });
+          "priced-model": { inputPerMillion: 10, outputPerMillion: 20 }}}});
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
     const hash = configurationHash(config);
     let state: RunState = {
       ...createRunState("unpriced-model", "idea", new Date().toISOString(), hash, CONFIG_VERSION),
       phase: "executing",
-      configurationHash: hash,
-    };
+      configurationHash: hash};
     await engine.store.initialize();
     await engine.store.create(state);
     await engine.store.writeJson(state.runId, "state.json", state);
     await engine.store.writeJson(state.runId, "config.json", {
       ...config,
-      configVersion: CONFIG_VERSION,
-    });
+      configVersion: CONFIG_VERSION});
     await engine.store.writeJson(state.runId, "sessions/unpriced.json", {
       sessionId: "unpriced",
       role: "implementer",
       model: "capable-model",
       status: "completed",
-      usage: { inputTokens: 2_000, outputTokens: 500, totalTokens: 2_500 },
-    });
+      usage: { inputTokens: 2_000, outputTokens: 500, totalTokens: 2_500 }});
 
     state = await accrueRunUsage(
       new ApplicationContext(config, { backend: createFakeBackend({}), store: engine.store }),

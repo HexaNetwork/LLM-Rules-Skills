@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decideWorktreeCleanup,
-  type WorktreeCleanupFacts,
-} from "../../src/domain/workspace-cleanup.js";
+  type WorktreeCleanupFacts} from "../../src/domain/workspace-cleanup.js";
 
 function facts(overrides: Partial<WorktreeCleanupFacts> = {}): WorktreeCleanupFacts {
   return {
@@ -16,23 +15,20 @@ function facts(overrides: Partial<WorktreeCleanupFacts> = {}): WorktreeCleanupFa
     commitsReachableFromRetainedRef: true,
     hasRetainedNamedRef: true,
     discard: false,
-    ...overrides,
-  };
+    ...overrides};
 }
 
 describe("decideWorktreeCleanup", () => {
   it("allows removing a clean completed worktree when commits are on a retained ref", () => {
     expect(decideWorktreeCleanup(facts())).toEqual({
       allow: true,
-      reason: "published-complete",
-    });
+      reason: "published-complete"});
   });
 
   it("allows already-removed worktrees as a no-op", () => {
     expect(decideWorktreeCleanup(facts({ alreadyRemoved: true }))).toEqual({
       allow: true,
-      reason: "already-removed",
-    });
+      reason: "already-removed"});
   });
 
   it("allows clean settled runs with no unique commits even without a delivery branch", () => {
@@ -41,13 +37,11 @@ describe("decideWorktreeCleanup", () => {
         facts({
           phase: "cancelled",
           hasRetainedNamedRef: false,
-          commitsReachableFromRetainedRef: true,
-        }),
+          commitsReachableFromRetainedRef: true}),
       ),
     ).toEqual({
       allow: true,
-      reason: "published-complete",
-    });
+      reason: "published-complete"});
   });
 
   it("allows discarded unpublished runs only with discard confirmation", () => {
@@ -57,13 +51,11 @@ describe("decideWorktreeCleanup", () => {
           phase: "cancelled",
           hasRetainedNamedRef: false,
           commitsReachableFromRetainedRef: false,
-          discard: false,
-        }),
+          discard: false}),
       ),
     ).toEqual({
       allow: false,
-      reason: "unpublished-requires-discard",
-    });
+      reason: "unpublished-requires-discard"});
 
     expect(
       decideWorktreeCleanup(
@@ -71,13 +63,11 @@ describe("decideWorktreeCleanup", () => {
           phase: "cancelled",
           hasRetainedNamedRef: false,
           commitsReachableFromRetainedRef: false,
-          discard: true,
-        }),
+          discard: true}),
       ),
     ).toEqual({
       allow: true,
-      reason: "discarded-unpublished",
-    });
+      reason: "discarded-unpublished"});
   });
 
   it("refuses dirty, non-settled, path-invalid, unregistered, and common-dir mismatches", () => {
@@ -100,12 +90,10 @@ describe("decideWorktreeCleanup", () => {
         facts({
           hasRetainedNamedRef: false,
           commitsReachableFromRetainedRef: false,
-          discard: false,
-        }),
+          discard: false}),
       ),
     ).toEqual({
       allow: false,
-      reason: "unpublished-requires-discard",
-    });
+      reason: "unpublished-requires-discard"});
   });
 });

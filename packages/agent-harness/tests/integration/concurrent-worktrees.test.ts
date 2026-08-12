@@ -7,12 +7,12 @@ import { HarnessEngine } from "../../src/engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import {
   confirmGrillAndAdvance,
-  createPlannerPrdSequence
+  createPlannerPrdSequence,
+  SCENARIO_PLANNER_OUTPUT
 } from "../helpers.js";
 import {
   createProjectFixture,
-  type ProjectFixture,
-} from "../testkit/project-fixture.js";
+  type ProjectFixture} from "../testkit/project-fixture.js";
 
 const REFLECT_OUTPUT = {
   proposedTitle: "Ship a feature",
@@ -23,8 +23,7 @@ const REFLECT_OUTPUT = {
   inScope: ["core change"],
   outOfScope: ["extras"],
   assumptions: ["base branch is correct"],
-  unknowns: ["edge cases"],
-};
+  unknowns: ["edge cases"]};
 
 describe("concurrent worktree runs (Slice 6)", () => {
   let fixture: ProjectFixture | undefined;
@@ -41,14 +40,11 @@ describe("concurrent worktree runs (Slice 6)", () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
-        workflow: { tdd: false } as never,
+        workflow: { } as never,
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
-          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        },
-      },
-    });
+          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
 
     let releaseA!: () => void;
@@ -75,18 +71,14 @@ describe("concurrent worktree runs (Slice 6)", () => {
           startedA();
           await aHold;
           return REFLECT_OUTPUT;
-        },
-      }),
-    });
+        }})});
     const engineB = new HarnessEngine(fixture.config, {
       backend: createFakeBackend({
         reflector: async () => {
           startedB();
           await bHold;
           return REFLECT_OUTPUT;
-        },
-      }),
-    });
+        }})});
 
     const runA = await engineA.start("Idea A", "run-a", false, false);
     const runB = await engineB.start("Idea B", "run-b", false, false);
@@ -109,14 +101,11 @@ describe("concurrent worktree runs (Slice 6)", () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
-        workflow: { tdd: false } as never,
+        workflow: { } as never,
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
-          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        },
-      },
-    });
+          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
 
     let releaseA!: () => void;
@@ -144,9 +133,7 @@ describe("concurrent worktree runs (Slice 6)", () => {
           startedA();
           await aHold;
           return REFLECT_OUTPUT;
-        },
-      }),
-    });
+        }})});
     const engineB = new HarnessEngine(fixture.config, {
       backend: createFakeBackend({
         reflector: async (request) => {
@@ -155,9 +142,7 @@ describe("concurrent worktree runs (Slice 6)", () => {
           startedB();
           await bHold;
           return REFLECT_OUTPUT;
-        },
-      }),
-    });
+        }})});
 
     const runA = await engineA.start("Idea A", "run-a", false, false);
     const runB = await engineB.start("Idea B", "run-b", false, false);
@@ -200,14 +185,11 @@ describe("concurrent worktree runs (Slice 6)", () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
-        workflow: { tdd: false } as never,
+        workflow: { } as never,
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
-          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        },
-      },
-    });
+          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
 
     let releaseA!: () => void;
@@ -246,11 +228,10 @@ describe("concurrent worktree runs (Slice 6)", () => {
                 id: "confirm",
                 question: `Confirm ${marker}?`,
                 answer: "Yes",
-                summary: `Use ${marker}`,
-              },
-            ],
-          }),
+                summary: `Use ${marker}`}]}),
           planner: createPlannerPrdSequence().planner,
+
+          "scenario-planner": () => SCENARIO_PLANNER_OUTPUT,
 
           "issue-slicer": () => ({
             summary: "One task",
@@ -260,12 +241,9 @@ describe("concurrent worktree runs (Slice 6)", () => {
                 title: `Ship ${marker}`,
                 description: `Write ${marker}`,
                 acceptanceCriteria: [`${marker} exists`],
-                blockedBy: [],
-                tdd: false,
-              },
-            ],
-            proposedInstalls: [],
-          }),
+                scenarioIds: ["greet-happy"],
+                blockedBy: []}],
+            proposedInstalls: []}),
           implementer: async (request) => {
             await mkdir(path.join(request.cwd, "src"), { recursive: true });
             await writeFile(
@@ -276,8 +254,12 @@ describe("concurrent worktree runs (Slice 6)", () => {
             return { summary: "built", changedFiles: ["src/feature.ts"] };
           },
           reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
-        }),
-      });
+          "scenario-writer": () => ({
+            status: "implemented",
+            summary: "Scenario tests",
+            testPaths: ["tests/greet.test.ts"],
+            changedFiles: ["tests/greet.test.ts"],
+          })})});
 
       let state = await engine.start(`Idea ${marker}`, runId, false, false);
       state = await engine.advance(state.runId);
@@ -287,8 +269,7 @@ describe("concurrent worktree runs (Slice 6)", () => {
       state = await engine.answer(state.runId, reflectQ!.id, `Confirmed ${marker}`);
       state = await engine.advance(state.runId);
       state = await confirmGrillAndAdvance(engine, state.runId, undefined, {
-        clearBaselineFailure: true,
-      });
+        clearBaselineFailure: true});
       expect(state.phase, state.failure).toBe("completed");
 
       const workspace = migrateRunWorkspace(
@@ -310,15 +291,13 @@ describe("concurrent worktree runs (Slice 6)", () => {
       runWorkflow("flow-b", "beta", async () => {
         startedB();
         await bHold;
-      }),
-    ]);
+      })]);
 
     await Promise.all([aStarted, bStarted]);
     expect(await fixture.listWorktrees()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ path: expect.stringContaining("flow-a") }),
-        expect.objectContaining({ path: expect.stringContaining("flow-b") }),
-      ]),
+        expect.objectContaining({ path: expect.stringContaining("flow-b") })]),
     );
     releaseA();
     releaseB();

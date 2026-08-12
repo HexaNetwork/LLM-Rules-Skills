@@ -82,8 +82,7 @@ describe("run-start git preflight", () => {
     await git(root, "commit", "-m", "feature-only file");
 
     const config = fixtureConfig(root, {
-      git: { enabled: true, baseBranch: "main" } as never,
-    });
+      git: { enabled: true, baseBranch: "main" } as never});
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
     const state = await engine.start("Add a feature", "run-from-base");
 

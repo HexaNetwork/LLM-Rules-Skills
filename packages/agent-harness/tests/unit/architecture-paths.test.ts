@@ -14,15 +14,13 @@ const EXECUTION_MODULES = [
   "infrastructure/agents/agent-coordinator.ts",
   "git.ts",
   "graphify.ts",
-  "knowledge.ts",
-] as const;
+  "knowledge.ts"] as const;
 
 /** Control-plane helpers may still read repositoryRoot while deriving HarnessPaths. */
 const ALLOWED_REPOSITORY_ROOT_PATTERNS = [
   /resolveHarnessPaths/,
   /path\.resolve\(\s*config\.repositoryRoot/,
-  /paths\.controlRoot/,
-];
+  /paths\.controlRoot/];
 
 async function readSrc(relativePath: string): Promise<string> {
   return readFile(path.join(srcRoot, relativePath), "utf8");
@@ -112,8 +110,7 @@ describe("architecture: HarnessPaths wiring", () => {
     const files = [
       "application/task-execution-service.ts",
       "application/planning-service.ts",
-      "application/recovery-service.ts",
-    ];
+      "application/recovery-service.ts"];
     for (const relativePath of files) {
       const source = await readSrc(relativePath);
       expect(source).not.toMatch(/cwd:\s*this\.ctx\.config\.repositoryRoot/);

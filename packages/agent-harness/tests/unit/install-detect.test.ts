@@ -7,8 +7,7 @@ describe("detectInstallFromCommand", () => {
     expect(detectInstallFromCommand("npm install lodash")).toEqual({
       manager: "npm",
       packages: ["lodash"],
-      commandSummary: "npm install lodash",
-    });
+      commandSummary: "npm install lodash"});
     expect(detectInstallFromCommand("pnpm add zod")).toMatchObject({ manager: "pnpm", packages: ["zod"] });
     expect(detectInstallFromCommand("yarn add left-pad")).toMatchObject({ manager: "yarn" });
     expect(detectInstallFromCommand("pip install requests")).toMatchObject({ manager: "pip", packages: ["requests"] });
@@ -32,8 +31,7 @@ describe("detectInstallFromToolStep", () => {
     expect(
       detectInstallFromToolStep({
         type: "toolCall",
-        message: { type: "Shell", args: { command: "npm i chalk" } },
-      }),
+        message: { type: "Shell", args: { command: "npm i chalk" } }}),
     ).toMatchObject({ manager: "npm", packages: ["chalk"] });
   });
 });

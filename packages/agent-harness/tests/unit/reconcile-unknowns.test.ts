@@ -7,8 +7,7 @@ const draft = (overrides: Partial<OpenUnknownDraft> = {}): OpenUnknownDraft => (
   title: "Tone of voice",
   whyItMatters: "Sets the language throughout",
   impact: "shaping",
-  ...overrides,
-});
+  ...overrides});
 
 const entry = (overrides: Partial<OpenUnknown> = {}): OpenUnknown => ({
   id: "tone",
@@ -16,8 +15,7 @@ const entry = (overrides: Partial<OpenUnknown> = {}): OpenUnknown => ({
   whyItMatters: "Sets the language throughout",
   impact: "shaping",
   status: "fog",
-  ...overrides,
-});
+  ...overrides});
 
 describe("reconcileUnknowns", () => {
   it("keeps an incoming entry at fog when it is neither asked nor parked", () => {

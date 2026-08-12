@@ -43,14 +43,12 @@ describe("loadGuidanceDocuments", () => {
     const documents = await loadGuidanceDocuments([
       { absolutePath: frozen, scope: "global" },
       { absolutePath: project, scope: "project", projectId: "proj" },
-      { absolutePath: shared, scope: "global" },
-    ]);
+      { absolutePath: shared, scope: "global" }]);
 
     expect(documents.map((document) => document.source).sort()).toEqual([
       "General/rules/priority.mdc",
       "General/skills/tdd/SKILL.md",
-      "rules/priority.mdc",
-    ]);
+      "rules/priority.mdc"]);
     expect(documents.find((document) => document.source === "General/rules/priority.mdc")?.content)
       .toContain("frozen body");
     expect(documents.find((document) => document.source === "General/skills/tdd/SKILL.md")?.guidance)
@@ -59,8 +57,7 @@ describe("loadGuidanceDocuments", () => {
 
   it("tolerates missing roots", async () => {
     const documents = await loadGuidanceDocuments([
-      { absolutePath: path.join(os.tmpdir(), "ah-missing-guidance-root"), scope: "global" },
-    ]);
+      { absolutePath: path.join(os.tmpdir(), "ah-missing-guidance-root"), scope: "global" }]);
     expect(documents).toEqual([]);
   });
 });

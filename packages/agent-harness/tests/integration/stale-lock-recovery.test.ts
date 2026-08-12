@@ -15,8 +15,7 @@ const REFLECT_OUTPUT = {
   inScope: ["tone"],
   outOfScope: [],
   assumptions: [],
-  unknowns: [],
-};
+  unknowns: []};
 
 describe("Phase 5 stale-lock recovery", () => {
   let fixture: ProjectFixture | undefined;
@@ -30,17 +29,14 @@ describe("Phase 5 stale-lock recovery", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 2_000, provider: "cursor" },
-        workflow: { tdd: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
-      },
-    });
+        workflow: { },
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
 
     await withDiagnosticArtifacts(
       { testName: "stale-lock-recovery-unlock", fixture },
       async () => {
         const backend = createFakeBackend({
-          reflector: () => REFLECT_OUTPUT,
-        });
+          reflector: () => REFLECT_OUTPUT});
         const engine = new HarnessEngine(fixture!.config, { backend });
         const started = await engine.start("Recover from stale lock", "stale-lock-run", false, false);
 
@@ -52,8 +48,7 @@ describe("Phase 5 stale-lock recovery", () => {
             hostname: "gone-host",
             at: new Date(0).toISOString(),
             runId: "dead-run",
-            action: "advance",
-          })}\n`,
+            action: "advance"})}\n`,
           "utf8",
         );
 
@@ -73,25 +68,21 @@ describe("Phase 5 stale-lock recovery", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 2_000, provider: "cursor" },
-        workflow: { tdd: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
-      },
-    });
+        workflow: { },
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
 
     await withDiagnosticArtifacts(
       { testName: "stale-lock-recovery-legacy-unlock", fixture },
       async () => {
         const backend = createFakeBackend({
-          reflector: () => REFLECT_OUTPUT,
-        });
+          reflector: () => REFLECT_OUTPUT});
         const engine = new HarnessEngine(fixture!.config, { backend });
         const started = await engine.start("Recover from stale lock", "stale-lock-legacy", false, false);
         await engine.store.writeJson(started.runId, "workspace.json", {
           version: 1,
           kind: "legacy-shared",
           controlRoot: fixture!.root,
-          createdAt: new Date().toISOString(),
-        });
+          createdAt: new Date().toISOString()});
 
         await mkdir(path.join(fixture!.root, ".agent-harness"), { recursive: true });
         await writeFile(
@@ -101,8 +92,7 @@ describe("Phase 5 stale-lock recovery", () => {
             hostname: "gone-host",
             at: new Date(0).toISOString(),
             runId: "dead-run",
-            action: "advance",
-          })}\n`,
+            action: "advance"})}\n`,
           "utf8",
         );
 
@@ -125,10 +115,8 @@ describe("Phase 5 stale-lock recovery", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000, provider: "cursor" },
-        workflow: { tdd: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
-      },
-    });
+        workflow: { },
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
 
     await withDiagnosticArtifacts(
       { testName: "duplicate-advance-serialization", fixture },
@@ -156,18 +144,14 @@ describe("Phase 5 stale-lock recovery", () => {
               startedA();
               await aHold;
               return REFLECT_OUTPUT;
-            },
-          }),
-        });
+            }})});
         const engineB = new HarnessEngine(fixture!.config, {
           backend: createFakeBackend({
             reflector: async () => {
               startedB();
               await bHold;
               return REFLECT_OUTPUT;
-            },
-          }),
-        });
+            }})});
         const runA = await engineA.start("Idea A", "dup-a", false, false);
         const runB = await engineB.start("Idea B", "dup-b", false, false);
 

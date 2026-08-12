@@ -9,12 +9,10 @@ import {
   selectedRunId,
   startNewRun,
   waitForRunStatus,
-  withE2EHarness,
-} from "./helpers.js";
+  withE2EHarness} from "./helpers.js";
 
 test("polling/scroll safety: user scroll during thinking survives activity-driven polls", async ({
-  page,
-}) => {
+  page}) => {
   let releaseGriller!: () => void;
   const grillerGate = new Promise<void>((resolve) => {
     releaseGriller = resolve;
@@ -32,11 +30,7 @@ test("polling/scroll safety: user scroll during thinking survives activity-drive
           output: {
             status: "needs_input",
             summary: "Need tone",
-            questions: [FIRST_GRILL_QUESTION],
-          },
-        },
-      ],
-    },
+            questions: [FIRST_GRILL_QUESTION]}}]},
     async ({ page, fixture, ui }) => {
       await startNewRun(page, "Keep scroll position while the agent thinks");
       await waitForRunStatus(page, /awaiting input|reflect/i);
@@ -73,8 +67,7 @@ test("polling/scroll safety: user scroll during thinking survives activity-drive
             startedAt: new Date().toISOString(),
             lastStepAt: new Date().toISOString(),
             lastStepSummary: `thinking step ${step}`,
-            stepCount: step,
-          })}\n`,
+            stepCount: step})}\n`,
           "utf8",
         );
         await expect

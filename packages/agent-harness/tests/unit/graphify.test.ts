@@ -10,8 +10,7 @@ import {
   shapeGraphifyQuery,
   prepareGraphifyForRun,
   type GraphifyCommandResult,
-  type GraphifyRunner,
-} from "../../src/graphify.js";
+  type GraphifyRunner} from "../../src/graphify.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 const HUB_ORDERED_DUMP = [
@@ -26,8 +25,7 @@ const HUB_ORDERED_DUMP = [
   "NODE CultureZone [src=src/culture/CultureZone.kt loc=L8 community=2]",
   "NODE Point2D [src=src/geom/Point2D.kt loc=L3 community=2]",
   "NODE TownChunkValidation [src=src/town/TownChunkValidation.kt loc=L20 community=2]",
-  "... truncated",
-].join("\n");
+  "... truncated"].join("\n");
 
 describe("graphify stopword lists", () => {
   it("keeps built-in lists disjoint and free of duplicates", () => {
@@ -127,8 +125,7 @@ describe("rankGraphifyExcerpt", () => {
       "Traversal: BFS | Start: ['CultureZone'] | 3 nodes found",
       "NODE .format() [src=src/util/Format.kt loc=L12]",
       "NODE CultureZone [src=src/culture/CultureZone.kt loc=L8]",
-      "NODE .toString() [src=src/util/Format.kt loc=L40]",
-    ].join("\n");
+      "NODE .toString() [src=src/util/Format.kt loc=L40]"].join("\n");
 
     const ranked = rankGraphifyExcerpt(dump, "CultureZone", 3_000);
     const nodeLabels = ranked
@@ -157,15 +154,12 @@ describe("GraphifyRepositoryLookup", () => {
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true },
-      },
-    });
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true }}});
 
     await expect(prepareGraphifyForRun(config, runner)).resolves.toMatchObject({
       enabled: true,
       graphReady: true,
-      setupRan: true,
-    });
+      setupRan: true});
     expect(runner).toHaveBeenCalledWith(
       "graphify",
       ["update", root],
@@ -173,8 +167,7 @@ describe("GraphifyRepositoryLookup", () => {
     );
 
     await expect(prepareGraphifyForRun(config, runner)).resolves.toMatchObject({
-      setupRan: false,
-    });
+      setupRan: false});
   });
 
   it("fails clearly when graphify is enabled but not installed", async () => {
@@ -183,14 +176,11 @@ describe("GraphifyRepositoryLookup", () => {
       exitCode: 1,
       stdout: "",
       stderr: "not found",
-      timedOut: false,
-    });
+      timedOut: false});
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true },
-      },
-    });
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true }}});
 
     await expect(prepareGraphifyForRun(config, runner)).rejects.toThrow(/uv tool install graphifyy/i);
   });
@@ -221,10 +211,7 @@ describe("GraphifyRepositoryLookup", () => {
           queryTimeoutMs: 7_000,
           queryBudgetTokens: 900,
           roles: ["implementer"],
-          stopwords: [],
-        },
-      },
-    });
+          stopwords: []}}});
     const lookup = new GraphifyRepositoryLookup(config, runner);
 
     await lookup.refresh();
@@ -233,8 +220,7 @@ describe("GraphifyRepositoryLookup", () => {
     expect(calls[0]).toEqual({
       executable: "graphify-custom",
       args: ["update", root],
-      timeoutMs: 90_000,
-    });
+      timeoutMs: 90_000});
     expect(calls[1]).toEqual({
       executable: "graphify-custom",
       args: [
@@ -243,15 +229,12 @@ describe("GraphifyRepositoryLookup", () => {
         "--budget",
         "900",
         "--graph",
-        graphPath,
-      ],
-      timeoutMs: 7_000,
-    });
+        graphPath],
+      timeoutMs: 7_000});
     expect(found.result).toMatchObject({
       source: "graphify:graphify-out/graph.json",
       title: "Repository relationships (Graphify)",
-      score: 0,
-    });
+      score: 0});
     expect(found.result?.excerpt).toContain("LocalKnowledgeBase");
     expect(found.shapedQuery).toBe("knowledge loaded");
   });
@@ -268,10 +251,7 @@ describe("GraphifyRepositoryLookup", () => {
         chunkCharacters: 400,
         graphify: {
           ...fixtureConfig(root).knowledge.graphify,
-          enabled: true,
-        },
-      },
-    });
+          enabled: true}}});
 
     const outcome = await new GraphifyRepositoryLookup(config, runner).search("unknown topic");
     expect(outcome.result).toBeUndefined();
@@ -288,9 +268,7 @@ describe("GraphifyRepositoryLookup", () => {
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true },
-      },
-    });
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true }}});
 
     const outcome = await new GraphifyRepositoryLookup(config, runner).search(
       "the objective acceptance criteria",
@@ -313,9 +291,7 @@ describe("GraphifyRepositoryLookup", () => {
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true },
-      },
-    });
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true }}});
     const lookup = new GraphifyRepositoryLookup(config, runner);
 
     const first = await lookup.search("SettlementWindow refunds");
@@ -334,13 +310,10 @@ describe("GraphifyRepositoryLookup", () => {
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true },
-      },
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true }},
       workflow: {
         ...fixtureConfig(root).workflow,
-        graphifyCharacters: 3_000,
-      },
-    });
+        graphifyCharacters: 3_000}});
 
     const outcome = await new GraphifyRepositoryLookup(config, runner).search(
       "Point2D TownChunkValidation CultureZone placement",

@@ -9,8 +9,7 @@ import {
   ACCEPTANCE_GRILL_QUESTION,
   ACCEPTANCE_REFLECT,
   runCli,
-  writeAcceptanceConfig,
-} from "./helpers.js";
+  writeAcceptanceConfig} from "./helpers.js";
 
 describe("CLI acceptance lifecycle", () => {
   let fixture: ProjectFixture | undefined;
@@ -51,10 +50,8 @@ describe("CLI acceptance lifecycle", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
-        workflow: { tdd: false, generateCommitMessages: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
-      },
-    });
+        workflow: { generateCommitMessages: false },
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
     const configPath = await writeAcceptanceConfig(fixture);
     const scripted = createScriptedBackend([
       { role: "reflector", output: ACCEPTANCE_REFLECT },
@@ -63,9 +60,7 @@ describe("CLI acceptance lifecycle", () => {
         output: {
           status: "needs_input",
           summary: "Need tone",
-          questions: [ACCEPTANCE_GRILL_QUESTION],
-        },
-      },
+          questions: [ACCEPTANCE_GRILL_QUESTION]}},
       {
         role: "griller",
         output: {
@@ -76,11 +71,7 @@ describe("CLI acceptance lifecycle", () => {
               id: "tone",
               question: ACCEPTANCE_GRILL_QUESTION.prompt,
               answer: "Casual",
-              summary: "Use a casual greeting",
-            },
-          ],
-        },
-      },
+              summary: "Use a casual greeting"}]}},
       { role: "planner", output: HIGH_LEVEL_PLAN },
       { role: "planner", output: PRD_OUTPUT },
       {
@@ -94,16 +85,10 @@ describe("CLI acceptance lifecycle", () => {
               title: "Ship greeting",
               description: "Render greeting",
               acceptanceCriteria: ["Works"],
-              blockedBy: [],
-              tdd: false,
-            },
-          ],
-          proposedInstalls: [],
-        },
-      },
+              blockedBy: []}],
+          proposedInstalls: []}},
       { role: "implementer", output: { summary: "Built", changedFiles: ["src/greet.ts"] } },
-      { role: "reviewer", output: { approved: true, summary: "ok", findings: [] } },
-    ]);
+      { role: "reviewer", output: { approved: true, summary: "ok", findings: [] } }]);
 
     await withDiagnosticArtifacts({ testName: "acceptance-lifecycle", fixture }, async () => {
       const deps = { createBackend: () => scripted.backend };
@@ -137,8 +122,7 @@ describe("CLI acceptance lifecycle", () => {
           "--question",
           reflectId,
           "--text",
-          "Confirmed brief: casual greeting.",
-        ],
+          "Confirmed brief: casual greeting."],
         deps,
       );
       expect(answeredReflect.code).toBe(0);
@@ -225,14 +209,11 @@ describe("CLI acceptance lifecycle", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 },
-        workflow: { tdd: false },
+        workflow: { },
         git: { enabled: true, autoCommitPreflight: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
-      },
-    });
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
     const configPath = await writeAcceptanceConfig(fixture, {
-      git: { enabled: true, autoCommitPreflight: false },
-    });
+      git: { enabled: true, autoCommitPreflight: false }});
     await fixture.initGit();
     await fixture.write("surprise.txt", "dirty\n");
 
@@ -245,8 +226,7 @@ describe("CLI acceptance lifecycle", () => {
       release = resolve;
     });
     const scripted = createScriptedBackend([
-      { role: "reflector", waitFor: hold, output: ACCEPTANCE_REFLECT },
-    ]);
+      { role: "reflector", waitFor: hold, output: ACCEPTANCE_REFLECT }]);
     const originalRun = scripted.backend.run.bind(scripted.backend);
     scripted.backend.run = async (request) => {
       if (request.role === "reflector") reflecting();
@@ -269,8 +249,7 @@ describe("CLI acceptance lifecycle", () => {
           noticeId,
           "--tdd",
           "off",
-          "--no-advance",
-        ],
+          "--no-advance"],
         deps,
       );
       expect(noticed.code).toBe(0);
@@ -318,8 +297,7 @@ describe("CLI acceptance lifecycle", () => {
           hostname: "gone",
           at: new Date(0).toISOString(),
           runId: "dead",
-          action: "advance",
-        })}\n`,
+          action: "advance"})}\n`,
         "utf8",
       );
       const unlocked = await runCli(

@@ -13,8 +13,7 @@ describe("dashboard session survives a browser refresh", () => {
       config: fixtureConfig(await fixtureRoot()),
       backend: createFakeBackend({}),
       port: 0,
-      token: "refresh-token",
-    });
+      token: "refresh-token"});
     return ui;
   }
 
@@ -35,8 +34,7 @@ describe("dashboard session survives a browser refresh", () => {
       const reload = await fetch(`${server.origin}/`);
       expect(reload.status).toBe(200);
       const boot = await fetch(`${server.origin}/api/bootstrap`, {
-        headers: { cookie: "harness_token=refresh-token" },
-      });
+        headers: { cookie: "harness_token=refresh-token" }});
       expect(boot.status).toBe(200);
       expect((await boot.json()) as { runs: unknown[] }).toHaveProperty("runs");
     } finally {
@@ -51,14 +49,12 @@ describe("dashboard session survives a browser refresh", () => {
       const created = await fetch(`${server.origin}/api/runs`, {
         method: "POST",
         headers: { "X-Harness-Token": server.token, "Content-Type": "application/json" },
-        body: JSON.stringify({ idea: "Build a thing" }),
-      });
+        body: JSON.stringify({ idea: "Build a thing" })});
       expect(created.status).toBe(202);
       const { run } = (await created.json()) as { run: { runId: string } };
 
       const boot = await fetch(`${server.origin}/api/bootstrap`, {
-        headers: { cookie: `harness_token=${server.token}` },
-      });
+        headers: { cookie: `harness_token=${server.token}` }});
       expect(boot.status).toBe(200);
       const body = (await boot.json()) as { runs: Array<{ runId: string }> };
       expect(body.runs.map((entry) => entry.runId)).toContain(run.runId);
@@ -76,8 +72,7 @@ describe("dashboard session survives a browser refresh", () => {
       expect(shell.headers.get("set-cookie")).toBeNull();
 
       const forged = await fetch(`${server.origin}/api/bootstrap`, {
-        headers: { cookie: "harness_token=wrong-token" },
-      });
+        headers: { cookie: "harness_token=wrong-token" }});
       expect(forged.status).toBe(401);
 
       const none = await fetch(`${server.origin}/api/bootstrap`);
@@ -97,22 +92,19 @@ describe("unreadable runs are reported, not dropped", () => {
       config,
       backend: createFakeBackend({}),
       port: 0,
-      token: "corrupt-token",
-    });
+      token: "corrupt-token"});
     try {
       const created = await fetch(`${server.origin}/api/runs`, {
         method: "POST",
         headers: { "X-Harness-Token": server.token, "Content-Type": "application/json" },
-        body: JSON.stringify({ idea: "A run that will be corrupted" }),
-      });
+        body: JSON.stringify({ idea: "A run that will be corrupted" })});
       const { run } = (await created.json()) as { run: { runId: string } };
 
       const statePath = path.join(root, ".agent-harness", "runs", run.runId, "state.json");
       await writeFile(statePath, "{ not valid json", "utf8");
 
       const boot = await fetch(`${server.origin}/api/bootstrap`, {
-        headers: { "X-Harness-Token": server.token },
-      });
+        headers: { "X-Harness-Token": server.token }});
       const body = (await boot.json()) as {
         runs: Array<{ runId: string }>;
         unreadableRuns: Array<{ runId: string; error: string }>;

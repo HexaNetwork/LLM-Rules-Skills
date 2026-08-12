@@ -32,8 +32,7 @@ describe("decision knowledge query composition", () => {
       destination,
       title,
       question,
-      compactDomainSeed(idea, destination),
-    ]
+      compactDomainSeed(idea, destination)]
       .filter(Boolean)
       .join(" ");
 
@@ -51,9 +50,7 @@ describe("retrieval audit artifact", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
-      },
-    });
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -63,8 +60,7 @@ describe("retrieval audit artifact", () => {
     const agents = new AgentCoordinator(
       config,
       createFakeBackend({
-        fixer: () => ({ summary: "Applied the bounded recovery.", changedFiles: [] }),
-      }),
+        fixer: () => ({ summary: "Applied the bounded recovery.", changedFiles: [] })}),
       store,
       knowledge,
     );
@@ -78,8 +74,7 @@ describe("retrieval audit artifact", () => {
       expectedOutput: "{summary,changedFiles}",
       schema: WorkerOutputSchema,
       retrieval: false,
-      buildPrompt: false,
-    });
+      buildPrompt: false});
 
     const files = await store.listFiles(runId, "packets");
     const packetPath = files.find(
@@ -116,9 +111,7 @@ describe("retrieval audit artifact", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
-      },
-    });
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -130,8 +123,7 @@ describe("retrieval audit artifact", () => {
     const agents = new AgentCoordinator(
       config,
       createFakeBackend({
-        implementer: () => ({ summary: "done", changedFiles: [] }),
-      }),
+        implementer: () => ({ summary: "done", changedFiles: [] })}),
       store,
       knowledge,
     );
@@ -144,14 +136,11 @@ describe("retrieval audit artifact", () => {
         task: {
           title: "SettlementWindow refunds",
           description: "Close the ledger",
-          acceptanceCriteria: ["Refunds reuse the original ledger entry"],
-        },
-      },
+          acceptanceCriteria: ["Refunds reuse the original ledger entry"]}},
       expectedOutput: "{summary,changedFiles}",
       schema: WorkerOutputSchema,
       knowledgeQuery: "SettlementWindow refunds ledger",
-      knowledgeFallbackQuery: compactDomainSeed("Build SettlementWindow refunds"),
-    });
+      knowledgeFallbackQuery: compactDomainSeed("Build SettlementWindow refunds")});
 
     const packetFiles = await store.listFiles(runId, "packets");
     const retrievalPath = packetFiles.find((file) => file.endsWith(".retrieval.json"));
@@ -203,8 +192,7 @@ describe("retrieval audit artifact", () => {
       source: "graphify:graphify-out/graph.json",
       title: "Repository relationships (Graphify)",
       excerpt: "SettlementWindow -> Ledger",
-      score: 1,
-    };
+      score: 1};
     const lookup: RepositoryLookup = {
       async refresh() {},
       async rebuild() {
@@ -214,10 +202,8 @@ describe("retrieval audit artifact", () => {
         return {
           shapedQuery: "SettlementWindow",
           usedFallback: false,
-          result: graphifyHit,
-        };
-      },
-    };
+          result: graphifyHit};
+      }};
 
     async function invokeWith(options: { rag: boolean; graphify: boolean }) {
       const config = fixtureConfig(root, {
@@ -232,11 +218,7 @@ describe("retrieval audit artifact", () => {
             sharedRoot,
             assignments: {
               ...base.knowledge.guidance.assignments,
-              implementer: { rules: [], skills: ["tdd"] },
-            },
-          },
-        },
-      });
+              implementer: { rules: [], skills: ["tdd"] }}}}});
       const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
       await store.initialize();
       const knowledge = new LocalKnowledgeBase(config, lookup, undefined, { sharedRoot });
@@ -246,8 +228,7 @@ describe("retrieval audit artifact", () => {
       const agents = new AgentCoordinator(
         config,
         createFakeBackend({
-          implementer: () => ({ summary: "done", changedFiles: [] }),
-        }),
+          implementer: () => ({ summary: "done", changedFiles: [] })}),
         store,
         knowledge,
       );
@@ -260,13 +241,10 @@ describe("retrieval audit artifact", () => {
             title: "SettlementWindow refunds",
             description: "Close the ledger",
             acceptanceCriteria: ["Refunds reuse the original ledger entry"],
-            affectedPaths: ["src/settlement.ts"],
-          },
-        },
+            affectedPaths: ["src/settlement.ts"]}},
         expectedOutput: "{summary,changedFiles}",
         schema: WorkerOutputSchema,
-        knowledgeQuery: "SettlementWindow refunds ledger",
-      });
+        knowledgeQuery: "SettlementWindow refunds ledger"});
       const files = await store.listFiles(runId, "packets");
       const packetPath = files.find(
         (file) =>
@@ -298,8 +276,7 @@ describe("retrieval audit artifact", () => {
     const graphifyOnly = await invokeWith({ rag: false, graphify: true });
     expect(graphifyOnly.packet.guidance.length).toBeGreaterThan(0);
     expect(graphifyOnly.packet.context.map((item) => item.source)).toEqual([
-      "graphify:graphify-out/graph.json",
-    ]);
+      "graphify:graphify-out/graph.json"]);
     expect(graphifyOnly.retrieval.retrieval.skipped).toBe("rag-disabled");
 
     const bothOff = await invokeWith({ rag: false, graphify: false });

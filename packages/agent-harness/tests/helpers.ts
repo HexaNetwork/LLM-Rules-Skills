@@ -5,20 +5,51 @@ import type { HighLevelPlan, RunState } from "../src/domain.js";
 import type { CommandRunner } from "../src/application/dependencies.js";
 import {
   buildFixtureConfig,
-  createProjectFixture,
-} from "./testkit/project-fixture.js";
+  createProjectFixture} from "./testkit/project-fixture.js";
 
 export { createProjectFixture } from "./testkit/project-fixture.js";
 export type { ProjectFixture } from "./testkit/project-fixture.js";
 export { createScriptedBackend } from "./testkit/scripted-backend.js";
 export type { ScriptedStep } from "./testkit/scripted-backend.js";
 export { git } from "./testkit/git.js";
+import {
+  createPlannerPrdSequence,
+  SCENARIO_PLANNER_OUTPUT,
+  SLICER_ONE_TASK,
+} from "./fixtures/plan-pipeline.js";
+
 export {
   HIGH_LEVEL_PLAN,
   PRD_OUTPUT,
+  SCENARIO_PLANNER_OUTPUT,
   SLICER_ONE_TASK,
   createPlannerPrdSequence,
 } from "./fixtures/plan-pipeline.js";
+
+/** Planner + scenario-planner + issue-slicer handlers for createFakeBackend tests. */
+export function planningRoleHandlers(options: {
+  slicer?: typeof SLICER_ONE_TASK;
+  scenarios?: typeof SCENARIO_PLANNER_OUTPUT;
+} = {}) {
+  const seq = createPlannerPrdSequence();
+  return {
+    planner: seq.planner,
+    "scenario-planner": () => options.scenarios ?? SCENARIO_PLANNER_OUTPUT,
+    "issue-slicer": () => options.slicer ?? SLICER_ONE_TASK,
+  };
+}
+
+/** Post-slice roles that take a run through implement → scenario tests → final review. */
+export const INTENT_FIRST_EXECUTION_HANDLERS = {
+  implementer: () => ({ summary: "Implemented", changedFiles: ["src/greet.ts"] }),
+  reviewer: () => ({ approved: true, summary: "Looks good", findings: [] as const }),
+  "scenario-writer": () => ({
+    status: "implemented" as const,
+    summary: "Scenario tests written",
+    testPaths: ["tests/greet.test.ts"],
+    changedFiles: ["tests/greet.test.ts"],
+  }),
+};
 
 /** Deterministic command runner that always exits 0 (keeps baseline flowing in suites). */
 export function passingCommandRunner(
@@ -34,10 +65,8 @@ export function passingCommandRunner(
         stderr: "",
         durationMs: 1,
         timedOut: false,
-        ...partial,
-      };
-    },
-  };
+        ...partial};
+    }};
 }
 
 /**
@@ -60,14 +89,12 @@ export async function confirmGrillAndAdvance(
   let state = await engine.advance(runId);
   if (state.verificationReady) {
     state = await engine.confirmVerification(runId, {
-      patch: state.verificationReady.proposedPatch,
-    });
+      patch: state.verificationReady.proposedPatch});
     state = await engine.advance(runId);
   }
   if (options.clearBaselineFailure && state.verificationBaselineReady) {
     state = await engine.retryVerificationBaseline(runId, {
-      verificationCommand: options.verificationCommand ?? 'node -e "process.exit(0)"',
-    });
+      verificationCommand: options.verificationCommand ?? 'node -e "process.exit(0)"'});
     if (!state.verificationBaselineReady) {
       state = await engine.advance(runId);
     }
@@ -105,8 +132,7 @@ export async function confirmVerificationAndAdvance(
   state = await engine.advance(runId);
   if (clearBaselineFailure && state.verificationBaselineReady) {
     state = await engine.retryVerificationBaseline(runId, {
-      verificationCommand: verificationCommand ?? 'node -e "process.exit(0)"',
-    });
+      verificationCommand: verificationCommand ?? 'node -e "process.exit(0)"'});
     if (!state.verificationBaselineReady) {
       state = await engine.advance(runId);
     }

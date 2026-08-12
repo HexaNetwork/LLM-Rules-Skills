@@ -18,9 +18,7 @@ describe("Phase 5 knowledge integration", () => {
     fixture = await createProjectFixture({
       initialFiles: {
         "README.md": "# Fixture\n",
-        "docs/alpha.md": "# AlphaModule\n\nAlphaModule refund ledger for project A.\n",
-      },
-    });
+        "docs/alpha.md": "# AlphaModule\n\nAlphaModule refund ledger for project A.\n"}});
 
     await withDiagnosticArtifacts(
       { testName: "knowledge-integration-cache-scope-graphify", fixture },
@@ -40,8 +38,7 @@ describe("Phase 5 knowledge integration", () => {
             "---",
             "",
             "Prefer AlphaModule refund ledger patterns.",
-            "",
-          ].join("\n"),
+            ""].join("\n"),
           "utf8",
         );
 
@@ -60,15 +57,13 @@ describe("Phase 5 knowledge integration", () => {
               exitCode: 1,
               stdout: "",
               stderr: "graphify query exploded",
-              timedOut: false,
-            };
+              timedOut: false};
           }
           return {
             exitCode: 0,
             stdout: "NODE AlphaModule [src=src/alpha.ts]\n",
             stderr: "",
-            timedOut: false,
-          };
+            timedOut: false};
         });
 
         const config = {
@@ -77,21 +72,16 @@ describe("Phase 5 knowledge integration", () => {
             ...fixture!.config.knowledge,
             projectId: "project-a",
             sources: [
-              { path: "docs", scope: "project" as const, visibility: "private" as const, projectId: "project-a" },
-            ],
+              { path: "docs", scope: "project" as const, visibility: "private" as const, projectId: "project-a" }],
             guidance: {
               enabled: true,
               maxResults: 6,
               maxCharacters: 6_000,
-              sharedRoot,
-            },
+              sharedRoot},
             graphify: {
               ...fixture!.config.knowledge.graphify,
               enabled: true,
-              updateOnRefresh: false,
-            },
-          },
-        };
+              updateOnRefresh: false}}};
 
         const knowledge = new LocalKnowledgeBase(
           config,
@@ -102,8 +92,7 @@ describe("Phase 5 knowledge integration", () => {
         await knowledge.refresh();
 
         const firstSearch = await knowledge.searchWithAudit("AlphaModule refunds", 4, {
-          repository: true,
-        });
+          repository: true});
         // Soft-fail: Graphify error does not throw; lexical docs still surface.
         expect(firstSearch.results.some((result) => result.source.includes("docs/alpha.md"))).toBe(
           true,
@@ -114,19 +103,16 @@ describe("Phase 5 knowledge integration", () => {
         ).toBeTruthy();
 
         const guidance = await knowledge.selectGuidanceWithAudit("AlphaModule refunds", {
-          role: "planner",
-        });
+          role: "planner"});
         expect(guidance.selected.some((item) => item.source.includes("alpha.mdc"))).toBe(true);
 
         const cachedSearch = await knowledge.searchWithAudit("AlphaModule refunds", 4, {
-          repository: true,
-        });
+          repository: true});
         expect(cachedSearch).toEqual(firstSearch);
 
         const foreign = await knowledge.searchWithAudit("AlphaModule refunds", 4, {
           projectId: "other-project",
-          repository: false,
-        });
+          repository: false});
         expect(foreign.results.every((result) => result.scope === "global" || result.projectId !== "project-a" || result.visibility === "shared")).toBe(
           true,
         );
@@ -141,8 +127,7 @@ describe("Phase 5 knowledge integration", () => {
         );
         await knowledge.refresh();
         const afterRefresh = await knowledge.searchWithAudit("AlphaModule refunds", 4, {
-          repository: false,
-        });
+          repository: false});
         expect(JSON.stringify(afterRefresh)).toContain("UPDATED_TOKEN_ZZZ");
         expect(afterRefresh).not.toEqual(firstSearch);
       },

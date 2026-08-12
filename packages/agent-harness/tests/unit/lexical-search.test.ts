@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   diversifyBySource,
   pathAffinityBoost,
-  rankHybridResults,
-} from "../../src/infrastructure/knowledge/lexical-search.js";
+  rankHybridResults} from "../../src/infrastructure/knowledge/lexical-search.js";
 import type { RetrievalOmission } from "../../src/infrastructure/knowledge/types.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
@@ -20,8 +19,7 @@ function hit(
     score,
     scope: "project" as const,
     visibility: "private" as const,
-    kind: "document" as const,
-  };
+    kind: "document" as const};
 }
 
 describe("pathAffinityBoost", () => {
@@ -43,8 +41,7 @@ describe("diversifyBySource soft diversity", () => {
       [
         hit("a", "docs/a.md", 1),
         hit("b", "docs/b.md", 0.5),
-        hit("c", "docs/c.md", 0.4),
-      ],
+        hit("c", "docs/c.md", 0.4)],
       3,
       { maxPerSource: 1, maxForTopSource: 1, newSourceScoreRatio: 0.85 },
       omitted,
@@ -100,8 +97,6 @@ describe("rankHybridResults", () => {
         score: 4.25,
         scope: "project",
         visibility: "private",
-        kind: "document",
-      },
-    ]);
+        kind: "document"}]);
   });
 });

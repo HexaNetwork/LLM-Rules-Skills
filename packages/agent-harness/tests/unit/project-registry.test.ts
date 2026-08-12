@@ -90,8 +90,7 @@ describe("ProjectRegistry", () => {
     const relinked = await registry.relink({
       projectKey: added.registration.projectKey,
       repository: moved,
-      home,
-    });
+      home});
     expect(path.resolve(relinked.registration.controlRoot)).toBe(path.resolve(moved));
 
     const discovered = await registry.discover({ repository: moved });

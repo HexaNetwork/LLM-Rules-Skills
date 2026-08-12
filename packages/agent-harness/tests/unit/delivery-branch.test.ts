@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   proposeDeliveryBranchName,
   shortRunIdForBranch,
-  slugifyFeatureTitle,
-} from "../../src/domain/workspace.js";
+  slugifyFeatureTitle} from "../../src/domain/workspace.js";
 
 describe("slugifyFeatureTitle", () => {
   it("lowercases, hyphenates, and trims punctuation", () => {
@@ -44,8 +43,7 @@ describe("proposeDeliveryBranchName", () => {
       proposeDeliveryBranchName({
         branchPrefix: "harness",
         title: "Ship a Feature",
-        runId: "4e78e0fa-aa32-4709-b904-38e9de2d07e7",
-      }),
+        runId: "4e78e0fa-aa32-4709-b904-38e9de2d07e7"}),
     ).toBe("harness/ship-a-feature-4e78e0fa");
   });
 
@@ -53,8 +51,7 @@ describe("proposeDeliveryBranchName", () => {
     const args = {
       branchPrefix: "feat",
       title: "Add greeting tone",
-      runId: "abc12345-rest",
-    };
+      runId: "abc12345-rest"};
     expect(proposeDeliveryBranchName(args)).toBe(proposeDeliveryBranchName(args));
     expect(proposeDeliveryBranchName(args)).toBe("feat/add-greeting-tone-abc12345");
   });

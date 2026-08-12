@@ -27,8 +27,7 @@ describe("GET /api/guidance/packs", () => {
         "",
         "# Test-Driven Development",
         "",
-        "Write a failing behavioral test first.",
-      ].join("\n"),
+        "Write a failing behavioral test first."].join("\n"),
       "utf8",
     );
 
@@ -37,20 +36,15 @@ describe("GET /api/guidance/packs", () => {
         ...fixtureConfig(root).knowledge,
         guidance: {
           ...fixtureConfig(root).knowledge.guidance,
-          sharedRoot,
-        },
-      },
-    });
+          sharedRoot}}});
     ui = await startUiServer({
       config,
       backend: createFakeBackend({}),
       port: 0,
-      token: "guidance-api-test",
-    });
+      token: "guidance-api-test"});
 
     const response = await fetch(`${ui.origin}/api/guidance/packs`, {
-      headers: { "X-Harness-Token": ui.token },
-    });
+      headers: { "X-Harness-Token": ui.token }});
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       packs: Array<{
@@ -65,15 +59,15 @@ describe("GET /api/guidance/packs", () => {
 
     const implementer = body.packs.find((pack) => pack.role === "implementer");
     expect(implementer).toBeDefined();
-    expect(implementer!.assignment.skills).toContain("tdd");
-    expect(implementer!.sources).toContain("General/skills/tdd/SKILL.md");
-    expect(implementer!.guidancePack).toContain("# Test-Driven Development");
-    expect(implementer!.guidancePack).toContain("Write a failing behavioral test first.");
-    expect(implementer!.guidancePack).not.toContain("name: tdd");
+    expect(implementer!.assignment.skills).toEqual([]);
     expect(implementer!.roleRules.some((rule) => rule.includes("never commit"))).toBe(true);
     expect(implementer!.promptPreview).toContain("You are the implementer worker");
-    expect(implementer!.promptPreview).toContain("GUIDANCE");
-    expect(implementer!.promptPreview).not.toContain("SELECTED GUIDANCE");
-    expect(implementer!.promptPreview).not.toContain("Reason:");
+    expect(implementer!.promptPreview).toContain("Do not write, edit, weaken, delete, or bypass tests during implementation");
+    const reviewer = body.packs.find((pack) => pack.role === "reviewer");
+    expect(reviewer).toBeDefined();
+    expect(reviewer!.assignment.skills).toContain("code-review");
+    expect(reviewer!.promptPreview).toContain("You are the reviewer worker");
+    expect(reviewer!.promptPreview).not.toContain("SELECTED GUIDANCE");
+    expect(reviewer!.promptPreview).not.toContain("Reason:");
   });
 });

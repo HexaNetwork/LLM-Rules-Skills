@@ -7,20 +7,17 @@ describe("parseAnswerBody", () => {
     const parsed = parseAnswerBody({
       answers: [{ questionId: "q-answer", answer: "Yes" }],
       parked: ["q-skip"],
-      clarifications: [{ questionId: "q-clarify", text: "What does quiet mean here?" }],
-    });
+      clarifications: [{ questionId: "q-clarify", text: "What does quiet mean here?" }]});
 
     expect(parsed.answers).toEqual([{ questionId: "q-answer", answer: "Yes", optionId: undefined }]);
     expect(parsed.parked).toEqual(["q-skip"]);
     expect(parsed.clarifications).toEqual([
-      { questionId: "q-clarify", text: "What does quiet mean here?" },
-    ]);
+      { questionId: "q-clarify", text: "What does quiet mean here?" }]);
   });
 
   it("allows a clarifications-only batch", () => {
     const parsed = parseAnswerBody({
-      clarifications: [{ questionId: "q1", text: "Please rephrase." }],
-    });
+      clarifications: [{ questionId: "q1", text: "Please rephrase." }]});
 
     expect(parsed.answers).toEqual([]);
     expect(parsed.parked).toEqual([]);
@@ -31,15 +28,13 @@ describe("parseAnswerBody", () => {
     expect(() =>
       parseAnswerBody({
         answers: [{ questionId: "q1", answer: "Yes" }],
-        clarifications: [{ questionId: "q1", text: "Wait" }],
-      }),
+        clarifications: [{ questionId: "q1", text: "Wait" }]}),
     ).toThrow(/cannot be clarified/);
 
     expect(() =>
       parseAnswerBody({
         parked: ["q2"],
-        clarifications: [{ questionId: "q2", text: "Wait" }],
-      }),
+        clarifications: [{ questionId: "q2", text: "Wait" }]}),
     ).toThrow(/cannot be clarified/);
   });
 
@@ -47,7 +42,6 @@ describe("parseAnswerBody", () => {
     expect(parseAnswerBody({ questionId: "q1", answer: "Confirmed" })).toEqual({
       answers: [{ questionId: "q1", answer: "Confirmed" }],
       parked: [],
-      clarifications: [],
-    });
+      clarifications: []});
   });
 });

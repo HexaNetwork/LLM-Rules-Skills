@@ -12,8 +12,8 @@ import {
   fixtureConfig,
   fixtureRoot,
   passingCommandRunner,
-  SLICER_ONE_TASK,
-} from "../helpers.js";
+  SCENARIO_PLANNER_OUTPUT,
+  SLICER_ONE_TASK} from "../helpers.js";
 
 const REFLECT_OUTPUT = {
   proposedTitle: "Add greeting tone",
@@ -24,15 +24,14 @@ const REFLECT_OUTPUT = {
   inScope: ["greeting"],
   outOfScope: [],
   assumptions: [],
-  unknowns: [],
-};
+  unknowns: []};
 
 function planPipelineHandlers() {
   const seq = createPlannerPrdSequence();
   return {
     planner: seq.planner,
-    "issue-slicer": () => SLICER_ONE_TASK,
-  };
+    "scenario-planner": () => SCENARIO_PLANNER_OUTPUT,
+    "issue-slicer": () => SLICER_ONE_TASK};
 }
 
 describe("verification settings gate", () => {
@@ -44,35 +43,28 @@ describe("verification settings gate", () => {
       griller: () => ({
         status: "ready_to_plan",
         summary: "Ready",
-        resolutions: [],
-      }),
+        resolutions: []}),
       "project-profiler": () => {
         profilerCalls += 1;
         return {
           summary: "Use vitest for this package",
           configPatch: {
             commands: { verification: [{ id: "unit", command: "npm run test:unit", timeoutMs: 600_000 }] },
-            workflow: { testPathPatterns: ["**/*.test.ts"] },
-          },
-        };
+            workflow: { testPathPatterns: ["**/*.test.ts"] }}};
       },
-      ...planPipelineHandlers(),
-    });
+      ...planPipelineHandlers()});
     const config = fixtureConfig(root, {
-      workflow: { tdd: false } as never,
+      workflow: { } as never,
       agent: { promptBuilder: false } as never,
-      commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never,
-    });
+      commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never});
     const engine = new HarnessEngine(config, {
       backend,
-      commands: passingCommandRunner(),
-    });
+      commands: passingCommandRunner()});
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     const reflectQ = state.questions.find((item) => item.status === "open");
     state = await engine.answerMany(state.runId, [
-      { questionId: reflectQ!.id, answer: REFLECT_OUTPUT.restatement },
-    ]);
+      { questionId: reflectQ!.id, answer: REFLECT_OUTPUT.restatement }]);
     state = await engine.advance(state.runId);
     expect(state.grillReady?.summary).toBeTruthy();
 
@@ -89,8 +81,7 @@ describe("verification settings gate", () => {
     expect(profilerCalls).toBe(1);
 
     state = await engine.confirmVerification(state.runId, {
-      patch: state.verificationReady!.proposedPatch,
-    });
+      patch: state.verificationReady!.proposedPatch});
     expect(state.phase).toBe("planning");
     expect(state.verificationReady).toBeUndefined();
     expect(state.verificationConfirmedAt).toBeTruthy();
@@ -123,28 +114,22 @@ describe("verification settings gate", () => {
       griller: () => ({
         status: "ready_to_plan",
         summary: "Ready",
-        resolutions: [],
-      }),
+        resolutions: []}),
       "project-profiler": () => ({
         summary: "Suggested change",
-        configPatch: { commands: { verification: [{ id: "test", command: "pytest", timeoutMs: 600_000 }] } },
-      }),
-      ...planPipelineHandlers(),
-    });
+        configPatch: { commands: { verification: [{ id: "test", command: "pytest", timeoutMs: 600_000 }] } }}),
+      ...planPipelineHandlers()});
     const config = fixtureConfig(root, {
-      workflow: { tdd: false } as never,
+      workflow: { } as never,
       agent: { promptBuilder: false } as never,
-      commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never,
-    });
+      commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never});
     const engine = new HarnessEngine(config, {
       backend,
-      commands: passingCommandRunner(),
-    });
+      commands: passingCommandRunner()});
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
-      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
-    ]);
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement }]);
     state = await engine.advance(state.runId);
     state = await engine.confirmGrill(state.runId);
     state = await engine.advance(state.runId);
@@ -163,23 +148,19 @@ describe("verification settings gate", () => {
   it("rejects unrelated keys on the verification patch schema", () => {
     expect(() =>
       VerificationSettingsPatchSchema.parse({
-        git: { autoCommitPreflight: true },
-      }),
+        git: { autoCommitPreflight: true }}),
     ).toThrow();
     expect(() =>
       VerificationSettingsPatchSchema.parse({
-        workflow: { maxGrillQuestionsPerEpisode: 3 },
-      }),
+        workflow: { maxGrillQuestionsPerEpisode: 3 }}),
     ).toThrow();
     expect(
       VerificationSettingsPatchSchema.parse({
         commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] },
-        workflow: { testPathPatterns: ["**/*.test.ts"] },
-      }),
+        workflow: { testPathPatterns: ["**/*.test.ts"] }}),
     ).toEqual({
       commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] },
-      workflow: { testPathPatterns: ["**/*.test.ts"] },
-    });
+      workflow: { testPathPatterns: ["**/*.test.ts"] }});
   });
 
   it("enables tools when verification evidence is thin", async () => {
@@ -190,30 +171,24 @@ describe("verification settings gate", () => {
       griller: () => ({
         status: "ready_to_plan",
         summary: "Ready",
-        resolutions: [],
-      }),
+        resolutions: []}),
       "project-profiler": (request) => {
         observedAllowTools = request.allowTools;
         return {
           summary: "No manifests; proposing npm from brief",
-          configPatch: { commands: { verification: [{ id: "test", command: "npm test -- --run", timeoutMs: 600_000 }] } },
-        };
+          configPatch: { commands: { verification: [{ id: "test", command: "npm test -- --run", timeoutMs: 600_000 }] } }};
       },
-      ...planPipelineHandlers(),
-    });
+      ...planPipelineHandlers()});
     const config = fixtureConfig(root, {
-      workflow: { tdd: false } as never,
-      agent: { promptBuilder: false } as never,
-    });
+      workflow: { } as never,
+      agent: { promptBuilder: false } as never});
     const engine = new HarnessEngine(config, {
       backend,
-      commands: passingCommandRunner(),
-    });
+      commands: passingCommandRunner()});
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
-      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
-    ]);
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement }]);
     state = await engine.advance(state.runId);
     state = await engine.confirmGrill(state.runId);
     state = await engine.advance(state.runId);
@@ -240,8 +215,7 @@ describe("verification settings gate", () => {
       griller: () => ({
         status: "ready_to_plan",
         summary: "Ready",
-        resolutions: [],
-      }),
+        resolutions: []}),
       "project-profiler": (request) => {
         observedAllowTools = request.allowTools;
         return {
@@ -249,26 +223,19 @@ describe("verification settings gate", () => {
           configPatch: {
             commands: { verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }] },
             workflow: {
-              testPathPatterns: ["**/src/main/test/**", "**/*Test.java"],
-            },
-          },
-        };
+              testPathPatterns: ["**/src/main/test/**", "**/*Test.java"]}}};
       },
-      ...planPipelineHandlers(),
-    });
+      ...planPipelineHandlers()});
     const config = fixtureConfig(root, {
-      workflow: { tdd: false } as never,
-      agent: { promptBuilder: false } as never,
-    });
+      workflow: { } as never,
+      agent: { promptBuilder: false } as never});
     const engine = new HarnessEngine(config, {
       backend,
-      commands: passingCommandRunner(),
-    });
+      commands: passingCommandRunner()});
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
-      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
-    ]);
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement }]);
     state = await engine.advance(state.runId);
     state = await engine.confirmGrill(state.runId);
     state = await engine.advance(state.runId);
@@ -285,23 +252,18 @@ describe("verification settings gate", () => {
       griller: () => ({
         status: "ready_to_plan",
         summary: "Ready",
-        resolutions: [],
-      }),
-      ...planPipelineHandlers(),
-    });
+        resolutions: []}),
+      ...planPipelineHandlers()});
     const config = fixtureConfig(root, {
-      workflow: { tdd: false } as never,
-      agent: { promptBuilder: false } as never,
-    });
+      workflow: { } as never,
+      agent: { promptBuilder: false } as never});
     const engine = new HarnessEngine(config, {
       backend,
-      commands: passingCommandRunner(),
-    });
+      commands: passingCommandRunner()});
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
-      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
-    ]);
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement }]);
     state = await engine.advance(state.runId);
     state = await confirmGrillAndAdvance(engine, state.runId);
     expect(state.verificationReady).toBeUndefined();
@@ -317,19 +279,15 @@ describe("verification settings gate", () => {
       griller: () => ({
         status: "ready_to_plan",
         summary: "Ready",
-        resolutions: [],
-      }),
+        resolutions: []}),
       "project-profiler": () => ({
         summary: "Broken command",
-        configPatch: { commands: { verification: [{ id: "test", command: "failing-baseline", timeoutMs: 600_000 }] } },
-      }),
-      ...planPipelineHandlers(),
-    });
+        configPatch: { commands: { verification: [{ id: "test", command: "failing-baseline", timeoutMs: 600_000 }] } }}),
+      ...planPipelineHandlers()});
     const config = fixtureConfig(root, {
-      workflow: { tdd: false } as never,
+      workflow: { } as never,
       agent: { promptBuilder: false } as never,
-      commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never,
-    });
+      commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never});
     const engine = new HarnessEngine(config, {
       backend,
       commands: {
@@ -341,8 +299,7 @@ describe("verification settings gate", () => {
               stdout: "1 failed",
               stderr: "",
               durationMs: 3,
-              timedOut: false,
-            };
+              timedOut: false};
           }
           return {
             command,
@@ -350,22 +307,17 @@ describe("verification settings gate", () => {
             stdout: "",
             stderr: "",
             durationMs: 1,
-            timedOut: false,
-          };
-        },
-      },
-    });
+            timedOut: false};
+        }}});
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
-      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
-    ]);
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement }]);
     state = await engine.advance(state.runId);
     state = await engine.confirmGrill(state.runId);
     state = await engine.advance(state.runId);
     state = await engine.confirmVerification(state.runId, {
-      patch: state.verificationReady!.proposedPatch,
-    });
+      patch: state.verificationReady!.proposedPatch});
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
     expect(state.verificationBaselineReady?.summary).toMatch(/failed/i);
@@ -378,8 +330,7 @@ describe("verification settings gate", () => {
     expect(state.verificationBaselineReady?.readyAt).toBe(before);
 
     state = await engine.retryVerificationBaseline(state.runId, {
-      verificationCommand: 'node -e "process.exit(0)"',
-    });
+      verificationCommand: 'node -e "process.exit(0)"'});
     expect(state.verificationBaselineReady).toBeUndefined();
     expect(state.verificationBaselinePassedAt).toBeTruthy();
     expect(engine.config.commands.verification[0]?.command).toBe('node -e "process.exit(0)"');
@@ -398,18 +349,14 @@ describe("verification settings gate", () => {
       griller: () => ({
         status: "ready_to_plan",
         summary: "Ready",
-        resolutions: [],
-      }),
+        resolutions: []}),
       "project-profiler": () => ({
         summary: "Empty suite",
-        configPatch: { commands: { verification: [{ id: "test", command: "vitest run", timeoutMs: 600_000 }] } },
-      }),
-      ...planPipelineHandlers(),
-    });
+        configPatch: { commands: { verification: [{ id: "test", command: "vitest run", timeoutMs: 600_000 }] } }}),
+      ...planPipelineHandlers()});
     const config = fixtureConfig(root, {
-      workflow: { tdd: false } as never,
-      agent: { promptBuilder: false } as never,
-    });
+      workflow: { } as never,
+      agent: { promptBuilder: false } as never});
     const engine = new HarnessEngine(config, {
       backend,
       commands: {
@@ -420,22 +367,17 @@ describe("verification settings gate", () => {
             stdout: "No test files found",
             stderr: "",
             durationMs: 5,
-            timedOut: false,
-          };
-        },
-      },
-    });
+            timedOut: false};
+        }}});
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
-      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement },
-    ]);
+      { questionId: state.activeQuestionId!, answer: REFLECT_OUTPUT.restatement }]);
     state = await engine.advance(state.runId);
     state = await engine.confirmGrill(state.runId);
     state = await engine.advance(state.runId);
     state = await engine.confirmVerification(state.runId, {
-      patch: state.verificationReady!.proposedPatch,
-    });
+      patch: state.verificationReady!.proposedPatch});
     state = await engine.advance(state.runId);
     expect(state.verificationBaselineReady).toBeUndefined();
     expect(state.verificationBaselinePassedAt).toBeTruthy();

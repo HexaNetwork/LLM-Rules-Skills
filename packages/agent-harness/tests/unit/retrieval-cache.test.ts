@@ -25,8 +25,7 @@ describe("retrieval result cache", () => {
         exitCode: 0,
         stdout: "NODE SettlementWindow [src=src/settlement.ts]\n",
         stderr: "",
-        timedOut: false,
-      };
+        timedOut: false};
     });
     const config = fixtureConfig(root, {
       knowledge: {
@@ -34,10 +33,7 @@ describe("retrieval result cache", () => {
         graphify: {
           ...fixtureConfig(root).knowledge.graphify,
           enabled: true,
-          updateOnRefresh: true,
-        },
-      },
-    });
+          updateOnRefresh: true}}});
     const knowledge = new LocalKnowledgeBase(config, new GraphifyRepositoryLookup(config, runner));
     await knowledge.refresh();
     const queryCallsBefore = runner.mock.calls.filter((call) => call[1][0] === "query").length;
@@ -82,8 +78,7 @@ describe("retrieval result cache", () => {
         "---",
         "",
         "Prefer SettlementWindow refund ledger patterns.",
-        "",
-      ].join("\n"),
+        ""].join("\n"),
       "utf8",
     );
 
@@ -95,24 +90,19 @@ describe("retrieval result cache", () => {
           enabled: true,
           maxResults: 6,
           maxCharacters: 6_000,
-          sharedRoot,
-        },
-      },
-    });
+          sharedRoot}}});
     const knowledge = new LocalKnowledgeBase(config, undefined, undefined, { sharedRoot });
     await knowledge.refresh();
 
     const retrievalFirst = await knowledge.searchWithAudit("SettlementWindow refunds", 4);
     const guidanceFirst = await knowledge.selectGuidanceWithAudit("SettlementWindow refunds", {
-      role: "planner",
-    });
+      role: "planner"});
     expect(retrievalFirst.results.length).toBeGreaterThan(0);
     expect(guidanceFirst.selected.length).toBeGreaterThan(0);
 
     const retrievalSecond = await knowledge.searchWithAudit("SettlementWindow refunds", 4);
     const guidanceSecond = await knowledge.selectGuidanceWithAudit("SettlementWindow refunds", {
-      role: "planner",
-    });
+      role: "planner"});
     expect(retrievalSecond).toEqual(retrievalFirst);
     expect(guidanceSecond).toEqual(guidanceFirst);
     expect(retrievalSecond.results[0]).not.toBe(retrievalFirst.results[0]);
@@ -127,8 +117,7 @@ describe("retrieval result cache", () => {
 
     const retrievalAfter = await knowledge.searchWithAudit("SettlementWindow refunds", 4);
     const guidanceAfterRefresh = await knowledge.selectGuidanceWithAudit("SettlementWindow refunds", {
-      role: "planner",
-    });
+      role: "planner"});
     expect(JSON.stringify(retrievalAfter)).toContain("UPDATED_TOKEN_XYZ");
     expect(retrievalAfter).not.toEqual(retrievalFirst);
     // Document refresh must not clear injected guidance.
@@ -146,14 +135,12 @@ describe("retrieval result cache", () => {
         "---",
         "",
         "Prefer SettlementWindow refund ledger patterns. UPDATED_TOKEN_XYZ",
-        "",
-      ].join("\n"),
+        ""].join("\n"),
       "utf8",
     );
 
     const guidanceAfter = await knowledge.selectGuidanceWithAudit("SettlementWindow refunds", {
-      role: "planner",
-    });
+      role: "planner"});
     expect(JSON.stringify(guidanceAfter)).toContain("UPDATED_TOKEN_XYZ");
     expect(guidanceAfter).not.toEqual(guidanceFirst);
   });

@@ -22,8 +22,7 @@ function evidenceEntry(index: number, passed = false): CommandEvidence {
     stdout: `${"banner noise\n".repeat(20)}ASSERT FAIL stack ${index} ${"x".repeat(19_000)}`,
     stderr: "",
     durationMs: 10,
-    at: new Date().toISOString(),
-  };
+    at: new Date().toISOString()};
 }
 
 describe("recentEvidenceOutput", () => {
@@ -36,8 +35,7 @@ describe("recentEvidenceOutput", () => {
       evidenceEntry(0, true),
       evidenceEntry(1, false),
       evidenceEntry(2, true),
-      evidenceEntry(3, true),
-    ];
+      evidenceEntry(3, true)];
     const rendered = recentEvidenceOutput(evidence, { entries: 2, charactersPerEntry: 500 });
     expect(rendered).toContain("gate:3");
     expect(rendered).toContain("gate:1");
@@ -71,13 +69,11 @@ describe("buildWorkPacket budgets", () => {
           id: "t1",
           title: "Ship feature",
           description: "A short task body",
-          acceptanceCriteria: ["works"],
-        },
+          acceptanceCriteria: ["works"]},
         changedFiles: ["src/a.ts"],
         commandEvidence: "ok",
         diff,
-        diffOmittedFiles: [],
-      },
+        diffOmittedFiles: []},
       guidance: [],
       retrievalResults: [],
       priorArtifacts: [],
@@ -86,9 +82,7 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: config.workflow.contextCharacters,
         inputCharacters: config.workflow.inputCharacters,
-        graphifyCharacters: config.workflow.graphifyCharacters,
-      },
-    });
+        graphifyCharacters: config.workflow.graphifyCharacters}});
 
     expect((packet.input as { diff: string }).diff).toBe(diff);
     expect(
@@ -115,9 +109,7 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: 12_000,
         inputCharacters: 24_000,
-        graphifyCharacters: 3_000,
-      },
-    });
+        graphifyCharacters: 3_000}});
     expect(packet.input).toEqual(input);
     expect(budgetAudit.truncations).toEqual([]);
   });
@@ -132,8 +124,7 @@ describe("buildWorkPacket budgets", () => {
       input: {
         short: "abc",
         long: "L".repeat(5_000),
-        nested: { mid: "M".repeat(2_000) },
-      },
+        nested: { mid: "M".repeat(2_000) }},
       guidance: [],
       retrievalResults: [],
       priorArtifacts: [],
@@ -142,9 +133,7 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: 12_000,
         inputCharacters: 1_200,
-        graphifyCharacters: 3_000,
-      },
-    });
+        graphifyCharacters: 3_000}});
     expect(JSON.stringify(packet.input).length).toBeLessThanOrEqual(1_200);
     expect(budgetAudit.truncations.length).toBeGreaterThan(0);
     expect(budgetAudit.truncations[0]?.path).toContain("long");
@@ -164,23 +153,18 @@ describe("buildWorkPacket budgets", () => {
         {
           source: "graphify:graphify-out/graph.json",
           title: "Repository relationships (Graphify)",
-          excerpt: "G".repeat(5_000),
-        },
+          excerpt: "G".repeat(5_000)},
         {
           source: "docs/settlement.md",
           title: "Settlement",
-          excerpt: "SettlementWindow refund ledger guidance",
-        },
-      ],
+          excerpt: "SettlementWindow refund ledger guidance"}],
       priorArtifacts: [],
       expectedOutput: "{}",
       createdAt: "2026-08-07T00:00:00.000Z",
       budgets: {
         contextCharacters: 12_000,
         inputCharacters: 24_000,
-        graphifyCharacters: 3_000,
-      },
-    });
+        graphifyCharacters: 3_000}});
     expect(packet.context[0]?.excerpt.length).toBe(3_000);
     expect(packet.context.some((item) => item.source === "docs/settlement.md")).toBe(true);
     expect(budgetAudit.truncations.some((item) => item.reason === "graphify-budget")).toBe(true);
@@ -199,22 +183,17 @@ describe("buildWorkPacket budgets", () => {
         {
           source: "rules/a.mdc",
           title: "A",
-          kind: "rule",
-        },
-      ],
+          kind: "rule"}],
       guidancePack,
       retrievalResults: [
-        { source: "docs/a.md", title: "A", excerpt: "C".repeat(20_000) },
-      ],
+        { source: "docs/a.md", title: "A", excerpt: "C".repeat(20_000) }],
       priorArtifacts: [],
       expectedOutput: "{}",
       createdAt: "2026-08-07T00:00:00.000Z",
       budgets: {
         contextCharacters: 5_000,
         inputCharacters: 2_000,
-        graphifyCharacters: 1_000,
-      },
-    });
+        graphifyCharacters: 1_000}});
     expect(budgetAudit.guidanceCharacters + budgetAudit.contextCharacters).toBeLessThanOrEqual(5_000);
     expect(budgetAudit.inputCharacters).toBeLessThanOrEqual(2_000);
     expect(JSON.stringify(packet.input).length).toBeLessThanOrEqual(2_000);
@@ -232,14 +211,11 @@ describe("implementer packet evidence projection", () => {
         ...fixtureConfig(root).workflow,
         contextCharacters: 12_000,
         inputCharacters: 24_000,
-        graphifyCharacters: 3_000,
-      },
+        graphifyCharacters: 3_000},
       knowledge: {
         ...fixtureConfig(root).knowledge,
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
-      },
-    });
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -255,14 +231,12 @@ describe("implementer packet evidence projection", () => {
       acceptanceCriteria: ["Refunds reuse the original ledger entry"],
       affectedPaths: [],
       blockedBy: [],
-      tdd: true,
       status: "active",
       step: "implementing",
-      attempts: { tests: 1, implementation: 2, review: 0 },
+      attempts: { implementation: 2, review: 0 },
       evidence,
       testPaths: ["tests/settlement.test.ts"],
-      changedFiles: ["src/settlement.ts"],
-    };
+      changedFiles: ["src/settlement.ts"]};
 
     const agents = new AgentCoordinator(
       config,
@@ -271,8 +245,7 @@ describe("implementer packet evidence projection", () => {
           expect(request.prompt.length).toBeLessThan(60_000);
           expect(request.prompt).not.toContain(evidence[0]!.stdout.slice(0, 200));
           return { summary: "ok", changedFiles: ["src/settlement.ts"] };
-        },
-      }),
+        }}),
       store,
       knowledge,
     );
@@ -283,17 +256,14 @@ describe("implementer packet evidence projection", () => {
       objective: "Implement SettlementWindow refunds",
       input: {
         task: taskForPacket(task),
-        verifiedCommandOutput: recentEvidenceOutput(task.evidence),
-      },
+        verifiedCommandOutput: recentEvidenceOutput(task.evidence)},
       expectedOutput: "{summary,changedFiles}",
       schema: WorkerOutputSchema,
-      knowledgeQuery: "SettlementWindow refunds",
-    });
+      knowledgeQuery: "SettlementWindow refunds"});
 
     await store.writeJson(runId, "state.json", {
       ...(await store.load(runId)),
-      tasks: [task],
-    });
+      tasks: [task]});
     const persisted = JSON.parse(
       await readFile(path.join(root, ".agent-harness", "runs", runId, "state.json"), "utf8"),
     ) as { tasks: BuildTask[] };
@@ -308,8 +278,7 @@ describe("implementer packet evidence projection", () => {
       constraints: [],
       input: {
         task: taskForPacket(task),
-        verifiedCommandOutput: recentEvidenceOutput(task.evidence),
-      },
+        verifiedCommandOutput: recentEvidenceOutput(task.evidence)},
       guidance: [],
       retrievalResults: [],
       priorArtifacts: [],
@@ -318,9 +287,7 @@ describe("implementer packet evidence projection", () => {
       budgets: {
         contextCharacters: config.workflow.contextCharacters,
         inputCharacters: config.workflow.inputCharacters,
-        graphifyCharacters: config.workflow.graphifyCharacters,
-      },
-    }).packet;
+        graphifyCharacters: config.workflow.graphifyCharacters}}).packet;
     expect(renderPrompt(packet).length).toBeLessThan(60_000);
   });
 });

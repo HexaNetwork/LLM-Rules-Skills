@@ -27,10 +27,8 @@ function mockRun(agentId: string, options?: Record<string, unknown>) {
         id: `run-${agentId}`,
         status: cancelled ? "cancelled" : "finished",
         result: "{}",
-        usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
-      };
-    },
-  };
+        usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 }};
+    }};
 }
 
 vi.mock("@cursor/sdk", () => ({
@@ -43,8 +41,7 @@ vi.mock("@cursor/sdk", () => ({
       const agent: MockAgent = {
         agentId,
         send: vi.fn(async (_prompt: string, options?: Record<string, unknown>) => mockRun(agentId, options)),
-        [Symbol.asyncDispose]: dispose,
-      };
+        [Symbol.asyncDispose]: dispose};
       return agent;
     }),
     resume: vi.fn(async (agentId: string) => {
@@ -53,11 +50,8 @@ vi.mock("@cursor/sdk", () => ({
       return {
         agentId,
         send: vi.fn(async (_prompt: string, options?: Record<string, unknown>) => mockRun(agentId, options)),
-        [Symbol.asyncDispose]: dispose,
-      };
-    }),
-  },
-}));
+        [Symbol.asyncDispose]: dispose};
+    })}}));
 
 import { createCursorBackend } from "../../src/agent.js";
 
@@ -69,8 +63,7 @@ function request(overrides: Partial<AgentRequest> = {}): AgentRequest {
     cwd: process.cwd(),
     signal: new AbortController().signal,
     retainProviderSession: true,
-    ...overrides,
-  };
+    ...overrides};
 }
 
 describe("retained provider agent eviction", () => {

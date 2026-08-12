@@ -45,8 +45,7 @@ export async function createProjectFixture(options?: {
   const root = await mkdtemp(path.join(tmpdir(), FIXTURE_PREFIX));
   const initialFiles = options?.initialFiles ?? {
     "README.md": "# Fixture\n",
-    "docs/.gitkeep": "",
-  };
+    "docs/.gitkeep": ""};
 
   for (const [relativePath, contents] of Object.entries(initialFiles)) {
     const absolute = path.join(root, relativePath);
@@ -128,8 +127,7 @@ export async function createProjectFixture(options?: {
         headSha: entry.headSha,
         gitCommonDir: path.resolve(resolved, commonRaw),
         detached: entry.detached,
-        registered: true,
-      });
+        registered: true});
     },
     async reopenWorktree(this: ProjectFixture, worktreePath) {
       const info = await this.inspectWorktree(worktreePath);
@@ -144,8 +142,7 @@ export async function createProjectFixture(options?: {
       return buildLinkedWorktreeInfo({
         ...info,
         headSha: head,
-        gitCommonDir: path.resolve(info.path, commonRaw),
-      });
+        gitCommonDir: path.resolve(info.path, commonRaw)});
     },
     async removeWorktree(this: ProjectFixture, worktreePath, options = {}) {
       const resolved = path.resolve(worktreePath);
@@ -189,8 +186,7 @@ export async function createProjectFixture(options?: {
         // Repo may already be partially deleted.
       }
       await rm(this.root, { recursive: true, force: true, maxRetries: 3 });
-    },
-  };
+    }};
 
   return fixture;
 }
@@ -209,36 +205,28 @@ export function buildFixtureConfig(
       provider: "cursor",
       timeoutMs: 1_000,
       promptBuilder: true,
-      schemaRepairAttempts: 0,
-    },
+      schemaRepairAttempts: 0},
     workflow: {
-      tdd: true,
-      maxTestAttempts: 2,
       maxImplementationAttempts: 3,
       maxReviewAttempts: 2,
       maxGrillQuestionsPerEpisode: 5,
       staleAnswerMinutes: 30,
       contextResults: 6,
-      contextCharacters: 12_000,
-    },
+      contextCharacters: 12_000},
     commands: {
       verification: [{
         id: "test",
         command: 'node -e "process.exit(0)"',
-        timeoutMs: 10 * 60 * 1000,
-      }],
-    },
+        timeoutMs: 10 * 60 * 1000}]},
     git: {
       enabled: false,
       baseBranch: "main",
       branchPrefix: "harness",
       remote: "origin",
       push: false,
-      openPullRequest: false,
-    },
+      openPullRequest: false},
     tracker: { kind: "local" },
-    knowledge: { sources: ["README.md", "docs"], chunkCharacters: 400 },
-  });
+    knowledge: { sources: ["README.md", "docs"], chunkCharacters: 400 }});
   return HarnessConfigSchema.parse({
     ...base,
     ...overrides,
@@ -249,8 +237,7 @@ export function buildFixtureConfig(
     commands: { ...base.commands, ...overrides.commands },
     git: { ...base.git, ...overrides.git },
     tracker: { ...base.tracker, ...overrides.tracker },
-    knowledge: { ...base.knowledge, ...overrides.knowledge },
-  });
+    knowledge: { ...base.knowledge, ...overrides.knowledge }});
 }
 
 export function fixtureTempPrefix(): string {
@@ -266,8 +253,7 @@ function buildLinkedWorktreeInfo(info: Omit<LinkedWorktreeInfo, "read" | "git">)
     },
     async git(...args: string[]) {
       return git(info.path, ...args);
-    },
-  };
+    }};
 }
 
 function parseWorktreePorcelain(
@@ -281,8 +267,7 @@ function parseWorktreePorcelain(
         entries.push({
           path: path.resolve(current.path),
           headSha: current.headSha,
-          detached: current.detached,
-        });
+          detached: current.detached});
       }
       current = undefined;
       continue;
@@ -302,8 +287,7 @@ function parseWorktreePorcelain(
     entries.push({
       path: path.resolve(current.path),
       headSha: current.headSha,
-      detached: current.detached,
-    });
+      detached: current.detached});
   }
   return entries;
 }

@@ -7,18 +7,15 @@ import {
   selectedRunId,
   startNewRun,
   waitForRunStatus,
-  withE2EHarness,
-} from "./helpers.js";
+  withE2EHarness} from "./helpers.js";
 
 test("polling/editor safety: focused reflect draft survives signature changes", async ({
-  page,
-}) => {
+  page}) => {
   await withE2EHarness(
     page,
     {
       testName: "e2e-polling-editor",
-      steps: [{ role: "reflector", output: REFLECT_OUTPUT }],
-    },
+      steps: [{ role: "reflector", output: REFLECT_OUTPUT }]},
     async ({ page, fixture, ui }) => {
       await startNewRun(page, "Protect the reflect editor across polls");
       await waitForRunStatus(page, /awaiting input|reflect/i);
@@ -47,8 +44,7 @@ test("polling/editor safety: focused reflect draft survives signature changes", 
           startedAt: new Date().toISOString(),
           lastStepAt: new Date().toISOString(),
           lastStepSummary: "forcing a signature change",
-          stepCount: 7,
-        })}\n`,
+          stepCount: 7})}\n`,
         "utf8",
       );
 
@@ -69,15 +65,13 @@ test("polling/editor safety: focused reflect draft survives signature changes", 
           );
           const selection = await restatement.evaluate((node: HTMLTextAreaElement) => ({
             start: node.selectionStart,
-            end: node.selectionEnd,
-          }));
+            end: node.selectionEnd}));
           return { value, active, selection };
         })
         .toEqual({
           value: typed,
           active: true,
-          selection: { start: 10, end: 22 },
-        });
+          selection: { start: 10, end: 22 }});
 
       await expect(page.getByTestId("reflect-form")).toBeVisible();
     },

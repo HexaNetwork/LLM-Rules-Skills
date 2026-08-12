@@ -43,8 +43,7 @@ describe("resolveHarnessPaths", () => {
       kind: "git-worktree",
       controlRoot,
       worktreePath,
-      createdAt: "2026-08-10T00:00:00.000Z",
-    });
+      createdAt: "2026-08-10T00:00:00.000Z"});
 
     expect(paths.controlRoot).toBe(controlRoot);
     expect(paths.workspaceRoot).toBe(worktreePath);
@@ -56,8 +55,7 @@ describe("resolveHarnessPaths", () => {
     const worktreeRoot = path.resolve("/tmp/ah-wt");
     const config = buildFixtureConfig(controlRoot, {
       stateDirectory: stateRoot,
-      worktreeRoot,
-    });
+      worktreeRoot});
     const paths = resolveHarnessPaths(config);
     expect(paths.worktreeRoot).toBe(worktreeRoot);
   });
@@ -94,15 +92,13 @@ describe("configurationHash runtime path stability", () => {
       stateDirectory: ".agent-harness",
       worktreeRoot: "/tmp/wt-a",
       knowledge: { sharedIndexDirectory: "shared-a" },
-      workflow: { tdd: true },
-    });
+      workflow: { }});
     const relocated = {
       ...base,
       repositoryRoot: "/project-b",
       stateDirectory: "/absolute/state",
       worktreeRoot: "/tmp/wt-b",
-      knowledge: { ...base.knowledge, sharedIndexDirectory: "shared-b" },
-    };
+      knowledge: { ...base.knowledge, sharedIndexDirectory: "shared-b" }};
 
     expect(configurationHash(relocated)).toBe(configurationHash(base));
   });

@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   offersPreflightCommitOrders,
-  preflightCommitUnavailableMessage,
-} from "../../src/application/helpers.js";
+  preflightCommitUnavailableMessage} from "../../src/application/helpers.js";
 
 describe("preflight commit-order gate", () => {
   it("offers commit-order controls only for legacy-shared workspaces", () => {

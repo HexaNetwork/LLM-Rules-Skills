@@ -7,8 +7,7 @@ import {
   HighLevelPlanSchema,
   WorkerOutputSchema,
   createRunState,
-  type DomainArtifacts,
-} from "../../src/domain.js";
+  type DomainArtifacts} from "../../src/domain.js";
 import { discoverDomainArtifacts } from "../../src/domain/domain-artifacts.js";
 import { LocalKnowledgeBase } from "../../src/knowledge.js";
 import { RunStore } from "../../src/store.js";
@@ -47,16 +46,14 @@ describe("discoverDomainArtifacts", () => {
       "nested/elsewhere/GLOSSARY-MAP.md": "# Nested map ignored for preference\n",
       "node_modules/pkg/GLOSSARY.md": "# skip\n",
       "node_modules/pkg/docs/adr/0001.md": "# skip\n",
-      "dist/GLOSSARY.md": "# skip\n",
-    });
+      "dist/GLOSSARY.md": "# skip\n"});
 
     const artifacts = await discoverDomainArtifacts(root);
 
     expect(artifacts).toEqual({
       glossaryMap: "GLOSSARY-MAP.md",
       glossaries: ["GLOSSARY.md", "src/billing/GLOSSARY.md", "src/ordering/GLOSSARY.md"],
-      adrDirs: ["docs/adr", "src/ordering/docs/adr"],
-    } satisfies DomainArtifacts);
+      adrDirs: ["docs/adr", "src/ordering/docs/adr"]} satisfies DomainArtifacts);
   });
 
   it("returns empty lists when nothing is present", async () => {
@@ -70,8 +67,7 @@ describe("discoverDomainArtifacts", () => {
     const root = await fixtureRoot();
     await writeTree(root, {
       "docs/adr/.keep": "",
-      "docs/other/readme.md": "# Other\n",
-    });
+      "docs/other/readme.md": "# Other\n"});
     const artifacts = await discoverDomainArtifacts(root);
     expect(artifacts.adrDirs).toEqual([]);
   });
@@ -82,15 +78,12 @@ describe("AgentCoordinator domainArtifacts injection", () => {
     const root = await fixtureRoot();
     await writeTree(root, {
       "GLOSSARY.md": "# Root\n",
-      "docs/adr/0001-example.md": "# ADR\n",
-    });
+      "docs/adr/0001-example.md": "# ADR\n"});
     const config = fixtureConfig(root, {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
-      },
-    });
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -107,9 +100,7 @@ describe("AgentCoordinator domainArtifacts injection", () => {
           approach: "Vertical slice",
           constraints: [],
           outOfScope: [],
-          openQuestions: [],
-        }),
-      }),
+          openQuestions: []})}),
       store,
       knowledge,
     );
@@ -123,29 +114,24 @@ describe("AgentCoordinator domainArtifacts injection", () => {
       schema: HighLevelPlanSchema,
       knowledgeQuery: "domain feature glossary",
       retrieval: false,
-      buildPrompt: false,
-    });
+      buildPrompt: false});
 
     const packet = await readPacket(store, runId);
     expect(packet.domainArtifacts).toEqual({
       glossaries: ["GLOSSARY.md"],
-      adrDirs: ["docs/adr"],
-    });
+      adrDirs: ["docs/adr"]});
   });
 
   it("omits domainArtifacts for implementer (no domain-modeling skill)", async () => {
     const root = await fixtureRoot();
     await writeTree(root, {
       "GLOSSARY.md": "# Root\n",
-      "docs/adr/0001-example.md": "# ADR\n",
-    });
+      "docs/adr/0001-example.md": "# ADR\n"});
     const config = fixtureConfig(root, {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false },
-      },
-    });
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -155,8 +141,7 @@ describe("AgentCoordinator domainArtifacts injection", () => {
     const agents = new AgentCoordinator(
       config,
       createFakeBackend({
-        implementer: () => ({ summary: "done", changedFiles: [] }),
-      }),
+        implementer: () => ({ summary: "done", changedFiles: [] })}),
       store,
       knowledge,
     );
@@ -169,15 +154,12 @@ describe("AgentCoordinator domainArtifacts injection", () => {
         task: {
           title: "Feature",
           description: "Do it",
-          acceptanceCriteria: ["done"],
-        },
-      },
+          acceptanceCriteria: ["done"]}},
       expectedOutput: "{summary,changedFiles}",
       schema: WorkerOutputSchema,
       knowledgeQuery: "feature",
       retrieval: false,
-      buildPrompt: false,
-    });
+      buildPrompt: false});
 
     const packet = await readPacket(store, runId);
     expect(packet).not.toHaveProperty("domainArtifacts");

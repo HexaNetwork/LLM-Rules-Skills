@@ -48,20 +48,16 @@ export function createScriptedBackend(steps: ScriptedStep[]): {
               cwd: request.cwd,
               mode: request.mode,
               providerSessionId: request.providerSessionId,
-              taskId: request.taskId,
-            },
-          });
+              taskId: request.taskId}});
           const providerSessionId = request.providerSessionId ?? randomUUID();
           return {
             output: {
               summary: "Keep current verification settings",
-              configPatch: {},
-            },
+              configPatch: {}},
             providerSessionId,
             providerRunId: randomUUID(),
             providerSessionReused: request.providerSessionId != null,
-            submittedPrompt: request.continuationPrompt ?? request.prompt,
-          };
+            submittedPrompt: request.continuationPrompt ?? request.prompt};
         }
         throw new Error(
           `ScriptedBackend: expected role "${step.role}" but received "${request.role}"`,
@@ -76,9 +72,7 @@ export function createScriptedBackend(steps: ScriptedStep[]): {
           cwd: request.cwd,
           mode: request.mode,
           providerSessionId: request.providerSessionId,
-          taskId: request.taskId,
-        },
-      });
+          taskId: request.taskId}});
 
       if ("waitFor" in step && step.waitFor) {
         await step.waitFor;
@@ -97,13 +91,11 @@ export function createScriptedBackend(steps: ScriptedStep[]): {
         providerSessionReused,
         submittedPrompt: providerSessionReused
           ? request.continuationPrompt ?? request.prompt
-          : request.prompt,
-      };
+          : request.prompt};
     },
     async release() {
       // Scripted sessions have no external resources.
-    },
-  };
+    }};
 
   return {
     backend,
@@ -115,8 +107,7 @@ export function createScriptedBackend(steps: ScriptedStep[]): {
           `ScriptedBackend: ${queue.length} unconsumed step(s) remaining: ${remaining}`,
         );
       }
-    },
-  };
+    }};
 }
 
 function emitScriptedSteps(
@@ -139,8 +130,7 @@ function sanitizeRequest(request: AgentRequest): Record<string, unknown> {
     retainProviderSession: request.retainProviderSession,
     mode: request.mode,
     cwd: request.cwd,
-    taskId: request.taskId,
-  };
+    taskId: request.taskId};
 }
 
 function deriveObjective(request: AgentRequest): string {

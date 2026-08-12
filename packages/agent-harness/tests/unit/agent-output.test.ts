@@ -9,24 +9,20 @@ describe("resolveAgentOutput", () => {
 
     expect(resolveAgentOutput(result, [older, newer])).toEqual({
       raw: result,
-      parsed: { summary: "from result", value: 3 },
-    });
+      parsed: { summary: "from result", value: 3 }});
     expect(resolveAgentOutput("", [older, newer])).toEqual({
       raw: newer,
-      parsed: { summary: "from newer plan", value: 2 },
-    });
+      parsed: { summary: "from newer plan", value: 2 }});
     expect(resolveAgentOutput("not json", [older])).toEqual({
       raw: older,
-      parsed: { summary: "from older plan", value: 1 },
-    });
+      parsed: { summary: "from older plan", value: 1 }});
   });
 
   it("parses fenced CreatePlan bodies the same way as assistant results", () => {
     const fenced = '```json\n{"summary":"planned","readyToPlan":false}\n```';
     expect(resolveAgentOutput("", [fenced]).parsed).toEqual({
       summary: "planned",
-      readyToPlan: false,
-    });
+      readyToPlan: false});
     expect(parseOutput(fenced)).toEqual({ summary: "planned", readyToPlan: false });
   });
 
@@ -40,8 +36,7 @@ describe("resolveAgentOutput", () => {
       status: "resolved",
       summary: "done",
       resolution: "Add to Town.java:\n\n```java\nint x = 1;\n```\n\nVerified.",
-      routeClear: true,
-    };
+      routeClear: true};
     const fenced = `\`\`\`json\n${JSON.stringify(body, null, 2)}\n\`\`\`\n`;
     expect(parseOutput(fenced)).toEqual(body);
     expect(resolveAgentOutput(fenced).parsed).toEqual(body);
@@ -59,8 +54,7 @@ describe("resolveAgentOutput", () => {
       "```mermaid",
       "flowchart TD",
       '  a{"decision?"} --> b["step"]',
-      "```",
-    ].join("\n");
+      "```"].join("\n");
     expect(parseOutput(output)).toEqual(body);
   });
 

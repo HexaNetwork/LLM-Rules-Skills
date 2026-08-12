@@ -36,8 +36,7 @@ describe("CLI acceptance errors and package entry", () => {
       "--tdd",
       "maybe",
       "--config",
-      configPath,
-    ]);
+      configPath]);
     expect(badTdd.code).not.toBe(0);
     expect(
       `${badTdd.stderr.join("\n")}\n${badTdd.stdout.join("\n")}\n${String((badTdd.error as Error)?.message ?? "")}`,
@@ -85,8 +84,7 @@ function spawnNode(
     const child = spawn(process.execPath, [script, ...args], {
       cwd: process.cwd(),
       env: { ...process.env, FORCE_COLOR: "0" },
-      windowsHide: true,
-    });
+      windowsHide: true});
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {

@@ -9,8 +9,7 @@ function request(role: AgentRequest["role"], prompt = `${role} objective`): Agen
     model: "test-model",
     prompt,
     cwd: "/tmp/fixture",
-    signal: new AbortController().signal,
-  };
+    signal: new AbortController().signal};
 }
 
 describe("createScriptedBackend", () => {
@@ -26,9 +25,7 @@ describe("createScriptedBackend", () => {
           inScope: ["copy"],
           outOfScope: [],
           assumptions: [],
-          unknowns: [],
-        },
-      },
+          unknowns: []}},
       {
         role: "griller",
         output: {
@@ -39,11 +36,7 @@ describe("createScriptedBackend", () => {
               id: "tone",
               question: "Tone?",
               answer: "Casual",
-              summary: "Casual",
-            },
-          ],
-        },
-      },
+              summary: "Casual"}]}},
       { role: "planner", output: HIGH_LEVEL_PLAN },
       { role: "planner", output: PRD_OUTPUT },
       {
@@ -57,13 +50,8 @@ describe("createScriptedBackend", () => {
               title: "Ship greeting",
               description: "Implement greeting",
               acceptanceCriteria: ["works"],
-              blockedBy: [],
-              tdd: true,
-            },
-          ],
-          proposedInstalls: [],
-        },
-      },
+              blockedBy: []}],
+          proposedInstalls: []}},
       {
         role: "red-writer",
         output: {
@@ -71,22 +59,16 @@ describe("createScriptedBackend", () => {
           summary: "RED",
           changedFiles: ["tests/greet.test.ts"],
           behaviorsAdded: ["greeting fails until implemented"],
-          edgeCasesAdded: [],
-        },
-      },
+          edgeCasesAdded: []}},
       {
         role: "implementer",
-        output: { summary: "GREEN", changedFiles: ["src/greet.ts"] },
-      },
+        output: { summary: "GREEN", changedFiles: ["src/greet.ts"] }},
       {
         role: "reviewer",
-        output: { approved: true, summary: "ok", findings: [] },
-      },
+        output: { approved: true, summary: "ok", findings: [] }},
       {
         role: "message-writer",
-        output: { subject: "feat: greeting", body: "Done." },
-      },
-    ]);
+        output: { subject: "feat: greeting", body: "Done." }}]);
 
     for (const role of [
       "reflector",
@@ -97,8 +79,7 @@ describe("createScriptedBackend", () => {
       "red-writer",
       "implementer",
       "reviewer",
-      "message-writer",
-    ] as const) {
+      "message-writer"] as const) {
       const result = await scripted.backend.run(request(role));
       expect(result.output).toBeTruthy();
     }
@@ -112,8 +93,7 @@ describe("createScriptedBackend", () => {
       "red-writer",
       "implementer",
       "reviewer",
-      "message-writer",
-    ]);
+      "message-writer"]);
     expect(scripted.calls[0]?.objective).toContain("reflector");
     expect(scripted.calls[0]?.retrieval.cwd).toBe("/tmp/fixture");
     scripted.assertExhausted();
@@ -122,8 +102,7 @@ describe("createScriptedBackend", () => {
   it("fails clearly on unexpected roles and unconsumed steps", async () => {
     const scripted = createScriptedBackend([
       { role: "reflector", output: { ok: true } },
-      { role: "planner", output: { ok: true } },
-    ]);
+      { role: "planner", output: { ok: true } }]);
 
     await expect(scripted.backend.run(request("griller"))).rejects.toThrow(
       /expected role "reflector"/,
@@ -140,8 +119,7 @@ describe("createScriptedBackend", () => {
     });
     const scripted = createScriptedBackend([
       { role: "implementer", waitFor, output: { summary: "done" } },
-      { role: "reviewer", error: new Error("review boom") },
-    ]);
+      { role: "reviewer", error: new Error("review boom") }]);
 
     const pending = scripted.backend.run(request("implementer"));
     release();
@@ -157,17 +135,13 @@ describe("createScriptedBackend", () => {
         role: "red-writer",
         steps: [
           { type: "toolCall", toolName: "readFile", summary: "readFile" },
-          { type: "toolCall", toolName: "shell", summary: "shell" },
-        ],
-        output: { summary: "red", changedFiles: [] },
-      },
-    ]);
+          { type: "toolCall", toolName: "shell", summary: "shell" }],
+        output: { summary: "red", changedFiles: [] }}]);
     const result = await scripted.backend.run({
       ...request("red-writer"),
       onStep: (step) => {
         if (step.toolName) observed.push(step.toolName);
-      },
-    });
+      }});
     expect(result.output).toEqual({ summary: "red", changedFiles: [] });
     expect(observed).toEqual(["readFile", "shell"]);
     scripted.assertExhausted();

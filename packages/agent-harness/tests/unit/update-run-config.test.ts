@@ -8,8 +8,7 @@ import { ApplicationContext } from "../../src/application/application-context.js
 import {
   CONFIG_VERSION,
   configurationHash,
-  normalizeFrozenRunConfig,
-} from "../../src/config.js";
+  normalizeFrozenRunConfig} from "../../src/config.js";
 import { createRunState, type RunState } from "../../src/domain.js";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { RunStore } from "../../src/store.js";
@@ -37,8 +36,7 @@ describe("updateRunConfig", () => {
   }> {
     fixture = await createProjectFixture();
     const config = fixtureConfig(fixture.root, {
-      workflow: { tdd: true, maxRunTokens: 100 } as never,
-    });
+      workflow: { maxRunTokens: 100 } as never});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     if (options?.fault) store.configTransitionFault = options.fault;
     await store.initialize();
@@ -46,14 +44,12 @@ describe("updateRunConfig", () => {
     const hash = configurationHash(config);
     const state = {
       ...createRunState(runId, "idea", new Date().toISOString(), hash, CONFIG_VERSION),
-      configRevision: 0,
-    };
+      configRevision: 0};
     await store.create(state);
     await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
     const ctx = new ApplicationContext(structuredClone(config), {
       store,
-      backend: createFakeBackend({}),
-    });
+      backend: createFakeBackend({})});
     return { ctx, state, store, runId, config };
   }
 
@@ -64,23 +60,21 @@ describe("updateRunConfig", () => {
       ctx,
       runId,
       state.configRevision ?? 0,
-      { workflow: { maxRunTokens: 500, tdd: false } },
+      { workflow: { maxRunTokens: 500 } },
       { reason: "budget" },
     );
 
     expect(result.revision).toBe(1);
     expect(result.changedPaths).toEqual(
-      expect.arrayContaining(["workflow.maxRunTokens", "workflow.tdd"]),
+      expect.arrayContaining(["workflow.maxRunTokens"]),
     );
     expect(result.nextHash).not.toBe(result.previousHash);
     expect(result.state.configurationHash).toBe(result.nextHash);
     expect(result.state.configRevision).toBe(1);
     expect(ctx.config.workflow.maxRunTokens).toBe(500);
-    expect(ctx.config.workflow.tdd).toBe(false);
 
     const frozen = normalizeFrozenRunConfig(await store.readJson(runId, "config.json"));
     expect(frozen.workflow.maxRunTokens).toBe(500);
-    expect(frozen.workflow.tdd).toBe(false);
     expect(configurationHash(frozen)).toBe(result.nextHash);
 
     const events = await store.readText(runId, "events.jsonl");
@@ -109,8 +103,7 @@ describe("updateRunConfig", () => {
     "after_journal",
     "after_config",
     "after_state",
-    "after_event",
-  ] as const)(
+    "after_event"] as const)(
     "recovers a consistent config/hash pair after a crash at %s",
     async (fault) => {
       const { ctx, state, store, runId, config } = await prepareRun({ fault });
@@ -156,7 +149,7 @@ describe("updateRunConfig", () => {
     const beforeState = await store.load(runId);
 
     await expect(
-      updateRunConfig(ctx, runId, 0, { workflow: { tdd: false } }, { reason: "tdd" }),
+      updateRunConfig(ctx, runId, 0, { workflow: { maxRunTokens: 777 } }, { reason: "budget" }),
     ).rejects.toThrow(/fault injection/);
 
     // Before recovery: config may already be new, but the journal explains it.
@@ -164,17 +157,17 @@ describe("updateRunConfig", () => {
       await readFile(path.join(store.runDirectory(runId), "transition.pending.json"), "utf8"),
     ) as {
       state: RunState;
-      config: { workflow: { tdd: boolean } };
+      config: { workflow: { maxRunTokens: number } };
     };
     const onDiskConfig = normalizeFrozenRunConfig(await store.readJson(runId, "config.json"));
     const onDiskState = JSON.parse(
       await readFile(path.join(store.runDirectory(runId), "state.json"), "utf8"),
     ) as RunState;
 
-    expect(onDiskConfig.workflow.tdd).toBe(false);
+    expect(onDiskConfig.workflow.maxRunTokens).toBe(777);
     expect(onDiskState.configurationHash).toBe(beforeState.configurationHash);
     expect(pending.state.configurationHash).toBe(configurationHash(onDiskConfig));
-    expect(pending.config.workflow.tdd).toBe(false);
+    expect(pending.config.workflow.maxRunTokens).toBe(777);
     void config;
   });
 });

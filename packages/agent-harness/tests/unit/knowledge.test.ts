@@ -55,8 +55,7 @@ describe("LocalKnowledgeBase", () => {
     expect(progress).toEqual(expect.arrayContaining([
       expect.objectContaining({ stage: "discovering" }),
       expect.objectContaining({ stage: "indexing", completed: 0 }),
-      expect.objectContaining({ stage: "complete" }),
-    ]));
+      expect.objectContaining({ stage: "complete" })]));
     expect(progress.find((update) => update.stage === "indexing")?.total).toBeGreaterThan(0);
   });
 
@@ -67,8 +66,7 @@ describe("LocalKnowledgeBase", () => {
     await new LocalKnowledgeBase(initial).refresh();
 
     const retained = fixtureConfig(root, {
-      knowledge: { ...initial.knowledge, sources: ["README.md"] },
-    });
+      knowledge: { ...initial.knowledge, sources: ["README.md"] }});
     const knowledge = new LocalKnowledgeBase(retained);
     await knowledge.refresh();
 
@@ -91,13 +89,10 @@ describe("LocalKnowledgeBase", () => {
             source: "graphify:graphify-out/graph.json",
             title: "Repository relationships (Graphify)",
             excerpt: "AgentCoordinator --calls--> LocalKnowledgeBase",
-            score: 0,
-          },
+            score: 0},
           shapedQuery: "AgentCoordinator",
-          usedFallback: false,
-        };
-      },
-    };
+          usedFallback: false};
+      }};
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), lookup);
     await knowledge.refresh();
 
@@ -115,9 +110,7 @@ describe("LocalKnowledgeBase", () => {
       fixtureConfig(root, {
         knowledge: {
           ...fixtureConfig(root).knowledge,
-          projectId: "alpha",
-        },
-      }),
+          projectId: "alpha"}}),
     );
     await knowledge.upsertText(
       "General/auth.md",
@@ -147,8 +140,7 @@ describe("LocalKnowledgeBase", () => {
 
     expect(defaultResults.map((result) => result.title)).toEqual([
       "Alpha authentication",
-      "Universal authentication",
-    ]);
+      "Universal authentication"]);
     expect(defaultResults.every((result) => result.projectId !== "beta")).toBe(true);
   });
 
@@ -157,31 +149,26 @@ describe("LocalKnowledgeBase", () => {
     const base = fixtureConfig(root);
     const knowledge = new LocalKnowledgeBase(
       fixtureConfig(root, {
-        knowledge: { ...base.knowledge, projectId: "alpha" },
-      }),
+        knowledge: { ...base.knowledge, projectId: "alpha" }}),
     );
     await knowledge.upsertText("beta/private.md", "Beta private", "proration formula private", {
       projectId: "beta",
-      visibility: "private",
-    });
+      visibility: "private"});
     await knowledge.upsertText("beta/shared.md", "Beta shared", "proration formula shared", {
       projectId: "beta",
-      visibility: "shared",
-    });
+      visibility: "shared"});
 
     const defaultResults = await knowledge.search("proration formula", 10, { repository: false });
     const crossProjectResults = await knowledge.search("proration formula", 10, {
       repository: false,
-      includeProjects: ["beta"],
-    });
+      includeProjects: ["beta"]});
 
     expect(defaultResults).toEqual([]);
     expect(crossProjectResults.map((result) => result.title)).toEqual(["Beta shared"]);
     expect(crossProjectResults[0]).toMatchObject({
       scope: "project",
       projectId: "beta",
-      visibility: "shared",
-    });
+      visibility: "shared"});
   });
 
   it("indexes prototype-named terms without corrupting lexical frequencies", async () => {
@@ -221,9 +208,7 @@ describe("LocalKnowledgeBase", () => {
           index,
           embedding: text.includes("delivery charge") || text.includes("shipping fee correction")
             ? [1, 0]
-            : [0, 1],
-        })),
-      }), { status: 200 });
+            : [0, 1]}))}), { status: 200 });
     });
     try {
       const knowledge = new LocalKnowledgeBase(fixtureConfig(root, {
@@ -235,10 +220,7 @@ describe("LocalKnowledgeBase", () => {
             enabled: true,
             endpoint: "https://embeddings.test/v1/embeddings",
             apiKeyEnv,
-            minSimilarity: 0.5,
-          },
-        },
-      }));
+            minSimilarity: 0.5}}}));
       await knowledge.upsertText(
         "alpha/billing.md",
         "Billing adjustments",
@@ -275,8 +257,7 @@ describe("LocalKnowledgeBase", () => {
       return new Response(JSON.stringify({
         embeddings: body.input.map((text) =>
           text.includes("order cancellation") || text.includes("void a purchase") ? [1, 0] : [0, 1],
-        ),
-      }), { status: 200 });
+        )}), { status: 200 });
     });
     try {
       const knowledge = new LocalKnowledgeBase(fixtureConfig(root, {
@@ -288,10 +269,7 @@ describe("LocalKnowledgeBase", () => {
             provider: "ollama",
             endpoint: "http://localhost:11434/api/embed",
             model: "qwen3-embedding",
-            minSimilarity: 0.5,
-          },
-        },
-      }));
+            minSimilarity: 0.5}}}));
       await knowledge.upsertText(
         "docs/orders.md",
         "Order cancellation",
@@ -315,19 +293,15 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/java.mdc":
         "---\ndescription: Java implementation guidance\nglobs: src/**/*.java\n---\n\nUse Java braces.",
       "General/skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: Test-first behavior\nroles: [red-writer]\n---\n\nWrite a failing behavioral test first.",
-    });
+        "---\nname: tdd\ndescription: Test-first behavior\nroles: [red-writer]\n---\n\nWrite a failing behavioral test first."});
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
-      sharedRoot,
-    });
+      sharedRoot});
 
     const implementation = await knowledge.selectGuidance("implement TypeScript behavior", {
       role: "implementer",
-      knownPaths: ["src/feature.ts"],
-    });
+      knownPaths: ["src/feature.ts"]});
     const redWriting = await knowledge.selectGuidance("establish runnable red", {
-      role: "red-writer",
-    });
+      role: "red-writer"});
 
     expect(implementation.map((item) => item.source)).toEqual(["General/rules/typescript.mdc"]);
     expect(implementation[0]).toMatchObject({ kind: "rule" });
@@ -343,11 +317,9 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/priority.mdc":
         "---\ndescription: login validation\nalwaysApply: true\n---\n\nlogin validation must reject blank credentials.",
       "General/rules/normal.mdc":
-        "---\ndescription: login validation\n---\n\nlogin validation should be clear.",
-    });
+        "---\ndescription: login validation\n---\n\nlogin validation should be clear."});
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
-      sharedRoot,
-    });
+      sharedRoot});
     await knowledge.upsertText(
       "docs/login.md",
       "Login docs",
@@ -357,11 +329,9 @@ describe("LocalKnowledgeBase", () => {
     const selected = await knowledge.selectGuidance("login validation", {
       role: "implementer",
       maxResults: 2,
-      maxCharacters: 35,
-    });
+      maxCharacters: 35});
     const generic = await knowledge.search("login validation", 10, {
-      repository: false,
-    });
+      repository: false});
 
     expect(selected[0]?.source).toBe("General/rules/priority.mdc");
     expect(selected.reduce((total, item) => total + item.excerpt.length, 0)).toBeLessThanOrEqual(35);
@@ -379,8 +349,7 @@ describe("LocalKnowledgeBase", () => {
         "disable-model-invocation: true",
         "---",
         "",
-        "Review failed. Emit ## Standards and ## Spec markdown for the recovery plan.",
-      ].join("\n"),
+        "Review failed. Emit ## Standards and ## Spec markdown for the recovery plan."].join("\n"),
       "General/skills/code-review/SKILL.md": [
         "---",
         "name: code-review",
@@ -388,12 +357,9 @@ describe("LocalKnowledgeBase", () => {
         "roles: [reviewer]",
         "---",
         "",
-        "Review failed. Report ## Standards and ## Spec findings side by side.",
-      ].join("\n"),
-    });
+        "Review failed. Report ## Standards and ## Spec findings side by side."].join("\n")});
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
-      sharedRoot,
-    });
+      sharedRoot});
 
     const failureQuery = "Review failed. Test writer misclassified test paths.";
     const fixerSelected = await knowledge.selectGuidance(failureQuery, { role: "fixer" });
@@ -401,8 +367,7 @@ describe("LocalKnowledgeBase", () => {
 
     const reviewerSelected = await knowledge.selectGuidance(failureQuery, { role: "reviewer" });
     expect(reviewerSelected.map((item) => item.source)).toEqual([
-      "General/skills/code-review/SKILL.md",
-    ]);
+      "General/skills/code-review/SKILL.md"]);
     expect(reviewerSelected.map((item) => item.source)).not.toContain(
       "General/skills/implement-auto/SKILL.md",
     );
@@ -414,8 +379,7 @@ describe("LocalKnowledgeBase", () => {
     const foreignRoot = path.join(root, "guidance-beta");
     await writeGuidanceFiles(foreignRoot, {
       "rules/security.mdc":
-        "---\ndescription: payment authorization\n---\n\npayment authorization requires an audit trail.",
-    });
+        "---\ndescription: payment authorization\n---\n\npayment authorization requires an audit trail."});
     const knowledge = new LocalKnowledgeBase(
       fixtureConfig(root, { knowledge: { ...fixtureConfig(root).knowledge, projectId: "alpha" } }),
       undefined,
@@ -433,16 +397,13 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/a.mdc":
         "---\ndescription: authorization\nalwaysApply: true\n---\n\nauthorization is required.",
       "General/rules/b.mdc":
-        "---\ndescription: authorization\nalwaysApply: true\n---\n\nauthorization must be logged.",
-    });
+        "---\ndescription: authorization\nalwaysApply: true\n---\n\nauthorization must be logged."});
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
-      sharedRoot,
-    });
+      sharedRoot});
 
     const audit = await knowledge.selectGuidanceWithAudit("authorization", {
       role: "implementer",
-      maxResults: 1,
-    });
+      maxResults: 1});
 
     expect(audit.selected).toHaveLength(1);
     expect(audit.omittedAlwaysApply).toEqual([
@@ -450,9 +411,7 @@ describe("LocalKnowledgeBase", () => {
         source: audit.selected[0]?.source === "General/rules/a.mdc"
           ? "General/rules/b.mdc"
           : "General/rules/a.mdc",
-        reason: "lower-ranked or omitted by the guidance budget",
-      }),
-    ]);
+        reason: "lower-ranked or omitted by the guidance budget"})]);
     expect(audit.omittedOverrides).toEqual([]);
   });
 
@@ -464,36 +423,28 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/no-legacy-fallback-code.mdc":
         "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nglobal authorization fallback text.",
       "General/skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer]\n---\n\nglobal authorization test skill.",
-    });
+        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer]\n---\n\nglobal authorization test skill."});
     await writeGuidanceFiles(projectRoot, {
       "rules/no-legacy-fallback-code.mdc":
         "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nproject authorization fallback text.",
       "skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer]\n---\n\nproject authorization test skill.",
-    });
+        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer]\n---\n\nproject authorization test skill."});
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
       projectRoot,
-      sharedRoot,
-    });
+      sharedRoot});
 
     const implementer = await knowledge.selectGuidanceWithAudit("authorization fallback", {
-      role: "implementer",
-    });
+      role: "implementer"});
     expect(implementer.selected.map((item) => item.source)).toEqual([
-      "rules/no-legacy-fallback-code.mdc",
-    ]);
+      "rules/no-legacy-fallback-code.mdc"]);
     expect(implementer.selected[0]?.reason).toContain("project scope");
     expect(implementer.omittedOverrides).toEqual([
       expect.objectContaining({
         source: "General/rules/no-legacy-fallback-code.mdc",
-        reason: "overridden by project guidance",
-      }),
-    ]);
+        reason: "overridden by project guidance"})]);
 
     const redWriter = await knowledge.selectGuidanceWithAudit("authorization tests", {
-      role: "red-writer",
-    });
+      role: "red-writer"});
     expect(redWriter.selected.map((item) => item.source)).toContain("skills/tdd/SKILL.md");
     expect(redWriter.selected.map((item) => item.source)).not.toContain(
       "General/skills/tdd/SKILL.md",
@@ -502,9 +453,7 @@ describe("LocalKnowledgeBase", () => {
       expect.arrayContaining([
         expect.objectContaining({
           source: "General/skills/tdd/SKILL.md",
-          reason: "overridden by project guidance",
-        }),
-      ]),
+          reason: "overridden by project guidance"})]),
     );
   });
 
@@ -518,51 +467,41 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/no-legacy-fallback-code.mdc":
         "---\ndescription: compatibility rule\n---\n\nremove compatibility paths",
       "General/skills/diagnose/SKILL.md":
-        "---\nname: diagnose\ndescription: debugging\n---\n\ndiagnose failures",
-    });
+        "---\nname: diagnose\ndescription: debugging\n---\n\ndiagnose failures"});
     await writeGuidanceFiles(projectRoot, {
       "skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: project test workflow\n---\n\nproject tdd guidance",
-    });
+        "---\nname: tdd\ndescription: project test workflow\n---\n\nproject tdd guidance"});
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
       projectRoot,
-      sharedRoot,
-    });
+      sharedRoot});
 
     const audit = await knowledge.selectGuidanceWithAudit("unrelated words", {
       role: "red-writer",
       assignment: {
         rules: ["no-legacy-fallback-code"],
-        skills: ["tdd"],
-      },
-    });
+        skills: ["tdd"]}});
 
     expect(audit.selected.map((item) => item.source)).toEqual([
       "General/rules/no-legacy-fallback-code.mdc",
-      "skills/tdd/SKILL.md",
-    ]);
+      "skills/tdd/SKILL.md"]);
     expect(audit.selected.every((item) => item.reason.includes("agent assignment"))).toBe(true);
     expect(audit.guidancePack).toContain("remove compatibility paths");
     expect(audit.guidancePack).toContain("project tdd guidance");
     expect(audit.guidancePack).not.toContain("---");
     expect(audit.selected.map((item) => item.source)).not.toContain("General/skills/diagnose/SKILL.md");
     expect(audit.omittedOverrides).toEqual([
-      expect.objectContaining({ source: "General/skills/tdd/SKILL.md" }),
-    ]);
+      expect.objectContaining({ source: "General/skills/tdd/SKILL.md" })]);
     expect(audit.missingAssignments).toEqual([]);
 
     await expect(knowledge.selectGuidance("debug failure", {
       role: "fixer",
-      assignment: { rules: [], skills: [] },
-    })).resolves.toEqual([]);
+      assignment: { rules: [], skills: [] }})).resolves.toEqual([]);
 
     const missing = await knowledge.selectGuidanceWithAudit("anything", {
       role: "fixer",
-      assignment: { rules: ["does-not-exist"], skills: [] },
-    });
+      assignment: { rules: ["does-not-exist"], skills: [] }});
     expect(missing.missingAssignments).toEqual([
-      expect.objectContaining({ kind: "rule", name: "does-not-exist" }),
-    ]);
+      expect.objectContaining({ kind: "rule", name: "does-not-exist" })]);
   });
 
   it("prefers frozen run guidance over live shared roots", async () => {
@@ -572,12 +511,10 @@ describe("LocalKnowledgeBase", () => {
     const frozenRoot = path.join(runsRoot, "run-1", "frozen-components", "guidance");
     await writeGuidanceFiles(sharedRoot, {
       "General/rules/live.mdc":
-        "---\ndescription: live guidance\nalwaysApply: true\n---\n\nlive guidance text",
-    });
+        "---\ndescription: live guidance\nalwaysApply: true\n---\n\nlive guidance text"});
     await writeGuidanceFiles(frozenRoot, {
       "General/rules/frozen.mdc":
-        "---\ndescription: frozen guidance\nalwaysApply: true\n---\n\nfrozen guidance text",
-    });
+        "---\ndescription: frozen guidance\nalwaysApply: true\n---\n\nfrozen guidance text"});
     await mkdir(path.join(runsRoot, "run-1"), { recursive: true });
     await writeFile(
       path.join(runsRoot, "run-1", "frozen-components.json"),
@@ -589,20 +526,16 @@ describe("LocalKnowledgeBase", () => {
           id: "guidance",
           sourcePath: sharedRoot,
           relativePath: "guidance",
-          sha256: "abc",
-        }],
-      }, null, 2)}\n`,
+          sha256: "abc"}]}, null, 2)}\n`,
       "utf8",
     );
 
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
       sharedRoot,
-      runsRoot,
-    });
+      runsRoot});
     const selected = await knowledge.selectGuidance("frozen guidance", {
       role: "implementer",
-      runId: "run-1",
-    });
+      runId: "run-1"});
     expect(selected.map((item) => item.source)).toEqual(["General/rules/frozen.mdc"]);
     expect(selected.map((item) => item.source)).not.toContain("General/rules/live.mdc");
   });
@@ -632,15 +565,13 @@ describe("LocalKnowledgeBase", () => {
 
     const forA = await knowledge.search("Quiet interface", 10, {
       repository: false,
-      runId: "run-a",
-    });
+      runId: "run-a"});
     expect(forA.some((result) => result.source === ".agent-harness/runs/run-a/map.md")).toBe(true);
     expect(forA.some((result) => result.source === ".agent-harness/runs/run-b/map.md")).toBe(false);
 
     const forB = await knowledge.search("Quiet interface", 10, {
       repository: false,
-      runId: "run-b",
-    });
+      runId: "run-b"});
     expect(forB.some((result) => result.source === ".agent-harness/runs/run-b/map.md")).toBe(true);
     expect(forB.some((result) => result.source === ".agent-harness/runs/run-a/map.md")).toBe(false);
   });
@@ -663,9 +594,7 @@ describe("LocalKnowledgeBase", () => {
         relevanceFloor: 0,
         minLexicalScore: 0,
         maxChunksPerSource: 2,
-        maxForTopSource: 2,
-      },
-    }));
+        maxForTopSource: 2}}));
     await knowledge.refresh();
 
     const results = await knowledge.search(
@@ -697,8 +626,7 @@ describe("LocalKnowledgeBase", () => {
     await knowledge.refresh();
 
     const results = await knowledge.search("SettlementWindow refunds ledger", 6, {
-      repository: false,
-    });
+      repository: false});
 
     expect(results.map((result) => result.source)).toEqual(["docs/settlement.md"]);
     expect(results).toHaveLength(1);
@@ -735,12 +663,10 @@ describe("LocalKnowledgeBase", () => {
 
     const results = await knowledge.search("Sign Cache dungeon signs", 6, {
       repository: false,
-      pathHints: ["src/features/dungeon-sign-cache.ts"],
-    });
+      pathHints: ["src/features/dungeon-sign-cache.ts"]});
 
     expect(results.map((result) => result.source)).toEqual([
-      "docs/features/dungeon-sign-cache.md",
-    ]);
+      "docs/features/dungeon-sign-cache.md"]);
   });
 
   it("supports documents-off Graphify-only search", async () => {
@@ -763,18 +689,14 @@ describe("LocalKnowledgeBase", () => {
             source: "graphify:graphify-out/graph.json",
             title: "Repository relationships (Graphify)",
             excerpt: "SettlementWindow -> Ledger",
-            score: 1,
-          },
-        };
-      },
-    };
+            score: 1}};
+      }};
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), lookup);
     await knowledge.refresh();
 
     const { results, audit } = await knowledge.searchWithAudit("SettlementWindow", 4, {
       documents: false,
-      repository: true,
-    });
+      repository: true});
 
     expect(results).toHaveLength(1);
     expect(results[0]?.source).toBe("graphify:graphify-out/graph.json");
@@ -798,14 +720,11 @@ describe("LocalKnowledgeBase", () => {
       knowledge: {
         ...base.knowledge,
         chunkCharacters: 120,
-        maxChunksPerSource: 1,
-      },
-    }));
+        maxChunksPerSource: 1}}));
     await knowledge.refresh();
 
     const results = await knowledge.search("SettlementWindow refund ledger", 4, {
-      repository: false,
-    });
+      repository: false});
 
     const sources = results.map((result) => result.source);
     // Top source may contribute two chunks; other sources remain capped at one.
@@ -827,9 +746,7 @@ describe("LocalKnowledgeBase", () => {
           index,
           embedding: text.includes("Theme tokens") || text.includes("SettlementWindow refunds")
             ? [1, 0]
-            : [0, 1],
-        })),
-      }), { status: 200 });
+            : [0, 1]}))}), { status: 200 });
     });
     try {
       await writeFile(
@@ -850,10 +767,7 @@ describe("LocalKnowledgeBase", () => {
             enabled: true,
             endpoint: "https://embeddings.test/v1/embeddings",
             apiKeyEnv,
-            minSimilarity: 0.1,
-          },
-        },
-      }));
+            minSimilarity: 0.1}}}));
       await knowledge.refresh();
 
       const { results, audit } = await knowledge.searchWithAudit(
@@ -887,9 +801,7 @@ describe("LocalKnowledgeBase", () => {
           embedding:
             text.includes("SettlementWindow") || text.includes("SettlementWindow refunds")
               ? [1, 0]
-              : weak,
-        })),
-      }), { status: 200 });
+              : weak}))}), { status: 200 });
     });
     try {
       await writeFile(
@@ -911,15 +823,11 @@ describe("LocalKnowledgeBase", () => {
             endpoint: "https://embeddings.test/v1/embeddings",
             apiKeyEnv,
             minSimilarity: 0.3,
-            minSemanticOnlySimilarity: 0.45,
-          },
-        },
-      }));
+            minSemanticOnlySimilarity: 0.45}}}));
       await knowledge.refresh();
 
       const results = await knowledge.search("SettlementWindow refunds", 6, {
-        repository: false,
-      });
+        repository: false});
 
       expect(results.map((result) => result.source)).toEqual(["docs/settlement.md"]);
       expect(results[0]?.score).toBeGreaterThan(0.4);
@@ -942,9 +850,7 @@ describe("LocalKnowledgeBase", () => {
           embedding:
             text.includes("delivery charge") || text.includes("carrier dispute refund")
               ? [1, 0]
-              : [0, 1],
-        })),
-      }), { status: 200 });
+              : [0, 1]}))}), { status: 200 });
     });
     try {
       const knowledge = new LocalKnowledgeBase(fixtureConfig(root, {
@@ -956,10 +862,7 @@ describe("LocalKnowledgeBase", () => {
             endpoint: "https://embeddings.test/v1/embeddings",
             apiKeyEnv,
             minSimilarity: 0.3,
-            minSemanticOnlySimilarity: 0.45,
-          },
-        },
-      }));
+            minSemanticOnlySimilarity: 0.45}}}));
       await knowledge.upsertText(
         "docs/billing.md",
         "Billing adjustments",
@@ -972,8 +875,7 @@ describe("LocalKnowledgeBase", () => {
       );
 
       const results = await knowledge.search("carrier dispute refund delivery charge", 5, {
-        repository: false,
-      });
+        repository: false});
 
       expect(results.map((result) => result.title)).toEqual(["Billing adjustments"]);
       // Lexical + semantic dual-channel normalized RRF, not raw ~0.016.
@@ -993,10 +895,8 @@ describe("LocalKnowledgeBase", () => {
         return {
           shapedQuery: "",
           usedFallback: true,
-          skippedReason: "generic-query",
-        };
-      },
-    };
+          skippedReason: "generic-query"};
+      }};
     await writeFile(
       path.join(root, "docs", "settlement.md"),
       "# SettlementWindow\n\nSettlementWindow closes the ledger.\n",
@@ -1011,8 +911,7 @@ describe("LocalKnowledgeBase", () => {
     expect(audit.graphify).toMatchObject({
       included: false,
       skippedReason: "generic-query",
-      usedFallback: true,
-    });
+      usedFallback: true});
     expect(audit.omitted.some((item) => item.reason === "graphify-skipped")).toBe(true);
   });
 });

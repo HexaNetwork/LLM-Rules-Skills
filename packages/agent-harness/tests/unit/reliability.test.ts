@@ -14,15 +14,13 @@ import { createRunState, type RunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
 import {
   HarnessFailure,
-  classifyFailure,
-} from "../../src/errors.js";
+  classifyFailure} from "../../src/errors.js";
 import { RunStore } from "../../src/store.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 async function deadPid(): Promise<number> {
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], {
-    stdio: "ignore",
-  });
+    stdio: "ignore"});
   const pid = child.pid;
   if (pid == null) throw new Error("failed to spawn probe child");
   child.kill("SIGKILL");
@@ -70,8 +68,7 @@ describe("stall protection", () => {
     const started = performance.now();
     const result = await runCommand("node -e \"setTimeout(() => {}, 5000)\"", {
       cwd: root,
-      timeoutMs: 30,
-    });
+      timeoutMs: 30});
 
     expect(performance.now() - started).toBeLessThan(2_500);
     expect(result.timedOut).toBe(true);
@@ -142,8 +139,7 @@ describe("stall protection", () => {
       JSON.stringify({
         pid: process.pid,
         hostname: hostname(),
-        at: new Date(ancientMs).toISOString(),
-      }),
+        at: new Date(ancientMs).toISOString()}),
       "utf8",
     );
     // Age the file past the 30-minute stale threshold so only liveness can refuse.
@@ -180,15 +176,13 @@ describe("durable transition journal", () => {
       sequence: state.lastEventSequence + 1,
       type: "test.recovered",
       detail: { source: "fault-injection" },
-      at: new Date().toISOString(),
-    };
+      at: new Date().toISOString()};
     const next = {
       ...state,
       phase: "awaiting_input" as const,
       lastEventSequence: event.sequence,
       revision: state.revision + 1,
-      updatedAt: new Date().toISOString(),
-    };
+      updatedAt: new Date().toISOString()};
     await writeFile(
       path.join(store.runDirectory("journal-run"), "transition.pending.json"),
       JSON.stringify({ expectedRevision: state.revision, state: next, event }),
@@ -214,32 +208,26 @@ describe("failure classification", () => {
 
     expect(classifyFailure(new AgentBackendRunError("Cursor run x error"))).toEqual({
       kind: "provider",
-      retriable: true,
-    });
+      retriable: true});
 
     expect(classifyFailure(new Error("The working tree has uncommitted changes: a.ts"))).toEqual({
       kind: "workspace",
-      retriable: true,
-    });
+      retriable: true});
     expect(classifyFailure(new Error("git.enabled is true but /tmp/x is not a git repository"))).toEqual({
       kind: "workspace",
-      retriable: true,
-    });
+      retriable: true});
     expect(classifyFailure(new Error("Run configuration changed; resume with the persisted run config"))).toEqual({
       kind: "config",
-      retriable: false,
-    });
+      retriable: false});
     expect(classifyFailure(new Error("unexpected boom"))).toEqual({
       kind: "internal",
-      retriable: false,
-    });
+      retriable: false});
   });
 
   it("retries a provider failure twice then succeeds, emitting run.provider_retry events", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 },
-    });
+      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 }});
     let calls = 0;
     const backend = createFakeBackend({
       reflector: () => {
@@ -253,17 +241,14 @@ describe("failure classification", () => {
           inScope: ["a"],
           outOfScope: [],
           assumptions: [],
-          unknowns: [],
-        };
-      },
-    });
+          unknowns: []};
+      }});
     const sleeps: number[] = [];
     const engine = new HarnessEngine(config, {
       backend,
       sleep: async (ms) => {
         sleeps.push(ms);
-      },
-    });
+      }});
     let state = await engine.start("provider retry");
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
@@ -281,8 +266,7 @@ describe("failure classification", () => {
   it("does not clobber mid-step persisted state when recording run.provider_retry", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 1 },
-    });
+      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 1 }});
     let calls = 0;
     const phasesDuringBackoff: string[] = [];
     let runId = "";
@@ -298,10 +282,8 @@ describe("failure classification", () => {
           inScope: ["a"],
           outOfScope: [],
           assumptions: [],
-          unknowns: [],
-        };
-      },
-    });
+          unknowns: []};
+      }});
     const engine = new HarnessEngine(config, {
       backend,
       sleep: async () => {
@@ -310,8 +292,7 @@ describe("failure classification", () => {
         // overwrite state.json.
         const mid = await engine.store.load(runId);
         phasesDuringBackoff.push(mid.phase);
-      },
-    });
+      }});
     const started = await engine.start("mid-step retry");
     runId = started.runId;
     expect(started.phase).toBe("new");
@@ -328,15 +309,13 @@ describe("failure classification", () => {
   it("short-circuits provider retry backoff when cancel.request appears", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 },
-    });
+      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 }});
     let runId = "";
     const sleeps: number[] = [];
     const backend = createFakeBackend({
       reflector: () => {
         throw new AgentBackendRunError("Cursor run flaky during backoff");
-      },
-    });
+      }});
     const engine = new HarnessEngine(config, {
       backend,
       sleep: async (ms) => {
@@ -348,8 +327,7 @@ describe("failure classification", () => {
             "utf8",
           );
         }
-      },
-    });
+      }});
     const started = await engine.start("cancel during backoff");
     runId = started.runId;
     const state = await engine.advance(runId);
@@ -362,17 +340,14 @@ describe("failure classification", () => {
   it("blocks with blockedKind provider when the backend always throws", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 },
-    });
+      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 }});
     const backend = createFakeBackend({
       reflector: () => {
         throw new AgentBackendRunError("Cursor run always-fails error");
-      },
-    });
+      }});
     const engine = new HarnessEngine(config, {
       backend,
-      sleep: async () => undefined,
-    });
+      sleep: async () => undefined});
     let state = await engine.start("always fail");
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("blocked");
@@ -385,8 +360,7 @@ describe("failure classification", () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
     const engine = new HarnessEngine(config, {
-      backend: createFakeBackend({}),
-    });
+      backend: createFakeBackend({})});
     await engine.store.initialize();
     const now = new Date().toISOString();
     let state: RunState = {
@@ -395,36 +369,31 @@ describe("failure classification", () => {
       blockedFrom: "reflecting",
       failure: "Run configuration changed; resume with the persisted run config",
       blockedKind: "config",
-      blockedRetriable: false,
-    };
+      blockedRetriable: false};
     await engine.store.create(state);
     await engine.store.writeJson(state.runId, "config.json", {
       ...config,
-      configVersion: CONFIG_VERSION,
-    });
+      configVersion: CONFIG_VERSION});
 
     await expect(engine.retry(state.runId)).rejects.toThrow(/config/i);
     await expect(engine.retry(state.runId, { force: true })).resolves.toMatchObject({
       phase: "reflecting",
       blockedKind: undefined,
       blockedRetriable: undefined,
-      failure: undefined,
-    });
+      failure: undefined});
   });
 
   it("keeps retry permissive when blockedRetriable is undefined (legacy runs)", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
     const engine = new HarnessEngine(config, {
-      backend: createFakeBackend({}),
-    });
+      backend: createFakeBackend({})});
     await engine.store.initialize();
     const state: RunState = {
       ...createRunState("legacy-block", "idea", new Date().toISOString(), "hash", CONFIG_VERSION),
       phase: "blocked",
       blockedFrom: "reflecting",
-      failure: "something old",
-    };
+      failure: "something old"};
     await engine.store.create(state);
     await expect(engine.retry(state.runId)).resolves.toMatchObject({ phase: "reflecting" });
   });
@@ -441,16 +410,13 @@ describe("failure classification", () => {
         inScope: ["a"],
         outOfScope: [],
         assumptions: [],
-        unknowns: [],
-      }),
-    });
+        unknowns: []})});
     const engine = new HarnessEngine(config, { backend });
     let state = await engine.start("hash drift");
     state = {
       ...state,
       configurationHash: createHash("sha256").update("different").digest("hex"),
-      configVersion: CONFIG_VERSION,
-    };
+      configVersion: CONFIG_VERSION};
     await engine.store.writeJson(state.runId, "state.json", state);
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("awaiting_input");
@@ -474,9 +440,7 @@ describe("failure classification", () => {
         inScope: ["a"],
         outOfScope: [],
         assumptions: [],
-        unknowns: [],
-      }),
-    });
+        unknowns: []})});
     const engine = new HarnessEngine(config, { backend });
     const state = await engine.start("hash drift");
 

@@ -14,8 +14,7 @@ const REFLECT: ReflectOutput = {
   inScope: ["copy"],
   outOfScope: [],
   assumptions: [],
-  unknowns: [],
-};
+  unknowns: []};
 
 describe("persistTransition", () => {
   let fixture: ProjectFixture | undefined;
@@ -41,8 +40,7 @@ describe("persistTransition", () => {
       { batchId: "batch-1", questionIds: ["q-1"] },
     );
     const next = await store.persistTransition("persist-run", transition, [
-      { relativePath: "brief.md", contents: "# Brief\n" },
-    ]);
+      { relativePath: "brief.md", contents: "# Brief\n" }]);
 
     expect(next.revision).toBe(initial.revision + 1);
     expect(next.lastEventSequence).toBe(2);
@@ -74,8 +72,7 @@ describe("persistTransition", () => {
 
     await expect(
       store.persistTransition("persist-fail", transition, [
-        { relativePath: "../escape.txt", contents: "nope" },
-      ]),
+        { relativePath: "../escape.txt", contents: "nope" }]),
     ).rejects.toThrow(/escapes run directory/);
 
     const loaded = await store.load("persist-fail");

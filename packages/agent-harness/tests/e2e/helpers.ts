@@ -9,12 +9,10 @@ import { startUiServer, type UiServer } from "../../src/ui/server.js";
 import { withDiagnosticArtifacts, type DiagnosticContext } from "../testkit/diagnostics.js";
 import {
   createProjectFixture,
-  type ProjectFixture,
-} from "../testkit/project-fixture.js";
+  type ProjectFixture} from "../testkit/project-fixture.js";
 import {
   createScriptedBackend,
-  type ScriptedStep,
-} from "../testkit/scripted-backend.js";
+  type ScriptedStep} from "../testkit/scripted-backend.js";
 
 export const REFLECT_OUTPUT = {
   proposedTitle: "Add greeting tone",
@@ -25,19 +23,16 @@ export const REFLECT_OUTPUT = {
   inScope: ["tone choice", "greeting copy"],
   outOfScope: ["localization"],
   assumptions: ["English only"],
-  unknowns: ["formal vs casual"],
-};
+  unknowns: ["formal vs casual"]};
 
 export const FIRST_GRILL_QUESTION = {
   prompt: "Should the greeting be formal or casual?",
   context: "The choice sets the voice users encounter throughout the feature.",
   options: [
     { id: "formal", label: "Formal", description: "Polished and reserved." },
-    { id: "casual", label: "Casual", description: "Warm and direct." },
-  ],
+    { id: "casual", label: "Casual", description: "Warm and direct." }],
   recommendedOptionId: "casual",
-  recommendation: "Use casual for a lightweight greeting.",
-};
+  recommendation: "Use casual for a lightweight greeting."};
 
 export const HAPPY_PATH_STEPS: ScriptedStep[] = [
   { role: "reflector", output: REFLECT_OUTPUT },
@@ -46,9 +41,7 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
     output: {
       status: "needs_input",
       summary: "Need tone",
-      questions: [FIRST_GRILL_QUESTION],
-    },
-  },
+      questions: [FIRST_GRILL_QUESTION]}},
   {
     role: "griller",
     output: {
@@ -59,11 +52,7 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
           id: "tone",
           question: FIRST_GRILL_QUESTION.prompt,
           answer: "Casual",
-          summary: "Use a casual greeting",
-        },
-      ],
-    },
-  },
+          summary: "Use a casual greeting"}]}},
   {
     role: "planner",
     output: {
@@ -73,9 +62,7 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
       approach: "Add a small greeting module, then wire it into the UI.",
       constraints: ["Keep scope narrow"],
       outOfScope: ["Localization"],
-      openQuestions: [],
-    },
-  },
+      openQuestions: []}},
   {
     role: "planner",
     output: {
@@ -83,14 +70,11 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
       problemStatement: "Users need a casual greeting.",
       solution: "Ship a greeting feature with a chosen tone.",
       userStories: [
-        "As a user, I want a casual greeting, so that the product feels friendly",
-      ],
+        "As a user, I want a casual greeting, so that the product feels friendly"],
       implementationDecisions: ["Add a greeting module"],
       testingDecisions: ["Test public greeting behavior"],
       outOfScope: ["Localization"],
-      furtherNotes: "",
-    },
-  },
+      furtherNotes: ""}},
   {
     role: "issue-slicer",
     output: {
@@ -101,21 +85,13 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
           title: "Ship greeting",
           description: "Render the casual greeting.",
           acceptanceCriteria: ["Greeting is casual"],
-          blockedBy: [],
-          tdd: false,
-        },
-      ],
-    },
-  },
+          blockedBy: []}]}},
   {
     role: "implementer",
-    output: { summary: "Built", changedFiles: ["src/greet.ts"] },
-  },
+    output: { summary: "Built", changedFiles: ["src/greet.ts"] }},
   {
     role: "reviewer",
-    output: { approved: true, summary: "Looks good", findings: [] },
-  },
-];
+    output: { approved: true, summary: "Looks good", findings: [] }}];
 
 export type E2EHarness = {
   page: Page;
@@ -155,31 +131,23 @@ export async function withE2EHarness(
         schemaRepairAttempts: 0,
         timeoutMs: 10_000,
         provider: "cursor",
-        ...(options.config?.agent ?? {}),
-      },
+        ...(options.config?.agent ?? {})},
       workflow: {
-        tdd: false,
         generateCommitMessages: false,
-        ...(options.config?.workflow ?? {}),
-      },
+        ...(options.config?.workflow ?? {})},
       commands: {
         verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }],
-        ...(options.config?.commands ?? {}),
-      },
+        ...(options.config?.commands ?? {})},
       git: {
         enabled: false,
-        ...(options.config?.git ?? {}),
-      },
+        ...(options.config?.git ?? {})},
       knowledge: {
         graphify: { enabled: false },
         guidance: { enabled: false },
-        ...(options.config?.knowledge ?? {}),
-      },
+        ...(options.config?.knowledge ?? {})},
       models: options.config?.models,
-      tracker: options.config?.tracker,
-    },
-    initialFiles: options.initialFiles,
-  });
+      tracker: options.config?.tracker},
+    initialFiles: options.initialFiles});
 
   let configPath: string | undefined;
   if (options.persistConfig) {
@@ -205,8 +173,7 @@ export async function withE2EHarness(
         configPath,
         port: 0,
         token: options.token ?? "e2e-token",
-        openBrowser: false,
-      });
+        openBrowser: false});
       try {
         await page.goto(ui.url);
         await expect(page.getByRole("button", { name: /new run/i })).toBeVisible();
@@ -275,22 +242,19 @@ export async function answerCasualGrill(page: Page): Promise<void> {
 
 export async function continueToPlanning(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: /continue to planning/i })).toBeVisible({
-    timeout: 20_000,
-  });
+    timeout: 20_000});
   await page.getByRole("button", { name: /continue to planning/i }).click();
 }
 
 export async function confirmVerificationSettings(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: /confirm verification/i })).toBeVisible({
-    timeout: 20_000,
-  });
+    timeout: 20_000});
   await page.getByRole("button", { name: /confirm verification/i }).click();
 }
 
 export async function approveHighLevelPlan(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: /approve plan/i })).toBeVisible({
-    timeout: 20_000,
-  });
+    timeout: 20_000});
   await page.getByRole("button", { name: /approve plan/i }).click();
 }
 
@@ -303,10 +267,8 @@ export async function apiJson<T>(
     method: init.method ?? "GET",
     headers: {
       "X-Harness-Token": ui.token,
-      ...(init.body ? { "content-type": "application/json" } : {}),
-    },
-    body: init.body ? JSON.stringify(init.body) : undefined,
-  });
+      ...(init.body ? { "content-type": "application/json" } : {})},
+    body: init.body ? JSON.stringify(init.body) : undefined});
   if (!response.ok) {
     throw new Error(`API ${pathname} failed: ${response.status} ${await response.text()}`);
   }
@@ -351,34 +313,28 @@ async function writeFixtureConfigYaml(configPath: string, config: HarnessConfig)
       provider: config.agent.provider,
       timeoutMs: config.agent.timeoutMs,
       promptBuilder: config.agent.promptBuilder,
-      schemaRepairAttempts: config.agent.schemaRepairAttempts,
-    },
+      schemaRepairAttempts: config.agent.schemaRepairAttempts},
     workflow: {
       tdd: config.workflow.tdd,
       testPathPatterns: config.workflow.testPathPatterns,
       maxGrillQuestionsPerEpisode: config.workflow.maxGrillQuestionsPerEpisode,
       staleAnswerMinutes: config.workflow.staleAnswerMinutes,
-      grillQuestionsPerBatch: config.workflow.grillQuestionsPerBatch,
-    },
+      grillQuestionsPerBatch: config.workflow.grillQuestionsPerBatch},
     commands: {
       verification: config.commands.verification,
       ...(config.commands.testTargetTemplate
         ? { testTargetTemplate: config.commands.testTargetTemplate }
-        : {}),
-    },
+        : {})},
     git: {
       enabled: config.git.enabled,
       baseBranch: config.git.baseBranch,
       autoCommitPreflight: config.git.autoCommitPreflight,
       preflightCommitOrder: config.git.preflightCommitOrder,
-      ignoredArtifactPatterns: config.git.ignoredArtifactPatterns,
-    },
+      ignoredArtifactPatterns: config.git.ignoredArtifactPatterns},
     tracker: config.tracker,
     knowledge: {
       sources: config.knowledge.sources,
       graphify: { enabled: false },
-      guidance: { enabled: false },
-    },
-  };
+      guidance: { enabled: false }}};
   await writeFile(configPath, `${yaml.dump(serializable, { noRefs: true, lineWidth: -1 })}\n`, "utf8");
 }

@@ -9,8 +9,7 @@ import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import { git as runGit } from "../testkit/git.js";
 import {
   createProjectFixture,
-  type ProjectFixture,
-} from "../testkit/project-fixture.js";
+  type ProjectFixture} from "../testkit/project-fixture.js";
 
 describe("worktree cleanup (Slice 7)", () => {
   let fixture: ProjectFixture | undefined;
@@ -30,10 +29,7 @@ describe("worktree cleanup (Slice 7)", () => {
         knowledge: {
           sources: [{ path: "README.md" }],
           graphify: { enabled: false },
-          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        },
-      },
-    });
+          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const engine = new HarnessEngine(fixture.config, { backend: createFakeBackend({}) });
     await engine.start("Cleanup target", runId, false, false);
@@ -47,16 +43,13 @@ describe("worktree cleanup (Slice 7)", () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true, baseBranch: "main" },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false, maxResults: 0, maxCharacters: 1 } },
-      },
-    });
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false, maxResults: 0, maxCharacters: 1 } }}});
     await fixture.initGit({ branch: "main" });
     const engine = new HarnessEngine(fixture.config, { backend: createFakeBackend({}) });
     await engine.start("Active run", "cleanup-active", false, false);
 
     await expect(engine.cleanup("cleanup-active")).rejects.toMatchObject({
-      message: expect.stringMatching(/settled|completed|cancelled|active/i),
-    });
+      message: expect.stringMatching(/settled|completed|cancelled|active/i)});
   });
 
   it("refuses dirty worktrees and unpublished detached history without discard", async () => {
@@ -69,8 +62,7 @@ describe("worktree cleanup (Slice 7)", () => {
 
     await expect(engine.cleanup("cleanup-dirty")).rejects.toBeInstanceOf(HarnessFailure);
     await expect(engine.cleanup("cleanup-dirty")).rejects.toMatchObject({
-      message: expect.stringMatching(/dirty/i),
-    });
+      message: expect.stringMatching(/dirty/i)});
 
     // Clean but unpublished detached commits require discard.
     await runGit(workspace.worktreePath!, "checkout", "--", "orphan.txt").catch(async () => {
@@ -81,8 +73,7 @@ describe("worktree cleanup (Slice 7)", () => {
     await runGit(workspace.worktreePath!, "commit", "-m", "orphan commit");
 
     await expect(engine.cleanup("cleanup-dirty")).rejects.toMatchObject({
-      message: expect.stringMatching(/discard|unpublished|retained/i),
-    });
+      message: expect.stringMatching(/discard|unpublished|retained/i)});
 
     const result = await engine.cleanup("cleanup-dirty", { discard: true });
     expect(result.removed).toBe(true);
@@ -109,14 +100,12 @@ describe("worktree cleanup (Slice 7)", () => {
     await runGit(workspace.worktreePath!, "commit", "-m", "feat: ship");
     await engine.store.writeJson("cleanup-published", "workspace.json", {
       ...workspace,
-      branchName: branch,
-    });
+      branchName: branch});
     const state = await engine.store.load("cleanup-published");
     await engine.store.writeJson("cleanup-published", "state.json", {
       ...state,
       phase: "completed",
-      branchName: branch,
-    });
+      branchName: branch});
 
     const result = await engine.cleanup("cleanup-published");
     expect(result.removed).toBe(true);

@@ -4,14 +4,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   collectVerificationEvidence,
-  verificationEvidenceNeedsTools,
-} from "../../src/application/verification-evidence.js";
+  verificationEvidenceNeedsTools} from "../../src/application/verification-evidence.js";
 import type { VerificationEvidence, VerificationSettingsSnapshot } from "../../src/domain.js";
 
 const SETTINGS: VerificationSettingsSnapshot = {
   workflow: { testPathPatterns: ["**/*.test.ts"] },
-  commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] },
-};
+  commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] }};
 
 describe("collectVerificationEvidence", () => {
   const roots: string[] = [];
@@ -98,8 +96,7 @@ describe("verificationEvidenceNeedsTools", () => {
     return {
       ...partial,
       currentSettings: SETTINGS,
-      host: { platform: process.platform, isWindows: process.platform === "win32" },
-    };
+      host: { platform: process.platform, isWindows: process.platform === "win32" }};
   }
 
   it("treats single-stack nested Gradle evidence as strong", () => {
@@ -110,10 +107,8 @@ describe("verificationEvidenceNeedsTools", () => {
             { path: "settings.gradle.kts", present: true, excerpt: "name" },
             { path: "gradlew", present: true, excerpt: "[wrapper script present]" },
             { path: "civcraft/build.gradle.kts", present: true, excerpt: "java" },
-            { path: "package.json", present: false },
-          ],
-          sampleTestPaths: ["civcraft/src/main/test/ThingTest.java"],
-        }),
+            { path: "package.json", present: false }],
+          sampleTestPaths: ["civcraft/src/main/test/ThingTest.java"]}),
       ),
     ).toBe(false);
   });
@@ -124,10 +119,8 @@ describe("verificationEvidenceNeedsTools", () => {
         evidence({
           manifests: [
             { path: "package.json", present: true, excerpt: "{}" },
-            { path: "build.gradle.kts", present: true, excerpt: "java" },
-          ],
-          sampleTestPaths: [],
-        }),
+            { path: "build.gradle.kts", present: true, excerpt: "java" }],
+          sampleTestPaths: []}),
       ),
     ).toBe(true);
 
@@ -135,8 +128,7 @@ describe("verificationEvidenceNeedsTools", () => {
       verificationEvidenceNeedsTools(
         evidence({
           manifests: [{ path: "package.json", present: false }],
-          sampleTestPaths: [],
-        }),
+          sampleTestPaths: []}),
       ),
     ).toBe(true);
   });

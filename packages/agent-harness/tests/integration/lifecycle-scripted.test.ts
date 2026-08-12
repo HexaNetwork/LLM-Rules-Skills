@@ -6,7 +6,8 @@ import { HarnessEngine } from "../../src/engine.js";
 import {
   confirmGrillAndAdvance,
   HIGH_LEVEL_PLAN,
-  PRD_OUTPUT
+  PRD_OUTPUT,
+  SCENARIO_PLANNER_OUTPUT,
 } from "../helpers.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
 import { git as runGit } from "../testkit/git.js";
@@ -30,23 +31,26 @@ describe("Phase 5 scripted full lifecycle", () => {
   let fixture: ProjectFixture | undefined;
 
   afterEach(async () => {
-    delete process.env.HARNESS_FORCE_RED;
     await fixture?.cleanup();
     fixture = undefined;
   });
 
-  it("reflect → grill → plan → TDD RED → implement → GREEN → review → commit with observable artifacts", async () => {
+  it("reflect → grill → plan → scenarios → implement → scenario tests → final review → publish", async () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000, provider: "cursor" },
         workflow: {
-          tdd: true,
           generateCommitMessages: false,
           maxGrillQuestionsPerEpisode: 5,
         },
         commands: {
-          verification: [{ id: "test", command: 'node -e "process.exit(process.env.HARNESS_FORCE_RED ? 1 : 0)"', timeoutMs: 600_000 }],
-          passEnv: ["HARNESS_FORCE_RED"],
+          verification: [
+            {
+              id: "test",
+              command: 'node -e "process.exit(0)"',
+              timeoutMs: 600_000,
+            },
+          ],
         },
         git: { enabled: true },
         knowledge: {
@@ -64,7 +68,7 @@ describe("Phase 5 scripted full lifecycle", () => {
     await fixture.initGit();
 
     await withDiagnosticArtifacts(
-      { testName: "lifecycle-scripted-full-tdd", fixture },
+      { testName: "lifecycle-scripted-implement-first", fixture },
       async () => {
         const scripted = createScriptedBackend([
           { role: "reflector", output: REFLECT_OUTPUT },
@@ -100,63 +104,50 @@ describe("Phase 5 scripted full lifecycle", () => {
                   summary: "Use a casual greeting",
                 },
               ],
+              openUnknowns: [],
             },
           },
           { role: "planner", output: HIGH_LEVEL_PLAN },
-      { role: "planner", output: PRD_OUTPUT },
-      {
-        role: "issue-slicer",
-        output: {
-
-              summary: "One task",
+          { role: "planner", output: PRD_OUTPUT },
+          { role: "scenario-planner", output: SCENARIO_PLANNER_OUTPUT },
+          {
+            role: "issue-slicer",
+            output: {
+              summary: "One tracer bullet",
               tasks: [
                 {
                   id: "greet",
-                  title: "Ship greeting",
-                  description: "Render the casual greeting.",
+                  title: "Add greeting",
+                  description: "Return a casual greeting",
                   acceptanceCriteria: ["Greeting is casual"],
                   affectedPaths: ["src/greet.ts"],
                   blockedBy: [],
-                  tdd: true,
+                  scenarioIds: ["greet-happy"],
                 },
               ],
-          proposedInstalls: [],
-        },
-      },
-          {
-            role: "red-writer",
-            output: {
-              status: "continue",
-              summary: "Test-only RED batch",
-              changedFiles: ["tests/greet.test.ts"],
-              behaviorsAdded: ["greeting fails until implemented"],
-              edgeCasesAdded: [],
+              proposedInstalls: [],
             },
           },
           {
             role: "implementer",
-            output: { status: "green", summary: "GREEN", changedFiles: ["src/greet.ts"] },
-          },
-          {
-            role: "red-writer",
-            output: {
-              status: "done",
-              summary: "Coverage complete",
-              changedFiles: [],
-              acceptanceCoverage: [
-                {
-                  criterionIndex: 0,
-                  covered: true,
-                  testPaths: ["tests/greet.test.ts"],
-                  rationale: "Greeting behavior is covered",
-                },
-              ],
-              edgeCaseRationale: "No further edge cases required for this fixture",
-            },
+            output: { summary: "Implemented greeting", changedFiles: ["src/greet.ts"] },
           },
           {
             role: "reviewer",
             output: { approved: true, summary: "Looks good", findings: [] },
+          },
+          {
+            role: "scenario-writer",
+            output: {
+              status: "implemented",
+              summary: "Scenario tests written",
+              testPaths: ["tests/greet.test.ts"],
+              changedFiles: ["tests/greet.test.ts"],
+            },
+          },
+          {
+            role: "reviewer",
+            output: { approved: true, summary: "Final review ok", findings: [] },
           },
         ]);
 
@@ -186,19 +177,20 @@ describe("Phase 5 scripted full lifecycle", () => {
 
         expect(state.phase).toBe("completed");
         expect(state.tasks[0]?.status).toBe("done");
-        expect(state.tasks[0]?.evidence.some((item) => item.purpose === "tdd:red")).toBe(false);
-        expect(state.tasks[0]?.evidence.some((item) => item.purpose === "tdd:green")).toBe(true);
-        expect(state.tasks[0]?.evidence.some((item) => item.passed)).toBe(true);
-        expect(state.tasks[0]?.redCheckpointSha).toMatch(/^[a-f0-9]{40}$/);
-        expect(state.tasks[0]?.redBaseSha).toMatch(/^[a-f0-9]{40}$/);
-        expect(state.tasks[0]?.tddLoop?.atVerifiedGreen).toBe(true);
-        // Delivery branch is created at publication from the confirmed title + short run id.
+        expect(state.tasks[0]?.scenarioIds).toEqual(["greet-happy"]);
+        expect(state.scenarios[0]?.status).toBe("passing");
+        expect(state.tasks[0]?.evidence.some((item) => item.purpose === "test" && item.passed)).toBe(
+          true,
+        );
         expect(state.branchName).toMatch(/^harness\/add-greeting-tone-[a-z0-9]{1,8}$/);
 
         const runDir = path.join(fixture!.root, ".agent-harness", "runs", state.runId);
         const events = await readFile(path.join(runDir, "events.jsonl"), "utf8");
-        expect(events).toContain("task.red_observed");
+        expect(events).toContain("scenarios.planned");
+        expect(events).toContain("task.implementation_verified");
         expect(events).toContain("task.committed");
+        expect(events).toContain("scenario.passed");
+        expect(events).toContain("final_review.approved");
 
         const packets = (await readdir(path.join(runDir, "packets"))).filter((name) =>
           name.endsWith(".json"),
@@ -207,16 +199,12 @@ describe("Phase 5 scripted full lifecycle", () => {
         const sessions = (await readdir(path.join(runDir, "sessions"))).filter((name) =>
           name.endsWith(".json"),
         );
-        expect(sessions.some((name) => name)).toBe(true);
         expect(sessions.length).toBeGreaterThanOrEqual(5);
-        const sampleSession = JSON.parse(
-          await readFile(path.join(runDir, "sessions", sessions[0]!), "utf8"),
-        ) as { invocationKind?: string; trigger?: { summary?: string } };
-        expect(sampleSession.invocationKind).toBeTruthy();
-        expect(sampleSession.trigger?.summary).toBeTruthy();
 
         const brief = await readFile(path.join(runDir, "brief.md"), "utf8");
         expect(brief).toContain("Confirmed brief");
+        const scenariosMd = await readFile(path.join(runDir, "scenarios.md"), "utf8");
+        expect(scenariosMd).toContain("greet-happy");
 
         const workspace = migrateRunWorkspace(
           await engine.store.readJson(state.runId, "workspace.json"),
@@ -225,16 +213,13 @@ describe("Phase 5 scripted full lifecycle", () => {
         const worktree = workspace.worktreePath!;
         const log = await runGit(worktree, "log", "-1", "--format=%B");
         expect(log).toContain("Harness-Task: greet");
-        expect(log).toContain(`Harness-Red-Checkpoints: ${state.tasks[0]!.redCheckpointSha}`);
         expect(await runGit(worktree, "show", "--pretty=", "--name-only", "HEAD")).toContain(
           "src/greet.ts",
         );
-        // Detached history is one atomic task commit ahead of the immutable base.
         const commits = (
           await runGit(worktree, "rev-list", "--count", `${workspace.baseSha}..HEAD`)
         ).trim();
         expect(Number(commits)).toBe(1);
-        // Control checkout remains on the original tip.
         expect((await fixture!.git("log", "-1", "--format=%s")).trim()).toBe("initial");
 
         scripted.assertExhausted();
@@ -245,10 +230,11 @@ describe("Phase 5 scripted full lifecycle", () => {
           "project-profiler",
           "planner",
           "planner",
+          "scenario-planner",
           "issue-slicer",
-          "red-writer",
           "implementer",
-          "red-writer",
+          "reviewer",
+          "scenario-writer",
           "reviewer",
         ]);
       },
@@ -265,31 +251,19 @@ function withWorkspaceSideEffects(
     release: inner.release?.bind(inner),
     async run(request: AgentRequest) {
       const workspaceRoot = request.cwd;
-      if (request.role === "red-writer") {
-        const output = await inner.run(request);
-        const status =
-          output.output &&
-          typeof output.output === "object" &&
-          "status" in output.output
-            ? (output.output as { status?: string }).status
-            : undefined;
-        if (status === "continue") {
-          process.env.HARNESS_FORCE_RED = "1";
-          await mkdir(path.join(workspaceRoot, "tests"), { recursive: true });
-          await writeFile(
-            path.join(workspaceRoot, "tests", "greet.test.ts"),
-            'test("greets", () => { throw new Error("not implemented"); });\n',
-            "utf8",
-          );
-        }
-        return output;
-      }
       if (request.role === "implementer") {
-        delete process.env.HARNESS_FORCE_RED;
         await mkdir(path.join(workspaceRoot, "src"), { recursive: true });
         await writeFile(
           path.join(workspaceRoot, "src", "greet.ts"),
           'export const greet = () => "hi";\n',
+          "utf8",
+        );
+      }
+      if (request.role === "scenario-writer") {
+        await mkdir(path.join(workspaceRoot, "tests"), { recursive: true });
+        await writeFile(
+          path.join(workspaceRoot, "tests", "greet.test.ts"),
+          'import { greet } from "../src/greet.ts";\n',
           "utf8",
         );
       }

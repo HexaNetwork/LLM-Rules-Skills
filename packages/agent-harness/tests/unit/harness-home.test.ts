@@ -7,14 +7,12 @@ import {
   resolveHarnessHome,
   resolveProjectPaths,
   validateWorktreeRootPlacement,
-  HARNESS_HOME_ENV,
-} from "../../src/application/harness-home.js";
+  HARNESS_HOME_ENV} from "../../src/application/harness-home.js";
 
 describe("defaultHarnessHomeRoot", () => {
   it("uses non-roaming LocalAppData on Windows", () => {
     const root = defaultHarnessHomeRoot("win32", () => "C:\\Users\\dev", {
-      LOCALAPPDATA: "C:\\Users\\dev\\AppData\\Local",
-    });
+      LOCALAPPDATA: "C:\\Users\\dev\\AppData\\Local"});
     expect(root.replaceAll("/", "\\").toLowerCase()).toBe(
       "c:\\users\\dev\\appdata\\local\\agent-harness",
     );
@@ -29,8 +27,7 @@ describe("defaultHarnessHomeRoot", () => {
   it("uses XDG_STATE_HOME on Linux when set", () => {
     expect(
       defaultHarnessHomeRoot("linux", () => "/home/dev", {
-        XDG_STATE_HOME: "/var/lib/xdg-state",
-      }),
+        XDG_STATE_HOME: "/var/lib/xdg-state"}),
     ).toBe("/var/lib/xdg-state/agent-harness");
   });
 
@@ -48,8 +45,7 @@ describe("resolveHarnessHome", () => {
       env: { [HARNESS_HOME_ENV]: "/tmp/env-home" },
       platform: "linux",
       homedir: () => "/home/dev",
-      cwd: "/tmp",
-    });
+      cwd: "/tmp"});
     expect(home.homeRoot).toBe(path.resolve("/tmp/custom-home"));
     expect(home.projectsRoot).toBe(path.join(home.homeRoot, "projects"));
     expect(home.sharedGuidanceRoot).toBe(path.join(home.homeRoot, "guidance"));
@@ -62,8 +58,7 @@ describe("resolveHarnessHome", () => {
       env: { [HARNESS_HOME_ENV]: "/tmp/from-env" },
       platform: "linux",
       homedir: () => "/home/dev",
-      cwd: "/tmp",
-    });
+      cwd: "/tmp"});
     expect(home.homeRoot).toBe(path.resolve("/tmp/from-env"));
   });
 });
@@ -81,8 +76,7 @@ describe("sibling worktree root", () => {
     expect(() =>
       validateWorktreeRootPlacement({
         worktreeRoot: path.join(control, ".agent-harness", "worktrees"),
-        controlRoot: control,
-      }),
+        controlRoot: control}),
     ).toThrow(/outside the target repository/);
   });
 
@@ -91,8 +85,7 @@ describe("sibling worktree root", () => {
     const sibling = deriveSiblingWorktreeRoot(control);
     const result = validateWorktreeRootPlacement({
       worktreeRoot: sibling,
-      controlRoot: control,
-    });
+      controlRoot: control});
     expect(result.derivedSibling).toBe(sibling);
   });
 
@@ -102,8 +95,7 @@ describe("sibling worktree root", () => {
     const result = validateWorktreeRootPlacement({
       worktreeRoot: override,
       controlRoot: control,
-      configuredOverride: override,
-    });
+      configuredOverride: override});
     expect(path.resolve(result.canonicalWorktreeRoot)).toBe(override);
   });
 });
@@ -112,14 +104,12 @@ describe("resolveProjectPaths", () => {
   it("places project state under harness home and worktrees beside the repo", () => {
     const home = resolveHarnessHome({
       homeRoot: "/tmp/harness-home",
-      cwd: "/tmp",
-    });
+      cwd: "/tmp"});
     const controlRoot = path.resolve("/tmp/repos/demo");
     const paths = resolveProjectPaths({
       projectKey: "abc123",
       controlRoot,
-      home,
-    });
+      home});
     expect(paths.projectStateRoot).toBe(path.join(home.projectsRoot, "abc123"));
     expect(paths.runsRoot).toBe(path.join(paths.projectStateRoot, "runs"));
     expect(paths.worktreeRoot).toBe(deriveSiblingWorktreeRoot(controlRoot));

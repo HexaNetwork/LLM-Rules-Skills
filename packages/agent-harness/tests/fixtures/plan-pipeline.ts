@@ -7,20 +7,32 @@ export const HIGH_LEVEL_PLAN = {
   approach: "Add a small greeting module, then wire it into the UI.",
   constraints: ["Keep scope narrow"],
   outOfScope: ["Localization"],
-  openQuestions: [] as string[],
-};
+  openQuestions: [] as string[]};
 
 export const PRD_OUTPUT = {
   summary: "Greeting PRD",
   problemStatement: "Users need a casual greeting.",
   solution: "Ship a greeting feature with a chosen tone.",
   userStories: [
-    "As a user, I want a casual greeting, so that the product feels friendly",
-  ],
+    "As a user, I want a casual greeting, so that the product feels friendly"],
   implementationDecisions: ["Add a greeting module"],
   testingDecisions: ["Test public greeting behavior"],
   outOfScope: ["Localization"],
-  furtherNotes: "",
+  furtherNotes: ""};
+
+export const SCENARIO_PLANNER_OUTPUT = {
+  summary: "Greeting scenarios",
+  scenarios: [
+    {
+      id: "greet-happy",
+      title: "Casual greeting happy path",
+      kind: "happy-path" as const,
+      intent: "Users receive a casual greeting",
+      given: "The greeting feature is available",
+      when: "A user requests a greeting",
+      then: "The response is casual",
+    },
+  ],
 };
 
 export const SLICER_ONE_TASK = {
@@ -32,16 +44,14 @@ export const SLICER_ONE_TASK = {
       description: "Render the casual greeting.",
       acceptanceCriteria: ["Greeting is casual"],
       blockedBy: [] as string[],
-      tdd: false,
-    },
-  ],
+      scenarioIds: ["greet-happy"],
+    }],
   proposedInstalls: [] as Array<{
     id: string;
     manager: "npm";
     packages: string[];
     reason: string;
-  }>,
-};
+  }>};
 
 function isPrdRequest(request: {
   prompt?: string;
@@ -65,6 +75,5 @@ export function createPlannerPrdSequence(plan = HIGH_LEVEL_PLAN, prd = PRD_OUTPU
       return plan;
     },
     plannerCallCount: () => plannerCalls,
-    prdCallCount: () => prdCalls,
-  };
+    prdCallCount: () => prdCalls};
 }

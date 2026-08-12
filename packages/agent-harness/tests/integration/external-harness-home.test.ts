@@ -5,8 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/agent.js";
 import {
   loadExternalProjectConfig,
-  seedExternalGuidance,
-} from "../../src/application/external-config.js";
+  seedExternalGuidance} from "../../src/application/external-config.js";
 import { resolveHarnessHome } from "../../src/application/harness-home.js";
 import { migrateHome } from "../../src/application/migrate-home.js";
 import { ProjectRegistry } from "../../src/application/project-registry.js";
@@ -51,8 +50,7 @@ const REFLECT_OUTPUT = {
   inScope: ["core change"],
   outOfScope: ["extras"],
   assumptions: ["base branch is correct"],
-  unknowns: ["edge cases"],
-};
+  unknowns: ["edge cases"]};
 
 describe("external harness home", () => {
   it("adds newly packaged guidance to an existing home without overwriting operator files", async () => {
@@ -102,8 +100,7 @@ describe("external harness home", () => {
         "    - id: home-test",
         "      command: home verify",
         "      timeoutMs: 1234",
-        "",
-      ].join("\n"),
+        ""].join("\n"),
       "utf8",
     );
     const lookup = await new ProjectRegistry(home).add({ repository: repo, home });
@@ -116,14 +113,12 @@ describe("external harness home", () => {
     const loaded = await loadExternalProjectConfig({
       projectKey: lookup.registration.projectKey,
       home,
-      allowLegacy: false,
-    });
+      allowLegacy: false});
 
     expect(loaded.config.workflow.maxGrillQuestionsPerEpisode).toBe(9);
     expect(loaded.config.workflow.staleAnswerMinutes).toBe(77);
     expect(loaded.config.commands.verification).toEqual([
-      { id: "home-test", command: "home verify", timeoutMs: 1234 },
-    ]);
+      { id: "home-test", command: "home verify", timeoutMs: 1234 }]);
   });
 
   it("starts a run with no harness-owned files under the control root", async () => {
@@ -137,34 +132,28 @@ describe("external harness home", () => {
     const loaded = await loadExternalProjectConfig({
       projectKey: lookup.registration.projectKey,
       home,
-      allowLegacy: false,
-    });
+      allowLegacy: false});
     const config = HarnessConfigSchema.parse({
       ...loaded.config,
       git: {
         ...loaded.config.git,
         enabled: true,
         baseBranch: "main",
-        createPullRequest: false,
-      },
+        createPullRequest: false},
       knowledge: {
         ...loaded.config.knowledge,
         graphify: { ...loaded.config.knowledge.graphify, enabled: false },
         sources: [{ path: "README.md", scope: "project", visibility: "private" }],
-        guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-      },
-      workflow: { ...loaded.config.workflow, tdd: false },
-    });
+        guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }},
+      workflow: { ...loaded.config.workflow }});
 
     const paths = harnessPathsFromProject(lookup.paths);
     const engine = new HarnessEngine(config, {
       backend: createFakeBackend({
-        reflector: () => REFLECT_OUTPUT,
-      }),
+        reflector: () => REFLECT_OUTPUT}),
       commands: passingCommandRunner(),
       projectContext: { home, paths: lookup.paths },
-      paths,
-    });
+      paths});
 
     const before = await readdir(repo);
     const state = await engine.start("ship a tiny feature", "run-ext-1", false, false);
@@ -206,8 +195,7 @@ describe("external harness home", () => {
         configRevision: 0,
         tasks: [],
         decisions: [],
-        proposedInstalls: [],
-      }),
+        proposedInstalls: []}),
       "utf8",
     );
 

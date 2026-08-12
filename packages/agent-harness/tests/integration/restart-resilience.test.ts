@@ -3,7 +3,8 @@ import { HarnessEngine } from "../../src/engine.js";
 import {
   confirmGrillAndAdvance,
   HIGH_LEVEL_PLAN,
-  PRD_OUTPUT
+  PRD_OUTPUT,
+  SCENARIO_PLANNER_OUTPUT
 } from "../helpers.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
@@ -18,8 +19,7 @@ const REFLECT_OUTPUT = {
   inScope: ["tone choice"],
   outOfScope: [],
   assumptions: [],
-  unknowns: ["tone"],
-};
+  unknowns: ["tone"]};
 
 describe("Phase 5 restart resilience", () => {
   let fixture: ProjectFixture | undefined;
@@ -33,15 +33,12 @@ describe("Phase 5 restart resilience", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000, provider: "cursor" },
-        workflow: { tdd: false, generateCommitMessages: false },
+        workflow: { generateCommitMessages: false },
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         git: { enabled: false },
         knowledge: {
           graphify: { enabled: false },
-          guidance: { enabled: false },
-        },
-      },
-    });
+          guidance: { enabled: false }}}});
 
     await withDiagnosticArtifacts(
       { testName: "restart-resilience-major-phases", fixture },
@@ -59,14 +56,9 @@ describe("Phase 5 restart resilience", () => {
                   context: "The choice sets the voice users encounter throughout the feature.",
                   options: [
                     { id: "formal", label: "Formal", description: "Polished and reserved." },
-                    { id: "casual", label: "Casual", description: "Warm and direct." },
-                  ],
+                    { id: "casual", label: "Casual", description: "Warm and direct." }],
                   recommendedOptionId: "casual",
-                  recommendation: "Use casual for a lightweight greeting.",
-                },
-              ],
-            },
-          },
+                  recommendation: "Use casual for a lightweight greeting."}]}},
           {
             role: "griller",
             output: {
@@ -77,13 +69,10 @@ describe("Phase 5 restart resilience", () => {
                   id: "tone",
                   question: "Should the greeting be formal or casual?",
                   answer: "Casual",
-                  summary: "Casual",
-                },
-              ],
-            },
-          },
+                  summary: "Casual"}]}},
           { role: "planner", output: HIGH_LEVEL_PLAN },
       { role: "planner", output: PRD_OUTPUT },
+      { role: "scenario-planner", output: SCENARIO_PLANNER_OUTPUT },
       {
         role: "issue-slicer",
         output: {
@@ -95,22 +84,26 @@ describe("Phase 5 restart resilience", () => {
                   title: "Ship greeting",
                   description: "Render greeting.",
                   acceptanceCriteria: ["Works"],
-                  blockedBy: [],
-                  tdd: false,
-                },
-              ],
-          proposedInstalls: [],
-        },
-      },
+                  scenarioIds: ["greet-happy"],
+                  blockedBy: []}],
+          proposedInstalls: []}},
           {
             role: "implementer",
-            output: { summary: "Built", changedFiles: ["src/greet.ts"] },
-          },
+            output: { summary: "Built", changedFiles: ["src/greet.ts"] }},
           {
             role: "reviewer",
-            output: { approved: true, summary: "ok", findings: [] },
-          },
-        ]);
+            output: { approved: true, summary: "ok", findings: [] }},
+          {
+            role: "scenario-writer",
+            output: {
+              status: "implemented",
+              summary: "Scenario tests",
+              testPaths: ["tests/greet.test.ts"],
+              changedFiles: ["tests/greet.test.ts"],
+            }},
+          {
+            role: "reviewer",
+            output: { approved: true, summary: "final ok", findings: [] }}]);
 
         const reopen = () => new HarnessEngine(fixture!.config, { backend: scripted.backend });
 

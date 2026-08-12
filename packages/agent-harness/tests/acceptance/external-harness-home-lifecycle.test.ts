@@ -61,8 +61,7 @@ const REFLECT = {
   inScope: ["core change"],
   outOfScope: ["extras"],
   assumptions: ["base branch is correct"],
-  unknowns: [] as string[],
-};
+  unknowns: [] as string[]};
 
 describe("external harness home E2E matrix", () => {
   it("register → configure → start → advance → publish → cleanup → remove", async () => {
@@ -82,14 +81,12 @@ describe("external harness home E2E matrix", () => {
       repo,
       "--home",
       homeRoot,
-      "--no-advance",
-    ]);
+      "--no-advance"]);
     expect(unregistered.code).not.toBe(0);
     const unregisteredText = [
       ...unregistered.stderr,
       ...unregistered.stdout,
-      unregistered.error instanceof Error ? unregistered.error.message : String(unregistered.error ?? ""),
-    ].join("\n");
+      unregistered.error instanceof Error ? unregistered.error.message : String(unregistered.error ?? "")].join("\n");
     expect(unregisteredText).toMatch(/agent-harness project add --repository/);
 
     // Register via CLI (zero-footprint).
@@ -101,8 +98,7 @@ describe("external harness home E2E matrix", () => {
       "--name",
       "E2E Demo",
       "--home",
-      homeRoot,
-    ]);
+      homeRoot]);
     expect(added.code).toBe(0);
     expect(added.stdout.join("\n")).toMatch(/Registered project/);
     expect(added.stdout.join("\n")).toMatch(/worktreeRoot:/);
@@ -125,18 +121,14 @@ describe("external harness home E2E matrix", () => {
           push: false,
           openPullRequest: false,
           remote: "origin",
-          autoCommitPreflight: false,
-        },
-        workflow: { tdd: false, generateCommitMessages: true },
+          autoCommitPreflight: false},
+        workflow: { generateCommitMessages: true },
         knowledge: {
           sources: [{ path: "README.md", scope: "project", visibility: "private" }],
           graphify: { enabled: false },
-          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        },
+          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }},
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
-        agent: { provider: "cursor", promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 },
-      },
-    });
+        agent: { provider: "cursor", promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 }}});
     const config = HarnessConfigSchema.parse(loaded.config);
     const lookup = loaded.lookup!;
     const runId = "e2e-ext-home-1";
@@ -150,8 +142,7 @@ describe("external harness home E2E matrix", () => {
       griller: () => ({
         status: "ready_to_plan",
         summary: "No open questions",
-        resolutions: [],
-      }),
+        resolutions: []}),
       planner: createPlannerPrdSequence().planner,
 
       "issue-slicer": () => ({
@@ -162,26 +153,20 @@ describe("external harness home E2E matrix", () => {
             title: "Ship feature",
             description: "Add feature.ts",
             acceptanceCriteria: ["file exists"],
-            blockedBy: [],
-            tdd: false,
-          },
-        ],
-        proposedInstalls: [],
-      }),
+            blockedBy: []}],
+        proposedInstalls: []}),
       implementer: async (request) => {
         observedCwds.push(request.cwd);
         return writingImplementer(request);
       },
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
-      "message-writer": () => ({ subject: "feat: ship feature", body: "Ready." }),
-    });
+      "message-writer": () => ({ subject: "feat: ship feature", body: "Ready." })});
 
     const engine = new HarnessEngine(config, {
       backend,
       commands: passingCommandRunner(),
       projectContext: { home, paths: lookup.paths },
-      paths: harnessPathsFromProject(lookup.paths),
-    });
+      paths: harnessPathsFromProject(lookup.paths)});
 
     let state = await engine.start("Ship a tiny feature", runId, false, false);
     expect(state.phase === "blocked" ? state.failure : undefined).toBeUndefined();
@@ -197,8 +182,7 @@ describe("external harness home E2E matrix", () => {
     }
     if (state.verificationReady) {
       state = await engine.confirmVerification(runId, {
-        patch: state.verificationReady.proposedPatch,
-      });
+        patch: state.verificationReady.proposedPatch});
       state = await engine.advance(runId);
     }
     if (state.planReady) {
@@ -214,8 +198,7 @@ describe("external harness home E2E matrix", () => {
       }
       if (state.verificationReady) {
         state = await engine.confirmVerification(runId, {
-          patch: state.verificationReady.proposedPatch,
-        });
+          patch: state.verificationReady.proposedPatch});
       }
       if (state.planReady) {
         state = await engine.confirmPlan(runId);
@@ -242,8 +225,7 @@ describe("external harness home E2E matrix", () => {
       "--repository",
       repo,
       "--home",
-      homeRoot,
-    ]);
+      homeRoot]);
     expect(storageCli.code).toBe(0);
     expect(storageCli.stdout.join("\n")).toMatch(/worktreeRoot:|total:/);
 
@@ -265,8 +247,7 @@ describe("external harness home E2E matrix", () => {
       lookup.registration.projectKey,
       "--force",
       "--home",
-      homeRoot,
-    ]);
+      homeRoot]);
     expect(removed.code).toBe(0);
     expect(removed.stdout.join("\n")).toMatch(/Target repository left untouched/);
     await access(path.join(repo, "README.md"));

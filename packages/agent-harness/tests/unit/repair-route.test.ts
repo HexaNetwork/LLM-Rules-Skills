@@ -12,8 +12,7 @@ describe("repairRoute", () => {
       repairRoute({
         blockedKind: "internal",
         failure:
-          "Test writer changed non-test paths: civcraft/src/main/test/BuildFootprintTest.java",
-      }),
+          "Test writer changed non-test paths: civcraft/src/main/test/BuildFootprintTest.java"}),
     ).toBe("config-fixer");
   });
 
@@ -21,8 +20,7 @@ describe("repairRoute", () => {
     expect(
       repairRoute({
         blockedKind: "internal",
-        failure: "Red writer changed non-test paths: src/sneaky.ts",
-      }),
+        failure: "Red writer changed non-test paths: src/sneaky.ts"}),
     ).toBe("config-fixer");
   });
 
@@ -30,8 +28,7 @@ describe("repairRoute", () => {
     expect(
       repairRoute({
         blockedKind: "workspace",
-        failure: "Run configuration changed; resume with the persisted run config",
-      }),
+        failure: "Run configuration changed; resume with the persisted run config"}),
     ).toBe("config-fixer");
   });
 
@@ -39,8 +36,7 @@ describe("repairRoute", () => {
     expect(
       repairRoute({
         blockedKind: "internal",
-        failure: "Implementer left the tree in a broken state",
-      }),
+        failure: "Implementer left the tree in a broken state"}),
     ).toBe("fixer");
   });
 
@@ -57,7 +53,6 @@ describe("repairRoute", () => {
     expect(repairRoute({ blockedKind: "contract", failure: message })).toBe("config-fixer");
     expect(classifyFailure(new Error(`Task task-1 failed: ${message}`))).toEqual({
       kind: "config",
-      retriable: false,
-    });
+      retriable: false});
   });
 });

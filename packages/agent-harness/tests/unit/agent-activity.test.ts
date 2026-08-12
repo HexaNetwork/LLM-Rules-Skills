@@ -4,8 +4,7 @@ import {
   buildAgentActivity,
   deriveInvocationOutcome,
   type ActivityEventInput,
-  type InvocationRecord,
-} from "../../src/application/agent-activity.js";
+  type InvocationRecord} from "../../src/application/agent-activity.js";
 
 function record(overrides: Partial<InvocationRecord> & Pick<InvocationRecord, "sessionId" | "path">): InvocationRecord {
   return {
@@ -16,8 +15,7 @@ function record(overrides: Partial<InvocationRecord> & Pick<InvocationRecord, "s
     startedAt: "2026-08-10T20:00:00.000Z",
     endedAt: "2026-08-10T20:01:00.000Z",
     usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
-    ...overrides,
-  };
+    ...overrides};
 }
 
 function event(
@@ -25,8 +23,7 @@ function event(
 ): ActivityEventInput {
   return {
     detail: {},
-    ...overrides,
-  };
+    ...overrides};
 }
 
 describe("buildAgentActivity", () => {
@@ -42,9 +39,7 @@ describe("buildAgentActivity", () => {
         trigger: {
           event: "task.implementing",
           classification: "initial",
-          summary: "initial implementation",
-        },
-      }),
+          summary: "initial implementation"}}),
       record({
         path: "sessions/b.json",
         sessionId: "b",
@@ -57,9 +52,7 @@ describe("buildAgentActivity", () => {
           event: "task.implementation_repair_needed",
           classification: "verification",
           summary: "implementation repair",
-          previousInvocationId: "inv-a",
-        },
-      }),
+          previousInvocationId: "inv-a"}}),
       record({
         path: "sessions/c.json",
         sessionId: "c",
@@ -67,17 +60,14 @@ describe("buildAgentActivity", () => {
         providerSessionReused: true,
         startedAt: "2026-08-10T20:12:00.000Z",
         invocationKind: "continuation",
-        usage: { inputTokens: 300, outputTokens: 60, totalTokens: 360 },
-      }),
-    ]);
+        usage: { inputTokens: 300, outputTokens: 60, totalTokens: 360 }})]);
 
     expect(activity.providerContexts).toHaveLength(1);
     expect(activity.totals).toEqual({
       providerContexts: 1,
       invocations: 3,
       continuedInvocations: 2,
-      schemaRepairs: 0,
-    });
+      schemaRepairs: 0});
     const context = activity.providerContexts[0]!;
     expect(context.id).toBe("ctx-1");
     expect(context.invocationCount).toBe(3);
@@ -91,13 +81,11 @@ describe("buildAgentActivity", () => {
   it("creates one synthetic context per record when providerSessionId is missing", () => {
     const activity = buildAgentActivity([
       record({ path: "sessions/a.json", sessionId: "a", startedAt: "2026-08-10T20:00:00.000Z" }),
-      record({ path: "sessions/b.json", sessionId: "b", startedAt: "2026-08-10T20:01:00.000Z" }),
-    ]);
+      record({ path: "sessions/b.json", sessionId: "b", startedAt: "2026-08-10T20:01:00.000Z" })]);
     expect(activity.providerContexts).toHaveLength(2);
     expect(activity.providerContexts.map((item) => item.id)).toEqual([
       "synthetic:b",
-      "synthetic:a",
-    ]);
+      "synthetic:a"]);
   });
 
   it("marks mixed roles and uses the latest outcome when a group spans statuses", () => {
@@ -108,17 +96,14 @@ describe("buildAgentActivity", () => {
         providerSessionId: "shared",
         role: "implementer",
         status: "completed",
-        startedAt: "2026-08-10T20:00:00.000Z",
-      }),
+        startedAt: "2026-08-10T20:00:00.000Z"}),
       record({
         path: "sessions/b.json",
         sessionId: "b",
         providerSessionId: "shared",
         role: "reviewer",
         status: "failed",
-        startedAt: "2026-08-10T20:02:00.000Z",
-      }),
-    ]);
+        startedAt: "2026-08-10T20:02:00.000Z"})]);
     expect(activity.providerContexts[0]!.role).toBe("mixed");
     expect(activity.providerContexts[0]!.status).toBe("failed");
   });
@@ -132,8 +117,7 @@ describe("buildAgentActivity", () => {
         providerSessionId: "ctx",
         attempt: 0,
         startedAt: "2026-08-10T20:00:00.000Z",
-        status: "failed",
-      }),
+        status: "failed"}),
       record({
         path: "sessions/b.json",
         sessionId: "b",
@@ -142,9 +126,7 @@ describe("buildAgentActivity", () => {
         attempt: 1,
         invocationKind: "schema-repair",
         startedAt: "2026-08-10T20:00:30.000Z",
-        status: "completed",
-      }),
-    ]);
+        status: "completed"})]);
     expect(activity.totals.schemaRepairs).toBe(1);
     expect(activity.providerContexts[0]!.schemaRepairCount).toBe(1);
     expect(activity.providerContexts[0]!.status).toBe("completed");
@@ -157,17 +139,14 @@ describe("buildAgentActivity", () => {
         sessionId: "a",
         providerSessionId: "ctx",
         status: "completed",
-        startedAt: "2026-08-10T20:00:00.000Z",
-      }),
+        startedAt: "2026-08-10T20:00:00.000Z"}),
       record({
         path: "sessions/b.json",
         sessionId: "b",
         providerSessionId: "ctx",
         status: "running",
         startedAt: "2026-08-10T20:01:00.000Z",
-        endedAt: undefined,
-      }),
-    ]);
+        endedAt: undefined})]);
     expect(activity.providerContexts[0]!.status).toBe("running");
     expect(activity.providerContexts[0]!.endedAt).toBeUndefined();
   });
@@ -178,15 +157,12 @@ describe("buildAgentActivity", () => {
         path: "sessions/later.json",
         sessionId: "later",
         providerSessionId: "b",
-        startedAt: "2026-08-10T21:00:00.000Z",
-      }),
+        startedAt: "2026-08-10T21:00:00.000Z"}),
       record({
         path: "sessions/earlier.json",
         sessionId: "earlier",
         providerSessionId: "a",
-        startedAt: "2026-08-10T20:00:00.000Z",
-      }),
-    ]);
+        startedAt: "2026-08-10T20:00:00.000Z"})]);
     expect(activity.providerContexts.map((item) => item.id)).toEqual(["b", "a"]);
     expect(activity.providerContexts[1]!.invocations[0]!.triggerSummary).toBe(
       HISTORICAL_TRIGGER_SUMMARY,
@@ -196,60 +172,54 @@ describe("buildAgentActivity", () => {
   it("interleaves invocations from different provider contexts chronologically", () => {
     const activity = buildAgentActivity([
       record({
-        path: "sessions/red-1.json",
-        sessionId: "red-1",
-        role: "red-writer",
-        providerSessionId: "red-ctx",
-        startedAt: "2026-08-11T10:31:04.000Z",
-        outcome: { status: "done" },
-      }),
-      record({
-        path: "sessions/green-1.json",
-        sessionId: "green-1",
+        path: "sessions/impl-1.json",
+        sessionId: "impl-1",
         role: "implementer",
-        providerSessionId: "green-ctx",
-        startedAt: "2026-08-11T10:39:48.000Z",
-        outcome: { status: "green" },
-      }),
+        providerSessionId: "impl-ctx",
+        startedAt: "2026-08-11T10:31:04.000Z",
+        outcome: { status: "implemented" }}),
       record({
-        path: "sessions/red-2.json",
-        sessionId: "red-2",
-        role: "red-writer",
-        providerSessionId: "red-ctx",
+        path: "sessions/review-1.json",
+        sessionId: "review-1",
+        role: "reviewer",
+        providerSessionId: "review-ctx",
+        startedAt: "2026-08-11T10:39:48.000Z",
+        outcome: { status: "approved" }}),
+      record({
+        path: "sessions/impl-2.json",
+        sessionId: "impl-2",
+        role: "implementer",
+        providerSessionId: "impl-ctx",
         providerSessionReused: true,
         startedAt: "2026-08-11T10:45:11.000Z",
         invocationKind: "continuation",
-        outcome: { status: "continue" },
-      }),
-    ]);
+        outcome: { status: "repaired" }})]);
 
     expect(activity.providerContexts).toHaveLength(2);
     expect(activity.timeline.map((entry) => {
       if (entry.type !== "invocation") return entry.type;
       return entry.invocation.sessionId;
-    })).toEqual(["red-1", "green-1", "red-2"]);
-    const redContext = activity.providerContexts.find((item) => item.id === "red-ctx")!;
-    expect(redContext.invocations.map((item) => item.contextTurn)).toEqual([1, 2]);
+    })).toEqual(["impl-1", "review-1", "impl-2"]);
+    const implContext = activity.providerContexts.find((item) => item.id === "impl-ctx")!;
+    expect(implContext.invocations.map((item) => item.contextTurn)).toEqual([1, 2]);
   });
 
-  it("keeps retained RED turns separated by verification, reviewer, and GREEN activity", () => {
+  it("keeps implementer turns separated by verification and reviewer activity", () => {
     const activity = buildAgentActivity(
       [
         record({
-          path: "sessions/red-1.json",
-          sessionId: "red-1",
-          role: "red-writer",
+          path: "sessions/impl-1.json",
+          sessionId: "impl-1",
+          role: "implementer",
           taskId: "task-1",
-          providerSessionId: "red-ctx",
+          providerSessionId: "impl-ctx",
           startedAt: "2026-08-11T10:31:04.000Z",
           invocationKind: "initial",
-          outcome: { status: "done", summary: "coverage complete" },
+          outcome: { status: "implemented", summary: "done" },
           trigger: {
-            event: "task.writing_tests",
+            event: "task.implementing",
             classification: "initial",
-            summary: "initial",
-          },
-        }),
+            summary: "initial"}}),
         record({
           path: "sessions/review-1.json",
           sessionId: "review-1",
@@ -261,40 +231,21 @@ describe("buildAgentActivity", () => {
             status: "blocking",
             blockingCount: 1,
             repairRoute: "production",
-            summary: "production finding",
-          },
-        }),
+            summary: "production finding"}}),
         record({
-          path: "sessions/green-1.json",
-          sessionId: "green-1",
+          path: "sessions/impl-2.json",
+          sessionId: "impl-2",
           role: "implementer",
           taskId: "task-1",
-          providerSessionId: "green-ctx",
+          providerSessionId: "impl-ctx",
+          providerSessionReused: true,
           startedAt: "2026-08-11T10:39:48.000Z",
           invocationKind: "review-repair",
-          outcome: { status: "green" },
+          outcome: { status: "repaired" },
           trigger: {
             event: "task.implementation_repair_needed",
             classification: "review-repair",
-            summary: "final repair",
-          },
-        }),
-        record({
-          path: "sessions/red-2.json",
-          sessionId: "red-2",
-          role: "red-writer",
-          taskId: "task-1",
-          providerSessionId: "red-ctx",
-          providerSessionReused: true,
-          startedAt: "2026-08-11T10:45:11.000Z",
-          invocationKind: "continuation",
-          outcome: { status: "continue" },
-          trigger: {
-            event: "task.writing_tests",
-            classification: "continuation",
-            summary: "continuation",
-          },
-        }),
+            summary: "repair"}}),
         record({
           path: "sessions/review-2.json",
           sessionId: "review-2",
@@ -303,44 +254,30 @@ describe("buildAgentActivity", () => {
           providerSessionId: "review-ctx-2",
           startedAt: "2026-08-11T10:46:04.000Z",
           outcome: {
-            status: "blocking",
-            blockingCount: 1,
-            repairRoute: "test-coverage",
-          },
-        }),
+            status: "approved",
+            blockingCount: 0}}),
       ],
       [
         event({
           sequence: 10,
           type: "task.gates_passed",
           at: "2026-08-11T10:34:18.000Z",
-          detail: { taskId: "task-1" },
-        }),
+          detail: { taskId: "task-1" }}),
         event({
           sequence: 11,
           type: "task.review_failed",
           at: "2026-08-11T10:34:23.000Z",
-          detail: { taskId: "task-1", reviewRepairRoute: "production" },
-        }),
+          detail: { taskId: "task-1", reviewRepairRoute: "production" }}),
         event({
           sequence: 12,
-          type: "task.green_observed",
+          type: "task.implementation_verified",
           at: "2026-08-11T10:40:00.000Z",
-          detail: { taskId: "task-1", finalRepair: true },
-        }),
-        event({
-          sequence: 14,
-          type: "task.review_failed",
-          at: "2026-08-11T10:46:05.000Z",
-          detail: { taskId: "task-1", reviewRepairRoute: "test-coverage" },
-        }),
+          detail: { taskId: "task-1" }}),
         event({
           sequence: 13,
           type: "task.gates_passed",
           at: "2026-08-11T10:46:02.000Z",
-          detail: { taskId: "task-1" },
-        }),
-      ],
+          detail: { taskId: "task-1" }})],
     );
 
     const labels = activity.timeline.map((entry) => {
@@ -350,31 +287,27 @@ describe("buildAgentActivity", () => {
       return `${entry.event}:${entry.summary}`;
     });
     expect(labels).toEqual([
-      "red-writer:red-1",
+      "implementer:impl-1",
       "task.gates_passed:Final gates",
       "reviewer:review-1",
-      "routing:production → GREEN",
-      "implementer:green-1",
-      "routing:GREEN → RED reassessment",
-      "red-writer:red-2",
+      "routing:review → implementer",
+      "implementer:impl-2",
+      "task.implementation_verified:Implementation verified",
       "task.gates_passed:Final gates",
-      "reviewer:review-2",
-      "routing:GREEN → RED reassessment",
-    ]);
+      "reviewer:review-2"]);
 
-    const redRows = activity.timeline.filter(
-      (entry) => entry.type === "invocation" && entry.invocation.role === "red-writer",
+    const implRows = activity.timeline.filter(
+      (entry) => entry.type === "invocation" && entry.invocation.role === "implementer",
     );
-    expect(redRows).toHaveLength(2);
-    expect(redRows[0]!.sequence + 1).not.toBe(redRows[1]!.sequence);
+    expect(implRows).toHaveLength(2);
     expect(
       activity.timeline
-        .filter((entry) => entry.type === "invocation" && entry.invocation.providerSessionId === "red-ctx")
+        .filter((entry) => entry.type === "invocation" && entry.invocation.providerSessionId === "impl-ctx")
         .map((entry) => (entry.type === "invocation" ? entry.invocation.contextTurn : null)),
     ).toEqual([1, 2]);
 
-    expect(activity.totals.invocations).toBe(5);
-    expect(activity.totals.providerContexts).toBe(4);
+    expect(activity.totals.invocations).toBe(4);
+    expect(activity.totals.providerContexts).toBe(3);
   });
 
   it("uses event sequence as the deterministic tie-breaker for identical timestamps", () => {
@@ -384,23 +317,18 @@ describe("buildAgentActivity", () => {
           path: "sessions/a.json",
           sessionId: "a",
           role: "reviewer",
-          startedAt: "2026-08-11T10:00:00.000Z",
-        }),
-      ],
+          startedAt: "2026-08-11T10:00:00.000Z"})],
       [
         event({
           sequence: 2,
           type: "task.review_failed",
           at: "2026-08-11T10:00:00.000Z",
-          detail: { reviewRepairRoute: "production", taskId: "t1" },
-        }),
+          detail: { reviewRepairRoute: "production", taskId: "t1" }}),
         event({
           sequence: 1,
           type: "task.gates_passed",
           at: "2026-08-11T10:00:00.000Z",
-          detail: { taskId: "t1" },
-        }),
-      ],
+          detail: { taskId: "t1" }})],
     );
     expect(
       activity.timeline.map((entry) =>
@@ -415,25 +343,20 @@ describe("buildAgentActivity", () => {
         record({
           path: "sessions/a.json",
           sessionId: "a",
-          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-        }),
-      ],
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }})],
       [
         event({ sequence: 1, type: "task.gates_passed", at: "2026-08-11T10:00:01.000Z" }),
         event({
           sequence: 2,
           type: "task.review_failed",
           at: "2026-08-11T10:00:02.000Z",
-          detail: { reviewRepairRoute: "production" },
-        }),
-      ],
+          detail: { reviewRepairRoute: "production" }})],
     );
     expect(activity.totals).toEqual({
       providerContexts: 1,
       invocations: 1,
       continuedInvocations: 0,
-      schemaRepairs: 0,
-    });
+      schemaRepairs: 0});
     expect(activity.timeline.filter((entry) => entry.type === "transition")).toHaveLength(2);
   });
 
@@ -446,9 +369,7 @@ describe("buildAgentActivity", () => {
         endedAt: undefined,
         trigger: undefined,
         outcome: undefined,
-        output: undefined,
-      }),
-    ]);
+        output: undefined})]);
     expect(activity.timeline).toHaveLength(1);
     const entry = activity.timeline[0]!;
     expect(entry.type).toBe("invocation");
@@ -468,10 +389,7 @@ describe("buildAgentActivity", () => {
         output: {
           approved: false,
           summary: "Need more coverage",
-          findings: [{ severity: "blocking", kind: "test-coverage", message: "edge case missing" }],
-        },
-      }),
-    ]);
+          findings: [{ severity: "blocking", kind: "test-coverage", message: "edge case missing" }]}})]);
     const entry = activity.timeline[0]!;
     expect(entry.type).toBe("invocation");
     if (entry.type === "invocation") {
@@ -479,8 +397,7 @@ describe("buildAgentActivity", () => {
         status: "blocking",
         summary: "Need more coverage",
         blockingCount: 1,
-        repairRoute: "test-coverage",
-      });
+        repairRoute: "test-coverage"});
     }
   });
 
@@ -494,8 +411,7 @@ describe("buildAgentActivity", () => {
         attempt: 0,
         startedAt: "2026-08-10T20:00:00.000Z",
         status: "failed",
-        error: "Validation error",
-      }),
+        error: "Validation error"}),
       record({
         path: "sessions/b.json",
         sessionId: "b",
@@ -504,29 +420,20 @@ describe("buildAgentActivity", () => {
         attempt: 1,
         invocationKind: "schema-repair",
         startedAt: "2026-08-10T20:00:30.000Z",
-        status: "completed",
-      }),
-    ]);
+        status: "completed"})]);
     expect(activity.providerContexts[0]!.invocations.map((item) => item.invocationId)).toEqual([
       "inv-1",
-      "inv-1",
-    ]);
+      "inv-1"]);
     expect(activity.timeline.map((entry) => (entry.type === "invocation" ? entry.invocation.sessionId : null))).toEqual([
       "a",
-      "b",
-    ]);
+      "b"]);
   });
 });
 
 describe("deriveInvocationOutcome", () => {
-  it("maps red-writer and green statuses", () => {
-    expect(deriveInvocationOutcome("red-writer", { status: "done", summary: "done" })).toEqual({
-      status: "done",
-      summary: "done",
-    });
-    expect(deriveInvocationOutcome("implementer", { status: "green", summary: "ok" })).toEqual({
-      status: "green",
-      summary: "ok",
-    });
+  it("maps implementer status from structured output", () => {
+    expect(deriveInvocationOutcome("implementer", { status: "implemented", summary: "ok" })).toEqual({
+      status: "implemented",
+      summary: "ok"});
   });
 });

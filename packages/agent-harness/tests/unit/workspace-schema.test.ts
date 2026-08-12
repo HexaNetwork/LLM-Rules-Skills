@@ -10,8 +10,7 @@ import {
   migrateRunWorkspace,
   requiresRepositoryLock,
   sanitizeWorktreeRunId,
-  workspaceEvidenceFingerprint,
-} from "../../src/domain/workspace.js";
+  workspaceEvidenceFingerprint} from "../../src/domain/workspace.js";
 
 describe("RunWorkspaceSchema", () => {
   it("accepts a version-1 git-worktree record", () => {
@@ -23,8 +22,7 @@ describe("RunWorkspaceSchema", () => {
       gitCommonDir: "D:/repo/.git",
       baseBranch: "main",
       baseSha: "abc123",
-      createdAt: "2026-08-10T12:00:00.000Z",
-    });
+      createdAt: "2026-08-10T12:00:00.000Z"});
     expect(parsed.version).toBe(1);
     expect(parsed.kind).toBe("git-worktree");
     expect(parsed.branchName).toBeUndefined();
@@ -37,16 +35,14 @@ describe("RunWorkspaceSchema", () => {
         version: 1,
         kind: "legacy-shared",
         controlRoot: "/repo",
-        createdAt: "2026-08-10T12:00:00.000Z",
-      }).kind,
+        createdAt: "2026-08-10T12:00:00.000Z"}).kind,
     ).toBe("legacy-shared");
     expect(
       RunWorkspaceSchema.parse({
         version: 1,
         kind: "git-disabled",
         controlRoot: "/repo",
-        createdAt: "2026-08-10T12:00:00.000Z",
-      }).kind,
+        createdAt: "2026-08-10T12:00:00.000Z"}).kind,
     ).toBe("git-disabled");
   });
 
@@ -56,16 +52,14 @@ describe("RunWorkspaceSchema", () => {
         version: 2,
         kind: "git-worktree",
         controlRoot: "/repo",
-        createdAt: "2026-08-10T12:00:00.000Z",
-      }),
+        createdAt: "2026-08-10T12:00:00.000Z"}),
     ).toThrow();
     expect(() =>
       RunWorkspaceSchema.parse({
         version: 1,
         kind: "other",
         controlRoot: "/repo",
-        createdAt: "2026-08-10T12:00:00.000Z",
-      }),
+        createdAt: "2026-08-10T12:00:00.000Z"}),
     ).toThrow();
   });
 });
@@ -77,8 +71,7 @@ describe("requiresRepositoryLock", () => {
         version: 1,
         kind: "legacy-shared",
         controlRoot: "/repo",
-        createdAt: "2026-08-10T12:00:00.000Z",
-      }),
+        createdAt: "2026-08-10T12:00:00.000Z"}),
     ).toBe(true);
     expect(
       requiresRepositoryLock({
@@ -86,16 +79,14 @@ describe("requiresRepositoryLock", () => {
         kind: "git-worktree",
         controlRoot: "/repo",
         worktreePath: "/repo/.agent-harness/worktrees/r1",
-        createdAt: "2026-08-10T12:00:00.000Z",
-      }),
+        createdAt: "2026-08-10T12:00:00.000Z"}),
     ).toBe(false);
     expect(
       requiresRepositoryLock({
         version: 1,
         kind: "git-disabled",
         controlRoot: "/repo",
-        createdAt: "2026-08-10T12:00:00.000Z",
-      }),
+        createdAt: "2026-08-10T12:00:00.000Z"}),
     ).toBe(false);
   });
 });
@@ -104,14 +95,12 @@ describe("migrateRunWorkspace", () => {
   it("treats missing workspace metadata as legacy-shared with compatibility defaults", () => {
     const migrated = migrateRunWorkspace(undefined, {
       controlRoot: "/project",
-      createdAt: "2026-08-10T12:00:00.000Z",
-    });
+      createdAt: "2026-08-10T12:00:00.000Z"});
     expect(migrated).toEqual({
       version: 1,
       kind: "legacy-shared",
       controlRoot: canonicalizeWorkspacePath("/project"),
-      createdAt: "2026-08-10T12:00:00.000Z",
-    });
+      createdAt: "2026-08-10T12:00:00.000Z"});
   });
 
   it("canonicalizes stored paths on migration", () => {
@@ -122,8 +111,7 @@ describe("migrateRunWorkspace", () => {
         controlRoot: path.join("/project", "."),
         worktreePath: path.join("/project", ".agent-harness", "worktrees", "run-1"),
         gitCommonDir: path.join("/project", ".git"),
-        createdAt: "2026-08-10T12:00:00.000Z",
-      },
+        createdAt: "2026-08-10T12:00:00.000Z"},
       { controlRoot: "/unused" },
     );
     expect(migrated.controlRoot).toBe(canonicalizeWorkspacePath("/project"));
@@ -162,8 +150,7 @@ describe("WorkspaceEvidenceSchema", () => {
       headSha: "a".repeat(40),
       indexTreeSha: "b".repeat(40),
       statusDigest: "c".repeat(64),
-      changedPaths: ["src/b.ts", "src/a.ts"],
-    });
+      changedPaths: ["src/b.ts", "src/a.ts"]});
     const parsed = WorkspaceEvidenceSchema.parse(evidence);
     expect(parsed.changedPaths).toEqual(["src/a.ts", "src/b.ts"]);
     expect(parsed.fingerprint).toBe(workspaceEvidenceFingerprint(evidence));
@@ -174,13 +161,11 @@ describe("WorkspaceEvidenceSchema", () => {
       headSha: "deadbeef",
       indexTreeSha: "cafebabe",
       statusDigest: "digest",
-      changedPaths: ["z.ts", "a.ts"],
-    };
+      changedPaths: ["z.ts", "a.ts"]};
     const first = workspaceEvidenceFingerprint(fields);
     const second = workspaceEvidenceFingerprint({
       ...fields,
-      changedPaths: ["a.ts", "z.ts"],
-    });
+      changedPaths: ["a.ts", "z.ts"]});
     expect(first).toBe(second);
     expect(first.startsWith(`v${WORKSPACE_EVIDENCE_FINGERPRINT_VERSION}:`)).toBe(true);
     expect(workspaceEvidenceFingerprint({ ...fields, headSha: "other" })).not.toBe(first);

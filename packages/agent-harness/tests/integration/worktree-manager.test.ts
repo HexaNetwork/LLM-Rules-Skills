@@ -8,8 +8,7 @@ import { WorktreeManager } from "../../src/git/worktree-manager.js";
 import { RunStore } from "../../src/store.js";
 import {
   createProjectFixture,
-  type ProjectFixture,
-} from "../testkit/project-fixture.js";
+  type ProjectFixture} from "../testkit/project-fixture.js";
 
 describe("WorktreeManager", () => {
   let fixture: ProjectFixture | undefined;
@@ -24,8 +23,7 @@ describe("WorktreeManager", () => {
   it("creates a detached worktree at baseSha under stateRoot/worktrees", async () => {
     await assertGitWorktreeCapability();
     fixture = await createProjectFixture({
-      config: { git: { enabled: true, baseBranch: "main" } },
-    });
+      config: { git: { enabled: true, baseBranch: "main" } }});
     await fixture.initGit({ branch: "main" });
     await fixture.git("checkout", "-b", "operator");
     await fixture.write("operator-only.txt", "operator\n");
@@ -42,13 +40,11 @@ describe("WorktreeManager", () => {
     const manager = new WorktreeManager({
       controlRoot: paths.controlRoot,
       stateRoot: paths.stateRoot,
-      store,
-    });
+      store});
 
     const workspace = await manager.create({
       runId: "Slice Two Run",
-      baseBranch: "main",
-    });
+      baseBranch: "main"});
 
     expect(workspace.kind).toBe("git-worktree");
     expect(workspace.baseBranch).toBe("main");
@@ -78,8 +74,7 @@ describe("WorktreeManager", () => {
 
     // Worktree is at main tip — no operator-only file, no delivery branch.
     await expect(access(path.join(workspace.worktreePath!, "operator-only.txt"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+      code: "ENOENT"});
     const branches = await fixture.git("branch", "--list", "harness/*");
     expect(branches.trim()).toBe("");
   });
@@ -87,8 +82,7 @@ describe("WorktreeManager", () => {
   it("open fails with a recoverable workspace error when the worktree is missing", async () => {
     await assertGitWorktreeCapability();
     fixture = await createProjectFixture({
-      config: { git: { enabled: true, baseBranch: "main" } },
-    });
+      config: { git: { enabled: true, baseBranch: "main" } }});
     await fixture.initGit({ branch: "main" });
     const paths = resolveHarnessPaths(fixture.config);
     const store = new RunStore(fixture.config, paths.stateRoot);
@@ -96,12 +90,10 @@ describe("WorktreeManager", () => {
     const manager = new WorktreeManager({
       controlRoot: paths.controlRoot,
       stateRoot: paths.stateRoot,
-      store,
-    });
+      store});
     const workspace = await manager.create({
       runId: "missing-later",
-      baseBranch: "main",
-    });
+      baseBranch: "main"});
     await fixture.removeWorktree(workspace.worktreePath!, { force: true });
 
     await expect(manager.open(workspace)).rejects.toThrow(/worktree|missing|moved|registered/i);

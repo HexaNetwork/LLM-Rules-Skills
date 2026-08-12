@@ -18,8 +18,7 @@ import {
   type BuildTask,
   type ReflectOutput,
   type RunPhase,
-  type RunState,
-} from "../../../src/domain.js";
+  type RunState} from "../../../src/domain.js";
 
 const NOW = "2026-08-09T12:00:00.000Z";
 
@@ -31,8 +30,7 @@ const REFLECT: ReflectOutput = {
   inScope: ["copy"],
   outOfScope: [],
   assumptions: [],
-  unknowns: ["tone"],
-};
+  unknowns: ["tone"]};
 
 function withPhase(phase: RunPhase): RunState {
   return { ...createRunState("run-1", "Add greeting", NOW), phase };
@@ -47,8 +45,7 @@ function evidence(purpose: string, passed = true) {
     stdout: "",
     stderr: "",
     durationMs: 1,
-    at: NOW,
-  };
+    at: NOW};
 }
 
 function task(overrides: Partial<BuildTask> & Pick<BuildTask, "id">): BuildTask {
@@ -58,15 +55,13 @@ function task(overrides: Partial<BuildTask> & Pick<BuildTask, "id">): BuildTask 
     acceptanceCriteria: ["works"],
     affectedPaths: [],
     blockedBy: [],
-    tdd: true,
     status: "pending",
     step: "pending",
-    attempts: { tests: 0, implementation: 0, review: 0 },
+    attempts: { implementation: 0, review: 0 },
     evidence: [],
     testPaths: [],
     changedFiles: [],
-    ...overrides,
-  };
+    ...overrides};
 }
 
 describe("domain transitions", () => {
@@ -85,8 +80,7 @@ describe("domain transitions", () => {
   it("answered questions never revert to unanswered", () => {
     const drafted = applyReflectOutput(withPhase("reflecting"), REFLECT, NOW, {
       batchId: "batch-1",
-      questionIds: ["q-reflect"],
-    });
+      questionIds: ["q-reflect"]});
     const answered = applyQuestionAnswers(
       drafted.state,
       [{ questionId: "q-reflect", answer: "Confirmed brief" }],
@@ -110,16 +104,14 @@ describe("domain transitions", () => {
       id: "greet",
       step: "reviewing",
       status: "active",
-      evidence: [evidence("tdd:green")],
-    });
+      evidence: [evidence("test")]});
     expect(canMarkTaskDone(reviewing)).toBe(false);
 
     const ready = task({
       id: "greet",
       step: "committing",
       status: "active",
-      evidence: [evidence("tdd:green")],
-    });
+      evidence: [evidence("test")]});
     expect(canMarkTaskDone(ready)).toBe(true);
 
     const state = { ...withPhase("executing"), tasks: [ready] };
@@ -131,14 +123,12 @@ describe("domain transitions", () => {
   it("allows only one active question batch", () => {
     const first = applyReflectOutput(withPhase("reflecting"), REFLECT, NOW, {
       batchId: "batch-1",
-      questionIds: ["q-1"],
-    });
+      questionIds: ["q-1"]});
     expect(hasOpenQuestionBatch(first.state)).toBe(true);
     expect(() =>
       applyReflectOutput(first.state, REFLECT, NOW, {
         batchId: "batch-2",
-        questionIds: ["q-2"],
-      }),
+        questionIds: ["q-2"]}),
     ).toThrow(/one active question batch/);
   });
 
@@ -146,22 +136,19 @@ describe("domain transitions", () => {
     expect(() =>
       assertAcyclic([
         { id: "a", blockedBy: ["b"] },
-        { id: "b", blockedBy: ["a"] },
-      ]),
+        { id: "b", blockedBy: ["a"] }]),
     ).toThrow(/cycle/i);
 
     expect(() => assertAcyclic([{ id: "a", blockedBy: ["missing"] }])).toThrow(/unknown blocker/);
 
     const blocked = [
       task({ id: "a", blockedBy: ["b"], status: "pending" }),
-      task({ id: "b", blockedBy: [], status: "pending" }),
-    ];
+      task({ id: "b", blockedBy: [], status: "pending" })];
     expect(taskFrontier(blocked).map((item) => item.id)).toEqual(["b"]);
 
     const pendingBehindDone = [
       task({ id: "a", blockedBy: ["b"], status: "pending" }),
-      task({ id: "b", blockedBy: [], status: "done", step: "done" }),
-    ];
+      task({ id: "b", blockedBy: [], status: "done", step: "done" })];
     expect(() => assertDependenciesExecutable(pendingBehindDone)).not.toThrow();
     expect(taskFrontier(pendingBehindDone).map((item) => item.id)).toEqual(["a"]);
   });
@@ -169,12 +156,10 @@ describe("domain transitions", () => {
   it("each valid transition produces a stable event name", () => {
     const reflect = applyReflectOutput(withPhase("reflecting"), REFLECT, NOW, {
       batchId: "batch-1",
-      questionIds: ["q-reflect"],
-    });
+      questionIds: ["q-reflect"]});
     expect(reflect.events.map((event) => event.type)).toEqual([
       "reflect.drafted",
-      "question.asked",
-    ]);
+      "question.asked"]);
 
     const grilling: RunState = {
       ...reflect.state,
@@ -183,16 +168,13 @@ describe("domain transitions", () => {
         draft: reflect.state.reflectBrief!.draft,
         structured: REFLECT,
         confirmed: "Confirmed",
-        confirmedAt: NOW,
-      },
+        confirmedAt: NOW},
       questions: reflect.state.questions.map((question) => ({
         ...question,
         status: "answered" as const,
         answer: "Confirmed",
-        answeredAt: NOW,
-      })),
-      activeQuestionId: undefined,
-    };
+        answeredAt: NOW})),
+      activeQuestionId: undefined};
 
     const grillReady = applyGrillOutput(
       grilling,
@@ -202,10 +184,8 @@ describe("domain transitions", () => {
         summary: "Ready",
         resolutionSummaries: [],
         resolutions: [
-          { id: "tone", question: "Tone?", answer: "Casual", summary: "Casual" },
-        ],
-        openUnknowns: [],
-      },
+          { id: "tone", question: "Tone?", answer: "Casual", summary: "Casual" }],
+        openUnknowns: []},
       NOW,
     );
     expect(grillReady.events.map((event) => event.type)).toEqual(["grill.ready"]);
@@ -219,17 +199,41 @@ describe("domain transitions", () => {
         approach: "Small module first",
         constraints: [],
         outOfScope: [],
-        openQuestions: [],
-      },
+        openQuestions: []},
       NOW,
     );
     expect(highLevel.events.map((event) => event.type)).toEqual(["plan.created"]);
-    expect(highLevel.state.phase).toBe("awaiting_input");
-    expect(highLevel.state.planReady?.summary).toBe("One plan");
+    expect(highLevel.state.phase).toBe("planning");
+    expect(highLevel.state.planReady).toBeUndefined();
+    expect(highLevel.state.plan?.summary).toBe("One plan");
     expect(highLevel.state.tasks).toHaveLength(0);
 
     const plan = applyPlan(
-      { ...highLevel.state, phase: "planning", planReady: undefined },
+      {
+        ...highLevel.state,
+        phase: "planning",
+        planReady: undefined,
+        scenarios: [
+          {
+            id: "greet-happy",
+            title: "Happy",
+            kind: "happy-path" as const,
+            intent: "greet",
+            given: "g",
+            when: "w",
+            then: "t",
+            taskIds: [],
+            status: "pending" as const,
+            attempts: 0,
+            writerAttempts: 0,
+            repairAttempts: 0,
+            testPaths: [],
+            seenEvidenceFingerprints: [],
+            seenRepairEdges: [],
+            reviewFindings: [],
+          },
+        ],
+      },
       {
         summary: "One task",
         tasks: [
@@ -239,12 +243,10 @@ describe("domain transitions", () => {
             description: "Implement",
             acceptanceCriteria: ["works"],
             blockedBy: [],
-          },
-        ],
-        proposedInstalls: [],
-      },
+            scenarioIds: ["greet-happy"]}],
+        proposedInstalls: []},
       NOW,
-      { tdd: true },
+      { },
     );
     expect(plan.events.map((event) => event.type)).toEqual(["tasks.materialized"]);
     expect(plan.state.phase).toBe("executing");

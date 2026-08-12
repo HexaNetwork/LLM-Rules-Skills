@@ -12,8 +12,7 @@ function evidence(partial: Partial<CommandEvidence>): CommandEvidence {
     stderr: "",
     durationMs: 10,
     at: "2026-01-01T00:00:00.000Z",
-    ...partial,
-  };
+    ...partial};
 }
 
 describe("isVerificationBaselineAcceptable", () => {
@@ -52,8 +51,7 @@ describe("isVerificationBaselineAcceptable", () => {
         evidence({
           stderr: "npm: command not found\nNo tests found",
           exitCode: 127,
-          passed: false,
-        }),
+          passed: false}),
       ),
     ).toBe(false);
     expect(
@@ -61,8 +59,7 @@ describe("isVerificationBaselineAcceptable", () => {
         evidence({
           stderr: "'vitest' is not recognized as an internal or external command",
           exitCode: 1,
-          passed: false,
-        }),
+          passed: false}),
       ),
     ).toBe(false);
   });
@@ -73,8 +70,7 @@ describe("isVerificationBaselineAcceptable", () => {
         evidence({
           exitCode: 124,
           passed: false,
-          stderr: "Command timed out after 1000ms",
-        }),
+          stderr: "Command timed out after 1000ms"}),
       ),
     ).toBe(false);
   });

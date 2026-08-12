@@ -4,12 +4,10 @@ import {
   selectedRunId,
   startNewRun,
   waitForRunStatus,
-  withE2EHarness,
-} from "./helpers.js";
+  withE2EHarness} from "./helpers.js";
 
 test("recovery: dirty control checkout starts without notice; worktree preflight orders are hidden", async ({
-  page,
-}) => {
+  page}) => {
   await withE2EHarness(
     page,
     {
@@ -20,11 +18,8 @@ test("recovery: dirty control checkout starts without notice; worktree preflight
         git: {
           enabled: true,
           autoCommitPreflight: false,
-          preflightCommitOrder: "branch-then-commit",
-        },
-      },
-      steps: [{ role: "reflector", output: REFLECT_OUTPUT }],
-    },
+          preflightCommitOrder: "branch-then-commit"}},
+      steps: [{ role: "reflector", output: REFLECT_OUTPUT }]},
     async ({ page, fixture }) => {
       await startNewRun(page, "Recover from a dirty working tree");
       // Worktree runs do not block on a dirty control checkout and do not surface a notice.

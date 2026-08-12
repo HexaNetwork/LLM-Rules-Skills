@@ -3,7 +3,11 @@ import { writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend, type AgentRequest } from "../../src/agent.js";
 import { HarnessEngine } from "../../src/engine.js";
-import { createPlannerPrdSequence, HIGH_LEVEL_PLAN } from "../helpers.js";
+import {
+  createPlannerPrdSequence,
+  HIGH_LEVEL_PLAN,
+  SCENARIO_PLANNER_OUTPUT,
+} from "../helpers.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 import { git as runGit } from "../testkit/git.js";
 
@@ -16,8 +20,7 @@ const REFLECT_OUTPUT = {
   inScope: ["tone choice", "greeting copy"],
   outOfScope: ["localization"],
   assumptions: ["English only"],
-  unknowns: ["formal vs casual"],
-};
+  unknowns: ["formal vs casual"]};
 
 describe("plan() workspace guard", () => {
   let fixture: ProjectFixture | undefined;
@@ -33,10 +36,8 @@ describe("plan() workspace guard", () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true } as never,
-        workflow: { tdd: false } as never,
-        agent: { promptBuilder: false } as never,
-      },
-    });
+        workflow: { } as never,
+        agent: { promptBuilder: false } as never}});
     await fixture.initGit();
 
     const requests: AgentRequest[] = [];
@@ -46,13 +47,12 @@ describe("plan() workspace guard", () => {
       griller: () => ({
         status: "ready_to_plan",
         summary: "Ready",
-        resolutions: [],
-      }),
+        resolutions: []}),
       planner: (request) => {
         requests.push(request);
         return seq.planner();
       },
-    });
+      "scenario-planner": () => SCENARIO_PLANNER_OUTPUT});
 
     const engine = new HarnessEngine(fixture.config, { backend });
     const planning = await reachPlanning(engine);
@@ -69,14 +69,12 @@ describe("plan() workspace guard", () => {
     expect(blocked.tasks).toHaveLength(0);
   });
 
-  it("persists the plan when the planner dirties the worktree, and retry skips re-planning", async () => {
+  it("persists the plan when the planner dirties the worktree, and retry continues the cold path", async () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true } as never,
-        workflow: { tdd: false } as never,
-        agent: { promptBuilder: false } as never,
-      },
-    });
+        workflow: { } as never,
+        agent: { promptBuilder: false } as never}});
     await fixture.initGit();
 
     let plannerCalls = 0;
@@ -87,19 +85,23 @@ describe("plan() workspace guard", () => {
       griller: () => ({
         status: "ready_to_plan",
         summary: "Ready",
-        resolutions: [],
-      }),
+        resolutions: []}),
       planner: async (request) => {
         plannerCalls += 1;
         worktreeRoot = request.cwd;
-        await writeFile(
-          path.join(request.cwd, "package-lock.json"),
-          `{"lockfileVersion":${plannerCalls}}\n`,
-          "utf8",
-        );
-        return seq.planner();
+        // Only the high-level plan step dirties the tree; PRD continuation must stay clean.
+        const text = `${request.prompt ?? ""}\n${request.continuationPrompt ?? ""}`;
+        const isPrd = /local PRD|user stories|Expand the approved high-level plan/i.test(text);
+        if (!isPrd) {
+          await writeFile(
+            path.join(request.cwd, "package-lock.json"),
+            `{"lockfileVersion":${plannerCalls}}\n`,
+            "utf8",
+          );
+        }
+        return seq.planner(request);
       },
-    });
+      "scenario-planner": () => SCENARIO_PLANNER_OUTPUT});
 
     const engine = new HarnessEngine(fixture.config, { backend });
     const planning = await reachPlanning(engine);
@@ -107,11 +109,11 @@ describe("plan() workspace guard", () => {
 
     const blocked = await engine.advance(runId);
     expect(blocked.phase).toBe("blocked");
-    // High-level plan persists as planReady (awaiting_input) before the dirty-tree failure is recorded.
-    expect(blocked.blockedFrom).toBe("awaiting_input");
+    // High-level plan persists in planning; gate opens only after PRD + scenarios.
+    expect(blocked.blockedFrom).toBe("planning");
     expect(blocked.blockedKind).toBe("workspace");
     expect(blocked.failure).toContain("package-lock.json");
-    expect(blocked.planReady?.summary).toBe(HIGH_LEVEL_PLAN.summary);
+    expect(blocked.planReady).toBeUndefined();
     expect(blocked.plan?.summary).toBe(HIGH_LEVEL_PLAN.summary);
     expect(blocked.tasks).toHaveLength(0);
     expect(plannerCalls).toBe(1);
@@ -127,11 +129,13 @@ describe("plan() workspace guard", () => {
     await runGit(worktreeRoot, "commit", "-m", "chore: accept planner side effect");
 
     await engine.retry(runId);
-    // Retry restores awaiting_input + planReady; advance does not re-invoke the planner.
     const resumed = await engine.advance(runId);
-    expect(plannerCalls).toBe(1);
+    // Retry resumes planning cold path through PRD + scenarios to the bundled gate.
+    expect(plannerCalls).toBe(2);
     expect(resumed.phase).toBe("awaiting_input");
-    expect(resumed.planReady?.summary).toBe(HIGH_LEVEL_PLAN.summary);
+    expect(resumed.planReady?.summary).toContain(HIGH_LEVEL_PLAN.summary);
+    expect(resumed.prd).toBeTruthy();
+    expect(resumed.scenarios.length).toBeGreaterThan(0);
     expect(resumed.tasks).toHaveLength(0);
 
     const after = (await engine.store.readText(runId, "events.jsonl"))
@@ -159,8 +163,7 @@ async function reachPlanning(engine: HarnessEngine) {
   state = await engine.advance(state.runId);
   expect(state.verificationReady?.summary).toBeTruthy();
   state = await engine.confirmVerification(state.runId, {
-    patch: state.verificationReady!.proposedPatch,
-  });
+    patch: state.verificationReady!.proposedPatch});
   expect(state.phase).toBe("planning");
   return state;
 }

@@ -5,12 +5,10 @@ import {
   selectedRunId,
   startNewRun,
   waitForRunStatus,
-  withE2EHarness,
-} from "./helpers.js";
+  withE2EHarness} from "./helpers.js";
 
 test("settings freezing: test-path edits apply to new runs only on disk snapshots", async ({
-  page,
-}) => {
+  page}) => {
   const originalPatterns = ["tests/**", "test/**"];
   const updatedPatterns = ["e2e/**/*.spec.ts", "modules/**/test/**"];
 
@@ -21,14 +19,10 @@ test("settings freezing: test-path edits apply to new runs only on disk snapshot
       persistConfig: true,
       config: {
         workflow: {
-          testPathPatterns: originalPatterns,
-        },
-      },
+          testPathPatterns: originalPatterns}},
       steps: [
         { role: "reflector", output: REFLECT_OUTPUT },
-        { role: "reflector", output: REFLECT_OUTPUT },
-      ],
-    },
+        { role: "reflector", output: REFLECT_OUTPUT }]},
     async ({ page, fixture }) => {
       await startNewRun(page, "First run before settings change");
       await waitForRunStatus(page, /awaiting input|reflect/i);

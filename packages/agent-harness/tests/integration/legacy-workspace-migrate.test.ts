@@ -29,8 +29,7 @@ describe("legacy workspace migration (Slice 7)", () => {
     await engine.store.create(state);
     await engine.store.writeJson(runId, "config.json", {
       ...config,
-      configVersion: CONFIG_VERSION,
-    });
+      configVersion: CONFIG_VERSION});
     await writeRunWorkspace(config, runId, {
       version: 1,
       kind: "legacy-shared",
@@ -38,8 +37,7 @@ describe("legacy workspace migration (Slice 7)", () => {
       baseBranch: "main",
       baseSha: (await runGit(root, "rev-parse", "HEAD")).trim(),
       branchName: "harness/legacy-migrate",
-      createdAt: new Date().toISOString(),
-    });
+      createdAt: new Date().toISOString()});
     await runGit(root, "checkout", "-b", "harness/legacy-migrate");
     return engine;
   }
@@ -52,8 +50,7 @@ describe("legacy workspace migration (Slice 7)", () => {
     await writeFile(path.join(root, "dirty.txt"), "nope\n", "utf8");
 
     await expect(engine.migrateWorkspace("legacy-dirty")).rejects.toMatchObject({
-      message: expect.stringMatching(/dirty|clean/i),
-    });
+      message: expect.stringMatching(/dirty|clean/i)});
     const workspace = migrateRunWorkspace(
       await engine.store.readJson("legacy-dirty", "workspace.json"),
       { controlRoot: root },

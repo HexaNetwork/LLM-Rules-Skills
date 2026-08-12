@@ -4,8 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createProjectFixture,
   fixtureTempPrefix,
-  type ProjectFixture,
-} from "../testkit/project-fixture.js";
+  type ProjectFixture} from "../testkit/project-fixture.js";
 
 describe("createProjectFixture", () => {
   let fixture: ProjectFixture | undefined;
@@ -21,9 +20,7 @@ describe("createProjectFixture", () => {
     fixture = await createProjectFixture({
       initialFiles: {
         "README.md": "# Custom\n",
-        "src/hello.ts": "export const hello = 1;\n",
-      },
-    });
+        "src/hello.ts": "export const hello = 1;\n"}});
 
     expect(path.resolve(fixture.root).toLowerCase()).toContain(
       path.basename(fixtureTempPrefix()).toLowerCase(),
@@ -56,8 +53,7 @@ describe("createProjectFixture", () => {
     const rogue = await createProjectFixture();
     const unsafe = {
       ...rogue,
-      root: path.resolve(rogue.root, "..", "not-a-fixture"),
-    };
+      root: path.resolve(rogue.root, "..", "not-a-fixture")};
     await expect(unsafe.cleanup()).rejects.toThrow(/Refusing to cleanup/);
     await rogue.cleanup();
   });

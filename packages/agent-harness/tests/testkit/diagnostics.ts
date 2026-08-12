@@ -38,8 +38,7 @@ export async function withDiagnosticArtifacts<T>(
     },
     setRetryCount(count) {
       retryCount = count;
-    },
-  };
+    }};
 
   try {
     return await body(diagnostics);
@@ -50,8 +49,7 @@ export async function withDiagnosticArtifacts<T>(
       resultsRoot: options.resultsRoot,
       error,
       serverErrors,
-      retryCount,
-    }).catch(() => undefined);
+      retryCount}).catch(() => undefined);
     throw error;
   }
 }
@@ -115,8 +113,6 @@ async function captureFailureArtifacts(options: {
         : { message: String(options.error) },
     git: {
       status: gitStatus,
-      log: gitLog,
-    },
-  };
+      log: gitLog}};
   await writeFile(path.join(destination, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }

@@ -3,8 +3,7 @@ import type { WorkPacket } from "../../src/domain.js";
 import {
   GRILL_EXPECTED_OUTPUT,
   PRD_EXPECTED_OUTPUT,
-  REFLECT_EXPECTED_OUTPUT,
-} from "../../src/domain.js";
+  REFLECT_EXPECTED_OUTPUT} from "../../src/domain.js";
 import { renderContinuationPrompt, renderPrompt, renderPromptBuilderPrompt } from "../../src/prompts.js";
 
 const packet: WorkPacket = {
@@ -19,15 +18,12 @@ const packet: WorkPacket = {
     {
       source: "General/rules/login.mdc",
       title: "Login validation",
-      kind: "rule",
-    },
-  ],
+      kind: "rule"}],
   guidancePack: "Reject blank credentials.",
   context: [],
   priorArtifacts: [],
   expectedOutput: "{summary,changedFiles}",
-  createdAt: "2026-08-06T00:00:00.000Z",
-};
+  createdAt: "2026-08-06T00:00:00.000Z"};
 
 describe("prompt rendering", () => {
   it("renders a lean compiled guidance pack without selection metadata", () => {
@@ -66,14 +62,11 @@ describe("prompt rendering", () => {
       input: {
         confirmedBrief: "A deliberately unique durable brief",
         resolutions: [{ summary: "A deliberately unique old resolution" }],
-        openUnknowns: [{ title: "A deliberately unique old unknown" }],
-      },
-      expectedOutput: "A deliberately unique full grill contract",
-    };
+        openUnknowns: [{ title: "A deliberately unique old unknown" }]},
+      expectedOutput: "A deliberately unique full grill contract"};
     const rendered = renderContinuationPrompt(grillPacket, {
       includeGuidance: false,
-      deltaInput: { responses: [{ questionId: "q-1", answer: "The new answer" }] },
-    });
+      deltaInput: { responses: [{ questionId: "q-1", answer: "The new answer" }] }});
 
     expect(rendered).toContain("The new answer");
     expect(rendered).not.toContain("durable brief");
@@ -86,8 +79,7 @@ describe("prompt rendering", () => {
   it("strips YAML frontmatter markers from model-facing packs", () => {
     const withFrontmatter: WorkPacket = {
       ...packet,
-      guidancePack: "# Test-Driven Development\n\nWrite a failing test first.",
-    };
+      guidancePack: "# Test-Driven Development\n\nWrite a failing test first."};
     const rendered = renderPrompt(withFrontmatter);
     expect(rendered).toContain("# Test-Driven Development");
     expect(rendered).not.toContain("---\nname:");
@@ -139,9 +131,7 @@ describe("prompt rendering", () => {
       ...packet,
       role: "project-profiler",
       constraints: [
-        "The work packet contains every fact needed. Do not call tools, inspect files, or search the repository.",
-      ],
-    };
+        "The work packet contains every fact needed. Do not call tools, inspect files, or search the repository."]};
     expect(renderPrompt(profilerPacket)).toContain(
       "Do not call tools, inspect files, or search the repository",
     );
@@ -174,12 +164,10 @@ describe("prompt rendering", () => {
       ...packet,
       role: "planner",
       expectedOutput:
-        "{summary,problemStatement,solution,approach,constraints?,outOfScope?,openQuestions?}",
-    };
+        "{summary,problemStatement,solution,approach,constraints?,outOfScope?,openQuestions?}"};
     const prdPacket: WorkPacket = {
       ...highLevelPacket,
-      expectedOutput: PRD_EXPECTED_OUTPUT,
-    };
+      expectedOutput: PRD_EXPECTED_OUTPUT};
 
     expect(renderPrompt(highLevelPacket)).toContain(
       'Valid shape example: {"summary":"...","problemStatement":"...","solution":"...","approach":"..."',
@@ -226,83 +214,39 @@ describe("prompt rendering", () => {
     );
   });
 
-  it("describes test-only, no-command red-writer batches and continue versus done", () => {
-    const rendered = renderPrompt({ ...packet, role: "red-writer" });
-    expect(rendered).toContain("Edit test files only");
-    expect(rendered).toContain("Do not run test, compile, build, lint, verification");
-    expect(rendered).toContain("minimum discriminating test evidence");
-    expect(rendered).toContain("distinct plausible defect");
-    expect(rendered).toContain("operator-owned inputs");
-    expect(rendered).toContain("Mark criteria that only select operator-owned values as not-validated");
-    expect(rendered).toContain("At a verified-GREEN checkpoint, default to done");
-    expect(rendered).not.toContain("three to five tests");
-    expect(rendered).not.toContain("Establish a runnable RED");
-    expect(rendered).not.toContain("minimal compile scaffolds");
-  });
-
-  it("tells reviewers not to turn operator-owned values into validation work", () => {
-    const rendered = renderPrompt({ ...packet, role: "reviewer" });
-    expect(rendered).toContain("marked not-validated");
-    expect(rendered).toContain("do not request tests, inspection, or command checks");
-  });
-
-  it("labels TDD implementer as green-implementer with status rules", () => {
-    const tddPacket: WorkPacket = {
-      ...packet,
-      role: "implementer",
-      input: {
-        task: {
-          title: "Feature",
-          description: "Do it",
-          acceptanceCriteria: ["works"],
-          tdd: true,
-        },
-      },
-    };
-    const rendered = renderPrompt(tddPacket);
-    expect(rendered).toContain("You are the green-implementer worker");
-    expect(rendered).toContain("Return status green when you implemented the current batch");
-    expect(rendered).toContain("already_green");
-    expect(rendered).toContain("test_issue");
-    expect(renderPrompt(packet)).toContain("You are the implementer worker");
-    expect(renderPrompt(packet)).not.toContain("green-implementer");
+  it("tells implementers not to write tests during executing", () => {
+    const rendered = renderPrompt(packet);
+    expect(rendered).toContain("You are the implementer worker");
+    expect(rendered).toContain("Do not write, edit, weaken, delete, or bypass tests during implementation");
   });
 
   it("omits full task JSON from same-session continuation deltas", () => {
-    const redPacket: WorkPacket = {
+    const implPacket: WorkPacket = {
       ...packet,
-      role: "red-writer",
+      role: "implementer",
       input: {
         task: {
           id: "task-1",
           title: "A deliberately unique full task title",
           description: "A deliberately unique full task description",
-          acceptanceCriteria: ["unique-criterion"],
-          tdd: true,
-        },
-        priorCommandOutput: "unique prior evidence blob",
-      },
-      expectedOutput: "unique-red-contract",
-    };
-    const rendered = renderContinuationPrompt(redPacket, {
+          acceptanceCriteria: ["unique-criterion"]},
+        verifiedCommandOutput: "unique prior evidence blob"},
+      expectedOutput: "unique-implementer-contract"};
+    const rendered = renderContinuationPrompt(implPacket, {
       includeGuidance: false,
       deltaInput: {
-        round: 2,
-        atVerifiedGreen: true,
-        instruction: "The accumulated suite is verified GREEN. Default to done.",
-      },
-    });
-    expect(rendered).toContain("Default to done");
+        instruction: "Continue from the latest verified command output and review feedback."}});
+    expect(rendered).toContain("Continue from the latest verified command output");
     expect(rendered).not.toContain("unique full task title");
     expect(rendered).not.toContain("unique prior evidence blob");
-    expect(rendered).not.toContain("unique-red-contract");
+    expect(rendered).not.toContain("unique-implementer-contract");
     expect(rendered).not.toContain("WORK PACKET");
-    expect(renderPrompt(redPacket)).toContain("unique full task title");
-    expect(renderPrompt(redPacket)).toContain("unique prior evidence blob");
+    expect(renderPrompt(implPacket)).toContain("unique full task title");
+    expect(renderPrompt(implPacket)).toContain("unique prior evidence blob");
   });
 
   it("requires schema-validated workers to return one raw JSON object after the work packet", () => {
-    for (const role of ["red-writer", "implementer"] as const) {
+    for (const role of ["implementer", "reviewer"] as const) {
       const rendered = renderPrompt({ ...packet, role });
       const workPacketIndex = rendered.indexOf("WORK PACKET");
       const noMarkdownIndex = rendered.indexOf(

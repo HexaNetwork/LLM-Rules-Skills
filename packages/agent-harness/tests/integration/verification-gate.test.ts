@@ -7,8 +7,7 @@ import {
   confirmPlanAndAdvance,
   HIGH_LEVEL_PLAN,
   passingCommandRunner,
-  PRD_OUTPUT,
-} from "../helpers.js";
+  PRD_OUTPUT, SCENARIO_PLANNER_OUTPUT} from "../helpers.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 import { createScriptedBackend } from "../testkit/scripted-backend.js";
 
@@ -21,8 +20,7 @@ const REFLECT_OUTPUT = {
   inScope: ["greeting"],
   outOfScope: [],
   assumptions: [],
-  unknowns: [],
-};
+  unknowns: []};
 
 describe("verification gate integration", () => {
   let fixture: ProjectFixture | undefined;
@@ -37,25 +35,17 @@ describe("verification gate integration", () => {
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
         workflow: {
-          tdd: false,
-          testPathPatterns: ["**/*.spec.ts"],
-        },
+          testPathPatterns: ["**/*.spec.ts"]},
         commands: {
-          verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }],
-        },
+          verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }]},
         git: { enabled: false },
         knowledge: {
           graphify: { enabled: false },
-          guidance: { enabled: false },
-        },
-      },
+          guidance: { enabled: false }}},
       initialFiles: {
         "package.json": JSON.stringify({
           name: "fixture",
-          scripts: { test: "vitest run", "test:unit": "vitest run --config vitest.unit.config.ts" },
-        }),
-      },
-    });
+          scripts: { test: "vitest run", "test:unit": "vitest run --config vitest.unit.config.ts" }})}});
 
     const scripted = createScriptedBackend([
       { role: "reflector", output: REFLECT_OUTPUT },
@@ -64,21 +54,17 @@ describe("verification gate integration", () => {
         output: {
           status: "ready_to_plan",
           summary: "Ready",
-          resolutions: [],
-        },
-      },
+          resolutions: []}},
       {
         role: "project-profiler",
         output: {
           summary: "Prefer the unit vitest script and tighten patterns",
           configPatch: {
             commands: { verification: [{ id: "unit", command: "npm run test:unit", timeoutMs: 600_000 }] },
-            workflow: { testPathPatterns: ["**/*.test.ts", "tests/**/*.ts"] },
-          },
-        },
-      },
+            workflow: { testPathPatterns: ["**/*.test.ts", "tests/**/*.ts"] }}}},
       { role: "planner", output: HIGH_LEVEL_PLAN },
       { role: "planner", output: PRD_OUTPUT },
+      { role: "scenario-planner", output: SCENARIO_PLANNER_OUTPUT },
       {
         role: "issue-slicer",
         output: {
@@ -90,27 +76,30 @@ describe("verification gate integration", () => {
               title: "Ship greeting",
               description: "Render greeting",
               acceptanceCriteria: ["ok"],
-              blockedBy: [],
-              tdd: false,
-            },
-          ],
-          proposedInstalls: [],
-        },
-      },
+              scenarioIds: ["greet-happy"],
+              blockedBy: []}],
+          proposedInstalls: []}},
       {
         role: "implementer",
-        output: { summary: "Built", changedFiles: ["src/greet.ts"] },
-      },
+        output: { summary: "Built", changedFiles: ["src/greet.ts"] }},
       {
         role: "reviewer",
-        output: { approved: true, summary: "ok", findings: [] },
-      },
-    ]);
+        output: { approved: true, summary: "ok", findings: [] }},
+      {
+        role: "scenario-writer",
+        output: {
+          status: "implemented",
+          summary: "Scenario tests",
+          testPaths: ["tests/greet.test.ts"],
+          changedFiles: ["tests/greet.test.ts"],
+        }},
+      {
+        role: "reviewer",
+        output: { approved: true, summary: "final ok", findings: [] }}]);
 
     const engine = new HarnessEngine(fixture.config, {
       backend: scripted.backend,
-      commands: passingCommandRunner(),
-    });
+      commands: passingCommandRunner()});
     let state = await engine.start("Add greeting");
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, REFLECT_OUTPUT.restatement);
@@ -130,13 +119,11 @@ describe("verification gate integration", () => {
     expect(profilerPayload).not.toMatch(/"idea"\s*:/);
 
     state = await engine.confirmVerification(state.runId, {
-      patch: state.verificationReady!.proposedPatch,
-    });
+      patch: state.verificationReady!.proposedPatch});
     expect(engine.config.commands.verification[0]?.command).toBe("npm run test:unit");
     expect(engine.config.workflow.testPathPatterns).toEqual([
       "**/*.test.ts",
-      "tests/**/*.ts",
-    ]);
+      "tests/**/*.ts"]);
 
     const frozen = JSON.parse(
       await readFile(
@@ -164,20 +151,18 @@ describe("verification gate integration", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
-        workflow: { tdd: false },
+        workflow: { },
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         git: { enabled: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
-      },
-    });
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
     const scripted = createScriptedBackend([
       { role: "reflector", output: REFLECT_OUTPUT },
       {
         role: "griller",
-        output: { status: "ready_to_plan", summary: "Ready", resolutions: [] },
-      },
+        output: { status: "ready_to_plan", summary: "Ready", resolutions: [] }},
       { role: "planner", output: HIGH_LEVEL_PLAN },
       { role: "planner", output: PRD_OUTPUT },
+      { role: "scenario-planner", output: SCENARIO_PLANNER_OUTPUT },
       {
         role: "issue-slicer",
         output: {
@@ -189,26 +174,29 @@ describe("verification gate integration", () => {
               title: "Ship greeting",
               description: "Render greeting",
               acceptanceCriteria: ["ok"],
-              blockedBy: [],
-              tdd: false,
-            },
-          ],
-          proposedInstalls: [],
-        },
-      },
+              scenarioIds: ["greet-happy"],
+              blockedBy: []}],
+          proposedInstalls: []}},
       {
         role: "implementer",
-        output: { summary: "Built", changedFiles: ["src/greet.ts"] },
-      },
+        output: { summary: "Built", changedFiles: ["src/greet.ts"] }},
       {
         role: "reviewer",
-        output: { approved: true, summary: "ok", findings: [] },
-      },
-    ]);
+        output: { approved: true, summary: "ok", findings: [] }},
+      {
+        role: "scenario-writer",
+        output: {
+          status: "implemented",
+          summary: "Scenario tests",
+          testPaths: ["tests/greet.test.ts"],
+          changedFiles: ["tests/greet.test.ts"],
+        }},
+      {
+        role: "reviewer",
+        output: { approved: true, summary: "final ok", findings: [] }}]);
     const engine = new HarnessEngine(fixture.config, {
       backend: scripted.backend,
-      commands: passingCommandRunner(),
-    });
+      commands: passingCommandRunner()});
     let state = await engine.start("Add greeting");
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, REFLECT_OUTPUT.restatement);
@@ -223,27 +211,23 @@ describe("verification gate integration", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
-        workflow: { tdd: false },
+        workflow: { },
         commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] },
         git: { enabled: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
-      },
-    });
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
     const scripted = createScriptedBackend([
       { role: "reflector", output: REFLECT_OUTPUT },
       {
         role: "griller",
-        output: { status: "ready_to_plan", summary: "Ready", resolutions: [] },
-      },
+        output: { status: "ready_to_plan", summary: "Ready", resolutions: [] }},
       {
         role: "project-profiler",
         output: {
           summary: "Use failing suite",
-          configPatch: { commands: { verification: [{ id: "test", command: "failing-baseline", timeoutMs: 600_000 }] } },
-        },
-      },
+          configPatch: { commands: { verification: [{ id: "test", command: "failing-baseline", timeoutMs: 600_000 }] } }}},
       { role: "planner", output: HIGH_LEVEL_PLAN },
       { role: "planner", output: PRD_OUTPUT },
+      { role: "scenario-planner", output: SCENARIO_PLANNER_OUTPUT },
       {
         role: "issue-slicer",
         output: {
@@ -255,14 +239,9 @@ describe("verification gate integration", () => {
               title: "Ship greeting",
               description: "Render greeting",
               acceptanceCriteria: ["ok"],
-              blockedBy: [],
-              tdd: false,
-            },
-          ],
-          proposedInstalls: [],
-        },
-      },
-    ]);
+              scenarioIds: ["greet-happy"],
+              blockedBy: []}],
+          proposedInstalls: []}}]);
     const engine = new HarnessEngine(fixture.config, {
       backend: scripted.backend,
       commands: {
@@ -274,8 +253,7 @@ describe("verification gate integration", () => {
               stdout: "AssertionError",
               stderr: "",
               durationMs: 4,
-              timedOut: false,
-            };
+              timedOut: false};
           }
           return {
             command,
@@ -283,11 +261,8 @@ describe("verification gate integration", () => {
             stdout: "",
             stderr: "",
             durationMs: 1,
-            timedOut: false,
-          };
-        },
-      },
-    });
+            timedOut: false};
+        }}});
     let state = await engine.start("Add greeting");
     state = await engine.advance(state.runId);
     state = await engine.answer(state.runId, state.activeQuestionId!, REFLECT_OUTPUT.restatement);
@@ -295,14 +270,12 @@ describe("verification gate integration", () => {
     state = await engine.confirmGrill(state.runId);
     state = await engine.advance(state.runId);
     state = await engine.confirmVerification(state.runId, {
-      patch: state.verificationReady!.proposedPatch,
-    });
+      patch: state.verificationReady!.proposedPatch});
     state = await engine.advance(state.runId);
     expect(state.verificationBaselineReady?.evidence.exitCode).toBe(1);
 
     state = await engine.retryVerificationBaseline(state.runId, {
-      verificationCommand: 'node -e "process.exit(0)"',
-    });
+      verificationCommand: 'node -e "process.exit(0)"'});
     expect(state.verificationBaselinePassedAt).toBeTruthy();
     state = await engine.advance(state.runId);
     expect(state.planReady?.summary).toBeTruthy();

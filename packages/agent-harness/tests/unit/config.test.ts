@@ -14,8 +14,7 @@ import {
   loadConfig,
   loadRunConfig,
   normalizeFrozenRunConfig,
-  writeProjectSettings,
-} from "../../src/config.js";
+  writeProjectSettings} from "../../src/config.js";
 import { isTestPath } from "../../src/engine.js";
 import { fixtureRoot } from "../helpers.js";
 
@@ -28,7 +27,7 @@ describe("token-conscious defaults", () => {
     expect(config.workflow.staleAnswerMinutes).toBe(30);
     expect(config.knowledge.graphify.enabled).toBe(false);
     expect(config.workflow.rag).toBe(true);
-    expect(config.workflow.tdd).toBe(true);
+    expect(config.workflow).not.toHaveProperty("tdd");
     expect(config.knowledge.graphify.roles).toContain("implementer");
     expect(config.knowledge.graphify.roles).not.toContain("message-writer");
     expect(config.knowledge.graphify.roles).not.toContain("reflector");
@@ -48,13 +47,11 @@ describe("token-conscious defaults", () => {
     expect(config.knowledge.guidance.assignments).toEqual(DEFAULT_GUIDANCE_ASSIGNMENTS);
     expect(config.knowledge.guidance.assignments?.planner.skills).toEqual([
       "domain-modeling",
-      "to-prd",
-    ]);
-    expect(config.knowledge.guidance.assignments?.["red-writer"].skills).toEqual(["red-writer-tdd"]);
+      "to-prd"]);
+    expect(config.knowledge.guidance.assignments).not.toHaveProperty("red-writer");
     expect(config.knowledge.guidance.assignments).not.toHaveProperty("test-writer");
     expect(HarnessConfigSchema.parse({
-      knowledge: { guidance: { enabled: true } },
-    }).knowledge.guidance.assignments).toEqual(DEFAULT_GUIDANCE_ASSIGNMENTS);
+      knowledge: { guidance: { enabled: true } }}).knowledge.guidance.assignments).toEqual(DEFAULT_GUIDANCE_ASSIGNMENTS);
     expect(config.knowledge.embeddings.enabled).toBe(false);
     expect(config.knowledge.embeddings.model).toBe("text-embedding-3-small");
     expect(config.knowledge.embeddings.minSimilarity).toBe(0.3);
@@ -71,8 +68,7 @@ describe("token-conscious defaults", () => {
       "**/*.test.*",
       "**/*.spec.*",
       "**/*_test.*",
-      "src/test/**",
-    ]);
+      "src/test/**"]);
     expect(config.knowledge.graphify.sourceExtensions).toEqual([
       ".ts",
       ".tsx",
@@ -93,8 +89,7 @@ describe("token-conscious defaults", () => {
       ".hpp",
       ".rb",
       ".php",
-      ".swift",
-    ]);
+      ".swift"]);
     expect(defaultConfigYaml()).toContain("promptBuilder: false");
     expect(defaultConfigYaml()).toContain("relevanceFloor: 0.72");
     expect(defaultConfigYaml()).toContain("maxGrillQuestionsPerEpisode: 5");
@@ -107,34 +102,28 @@ describe("token-conscious defaults", () => {
     expect(defaultConfigYaml()).toContain("sourceExtensions:");
     expect(defaultConfigYaml()).toContain("assignments:");
     expect(defaultConfigYaml()).toContain("scope: project");
-    expect(defaultConfigYaml()).toContain("not the number of");
-    expect(defaultConfigYaml()).toContain("do not run after every RED batch");
+    expect(defaultConfigYaml()).toContain("Implementation attempt limit per task during executing");
+    expect(defaultConfigYaml()).toContain("Paths treated as tests for test-writer path validation");
     expect(defaultConfigYaml()).not.toContain("agent-harness/guidance/General");
     const deployed = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({
       sources: [
         "README.md",
-        "src",
-      ],
-      ollama: true,
-    })));
+        "src"],
+      ollama: true})));
     expect(deployed.knowledge.sources).toEqual([
       expect.objectContaining({ path: "README.md", scope: "project" }),
-      expect.objectContaining({ path: "src", scope: "project" }),
-    ]);
+      expect.objectContaining({ path: "src", scope: "project" })]);
     expect(deployed.knowledge.embeddings).toMatchObject({
       enabled: true,
       provider: "ollama",
-      model: "qwen3-embedding",
-    });
+      model: "qwen3-embedding"});
     expect(deployed.knowledge.graphify).toMatchObject({
       enabled: true,
-      updateOnRefresh: false,
-    });
+      updateOnRefresh: false});
     const documentOnly = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({ graphify: false })));
     expect(documentOnly.knowledge.graphify).toMatchObject({
       enabled: false,
-      updateOnRefresh: false,
-    });
+      updateOnRefresh: false});
   });
 
   it("requires assignments for every agent role when explicit guidance mapping is enabled", () => {
@@ -142,34 +131,30 @@ describe("token-conscious defaults", () => {
       reflector: { rules: [], skills: [] },
       griller: { rules: [], skills: [] },
       planner: { rules: [], skills: [] },
+      "scenario-planner": { rules: [], skills: [] },
       "issue-slicer": { rules: [], skills: [] },
       "prompt-builder": { rules: [], skills: [] },
-      "red-writer": { rules: [], skills: ["red-writer-tdd"] },
+      "scenario-writer": { rules: [], skills: [] },
+      "unit-test-writer": { rules: [], skills: [] },
       implementer: { rules: ["no-legacy-fallback-code"], skills: [] },
       reviewer: { rules: [], skills: ["code-review"] },
       "message-writer": { rules: [], skills: [] },
       fixer: { rules: [], skills: ["diagnose"] },
       "config-fixer": { rules: [], skills: [] },
-      "project-profiler": { rules: [], skills: [] },
-    };
+      "project-profiler": { rules: [], skills: [] }};
     expect(HarnessConfigSchema.parse({
-      knowledge: { guidance: { assignments: complete } },
-    }).knowledge.guidance.assignments).toEqual(complete);
+      knowledge: { guidance: { assignments: complete } }}).knowledge.guidance.assignments).toEqual(complete);
     expect(
       HarnessConfigSchema.parse({
         knowledge: {
           guidance: {
             assignments: {
               ...complete,
-              "test-writer": { rules: [], skills: ["tdd"] },
-            },
-          },
-        },
-      }).knowledge.guidance.assignments,
+              "test-writer": { rules: [], skills: [] },
+              "red-writer": { rules: [], skills: [] }}}}}).knowledge.guidance.assignments,
     ).toEqual(complete);
     expect(() => HarnessConfigSchema.parse({
-      knowledge: { guidance: { assignments: { implementer: complete.implementer } } },
-    })).toThrow();
+      knowledge: { guidance: { assignments: { implementer: complete.implementer } } }})).toThrow();
   });
 
   it("classifies Go and Maven test paths with default patterns", () => {
@@ -192,10 +177,8 @@ describe("token-conscious defaults", () => {
       workflow: {
         maxGrillQuestionsPerEpisode: 8,
         staleAnswerMinutes: 45,
-        testPathPatterns: ["services/**/src/test/**", "**/*Test.java"],
-      },
-      commands: { verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }] },
-    });
+        testPathPatterns: ["services/**/src/test/**", "**/*Test.java"]},
+      commands: { verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }] }});
 
     expect(updated.config.workflow.maxGrillQuestionsPerEpisode).toBe(8);
     expect(updated.config.workflow.staleAnswerMinutes).toBe(45);
@@ -212,22 +195,17 @@ describe("token-conscious defaults", () => {
 
     await Promise.all([
       writeProjectSettings(configPath, {
-        workflow: { staleAnswerMinutes: 91 },
-      }),
+        workflow: { staleAnswerMinutes: 91 }}),
       writeProjectSettings(configPath, {
         commands: {
-          verification: [{ id: "verify", command: "verify all", timeoutMs: 123_000 }],
-        },
-      }),
-    ]);
+          verification: [{ id: "verify", command: "verify all", timeoutMs: 123_000 }]}})]);
 
     const loaded = await loadConfig(configPath);
     expect(loaded.config.workflow.staleAnswerMinutes).toBe(91);
     expect(loaded.config.commands.verification[0]).toEqual({
       id: "verify",
       command: "verify all",
-      timeoutMs: 123_000,
-    });
+      timeoutMs: 123_000});
   });
 
   it("keeps legacy frozen runs on generic retrieval", async () => {
@@ -254,7 +232,7 @@ version: 2
 repositoryRoot: .
 `) as unknown;
     const parsed = HarnessConfigSchema.parse(minimal);
-    expect(CONFIG_VERSION).toBe(12);
+    expect(CONFIG_VERSION).toBe(14);
     expect(parsed.agent.promptBuilder).toBe(false);
     expect(parsed.knowledge.guidance.enabled).toBe(true);
     expect(parsed.git.ignoredArtifactPatterns.length).toBeGreaterThan(0);
@@ -263,10 +241,9 @@ repositoryRoot: .
   it("strips legacy maxStepsPerRun from workflow config without treating it as policy", () => {
     const parsed = HarnessConfigSchema.parse({
       repositoryRoot: ".",
-      workflow: { maxStepsPerRun: 25, tdd: true },
-    });
+      workflow: { maxStepsPerRun: 25 }});
     expect("maxStepsPerRun" in parsed.workflow).toBe(false);
-    expect(parsed.workflow.tdd).toBe(true);
+    expect(parsed.workflow).not.toHaveProperty("tdd");
   });
 
   it("migrates frozen-run snapshots missing knowledge.guidance via normalizeFrozenRunConfig", () => {
@@ -276,18 +253,15 @@ repositoryRoot: .
     const frozen = normalizeFrozenRunConfig({
       ...project,
       configVersion: 3,
-      knowledge: legacyKnowledge,
-    });
+      knowledge: legacyKnowledge});
     expect(frozen.knowledge.guidance.enabled).toBe(false);
     const modern = normalizeFrozenRunConfig({
       ...project,
-      knowledge: { ...project.knowledge, guidance: { enabled: true, maxResults: 2, maxCharacters: 1_000 } },
-    });
+      knowledge: { ...project.knowledge, guidance: { enabled: true, maxResults: 2, maxCharacters: 1_000 } }});
     expect(modern.knowledge.guidance).toMatchObject({
       enabled: true,
       maxResults: 2,
-      maxCharacters: 1_000,
-    });
+      maxCharacters: 1_000});
   });
 
   it("strips legacy guidance sources from frozen configs and records sharedRoot", () => {
@@ -298,10 +272,7 @@ repositoryRoot: .
           { path: "C:/Users/me/AppData/Local/agent-harness/guidance/General", scope: "global" },
           { path: "README.md", scope: "project" },
           "agent-harness/guidance/General",
-          "docs",
-        ],
-      },
-    });
+          "docs"]}});
     expect(frozen.knowledge.sources.map((source) => source.path)).toEqual(["README.md", "docs"]);
     expect(frozen.knowledge.guidance.sharedRoot?.replaceAll("\\", "/")).toBe(
       "C:/Users/me/AppData/Local/agent-harness/guidance",
@@ -313,8 +284,7 @@ repositoryRoot: .
     const liveOverlay = {
       ...base,
       workflow: { ...base.workflow, testPathPatterns: ["other/**"] },
-      git: { ...base.git, ignoredArtifactPatterns: ["**/Generated/**"] },
-    };
+      git: { ...base.git, ignoredArtifactPatterns: ["**/Generated/**"] }};
     expect(configurationPolicyDiff(base, liveOverlay)).toEqual(
       expect.arrayContaining(["workflow.testPathPatterns", "git.ignoredArtifactPatterns"]),
     );
@@ -323,10 +293,8 @@ repositoryRoot: .
       ...base,
       commands: {
         ...base.commands,
-        verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }],
-      },
-      git: { ...base.git, baseBranch: "develop" },
-    };
+        verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }]},
+      git: { ...base.git, baseBranch: "develop" }};
     expect(configurationPolicyDiff(base, hashedDrift)).toEqual(
       expect.arrayContaining(["commands.verification", "git.baseBranch"]),
     );
@@ -341,8 +309,7 @@ repositoryRoot: .
       "*.user",
       "**/*.cache",
       "**/GeneratedMSBuildEditorConfig.editorconfig",
-      "**/AssemblyAttributes.cs",
-    ]);
+      "**/AssemblyAttributes.cs"]);
     expect(defaultConfigYaml()).toContain("ignoredArtifactPatterns:");
     expect(defaultConfigYaml()).toContain('"**/obj/"');
     const deployed = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml()));
@@ -353,15 +320,12 @@ repositoryRoot: .
       ...empty,
       git: {
         ...empty.git,
-        ignoredArtifactPatterns: [...empty.git.ignoredArtifactPatterns, "**/Generated/**"],
-      },
-    });
+        ignoredArtifactPatterns: [...empty.git.ignoredArtifactPatterns, "**/Generated/**"]}});
     expect(after).not.toBe(before);
 
     const drift = configurationHash({
       ...empty,
-      git: { ...empty.git, baseBranch: "develop" },
-    });
+      git: { ...empty.git, baseBranch: "develop" }});
     expect(drift).not.toBe(before);
   });
 
@@ -369,8 +333,7 @@ repositoryRoot: .
     const base = HarnessConfigSchema.parse({
       repositoryRoot: "D:/control/root",
       stateDirectory: "D:/state/root",
-      knowledge: { sharedIndexDirectory: "D:/shared/index" },
-    });
+      knowledge: { sharedIndexDirectory: "D:/shared/index" }});
     const stamped = configurationHash(base);
 
     expect(
@@ -384,10 +347,7 @@ repositoryRoot: .
           guidance: {
             ...base.knowledge.guidance,
             projectRoot: "E:/other/project-guidance",
-            sharedRoot: "E:/other/shared-guidance",
-          },
-        },
-      }),
+            sharedRoot: "E:/other/shared-guidance"}}}),
     ).toBe(stamped);
 
     // Workspace identity is runtime metadata; even if present on a snapshot it must not hash.
@@ -399,16 +359,14 @@ repositoryRoot: .
         gitCommonDir: "D:/control/root/.git",
         baseSha: "a".repeat(40),
         branchName: "agent/feature-run",
-        headSha: "b".repeat(40),
-      }),
+        headSha: "b".repeat(40)}),
     ).toBe(stamped);
 
     // Policy still hashes: git.baseBranch is an intentional run policy choice.
     expect(
       configurationHash({
         ...base,
-        git: { ...base.git, baseBranch: "develop" },
-      }),
+        git: { ...base.git, baseBranch: "develop" }}),
     ).not.toBe(stamped);
   });
 
@@ -422,8 +380,7 @@ repositoryRoot: .
     );
 
     const updated = await writeProjectSettings(configPath, {
-      git: { ignoredArtifactPatterns: ["**/obj/", "*.pdb"] },
-    });
+      git: { ignoredArtifactPatterns: ["**/obj/", "*.pdb"] }});
     expect(updated.config.git.ignoredArtifactPatterns).toEqual(["**/obj/", "*.pdb"]);
     expect(await readFile(configPath, "utf8")).toContain("**/obj/");
 
@@ -432,8 +389,7 @@ repositoryRoot: .
     await mkdir(runDirectory, { recursive: true });
     const frozen = HarnessConfigSchema.parse({
       repositoryRoot: root,
-      git: { ignoredArtifactPatterns: [] },
-    });
+      git: { ignoredArtifactPatterns: [] }});
     await writeFile(path.join(runDirectory, "config.json"), `${JSON.stringify(frozen)}\n`, "utf8");
 
     const loaded = await loadRunConfig(updated.config, runId);
@@ -450,16 +406,14 @@ repositoryRoot: .
     );
     const initial = HarnessConfigSchema.parse({
       repositoryRoot: root,
-      workflow: { testPathPatterns: ["tests/**"] },
-    });
+      workflow: { testPathPatterns: ["tests/**"] }});
     const runId = "live-test-paths";
     const runDirectory = path.join(root, ".agent-harness", "runs", runId);
     await mkdir(runDirectory, { recursive: true });
     await writeFile(path.join(runDirectory, "config.json"), `${JSON.stringify(initial)}\n`, "utf8");
 
     const updated = await writeProjectSettings(configPath, {
-      workflow: { testPathPatterns: ["**/src/main/test/**"] },
-    });
+      workflow: { testPathPatterns: ["**/src/main/test/**"] }});
     const loaded = await loadRunConfig(updated.config, runId);
 
     expect(loaded.workflow.testPathPatterns).toEqual(["tests/**"]);
@@ -482,15 +436,13 @@ repositoryRoot: .
         "workflow:",
         "  testPathPatterns:",
         "    - tests/**",
-        "",
-      ].join("\n"),
+        ""].join("\n"),
       "utf8",
     );
     const initial = HarnessConfigSchema.parse({
       repositoryRoot: root,
       commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
-      workflow: { testPathPatterns: ["tests/**"] },
-    });
+      workflow: { testPathPatterns: ["tests/**"] }});
     const stamped = configurationHash(initial);
     const runId = "mid-run-test-paths";
     const runDirectory = path.join(root, ".agent-harness", "runs", runId);
@@ -498,16 +450,14 @@ repositoryRoot: .
     await writeFile(path.join(runDirectory, "config.json"), `${JSON.stringify(initial)}\n`, "utf8");
 
     const afterPaths = await writeProjectSettings(configPath, {
-      workflow: { testPathPatterns: ["modules/**/src/test/**"] },
-    });
+      workflow: { testPathPatterns: ["modules/**/src/test/**"] }});
     const loadedAfterPaths = await loadRunConfig(afterPaths.config, runId);
     expect(configurationHash(loadedAfterPaths)).toBe(stamped);
     expect(loadedAfterPaths.workflow.testPathPatterns).toEqual(["tests/**"]);
     expect(loadedAfterPaths.commands.verification[0]?.command).toBe('node -e "process.exit(0)"');
 
     const afterCommand = await writeProjectSettings(configPath, {
-      commands: { verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }] },
-    });
+      commands: { verification: [{ id: "test", command: "./gradlew test", timeoutMs: 600_000 }] }});
     const loadedAfterCommand = await loadRunConfig(afterCommand.config, runId);
     expect(configurationHash(loadedAfterCommand)).toBe(stamped);
     expect(loadedAfterCommand.commands.verification[0]?.command).toBe('node -e "process.exit(0)"');

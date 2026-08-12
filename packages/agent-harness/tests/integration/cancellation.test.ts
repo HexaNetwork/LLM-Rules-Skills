@@ -22,8 +22,7 @@ describe("out-of-band cancellation", () => {
     const fixture = await createProjectFixture();
     await fixture.initGit();
     const config = fixtureConfig(fixture.root, {
-      git: { ...fixtureConfig(fixture.root).git, enabled: true, autoCommitPreflight: false },
-    });
+      git: { ...fixtureConfig(fixture.root).git, enabled: true, autoCommitPreflight: false }});
     const engine = new HarnessEngine(config, { backend: createFakeBackend() });
     try {
       const started = await engine.start("blocked then cancel");
@@ -36,8 +35,7 @@ describe("out-of-band cancellation", () => {
           blockedFrom: "new",
           failure: "simulated workspace block",
           blockedKind: "workspace",
-          blockedRetriable: true,
-        },
+          blockedRetriable: true},
         "run.blocked",
         {},
       );
@@ -64,8 +62,7 @@ describe("out-of-band cancellation", () => {
     const running = runCommand('node -e "setTimeout(() => {}, 30_000)"', {
       cwd: root,
       timeoutMs: 60_000,
-      signal: controller.signal,
-    });
+      signal: controller.signal});
     await new Promise((resolve) => setTimeout(resolve, 50));
     controller.abort();
     const result = await running;
@@ -80,8 +77,7 @@ describe("out-of-band cancellation", () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 },
-      agent: { ...fixtureConfig(root).agent, timeoutMs: 30_000 },
-    });
+      agent: { ...fixtureConfig(root).agent, timeoutMs: 30_000 }});
     let seenSignal: AbortSignal | undefined;
     let signalAborted = false;
     const backend = createFakeBackend({
@@ -97,12 +93,10 @@ describe("out-of-band cancellation", () => {
             return;
           }
           request.signal.addEventListener("abort", onAbort, { once: true });
-        }),
-    });
+        })});
     const engine = new HarnessEngine(config, {
       backend,
-      sleep: async () => undefined,
-    });
+      sleep: async () => undefined});
     const started = await engine.start("cancel mid-flight");
     const advancing = engine.advance(started.runId);
 
@@ -139,24 +133,21 @@ describe("out-of-band cancellation", () => {
   it("cancel during provider-retry backoff completes cancelled without retrying again", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 },
-    });
+      workflow: { ...fixtureConfig(root).workflow, maxProviderRetries: 2 }});
     let calls = 0;
     let runId = "";
     const backend = createFakeBackend({
       reflector: () => {
         calls += 1;
         throw new AgentBackendRunError(`Cursor run failed attempt ${calls}`);
-      },
-    });
+      }});
     const engine = new HarnessEngine(config, {
       backend,
       sleep: async () => {
         if (calls === 1) {
           await engine.cancel(runId);
         }
-      },
-    });
+      }});
     const started = await engine.start("cancel during retry");
     runId = started.runId;
     const state = await engine.advance(runId);
@@ -193,23 +184,18 @@ describe("out-of-band cancellation", () => {
           inScope: ["a"],
           outOfScope: [],
           assumptions: [],
-          unknowns: [],
-        };
-      },
-    });
+          unknowns: []};
+      }});
     ui = await startUiServer({
       config: fixtureConfig(root, {
-        agent: { ...fixtureConfig(root).agent, timeoutMs: 30_000 },
-      }),
+        agent: { ...fixtureConfig(root).agent, timeoutMs: 30_000 }}),
       backend,
       port: 0,
-      token: "cancel-ui",
-    });
+      token: "cancel-ui"});
 
     const created = await request(ui, "/api/runs", {
       method: "POST",
-      body: { idea: "cancel while advancing" },
-    });
+      body: { idea: "cancel while advancing" }});
     expect(created.status).toBe(202);
     const { run } = (await created.json()) as { run: { runId: string } };
     const runId = run.runId;
@@ -219,15 +205,13 @@ describe("out-of-band cancellation", () => {
     // A non-cancel action would 409 here; cancel must bypass the queue.
     const conflicted = await request(ui, `/api/runs/${encodeURIComponent(runId)}/actions`, {
       method: "POST",
-      body: { action: "continue" },
-    });
+      body: { action: "continue" }});
     expect(conflicted.status).toBe(409);
 
     const cancelStarted = performance.now();
     const cancelled = await request(ui, `/api/runs/${encodeURIComponent(runId)}/actions`, {
       method: "POST",
-      body: { action: "cancel" },
-    });
+      body: { action: "cancel" }});
     expect(performance.now() - cancelStarted).toBeLessThan(2_000);
     expect(cancelled.status).toBe(202);
     const cancelBody = (await cancelled.json()) as {
@@ -255,9 +239,8 @@ describe("out-of-band cancellation", () => {
     // cancel.request pending forever with the UI stuck on "Cancelling…".
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
-      workflow: { ...fixtureConfig(root).workflow, tdd: false },
-      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
-    });
+      workflow: { ...fixtureConfig(root).workflow },
+      commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] }});
     let calls = 0;
     const backend = createFakeBackend({
       implementer: () => {
@@ -265,8 +248,7 @@ describe("out-of-band cancellation", () => {
         return { summary: "built", changedFiles: [`src/a${calls}.ts`] };
       },
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
-      "message-writer": () => ({ subject: "feat: a", body: "" }),
-    });
+      "message-writer": () => ({ subject: "feat: a", body: "" })});
     const engine = new HarnessEngine(config, { backend });
     const tasks: BuildTask[] = [1, 2].map((index) => ({
       id: `t${index}`,
@@ -275,31 +257,26 @@ describe("out-of-band cancellation", () => {
       acceptanceCriteria: ["works"],
       affectedPaths: [],
       blockedBy: [],
-      tdd: false,
       status: "pending" as const,
       step: "pending" as const,
-      attempts: { tests: 0, implementation: 0, review: 0 },
+      attempts: { implementation: 0, review: 0 },
       evidence: [],
       testPaths: [],
-      changedFiles: [],
-    }));
+      changedFiles: []}));
     let seed: RunState = {
       ...createRunState("cancel-boundary", "idea", new Date().toISOString(), "hash", CONFIG_VERSION),
       phase: "executing",
       tasks,
-      reflectBrief: { draft: "d", confirmed: "confirmed", confirmedAt: new Date().toISOString() },
-    };
+      reflectBrief: { draft: "d", confirmed: "confirmed", confirmedAt: new Date().toISOString() }};
     await engine.store.initialize();
     await engine.store.create(seed);
     seed = {
       ...seed,
-      configurationHash: configurationHash(config),
-    };
+      configurationHash: configurationHash(config)};
     await engine.store.writeJson(seed.runId, "state.json", seed);
     await engine.store.writeJson(seed.runId, "config.json", {
       ...config,
-      configVersion: CONFIG_VERSION,
-    });
+      configVersion: CONFIG_VERSION});
 
     const originalRecord = engine.store.record.bind(engine.store);
     let cancelDuringStep: Awaited<ReturnType<HarnessEngine["cancel"]>> | undefined;
@@ -334,10 +311,7 @@ describe("out-of-band cancellation", () => {
           inScope: ["a"],
           outOfScope: [],
           assumptions: [],
-          unknowns: [],
-        }),
-      }),
-    });
+          unknowns: []})})});
     const started = await engine.start("cross-process cancel file");
     // Hold the run lock as another process would during advance.
     let release!: () => void;
@@ -385,8 +359,6 @@ async function request(
     method: init.method ?? "GET",
     headers: {
       "X-Harness-Token": ui.token,
-      ...(init.body ? { "content-type": "application/json" } : {}),
-    },
-    body: init.body ? JSON.stringify(init.body) : undefined,
-  });
+      ...(init.body ? { "content-type": "application/json" } : {})},
+    body: init.body ? JSON.stringify(init.body) : undefined});
 }

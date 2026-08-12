@@ -14,8 +14,7 @@ function evidenceEntry(index: number): CommandEvidence {
     stdout: `${"noise\n".repeat(50)}${"failure-tail".repeat(1_500)}`,
     stderr: "stderr-tail".repeat(200),
     durationMs: 12,
-    at: new Date().toISOString(),
-  };
+    at: new Date().toISOString()};
 }
 
 function worstCaseTask(): BuildTask {
@@ -26,36 +25,30 @@ function worstCaseTask(): BuildTask {
     acceptanceCriteria: Array.from({ length: 6 }, (_, index) => `Criterion ${index} ${"a".repeat(800)}`),
     affectedPaths: ["src/settlement.ts", "tests/settlement.test.ts"],
     blockedBy: [],
-    tdd: true,
     status: "active",
     step: "implementing",
-    attempts: { tests: 2, implementation: 2, review: 1 },
+    attempts: { implementation: 2, review: 1 },
     evidence: Array.from({ length: 10 }, (_, index) => evidenceEntry(index)),
     testPaths: ["tests/settlement.test.ts"],
     changedFiles: ["src/settlement.ts", "tests/settlement.test.ts"],
-    reviewSummary: "blocking: fix edge case",
-  };
+    reviewSummary: "blocking: fix edge case"};
 }
 
 function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
   const guidance = Array.from({ length: 4 }, (_, index) => ({
     source: `rules/rule-${index}.mdc`,
     title: `Rule ${index}`,
-    kind: "rule" as const,
-  }));
+    kind: "rule" as const}));
   const guidancePack = "G".repeat(5_600);
   const context = [
     {
       source: "graphify:graphify-out/graph.json",
       title: "Repository relationships (Graphify)",
-      excerpt: "GRAPH".repeat(1_200),
-    },
+      excerpt: "GRAPH".repeat(1_200)},
     ...Array.from({ length: 5 }, (_, index) => ({
       source: `docs/doc-${index}.md`,
       title: `Doc ${index}`,
-      excerpt: "C".repeat(1_800),
-    })),
-  ];
+      excerpt: "C".repeat(1_800)}))];
   const input =
     role === "reviewer"
       ? {
@@ -63,18 +56,11 @@ function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
           changedFiles: task.changedFiles,
           commandEvidence: recentEvidenceOutput(task.evidence),
           diff: "diff --git a/src/settlement.ts b/src/settlement.ts\n+export {}",
-          diffOmittedFiles: [],
-        }
-      : role === "red-writer"
-        ? {
-            task: taskForPacket(task),
-            priorCommandOutput: recentEvidenceOutput(task.evidence),
-          }
-        : {
-            task: taskForPacket(task),
-            verifiedCommandOutput: recentEvidenceOutput(task.evidence),
-            reviewFeedback: task.reviewSummary,
-          };
+          diffOmittedFiles: []}
+      : {
+          task: taskForPacket(task),
+          verifiedCommandOutput: recentEvidenceOutput(task.evidence),
+          reviewFeedback: task.reviewSummary};
 
   return buildWorkPacket({
     invocationId: `inv-${role}`,
@@ -92,30 +78,23 @@ function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
     budgets: {
       contextCharacters: 12_000,
       inputCharacters: 24_000,
-      graphifyCharacters: 3_000,
-    },
-  }).packet;
+      graphifyCharacters: 3_000}}).packet;
 }
 
 describe("packet size baseline", () => {
   it("snapshots worst-case rendered prompt lengths for worker roles", () => {
     const task = worstCaseTask();
     const lengths = {
-      "red-writer": renderPrompt(packetForRole("red-writer", task)).length,
       implementer: renderPrompt(packetForRole("implementer", task)).length,
-      reviewer: renderPrompt(packetForRole("reviewer", task)).length,
-    };
+      reviewer: renderPrompt(packetForRole("reviewer", task)).length};
 
     // Ceiling guards: Phase 1 projection + budgets must keep repair prompts bounded.
-    expect(lengths["red-writer"]).toBeLessThan(60_000);
     expect(lengths.implementer).toBeLessThan(60_000);
     expect(lengths.reviewer).toBeLessThan(60_000);
 
     // Stable order for regression visibility in failures.
     expect(lengths).toEqual({
-      "red-writer": lengths["red-writer"],
       implementer: lengths.implementer,
-      reviewer: lengths.reviewer,
-    });
+      reviewer: lengths.reviewer});
   });
 });

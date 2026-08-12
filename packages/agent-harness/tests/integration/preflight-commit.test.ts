@@ -12,8 +12,7 @@ import { HarnessEngine } from "../../src/engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 import {
   createProjectFixture,
-  type ProjectFixture,
-} from "../testkit/project-fixture.js";
+  type ProjectFixture} from "../testkit/project-fixture.js";
 import { git as runGit } from "../testkit/git.js";
 
 const exec = promisify(execFile);
@@ -43,8 +42,7 @@ async function startThenBlockDirtyWorktree(
       blockedFrom,
       failure: "dirty tree",
       blockedKind: "workspace",
-      blockedRetriable: true,
-    },
+      blockedRetriable: true},
     "run.blocked",
     {},
   );
@@ -68,14 +66,12 @@ async function createLegacyBlockedRun(
   await engine.store.create(state);
   await engine.store.writeJson(runId, "config.json", {
     ...config,
-    configVersion: CONFIG_VERSION,
-  });
+    configVersion: CONFIG_VERSION});
   await writeRunWorkspace(config, runId, {
     version: 1,
     kind: "legacy-shared",
     controlRoot: canonicalizeWorkspacePath(root),
-    createdAt: new Date().toISOString(),
-  });
+    createdAt: new Date().toISOString()});
   for (const [relative, contents] of Object.entries(dirtyFiles)) {
     const absolute = path.join(root, relative);
     await mkdir(path.dirname(absolute), { recursive: true });
@@ -88,8 +84,7 @@ async function createLegacyBlockedRun(
       blockedFrom: "new",
       failure: "dirty tree",
       blockedKind: "workspace",
-      blockedRetriable: true,
-    },
+      blockedRetriable: true},
     "run.blocked",
     {},
   );
@@ -108,21 +103,17 @@ describe("commitPreflight", () => {
 
   it("refuses commit-order controls for git-worktree runs", async () => {
     migratedFixture = await createProjectFixture({
-      config: { git: { enabled: true } as never },
-    });
+      config: { git: { enabled: true } as never }});
     await migratedFixture.initGit();
     const engine = new HarnessEngine(migratedFixture.config, {
-      backend: createFakeBackend({}),
-    });
+      backend: createFakeBackend({})});
     await startThenBlockDirtyWorktree(engine, "run-worktree-gate", {
-      "surprise.txt": "untracked\n",
-    });
+      "surprise.txt": "untracked\n"});
 
     await expect(
       engine.commitPreflight("run-worktree-gate", { order: "branch-then-commit" }),
     ).rejects.toMatchObject({
-      message: expect.stringMatching(/not offered for worktree|committed base/i),
-    });
+      message: expect.stringMatching(/not offered for worktree|committed base/i)});
   });
 
   it("legacy-shared branch-then-commit still cuts the run branch from HEAD", async () => {
@@ -130,12 +121,10 @@ describe("commitPreflight", () => {
     await initGitRepo(root);
     const controlBranch = (await git(root, "branch", "--show-current")).trim();
     const engine = await createLegacyBlockedRun(root, "run-branch-first", {
-      "surprise.txt": "untracked\n",
-    });
+      "surprise.txt": "untracked\n"});
 
     const resumed = await engine.commitPreflight("run-branch-first", {
-      order: "branch-then-commit",
-    });
+      order: "branch-then-commit"});
     expect(resumed.phase).toBe("new");
     expect(resumed.blockedFrom).toBeUndefined();
     expect(resumed.branchName).toBe("harness/run-branch-first");
@@ -151,12 +140,10 @@ describe("commitPreflight", () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
     const engine = await createLegacyBlockedRun(root, "run-commit-first", {
-      "surprise.txt": "untracked\n",
-    });
+      "surprise.txt": "untracked\n"});
 
     const resumed = await engine.commitPreflight("run-commit-first", {
-      order: "commit-then-branch",
-    });
+      order: "commit-then-branch"});
     expect(resumed.phase).toBe("new");
     expect(resumed.branchName).toBe("harness/run-commit-first");
     expect((await git(root, "status", "--porcelain")).trim()).toBe("");
@@ -171,8 +158,7 @@ describe("commitPreflight", () => {
     await initGitRepo(root);
     const engine = await createLegacyBlockedRun(root, "audit-run", {
       "surprise.txt": "x\n",
-      "second.txt": "y\n",
-    });
+      "second.txt": "y\n"});
     await engine.commitPreflight("audit-run", { order: "commit-then-branch" });
 
     const events = (await engine.store.readText("audit-run", "events.jsonl"))
@@ -189,8 +175,7 @@ describe("commitPreflight", () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
     const engine = await createLegacyBlockedRun(root, "deviation-run", {
-      "surprise.txt": "x\n",
-    });
+      "surprise.txt": "x\n"});
     await engine.commitPreflight("deviation-run", { order: "branch-then-commit" });
 
     const event = (await engine.store.readText("deviation-run", "events.jsonl"))
@@ -205,8 +190,7 @@ describe("commitPreflight", () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
     const engine = await createLegacyBlockedRun(root, "run-state-guard", {
-      "surprise.txt": "x\n",
-    });
+      "surprise.txt": "x\n"});
     await engine.commitPreflight("run-state-guard", { order: "commit-then-branch" });
 
     const committedFiles = (await runGit(root, "show", "--name-only", "--format=", "HEAD"))
@@ -227,9 +211,7 @@ describe("start() with dirty control checkout (worktree semantics)", () => {
       git: {
         enabled: true,
         autoCommitPreflight: true,
-        preflightCommitOrder: "commit-then-branch",
-      } as never,
-    });
+        preflightCommitOrder: "commit-then-branch"} as never});
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
     const state = await engine.start("Add a feature", "auto-commit-run");
 
@@ -252,8 +234,7 @@ describe("start() with dirty control checkout (worktree semantics)", () => {
     await writeFile(path.join(root, "surprise.txt"), "x\n", "utf8");
 
     const config = fixtureConfig(root, {
-      git: { enabled: true, autoCommitPreflight: false } as never,
-    });
+      git: { enabled: true, autoCommitPreflight: false } as never});
     const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
     const state = await engine.start("Add a feature", "no-auto-run");
 

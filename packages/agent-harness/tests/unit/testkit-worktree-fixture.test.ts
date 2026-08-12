@@ -6,8 +6,7 @@ import { sanitizeWorktreeRunId } from "../../src/domain/workspace.js";
 import {
   createProjectFixture,
   type LinkedWorktreeInfo,
-  type ProjectFixture,
-} from "../testkit/project-fixture.js";
+  type ProjectFixture} from "../testkit/project-fixture.js";
 
 describe("ProjectFixture linked worktrees", () => {
   let fixture: ProjectFixture | undefined;

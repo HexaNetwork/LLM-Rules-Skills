@@ -5,8 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   freezeRunComponents,
   loadFrozenComponentManifest,
-  resolveFrozenGuidanceRoot,
-} from "../../src/application/component-freeze.js";
+  resolveFrozenGuidanceRoot} from "../../src/application/component-freeze.js";
 import { resolveHarnessHome, resolveProjectPaths } from "../../src/application/harness-home.js";
 import { HarnessConfigSchema } from "../../src/config.js";
 
@@ -30,8 +29,7 @@ describe("freezeRunComponents", () => {
     const project = resolveProjectPaths({
       projectKey: "proj1",
       controlRoot,
-      home,
-    });
+      home});
     await mkdir(path.join(home.sharedGuidanceRoot, "General"), { recursive: true });
     await writeFile(
       path.join(home.sharedGuidanceRoot, "General", "RULE.md"),
@@ -42,16 +40,14 @@ describe("freezeRunComponents", () => {
 
     const config = HarnessConfigSchema.parse({
       repositoryRoot: controlRoot,
-      stateDirectory: project.projectStateRoot,
-    });
+      stateDirectory: project.projectStateRoot});
 
     const manifest = await freezeRunComponents({
       runId: "run-1",
       runsRoot: project.runsRoot,
       project,
       home,
-      config,
-    });
+      config});
     expect(manifest.components.some((item) => item.kind === "guidance-tree")).toBe(true);
 
     await writeFile(

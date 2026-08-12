@@ -107,11 +107,7 @@ describe("dashboard document", () => {
     expect(html).toContain("function renderExecutionSequence");
     expect(html).toContain("timeline.slice().reverse().forEach");
     expect(html).toContain("function renderProviderContextActivity");
-    expect(html).toContain("function activeTddStatusLine(s)");
-    expect(html).toContain("function renderTaskTddDetails(task, taskKey)");
-    expect(html).toContain("green-implementer");
-    expect(html).toContain("Final coverage assessment");
-    expect(html).toContain("already-covered");
+    expect(html).toContain("function displayActivityRole(role, _taskId)");
     expect(html).toContain("function renderRunVitals(s)");
     expect(html).toContain("run-vitals");
     expect(html).toContain("Build progress");
@@ -152,7 +148,6 @@ describe("dashboard document", () => {
     expect(html).toContain("Approve dependency installs");
     expect(html).toContain("Installs observed");
     expect(html).toContain("harnessSoundsMuted");
-    expect(html).toContain("set_tdd");
     expect(html).toContain("set_rag");
     expect(html).toContain("set_graphify");
     expect(html).toContain("Document RAG");
@@ -168,7 +163,7 @@ describe("dashboard document", () => {
     expect(html).toContain("confirm_grill");
     expect(html).toContain("Grilling complete — review before planning");
     expect(html).toContain("!s.grillReady");
-    expect(html).toContain("Review high-level plan");
+    expect(html).toContain("Review plan, PRD, and scenarios");
     expect(html).toContain("Approve plan");
     expect(html).toContain("confirm_plan");
     expect(html).toContain("planReady");

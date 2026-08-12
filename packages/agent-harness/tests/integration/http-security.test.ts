@@ -20,10 +20,8 @@ describe("Phase 5 HTTP security", () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 2_000, provider: "cursor" },
-        workflow: { tdd: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
-      },
-    });
+        workflow: { },
+        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
 
     await withDiagnosticArtifacts(
       { testName: "http-security-surface", fixture },
@@ -37,16 +35,13 @@ describe("Phase 5 HTTP security", () => {
             inScope: ["scope"],
             outOfScope: [],
             assumptions: [],
-            unknowns: [],
-          }),
-        });
+            unknowns: []})});
         ui = await startUiServer({
           config: fixture!.config,
           backend,
           port: 0,
           token: "phase5-token",
-          openBrowser: false,
-        });
+          openBrowser: false});
 
         const unauth = await fetch(`${ui.origin}/api/bootstrap`);
         expect(unauth.status).toBe(401);
@@ -56,10 +51,8 @@ describe("Phase 5 HTTP security", () => {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "X-Harness-Token": ui.token,
-          },
-          body: "[1,2,3]",
-        });
+            "X-Harness-Token": ui.token},
+          body: "[1,2,3]"});
         expect(malformed.status).toBe(400);
         expect(await malformed.text()).toMatch(/object/i);
 
@@ -67,28 +60,23 @@ describe("Phase 5 HTTP security", () => {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "X-Harness-Token": ui.token,
-          },
-          body: JSON.stringify({ idea: "x".repeat(1_100_000) }),
-        });
+            "X-Harness-Token": ui.token},
+          body: JSON.stringify({ idea: "x".repeat(1_100_000) })});
         expect(oversized.status).toBe(413);
 
         const created = await fetch(`${ui.origin}/api/runs`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "X-Harness-Token": ui.token,
-          },
-          body: JSON.stringify({ idea: "Trigger a failed job", tdd: false }),
-        });
+            "X-Harness-Token": ui.token},
+          body: JSON.stringify({ idea: "Trigger a failed job" })});
         expect(created.status).toBe(202);
         const runId = ((await created.json()) as { run: { runId: string } }).run.runId;
 
         await waitUntil(
           async () => {
             const detail = await fetch(`${ui!.origin}/api/runs/${runId}`, {
-              headers: { "X-Harness-Token": ui!.token },
-            });
+              headers: { "X-Harness-Token": ui!.token }});
             const body = (await detail.json()) as { state?: { phase?: string }; job?: { status?: string } };
             return body.state?.phase === "awaiting_input" && !body.job;
           },
@@ -101,18 +89,15 @@ describe("Phase 5 HTTP security", () => {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "X-Harness-Token": ui.token,
-          },
-          body: JSON.stringify({ action: "propose_fix", guidance: "try something" }),
-        });
+            "X-Harness-Token": ui.token},
+          body: JSON.stringify({ action: "propose_fix", guidance: "try something" })});
         expect(propose.status).toBe(202);
 
         let failedJob: { status: string; error?: string } | undefined;
         await waitUntil(
           async () => {
             const detail = await fetch(`${ui!.origin}/api/runs/${runId}`, {
-              headers: { "X-Harness-Token": ui!.token },
-            });
+              headers: { "X-Harness-Token": ui!.token }});
             const body = (await detail.json()) as {
               job?: { status: string; error?: string };
             };
@@ -143,10 +128,8 @@ describe("Phase 5 HTTP security", () => {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "X-Harness-Token": ui.token,
-          },
-          body: JSON.stringify({ action: "not_a_real_action" }),
-        });
+            "X-Harness-Token": ui.token},
+          body: JSON.stringify({ action: "not_a_real_action" })});
         expect(badAction.status).toBe(400);
       },
     );

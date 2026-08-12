@@ -6,33 +6,26 @@ import {
   selectedRunId,
   startNewRun,
   waitForRunStatus,
-  withE2EHarness,
-} from "./helpers.js";
+  withE2EHarness} from "./helpers.js";
 
 test("polling/details safety: open Raw failure detail survives signature changes", async ({
-  page,
-}) => {
+  page}) => {
   await withE2EHarness(
     page,
     {
       testName: "e2e-polling-details",
       config: {
-        workflow: { maxProviderRetries: 0 },
-      },
+        workflow: { maxProviderRetries: 0 }},
       steps: [
         {
           role: "reflector",
-          error: new Error("Synthetic provider failure for polling details e2e"),
-        },
-      ],
-    },
+          error: new Error("Synthetic provider failure for polling details e2e")}]},
     async ({ page, fixture, ui }) => {
       await startNewRun(page, "Keep Raw failure detail open across polls");
       await waitForRunStatus(page, /blocked/i);
 
       const details = page.locator("details").filter({
-        has: page.locator("summary", { hasText: "Raw failure detail" }),
-      });
+        has: page.locator("summary", { hasText: "Raw failure detail" })});
       await expect(details).toBeVisible({ timeout: 20_000 });
       await details.locator("summary").click();
       await expect(details).toHaveAttribute("open", "");
@@ -55,8 +48,7 @@ test("polling/details safety: open Raw failure detail survives signature changes
           startedAt: new Date().toISOString(),
           lastStepAt: new Date().toISOString(),
           lastStepSummary: "forcing a signature change while details stay open",
-          stepCount: 3,
-        })}\n`,
+          stepCount: 3})}\n`,
         "utf8",
       );
 

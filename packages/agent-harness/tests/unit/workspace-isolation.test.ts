@@ -3,8 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertWorkspaceIsolation,
   checkWorkspaceIsolation,
-  forbiddenAgentWritableRoots,
-} from "../../src/application/workspace-isolation.js";
+  forbiddenAgentWritableRoots} from "../../src/application/workspace-isolation.js";
 import type { AgentBackend } from "../../src/agent.js";
 
 describe("workspace isolation", () => {
@@ -18,8 +17,7 @@ describe("workspace isolation", () => {
     controlRoot,
     stateRoot,
     workspaceRoot,
-    worktreeRoot,
-  };
+    worktreeRoot};
 
   it("accepts the run worktree as the writable root", () => {
     const result = checkWorkspaceIsolation({
@@ -27,8 +25,7 @@ describe("workspace isolation", () => {
       homeRoot,
       strictIsolation: true,
       capabilities: { canRestrictWritableWorkspace: true, providerId: "cursor" },
-      agentCwd: workspaceRoot,
-    });
+      agentCwd: workspaceRoot});
     expect(result.ok).toBe(true);
     expect(forbiddenAgentWritableRoots(paths, homeRoot)).toEqual(
       expect.arrayContaining([homeRoot, stateRoot]),
@@ -41,8 +38,7 @@ describe("workspace isolation", () => {
       homeRoot,
       strictIsolation: false,
       capabilities: { canRestrictWritableWorkspace: true, providerId: "cursor" },
-      agentCwd: homeRoot,
-    });
+      agentCwd: homeRoot});
     expect(result.ok).toBe(false);
     expect(result.issues.join(" ")).toMatch(/harness home/);
   });
@@ -54,8 +50,7 @@ describe("workspace isolation", () => {
         homeRoot,
         strictIsolation: true,
         capabilities: { canRestrictWritableWorkspace: false, providerId: "open" },
-        agentCwd: workspaceRoot,
-      }),
+        agentCwd: workspaceRoot}),
     ).toThrow(/cannot restrict the writable workspace/);
   });
 
@@ -66,17 +61,14 @@ describe("workspace isolation", () => {
       },
       workspaceCapabilities: () => ({
         canRestrictWritableWorkspace: false,
-        providerId: "incapable",
-      }),
-    };
+        providerId: "incapable"})};
     expect(() =>
       assertWorkspaceIsolation({
         paths,
         homeRoot,
         strictIsolation: true,
         capabilities: backend.workspaceCapabilities!(),
-        agentCwd: workspaceRoot,
-      }),
+        agentCwd: workspaceRoot}),
     ).toThrow(/incapable/);
   });
 });

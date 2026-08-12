@@ -4,8 +4,7 @@ import yaml from "js-yaml";
 import {
   createCli,
   productionCliDependencies,
-  type CliDependencies,
-} from "../../src/cli/create-cli.js";
+  type CliDependencies} from "../../src/cli/create-cli.js";
 import type { HarnessConfig } from "../../src/config.js";
 import type { ProjectFixture } from "../testkit/project-fixture.js";
 
@@ -23,8 +22,7 @@ export async function runCli(
 ): Promise<CliRunResult> {
   const deps: CliDependencies = {
     ...productionCliDependencies(),
-    ...dependencies,
-  };
+    ...dependencies};
   const stdout: string[] = [];
   const stderr: string[] = [];
   const originalLog = console.log;
@@ -52,8 +50,7 @@ export async function runCli(
       code: helpOrVersion ? 0 : code || 1,
       stdout,
       stderr,
-      error,
-    };
+      error};
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -75,30 +72,23 @@ export async function writeAcceptanceConfig(
       timeoutMs: fixture.config.agent.timeoutMs,
       promptBuilder: false,
       schemaRepairAttempts: 0,
-      ...(overrides.agent ?? {}),
-    },
+      ...(overrides.agent ?? {})},
     workflow: {
-      tdd: false,
       generateCommitMessages: false,
       testPathPatterns: fixture.config.workflow.testPathPatterns,
-      ...(overrides.workflow ?? {}),
-    },
+      ...(overrides.workflow ?? {})},
     commands: {
       verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }],
-      ...(overrides.commands ?? {}),
-    },
+      ...(overrides.commands ?? {})},
     git: {
       enabled: false,
-      ...(overrides.git ?? {}),
-    },
+      ...(overrides.git ?? {})},
     tracker: { kind: "local" },
     knowledge: {
       sources: ["README.md", "docs"],
       graphify: { enabled: false },
       guidance: { enabled: false },
-      ...(overrides.knowledge ?? {}),
-    },
-  };
+      ...(overrides.knowledge ?? {})}};
   await writeFile(configPath, `${yaml.dump(serializable, { noRefs: true, lineWidth: -1 })}\n`, "utf8");
   return configPath;
 }
@@ -112,16 +102,13 @@ export const ACCEPTANCE_REFLECT = {
   inScope: ["tone choice"],
   outOfScope: [],
   assumptions: [],
-  unknowns: ["tone"],
-};
+  unknowns: ["tone"]};
 
 export const ACCEPTANCE_GRILL_QUESTION = {
   prompt: "Should the greeting be formal or casual?",
   context: "The choice sets the voice users encounter throughout the feature.",
   options: [
     { id: "formal", label: "Formal", description: "Polished and reserved." },
-    { id: "casual", label: "Casual", description: "Warm and direct." },
-  ],
+    { id: "casual", label: "Casual", description: "Warm and direct." }],
   recommendedOptionId: "casual",
-  recommendation: "Use casual for a lightweight greeting.",
-};
+  recommendation: "Use casual for a lightweight greeting."};

@@ -3,8 +3,7 @@ import {
   evaluateRepairProgress,
   evidenceFingerprint,
   failureCategoryFromEvidence,
-  classifyRunnableRed,
-} from "../../src/application/evidence-fingerprint.js";
+  classifyRunnableRed} from "../../src/application/evidence-fingerprint.js";
 import type { CommandEvidence } from "../../src/domain.js";
 
 const evidence = (overrides: Partial<CommandEvidence> = {}): CommandEvidence => ({
@@ -16,8 +15,7 @@ const evidence = (overrides: Partial<CommandEvidence> = {}): CommandEvidence => 
   stderr: "",
   durationMs: 10,
   at: "2026-08-10T20:00:00.000Z",
-  ...overrides,
-});
+  ...overrides});
 
 describe("evidenceFingerprint", () => {
   it("is stable for identical canonical inputs", () => {
@@ -25,45 +23,28 @@ describe("evidenceFingerprint", () => {
       taskId: "greet",
       step: "implementing" as const,
       sourceTreeState: "tree-a",
-      redCheckpointSha: "abc",
       failingTestIds: ["FAIL tests/greet.test.ts", "other"],
-      failureCategory: "verification",
-    };
+      failureCategory: "verification"};
     expect(evidenceFingerprint(input)).toBe(
       evidenceFingerprint({
         ...input,
-        failingTestIds: ["other", "FAIL tests/greet.test.ts"],
-      }),
+        failingTestIds: ["other", "FAIL tests/greet.test.ts"]}),
     );
   });
 
-  it("changes when the RED checkpoint or failure category changes", () => {
+  it("changes when the source tree or failure category changes", () => {
     const base = {
       taskId: "greet",
       step: "implementing" as const,
       sourceTreeState: "tree-a",
-      redCheckpointSha: "abc",
       failingTestIds: ["x"],
-      failureCategory: "verification",
-    };
+      failureCategory: "verification"};
     expect(evidenceFingerprint(base)).not.toBe(
-      evidenceFingerprint({ ...base, redCheckpointSha: "def" }),
+      evidenceFingerprint({ ...base, sourceTreeState: "tree-b" }),
     );
     expect(evidenceFingerprint(base)).not.toBe(
       evidenceFingerprint({ ...base, failureCategory: "test-repair" }),
     );
-  });
-
-  it("changes when tddRound changes under a constant git-disabled tree state", () => {
-    const base = {
-      taskId: "greet",
-      step: "implementing" as const,
-      sourceTreeState: "git-disabled",
-      failingTestIds: ["FAIL tests/a.test.ts"],
-      failureCategory: "verification",
-      tddRound: 1,
-    };
-    expect(evidenceFingerprint(base)).not.toBe(evidenceFingerprint({ ...base, tddRound: 2 }));
   });
 });
 
@@ -76,8 +57,7 @@ describe("evaluateRepairProgress", () => {
       seenFingerprints: [fingerprint],
       seenEdges: [],
       fromRole: "implementer",
-      toRole: "implementer",
-    });
+      toRole: "implementer"});
     expect(result.allowed).toBe(false);
     if (!result.allowed) expect(result.reason).toBe("no_progress");
   });
@@ -89,8 +69,7 @@ describe("evaluateRepairProgress", () => {
       seenFingerprints: [],
       seenEdges: [`${fingerprint}:implementer->red-writer`],
       fromRole: "implementer",
-      toRole: "red-writer",
-    });
+      toRole: "red-writer"});
     expect(result.allowed).toBe(false);
     if (!result.allowed) expect(result.reason).toBe("repeated_edge");
   });
@@ -102,8 +81,7 @@ describe("evaluateRepairProgress", () => {
       seenFingerprints: ["fp-old"],
       seenEdges: [],
       fromRole: "implementer",
-      toRole: "implementer",
-    });
+      toRole: "implementer"});
     expect(result).toEqual({ allowed: true, fingerprint: "fp-new" });
   });
 });
@@ -122,8 +100,7 @@ describe("failureCategoryFromEvidence", () => {
       failureCategoryFromEvidence(
         evidence({
           stdout: "",
-          stderr: "SyntaxError in tests/greet.test.ts",
-        }),
+          stderr: "SyntaxError in tests/greet.test.ts"}),
       ),
     ).toBe("test-repair");
   });
@@ -137,9 +114,7 @@ describe("failureCategoryFromEvidence", () => {
             "tests/GreeterTest.java:12: error: cannot find symbol",
             "  symbol:   class Greeter",
             "  location: class GreeterTest",
-            "Compilation failed",
-          ].join("\n"),
-        }),
+            "Compilation failed"].join("\n")}),
       ),
     ).toBe("verification");
   });
@@ -153,8 +128,7 @@ describe("classifyRunnableRed", () => {
           stdout:
             "GreeterTest > greets FAILED\norg.opentest4j.AssertionFailedError: expected: <hi> but was: <null>",
           stderr: "",
-          exitCode: 1,
-        }),
+          exitCode: 1}),
       ),
     ).toEqual({ runnable: true });
   });
@@ -166,8 +140,7 @@ describe("classifyRunnableRed", () => {
           stdout: "",
           stderr:
             "> Task :compileTestJava FAILED\ncannot find symbol\n  symbol: class Greeter\nCompilation failed",
-          exitCode: 1,
-        }),
+          exitCode: 1}),
       ),
     ).toEqual({ runnable: false, reason: "compile_only" });
   });
@@ -185,7 +158,6 @@ describe("classifyRunnableRed", () => {
 
   it("treats non-zero exit without compile markers as runnable (custom runners)", () => {
     expect(classifyRunnableRed(evidence({ stdout: "", stderr: "", exitCode: 1 }))).toEqual({
-      runnable: true,
-    });
+      runnable: true});
   });
 });

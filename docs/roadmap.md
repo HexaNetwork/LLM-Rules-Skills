@@ -10,7 +10,7 @@
 - Complete work packets with bounded resumable grill episodes and no provider-session dependency for recovery
 - Exact HITL question/answer persistence, batched independent questions, skip/park, and operator notes
 - Tracer-bullet task planning and sequential dependency execution
-- Per-run TDD toggle with harness-owned RED/GREEN evidence
+- Intent-first workflow: scenario planning, implement-first tasks, run-level scenario tests / coverage / final review (supersedes per-run TDD toggle)
 - Deterministic command gates and bounded implementation/review repair
 - Ordered config-owned verification commands and targeted-test templates; tasks only provide validated filters
 - Deterministic prompts by default, with optional small-model compilation and small-model commit/PR writing

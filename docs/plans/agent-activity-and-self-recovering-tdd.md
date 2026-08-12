@@ -1,8 +1,11 @@
 # Agent activity timeline and self-recovering TDD
 
-**Status:** implemented (core path)  
+**Status:** superseded  
+**Superseded by:** [intent-first-workflow.md](./intent-first-workflow.md)  
 **Scope:** `packages/agent-harness`  
 **Primary outcomes:** replace the misleading session-card grid; preserve strict RED/GREEN evidence; recover from bounded implementation and test defects without circular model calls.
+
+> **Note:** The RED-first TDD loop (`red-writer`, RED checkpoints, `tddLoop`) described below has been removed in favor of the intent-first pipeline (scenario planning → implement → scenario tests → coverage → final review). Agent-activity timeline and evidence-fingerprint machinery remain.
 
 **Implementation notes (2026-08-10):** Delivery slices 1–7 are in the harness. Runnable RED writer (`red-writer`) plus scaffolds-on-`affectedPaths`, runnable-red gate, and first-implement false-repair fix are in place. Remaining polish: full temporary-worktree counterfactual RED isolation (current accept path validates meaningful RED in-place), dedicated Playwright coverage for the Agent activity timeline, and stricter per-invocation token circuit-breaker enforcement beyond UI warnings / `maxContextTurns`.
 

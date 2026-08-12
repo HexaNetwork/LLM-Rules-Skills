@@ -19,16 +19,18 @@ retrieval; the harness builds `graphify-out/graph.json` before new runs and afte
 verified task commits. `init` / `deploy` write a repo-local config when needed.
 Use `--no-graphify` on deploy for document-only projects.
 
-The dashboard opens on an authenticated loopback URL and centralizes run creation, human questions, progress, test evidence, session handoffs, artifacts, retries, cancellation, and local knowledge search. Set `CURSOR_API_KEY` for real agent runs. The generated config pins models, commands, retry budgets, TDD policy, git publication, and local knowledge sources.
+The dashboard opens on an authenticated loopback URL and centralizes run creation, human questions, progress, test evidence, session handoffs, artifacts, retries, cancellation, and local knowledge search. Set `CURSOR_API_KEY` for real agent runs. The generated config pins models, commands, retry budgets, coverage policy, git publication, and local knowledge sources.
 
 The lifecycle is:
 
 ```text
-idea → reflect (editable confirm) → grill-me → verification settings → implementation tickets
-     → [RED batch → GREEN verify]* → done → final gates → review → commit → pull request
+idea → reflect → grill-me → verification settings → plan → PRD → scenario-planner
+     → one operator gate (plan + PRD + scenarios) → issue-slicer
+     → implement → gates → per-task review → commit
+     → scenario_testing → crystallizing (optional coverage) → final_review → publish
 ```
 
-The process stops at `awaiting_input`, `blocked`, `cancelled`, or `completed`. It never waits indefinitely: agent calls, shell commands, locks, schema repair, implementation repair, review repair, grill episodes, and per-command advancement are all bounded.
+The process stops at `awaiting_input`, `blocked`, `cancelled`, or `completed`. It never waits indefinitely: agent calls, shell commands, locks, schema repair, implementation repair, review repair, grill episodes, and per-command advancement are all bounded. Pre-redesign TDD runs remain readable but cannot be resumed.
 
 ## Commands
 
@@ -36,7 +38,7 @@ The process stops at `awaiting_input`, `blocked`, `cancelled`, or `completed`. I
 agent-harness ui                              # open the centralized dashboard
 agent-harness ui --port 9000 --no-open        # serve locally without opening a browser
 agent-harness start --idea "..."              # `run` is an alias
-agent-harness start --idea @idea.md --tdd off
+agent-harness start --idea @idea.md
 agent-harness status --run-id <id> --json
 agent-harness answer --run-id <id> --question <id> --text "..."
 agent-harness continue --run-id <id>
@@ -187,7 +189,7 @@ knowledge:
       planner: { rules: [], skills: [domain-modeling, improve-codebase-architecture] }
       prompt-builder: { rules: [], skills: [] }
       red-writer: { rules: [], skills: [red-writer-tdd] }
-      implementer: { rules: [], skills: [tdd] }
+      implementer: { rules: [], skills: [] }
       reviewer: { rules: [], skills: [code-review] }
       message-writer: { rules: [], skills: [] }
       fixer: { rules: [], skills: [diagnose, tdd] }
@@ -222,7 +224,7 @@ harness configs enable it by default. Install Graphify yourself
 `graphify-out/graph.json` with `graphify update` when the graph is missing.
 After each verified harness task commit that includes a source-file path, it
 runs `graphify update` again so the next task receives fresh structural
-context. Default Graphify roles are planner, red-writer, implementer, and
+context. Default Graphify roles are planner, scenario-planner, issue-slicer, scenario-writer, unit-test-writer, implementer, and
 reviewer (not reflector/griller). Project-specific
 `knowledge.graphify.stopwords` merge over the built-in English and harness-meta
 lists. Enable `knowledge.graphify.updateOnRefresh` if a
@@ -238,24 +240,18 @@ with an argument array rather than a shell, reads only
 
 Prompt compilation is disabled by default because the deterministic renderer is already complete. If explicitly enabled and the compiler fails or times out, the harness falls back to that renderer. Grill episodes never invoke the prompt compiler.
 
-## TDD and deterministic evidence
+## Intent-first testing and deterministic evidence
 
-With TDD on, each task runs an **alternating multi-round loop** with two retained logical agents:
+The harness no longer runs a per-task RED/GREEN TDD loop. Testing is intent-first and mostly run-level:
 
-1. **red-writer** adds the minimum discriminating test for one uncovered behavior (and may reference missing production surfaces). It edits only `workflow.testPathPatterns` paths and does **not** run shell/test commands. Exact operator-owned configuration values are deliberately not validated; synthetic configuration tests cover contractual ranges, missing/malformed values, defaults, and validation behavior.
-2. The harness records a RED checkpoint (no targeted command yet).
-3. **green-implementer** implements until the harness independently verifies the accumulated targeted tests via `commands.testTargetTemplate` (when configured) or the first verification command.
-4. Control returns to the same red-writer session, which defaults to `done` at verified GREEN unless it can name a distinct uncovered criterion or high-risk defect.
-5. The loop ends when the red-writer returns `done` with no file changes and a final assessment that records automated, non-test, or deliberately not-validated criteria.
-6. **Final** `commands.verification` gates, review, and commit run only after `done` — not after every RED batch.
+1. **scenario-planner** authors happy/error-path scenarios after the PRD (approved with the plan gate).
+2. **issue-slicer** tags tasks with `scenarioIds`.
+3. **implementer** builds production code during `executing` and must not edit `workflow.testPathPatterns` paths. Cheap `commands.verification` gates and per-task review still run before each task commit.
+4. **scenario-writer** turns scenario intent into tests during `scenario_testing`; the harness runs them and routes production vs test-defect repairs with fingerprint guards.
+5. Optional **crystallizing** uses `workflow.coverage` + `commands.coverage` (lcov / cobertura / clover) and **unit-test-writer** until the threshold or a no-progress stop.
+6. **final_review** is a holistic reviewer over `baseSha..HEAD` with scenario and coverage evidence. Blocking kinds route back to executing, scenario_testing, or crystallizing.
 
-`workflow.maxTestAttempts` is the per-round RED schema/path/test-repair revision limit, **not** the number of RED/GREEN rounds. `workflow.maxImplementationAttempts` is the per-round GREEN attempt limit and resets after each verified GREEN round. Post-`done` verification/review repairs use a dedicated `tddLoop.finalRepairAttempts` budget.
-
-Retained provider sessions are an optimization for prompt caching and continuity. Durable correctness lives in the worktree, `state.json` (`tddLoop` ledger), and evidence artifacts. A provider restart cold-starts either role from that ledger without depending on hidden transcript history. `workflow.maxContextTurns` (when non-zero) rotates each role's provider session independently.
-
-CLI `status` and the dashboard show the active TDD round, role (red-writer / green-implementer), completed round count, retained session turn counts, and current batch behaviors/edge cases. Agent activity surfaces cached versus total tokens from existing usage fields. See [ADR 0013](../../docs/adr/0013-alternating-persistent-tdd-loop.md).
-
-With TDD off, implementation starts first; the same targeted test, gate, review, and repair budgets still apply for non-loop tasks.
+See [intent-first workflow](../../docs/plans/intent-first-workflow.md). Evidence-fingerprint / `no_progress` / `seenRepairEdges` machinery still prevents identical deterministic failures from re-invoking a model.
 
 Agents cannot claim a command passed. The harness owns process execution and records exit code, stdout, stderr, duration, and timestamp.
 

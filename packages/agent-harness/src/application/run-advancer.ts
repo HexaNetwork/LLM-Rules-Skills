@@ -13,6 +13,9 @@ import type { InterviewService } from "./interview-service.js";
 import type { PlanningService } from "./planning-service.js";
 import type { RecoveryService } from "./recovery-service.js";
 import type { TaskExecutionService } from "./task-execution-service.js";
+import type { ScenarioTestingService } from "./scenario-testing-service.js";
+import type { CrystallizingService } from "./crystallizing-service.js";
+import type { FinalReviewService } from "./final-review-service.js";
 import { CANCEL_LOCK_WAIT_MS, PROVIDER_RETRY_BACKOFF_MS } from "./helpers.js";
 import { accrueRunUsage } from "./usage-ledger.js";
 
@@ -57,6 +60,21 @@ function workflowSignature(state: RunState): string {
     verificationBaselinePassed: Boolean(state.verificationBaselinePassedAt),
     plan: Boolean(state.plan),
     prd: Boolean(state.prd),
+    scenarios: state.scenarios.map(({ id, status, attempts, writerAttempts, repairAttempts }) => [
+      id,
+      status,
+      attempts,
+      writerAttempts,
+      repairAttempts,
+    ]),
+    coverage: state.coverage
+      ? {
+          percentage: state.coverage.percentage,
+          attempts: state.coverage.attempts,
+          scope: state.coverage.scope,
+        }
+      : undefined,
+    finalReviewAttempts: state.finalReviewAttempts,
     activeTask: activeTask
       ? {
           id: activeTask.id,
@@ -64,12 +82,6 @@ function workflowSignature(state: RunState): string {
           step: activeTask.step,
           attempts: activeTask.attempts,
           reviewSummary: activeTask.reviewSummary,
-          integrityViolationCount: activeTask.integrityViolationCount,
-          // Distinguish same-step GREEN retries and multi-round loops for the
-          // repeated-transition circuit breaker (attempts alone is not enough when
-          // only the per-round counter moves between identical diagnostic totals).
-          tddRound: activeTask.tddLoop?.pendingRound?.number ?? activeTask.tddLoop?.round,
-          pendingImplementerAttempts: activeTask.tddLoop?.pendingRound?.implementerAttempts,
         }
       : undefined,
     taskStates: state.tasks.map(({ id, status, step }) => [id, status, step]),
@@ -83,6 +95,9 @@ export class RunAdvancer {
     private readonly planning: PlanningService,
     private readonly execution: TaskExecutionService,
     private readonly recovery: RecoveryService,
+    private readonly scenarioTesting: ScenarioTestingService,
+    private readonly crystallizing: CrystallizingService,
+    private readonly finalReview: FinalReviewService,
   ) {}
 
   async advance(
@@ -396,6 +411,12 @@ export class RunAdvancer {
         return this.planning.plan(state);
       case "executing":
         return this.execution.execute(state);
+      case "scenario_testing":
+        return this.scenarioTesting.advance(state);
+      case "crystallizing":
+        return this.crystallizing.advance(state);
+      case "final_review":
+        return this.finalReview.advance(state);
       case "publishing":
         return this.execution.publish(state);
       case "awaiting_input":

@@ -87,6 +87,9 @@ export { RecoveryService } from "./recovery-service.js";
 export { RunAdvancer } from "./run-advancer.js";
 export { RunLifecycleService } from "./run-lifecycle-service.js";
 export { TaskExecutionService } from "./task-execution-service.js";
+export { ScenarioTestingService } from "./scenario-testing-service.js";
+export { CrystallizingService } from "./crystallizing-service.js";
+export { FinalReviewService } from "./final-review-service.js";
 export { openRunHarness, type OpenedRunHarness } from "./run-engine-factory.js";
 export {
   updateRunConfig,

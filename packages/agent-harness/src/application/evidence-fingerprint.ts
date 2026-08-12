@@ -3,15 +3,13 @@ import type { BuildTask, CommandEvidence } from "../domain.js";
 
 export type EvidenceFingerprintInput = {
   taskId: string;
-  step: BuildTask["step"];
+  /** Task step or run-phase label used to scope the fingerprint. */
+  step: BuildTask["step"] | string;
   sourceTreeState: string;
-  redCheckpointSha?: string;
   failingTestIds: string[];
   failureCategory: string;
   reviewFinding?: string;
   frozenConfigHash?: string;
-  /** Distinguishes identical git-disabled tree states across TDD rounds. */
-  tddRound?: number;
 };
 
 /** Canonical hash of the evidence that would justify another repair invocation. */
@@ -20,12 +18,10 @@ export function evidenceFingerprint(input: EvidenceFingerprintInput): string {
     input.taskId,
     input.step,
     input.sourceTreeState,
-    input.redCheckpointSha ?? "",
     [...input.failingTestIds].map((id) => id.trim()).filter(Boolean).sort().join("\n"),
     input.failureCategory,
     (input.reviewFinding ?? "").trim(),
     input.frozenConfigHash ?? "",
-    input.tddRound === undefined ? "" : String(input.tddRound),
   ].join("\0");
   return createHash("sha256").update(payload).digest("hex");
 }

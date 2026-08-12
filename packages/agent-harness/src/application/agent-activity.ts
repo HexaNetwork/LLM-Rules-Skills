@@ -1,5 +1,5 @@
 import type { AgentRole, RunPhase } from "../domain.js";
-import { reviewRepairRoute } from "../domain/tdd-loop.js";
+import { reviewRepairRoute } from "../domain/policies.js";
 
 export const INVOCATION_KINDS = [
   "initial",
@@ -148,17 +148,22 @@ const MISSING_TIMESTAMP_SORT_KEY = "\uffff";
 const TIMELINE_TRANSITION_EVENTS = new Set([
   "task.gates_passed",
   "task.gates_failed",
-  "task.tdd_round_started",
-  "task.tdd_round_completed",
-  "task.red_done",
-  "task.green_observed",
-  "task.redundant_green_skipped",
+  "task.implementation_verified",
   "task.implementation_exhausted",
-  "task.test_integrity_exhausted",
-  "task.green_rejected",
-  "task.test_issue_reported",
   "task.no_progress",
   "task.review_failed",
+  "scenario.started",
+  "scenario.tests_written",
+  "scenario.passed",
+  "scenario.repair_routed",
+  "scenario.no_progress",
+  "coverage.measured",
+  "coverage.below_threshold",
+  "coverage.no_progress",
+  "coverage.passed",
+  "final_review.approved",
+  "final_review.blocked",
+  "final_review.routed",
 ]);
 
 function asNumber(value: unknown): number {
@@ -231,10 +236,6 @@ export function deriveInvocationOutcome(
 ): InvocationOutcome | undefined {
   if (!isRecord(output)) return undefined;
   const summary = typeof output.summary === "string" ? output.summary : undefined;
-
-  if (role === "red-writer" && typeof output.status === "string") {
-    return { status: output.status, ...(summary ? { summary } : {}) };
-  }
 
   if (role === "implementer" && typeof output.status === "string") {
     return { status: output.status, ...(summary ? { summary } : {}) };
@@ -383,10 +384,6 @@ function transitionCandidates(event: ActivityEventInput): TimelineCandidate[] {
   if (!TIMELINE_TRANSITION_EVENTS.has(event.type)) return [];
   const detail = isRecord(event.detail) ? event.detail : {};
   const taskId = detailString(detail, "taskId");
-  const round =
-    detailNumber(detail, "round") ??
-    detailNumber(detail, "number") ??
-    (isRecord(detail.pendingRound) ? detailNumber(detail.pendingRound, "number") : undefined);
   const base = {
     occurredAt: event.at,
     sortAt: event.at || MISSING_TIMESTAMP_SORT_KEY,
@@ -410,8 +407,8 @@ function transitionCandidates(event: ActivityEventInput): TimelineCandidate[] {
           },
         },
       ];
-    case "task.gates_failed": {
-      const rows: TimelineCandidate[] = [
+    case "task.gates_failed":
+      return [
         {
           ...base,
           entry: {
@@ -425,24 +422,10 @@ function transitionCandidates(event: ActivityEventInput): TimelineCandidate[] {
           },
         },
       ];
-      if (detail.finalRepairPending === true) {
-        rows.push({
-          ...routingTransition(event, "verification", "GREEN", "verification → GREEN final repair"),
-          tieBreak: event.sequence + 0.5,
-        });
-      }
-      return rows;
-    }
     case "task.review_failed": {
       const route = detailString(detail, "reviewRepairRoute");
-      if (route === "production") {
-        return [routingTransition(event, "production", "GREEN", "production → GREEN")];
-      }
-      if (route === "test-coverage") {
-        return [routingTransition(event, "GREEN", "RED", "GREEN → RED reassessment")];
-      }
-      if (detail.finalRepairPending === true) {
-        return [routingTransition(event, "review", "GREEN", "review → GREEN final repair")];
+      if (route === "production" || route === "test-coverage" || route === "none") {
+        return [routingTransition(event, "review", "implementer", "review → implementer")];
       }
       return [
         {
@@ -459,7 +442,7 @@ function transitionCandidates(event: ActivityEventInput): TimelineCandidate[] {
         },
       ];
     }
-    case "task.tdd_round_started":
+    case "task.implementation_verified":
       return [
         {
           ...base,
@@ -468,65 +451,13 @@ function transitionCandidates(event: ActivityEventInput): TimelineCandidate[] {
             event: event.type,
             eventSequence: event.sequence,
             taskId,
-            round,
-            summary: round != null ? `TDD round ${round} started` : "TDD round started",
-            detail,
-          },
-        },
-      ];
-    case "task.tdd_round_completed":
-      return [
-        {
-          ...base,
-          entry: {
-            type: "transition",
-            event: event.type,
-            eventSequence: event.sequence,
-            taskId,
-            round,
-            summary: round != null ? `TDD round ${round} completed` : "TDD round completed",
-            status: "completed",
-            detail,
-          },
-        },
-      ];
-    case "task.red_done":
-      return [
-        {
-          ...base,
-          entry: {
-            type: "transition",
-            event: event.type,
-            eventSequence: event.sequence,
-            taskId,
-            summary: "RED completion declared",
-            status: "completed",
-            detail,
-          },
-        },
-      ];
-    case "task.green_observed": {
-      if (detail.finalRepair === true) {
-        return [routingTransition(event, "GREEN", "RED", "GREEN → RED reassessment")];
-      }
-      return [];
-    }
-    case "task.redundant_green_skipped":
-      return [
-        {
-          ...base,
-          entry: {
-            type: "transition",
-            event: event.type,
-            eventSequence: event.sequence,
-            taskId,
-            summary: "Redundant GREEN invocation skipped",
+            summary: "Implementation verified",
+            status: "passed",
             detail,
           },
         },
       ];
     case "task.implementation_exhausted":
-    case "task.test_integrity_exhausted":
       return [
         {
           ...base,
@@ -537,37 +468,6 @@ function transitionCandidates(event: ActivityEventInput): TimelineCandidate[] {
             taskId,
             summary: "Repair budget exhausted",
             status: "failed",
-            detail,
-          },
-        },
-      ];
-    case "task.green_rejected":
-      return [
-        {
-          ...base,
-          entry: {
-            type: "transition",
-            event: event.type,
-            eventSequence: event.sequence,
-            taskId,
-            summary: "GREEN claim rejected",
-            status: "failed",
-            detail,
-          },
-        },
-      ];
-    case "task.test_issue_reported":
-      return [
-        {
-          ...base,
-          entry: {
-            type: "transition",
-            event: event.type,
-            eventSequence: event.sequence,
-            taskId,
-            summary: "Test issue reported → RED",
-            from: "GREEN",
-            to: "RED",
             detail,
           },
         },
@@ -583,6 +483,68 @@ function transitionCandidates(event: ActivityEventInput): TimelineCandidate[] {
             taskId,
             summary: "No progress detected",
             status: "failed",
+            detail,
+          },
+        },
+      ];
+    case "scenario.started":
+    case "scenario.tests_written":
+    case "scenario.passed":
+    case "scenario.repair_routed":
+    case "scenario.no_progress":
+      return [
+        {
+          ...base,
+          entry: {
+            type: "transition",
+            event: event.type,
+            eventSequence: event.sequence,
+            taskId: detailString(detail, "scenarioId") ?? taskId,
+            summary: event.type.replace("scenario.", "Scenario "),
+            status:
+              event.type === "scenario.passed"
+                ? "passed"
+                : event.type === "scenario.no_progress"
+                  ? "failed"
+                  : "completed",
+            detail,
+          },
+        },
+      ];
+    case "coverage.measured":
+    case "coverage.below_threshold":
+    case "coverage.no_progress":
+    case "coverage.passed":
+      return [
+        {
+          ...base,
+          entry: {
+            type: "transition",
+            event: event.type,
+            eventSequence: event.sequence,
+            summary: event.type.replace("coverage.", "Coverage "),
+            status:
+              event.type === "coverage.passed"
+                ? "passed"
+                : event.type === "coverage.no_progress" || event.type === "coverage.below_threshold"
+                  ? "failed"
+                  : "completed",
+            detail,
+          },
+        },
+      ];
+    case "final_review.approved":
+    case "final_review.blocked":
+    case "final_review.routed":
+      return [
+        {
+          ...base,
+          entry: {
+            type: "transition",
+            event: event.type,
+            eventSequence: event.sequence,
+            summary: event.type.replace("final_review.", "Final review "),
+            status: event.type === "final_review.approved" ? "passed" : "blocking",
             detail,
           },
         },

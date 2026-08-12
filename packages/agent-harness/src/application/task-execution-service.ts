@@ -1,44 +1,20 @@
 import { writeRunWorkspace } from "../config.js";
 import {
-  GREEN_IMPLEMENTER_EXPECTED_OUTPUT,
-  GreenImplementerOutputSchema,
   MessageOutputSchema,
-  RED_WRITER_EXPECTED_OUTPUT,
-  RedWriterOutputSchema,
   REVIEW_EXPECTED_OUTPUT,
   ReviewOutputSchema,
   WorkerOutputSchema,
   assertCanMarkTaskDone,
-  canAcceptRedContinue,
-  canAcceptRedDone,
-  canCompleteTddRound,
-  canEnterFinalVerification,
-  canRetryFinalRepair,
-  canRetryRoundImplementation,
-  canRouteTestIssue,
-  canToggleTaskTdd,
-  ensureTddLoop,
   includesSourcePath,
   isTestPath,
-  pendingRoundNumber,
   proposeDeliveryBranchName,
   reviewRepairRoute,
   slugifyFeatureTitle,
-  withCompletedTddRound,
-  withFinalRepairCleared,
-  withFinalRepairRouting,
-  withGreenImplementerSession,
-  withIncrementedRoundImplementerAttempt,
-  withRedWriterSession,
-  withTestRepairPendingRound,
   type BuildTask,
-  type GreenImplementerOutput,
   type MessageOutput,
   type RunState,
   isTerminalPhase,
 } from "../domain.js";
-import { isShellToolName } from "../infrastructure/agents/step-utils.js";
-
 const terminal = isTerminalPhase;
 import { CONFIG_FAILURE_PATTERN, HarnessFailure, RunCancelledError } from "../errors.js";
 import { commandEvidence, recentEvidenceOutput } from "../commands.js";
@@ -54,7 +30,7 @@ import {
   failureCategoryFromEvidence,
   repairEdgeKey,
 } from "./evidence-fingerprint.js";
-import { normalizePathKey, taskForPacket, unique } from "./helpers.js";
+import { taskForPacket, unique } from "./helpers.js";
 import { updateRunConfig } from "./update-run-config.js";
 
 export class TaskExecutionService {
@@ -70,7 +46,10 @@ export class TaskExecutionService {
     const active = state.tasks.find((task) => task.status === "active");
     if (!active) {
       if (state.tasks.every((item) => item.status === "done")) {
-        return this.ctx.store.record({ ...state, phase: "publishing" }, "implementation.completed");
+        return this.ctx.store.record(
+          { ...state, phase: "scenario_testing" },
+          "implementation.completed",
+        );
       }
       if (await this.ctx.isStopRequested(state.runId, state)) {
         const stopped = await this.ctx.store.record(
@@ -105,14 +84,17 @@ export class TaskExecutionService {
         const next = {
           ...task,
           status: "active" as const,
-          step: task.tdd ? ("writing_tests" as const) : ("implementing" as const),
+          step: "implementing" as const,
         };
         return this.updateTask(state, next, "task.started");
       }
       case "writing_tests":
-        return this.writeTests(state, task);
       case "red":
-        return this.confirmRed(state, task);
+        throw new HarnessFailure(
+          `Task ${task.id} uses legacy TDD step "${task.step}"; pre-redesign runs cannot be resumed`,
+          "contract",
+          false,
+        );
       case "implementing":
         return this.implementTask(state, task);
       case "verifying":
@@ -127,498 +109,37 @@ export class TaskExecutionService {
     }
   }
 
-  async writeTests(state: RunState, task: BuildTask): Promise<RunState> {
-    // A config repair can intentionally leave its project-settings file dirty.
-    // Capture that known baseline before the writer runs so the path allowlist
-    // attributes only paths introduced by this invocation to the writer.
-    const knownPaths = this.ctx.config.git.enabled
-      ? new Set(await this.ctx.git.changedFiles())
-      : undefined;
-    const testPatterns = this.ctx.config.workflow.testPathPatterns;
-
-    // Crash re-entry: adopt a dangling RED checkpoint without re-invoking the agent.
-    if (this.ctx.config.git.enabled) {
-      const recovered = await this.ctx.git.findRedCheckpoint(task.id);
-      if (recovered && recovered.sha !== task.redCheckpointSha) {
-        const dirty = await this.ctx.git.changedFiles();
-        const dirtyTests = dirty.filter((file) => isTestPath(file, testPatterns));
-        if (dirtyTests.length === 0) {
-          const priorTests = new Set(task.testPaths.map((file) => normalizePathKey(file)));
-          const recoveredTestPaths = (
-            recovered.paths.length > 0 ? recovered.paths : task.testPaths
-          ).filter((file) => isTestPath(file, testPatterns));
-          const testPathsAdded = recoveredTestPaths.filter(
-            (file) => !priorTests.has(normalizePathKey(file)),
-          );
-          const added =
-            testPathsAdded.length > 0 ? testPathsAdded : recoveredTestPaths;
-          const loop = ensureTddLoop(task);
-          const adopted: BuildTask = {
-            ...task,
-            redBaseSha: task.redBaseSha ?? recovered.baseSha,
-            redCheckpointSha: recovered.sha,
-            redCheckpointNumber: (task.redCheckpointNumber ?? 0) + 1,
-            redCheckpointPaths: unique([...task.redCheckpointPaths, ...recoveredTestPaths]),
-            redCheckpointHistory: unique([...task.redCheckpointHistory, recovered.sha]),
-            testPaths: unique([...task.testPaths, ...added]),
-            tddLoop: {
-              ...loop,
-              atVerifiedGreen: false,
-              pendingRound: {
-                number: loop.round,
-                mode: loop.pendingRound?.mode ?? "feature",
-                redCheckpointSha: recovered.sha,
-                testPathsAdded: added,
-                behaviorsAdded: ["unknown/recovered"],
-                edgeCasesAdded: [],
-                implementerAttempts: loop.pendingRound?.implementerAttempts ?? 0,
-                startedAt: new Date().toISOString(),
-              },
-            },
-            step: "red",
-            status: "active",
-            failure: undefined,
-          };
-          return this.updateTask(
-            await this.ctx.withTreeFingerprint(state),
-            adopted,
-            "task.red_checkpoint_recovered",
-            {
-              redCheckpointSha: recovered.sha,
-              redBaseSha: adopted.redBaseSha,
-            },
-          );
-        }
-      }
-    }
-
-    let episode = task.tddLoop?.redWriterSession;
-    const maxContextTurns = this.ctx.config.workflow.maxContextTurns;
-    if (
-      episode?.providerSessionId &&
-      maxContextTurns > 0 &&
-      (episode.turns ?? 0) >= maxContextTurns
-    ) {
-      const rotatedTurns = episode.turns;
-      await this.ctx.agents.releaseProviderSession(episode.providerSessionId);
-      state = await this.ctx.store.record(
-        {
-          ...state,
-          tasks: state.tasks.map((item) =>
-            item.id === task.id
-              ? {
-                  ...item,
-                  tddLoop: item.tddLoop
-                    ? { ...item.tddLoop, redWriterSession: undefined }
-                    : undefined,
-                }
-              : item,
-          ),
-        },
-        "task.tdd_context_rotated",
-        {
-          taskId: task.id,
-          maxContextTurns,
-          turns: rotatedTurns,
-          role: "red-writer",
-        },
-      );
-      task = {
-        ...task,
-        tddLoop: task.tddLoop
-          ? { ...task.tddLoop, redWriterSession: undefined }
-          : undefined,
-      };
-      episode = undefined;
-    }
-    const reuseContext =
-      Boolean(episode?.providerSessionId) && (task.integrityViolationCount ?? 0) === 0;
-    const invocationKind =
-      task.attempts.tests > 0 ? ("continuation" as const) : ("initial" as const);
-    const repairMode = task.tddLoop?.pendingRound?.mode === "test-repair";
-    const fullInput = {
-      task: taskForPacket(task),
-      priorCommandOutput: recentEvidenceOutput(task.evidence),
-      round: pendingRoundNumber(task.tddLoop),
-      atVerifiedGreen: task.tddLoop?.atVerifiedGreen ?? false,
-      ...(repairMode
-        ? {
-            redCheckpointSha: task.redCheckpointSha,
-            redBaseSha: task.redBaseSha,
-            repairMode: true,
-          }
-        : {}),
-    };
-    const invocation = await this.ctx.agents.invokeInEpisode({
-      runId: state.runId,
-      role: "red-writer",
-      mode: "agent",
-      objective: repairMode
-        ? `Repair the defective tests for “${task.title}” (tests only; no commands)`
-        : `Add the next coherent failing test batch for “${task.title}” (tests only; no commands)`,
-      input: fullInput,
-      continuationInput: reuseContext
-        ? {
-            round: pendingRoundNumber(task.tddLoop),
-            atVerifiedGreen: task.tddLoop?.atVerifiedGreen ?? false,
-            instruction: task.tddLoop?.atVerifiedGreen
-              ? "The accumulated suite is verified GREEN. Default to done. Continue only for a named uncovered acceptance criterion or a distinct high-risk defect not detected by existing tests. Do not run commands."
-              : "Add the minimum discriminating test for the current uncovered behavior. Do not run commands.",
-          }
-        : undefined,
-      expectedOutput: RED_WRITER_EXPECTED_OUTPUT,
-      schema: RedWriterOutputSchema,
-      constraints: [
-        "Edit tests only; do not add production scaffolds or implement behavior",
-        "Do not run test, compile, build, lint, or verification commands",
-        "Add the minimum discriminating test evidence for one uncovered behavior and avoid redundant coverage",
-        "Treat exact operator-owned configuration values as deliberately unvalidated",
-        "At verified GREEN default to done; continue only for a named uncovered criterion or distinct high-risk defect",
-      ],
-      knowledgeQuery: [task.title, task.description, ...task.acceptanceCriteria].join(" "),
-      knowledgeFallbackQuery: compactDomainSeed(
-        state.idea,
-        state.reflectBrief?.confirmed,
-        task.title,
-        task.description,
-      ),
-      providerSessionId: reuseContext ? episode?.providerSessionId : undefined,
-      previousGuidanceFingerprint: reuseContext ? episode?.guidanceFingerprint : undefined,
-      signal: this.ctx.signalFor(state.runId),
-      causal: {
-        taskId: task.id,
-        phase: state.phase,
-        taskStep: task.step,
-        invocationKind,
-        trigger: {
-          event: "task.writing_tests",
-          classification: invocationKind,
-          summary:
-            invocationKind === "continuation"
-              ? "continued red-writer episode"
-              : "initial red-writer episode",
-          evidenceFingerprint: task.evidenceFingerprint,
-        },
-      },
-    });
-    const shellTools = invocation.observedToolNames.filter(isShellToolName);
-    if (shellTools.length > 0) {
-      throw new HarnessFailure(
-        `Red writer used command-execution tools: ${[...new Set(shellTools)].join(", ")}`,
-        "contract",
-        true,
-      );
-    }
-    const result = invocation.value;
-    task = {
-      ...task,
-      tddLoop: withRedWriterSession(task.tddLoop, {
-        providerSessionId: invocation.providerSessionId,
-        guidanceFingerprint:
-          invocation.guidanceFingerprint ?? episode?.guidanceFingerprint,
-        turns: (episode?.turns ?? 0) + 1,
-      }),
-    };
-
-    const observedPaths = this.ctx.config.git.enabled
-      ? (await this.ctx.git.changedFiles()).filter((file) => !knownPaths!.has(file))
-      : result.changedFiles;
-    const dirtyTestPaths = observedPaths.filter((file) => isTestPath(file, testPatterns));
-    const dirtyNonTestPaths = observedPaths.filter((file) => !isTestPath(file, testPatterns));
-    if (dirtyNonTestPaths.length > 0) {
-      throw new HarnessFailure(
-        `Red writer changed non-test paths: ${dirtyNonTestPaths.join(", ")}`,
-        "config",
-        false,
-      );
-    }
-
-    const attempts = { ...task.attempts, tests: task.attempts.tests + 1 };
-
-    if (result.status === "continue") {
-      const guard = canAcceptRedContinue({
-        output: result,
-        dirtyTestPaths,
-        dirtyNonTestPaths,
-      });
-      if (!guard.ok) {
-        throw new HarnessFailure(guard.reason, "contract", true);
-      }
-      const testPaths = unique([...task.testPaths, ...dirtyTestPaths]);
-      let updated: BuildTask = {
-        ...task,
-        attempts,
-        testPaths,
-        changedFiles: unique([...task.changedFiles, ...result.changedFiles, ...dirtyTestPaths]),
-        step: "red",
-        status: "active",
-        failure: undefined,
-      };
-      updated = await this.establishRedCheckpoint(updated, dirtyTestPaths);
-      const loop = ensureTddLoop(updated);
-      const keepRepair = loop.pendingRound?.mode === "test-repair";
-      const acceptedTestRepairFingerprints = keepRepair
-        ? unique([
-            ...updated.acceptedTestRepairFingerprints,
-            ...(updated.evidenceFingerprint ? [updated.evidenceFingerprint] : []),
-          ])
-        : updated.acceptedTestRepairFingerprints;
-      updated = {
-        ...updated,
-        acceptedTestRepairFingerprints,
-        // Clear so GREEN resume after repair is not false-blocked as no-progress.
-        evidenceFingerprint: keepRepair ? undefined : updated.evidenceFingerprint,
-        tddLoop: {
-          ...loop,
-          atVerifiedGreen: false,
-          pendingRound: {
-            number: loop.round,
-            mode: keepRepair ? "test-repair" : "feature",
-            redCheckpointSha: updated.redCheckpointSha,
-            testPathsAdded: dirtyTestPaths,
-            behaviorsAdded: result.behaviorsAdded,
-            edgeCasesAdded: result.edgeCasesAdded,
-            implementerAttempts: keepRepair
-              ? (loop.pendingRound?.implementerAttempts ?? 0)
-              : 0,
-            startedAt: new Date().toISOString(),
-          },
-        },
-      };
-      let nextState = await this.ctx.withTreeFingerprint(state);
-      if (keepRepair) {
-        nextState = await this.ctx.store.record(nextState, "task.test_issue_repaired", {
-          taskId: updated.id,
-          round: updated.tddLoop?.pendingRound?.number,
-          evidenceFingerprint: updated.evidenceFingerprint,
-          testPathsAdded: dirtyTestPaths,
-        });
-      } else {
-        nextState = await this.ctx.store.record(nextState, "task.tdd_round_started", {
-          taskId: updated.id,
-          round: updated.tddLoop?.pendingRound?.number,
-          testPathsAdded: dirtyTestPaths,
-          behaviorsAdded: result.behaviorsAdded.length,
-          edgeCasesAdded: result.edgeCasesAdded.length,
-        });
-      }
-      nextState = await this.ctx.store.record(nextState, "task.red_batch_recorded", {
-        taskId: updated.id,
-        round: updated.tddLoop?.pendingRound?.number,
-        testPathsAdded: dirtyTestPaths,
-        redCheckpointSha: updated.redCheckpointSha,
-      });
-      return this.updateTask(nextState, updated, "task.red_observed", {
-        redCheckpointSha: updated.redCheckpointSha,
-        redBaseSha: updated.redBaseSha,
-      });
-    }
-
-    const loop = ensureTddLoop(task);
-    const doneGuard = canAcceptRedDone({
-      output: result,
-      tddLoop: loop,
-      dirtyPaths: observedPaths,
-    });
-    if (!doneGuard.ok) {
-      throw new HarnessFailure(doneGuard.reason, "contract", true);
-    }
-    const updated: BuildTask = {
-      ...task,
-      attempts,
-      tddLoop: {
-        ...loop,
-        coverage: {
-          ...loop.coverage,
-          finalAssessment: {
-            acceptanceCriteria: result.acceptanceCoverage,
-            edgeCaseRationale: result.edgeCaseRationale,
-          },
-        },
-      },
-      step: "verifying",
-      status: "active",
-      failure: undefined,
-    };
-    let nextState = await this.ctx.withTreeFingerprint(state);
-    nextState = await this.ctx.store.record(nextState, "task.tdd_done_declared", {
-      taskId: updated.id,
-      round: loop.round,
-      completedRounds: loop.completedRounds.length,
-      atVerifiedGreen: true,
-    });
-    return this.updateTask(nextState, updated, "task.red_done", { atVerifiedGreen: true });
-  }
-
-  async confirmRed(state: RunState, task: BuildTask): Promise<RunState> {
-    if (!task.tddLoop?.pendingRound) {
-      throw new HarnessFailure(
-        "confirmRed requires an open pending TDD round",
-        "internal",
-        false,
-      );
-    }
-    if (this.ctx.config.git.enabled) {
-      if (!task.redCheckpointSha) {
-        throw new HarnessFailure(
-          "confirmRed requires a recorded RED checkpoint",
-          "internal",
-          false,
-        );
-      }
-      const existing = await this.ctx.git.findRedCheckpoint(task.id);
-      if (!existing || existing.sha !== task.redCheckpointSha) {
-        throw new HarnessFailure(
-          "RED checkpoint missing or mismatched; writeTests owns dangling-checkpoint recovery",
-          "internal",
-          false,
-        );
-      }
-    }
-    return this.updateTask(
-      state,
-      { ...task, step: "implementing" },
-      "task.red_confirmed",
-    );
-  }
-
   async implementTask(state: RunState, task: BuildTask): Promise<RunState> {
-    const redAlreadyDeclaredDone = Boolean(
-      task.tdd &&
-      task.tddLoop?.atVerifiedGreen &&
-      !task.tddLoop.pendingRound &&
-      !task.tddLoop.finalRepairPending &&
-      task.tddLoop.coverage.finalAssessment,
-    );
-    if (redAlreadyDeclaredDone) {
-      return this.updateTask(
-        state,
-        { ...task, step: "verifying", status: "active", failure: undefined },
-        "task.redundant_green_skipped",
-        { reason: "RED already declared done at verified GREEN" },
-      );
-    }
-
     const latestEvidence = task.evidence.at(-1);
     const category = failureCategoryFromEvidence(latestEvidence, "verification");
-    const pendingAttempts = task.tddLoop?.pendingRound?.implementerAttempts ?? 0;
-    // In-round GREEN retries keep the same failing evidence + tree until the agent runs again;
-    // the per-round implementerAttempts budget bounds those retries. Apply the deterministic
-    // no-progress gate for cross-role returns (review) and fresh entries, not mid-round retries.
-    const inRoundGreenRetry = Boolean(task.tdd && pendingAttempts > 0);
-    const inFinalRepairRetry = Boolean(task.tdd && task.tddLoop?.finalRepairPending);
-    const skipProgressGate =
-      latestEvidence?.purpose === "guard:test-integrity" ||
-      inRoundGreenRetry ||
-      inFinalRepairRetry;
-    if (
-      !skipProgressGate &&
-      (task.attempts.implementation > 0 || task.reviewSummary)
-    ) {
+    if (task.attempts.implementation > 0 || task.reviewSummary) {
       const gate = await this.progressGate(task, "implementer", "implementer", latestEvidence);
       if (!gate.allowed) {
         return this.blockNoProgress(state, task, gate.fingerprint, gate.summary);
       }
     }
 
-    let episode = task.tddLoop?.greenImplementerSession;
-    const maxContextTurns = this.ctx.config.workflow.maxContextTurns;
-    if (
-      episode?.providerSessionId &&
-      maxContextTurns > 0 &&
-      (episode.turns ?? 0) >= maxContextTurns
-    ) {
-      const rotatedTurns = episode.turns;
-      await this.ctx.agents.releaseProviderSession(episode.providerSessionId);
-      state = await this.ctx.store.record(
-        {
-          ...state,
-          tasks: state.tasks.map((item) =>
-            item.id === task.id
-              ? {
-                  ...item,
-                  tddLoop: item.tddLoop
-                    ? { ...item.tddLoop, greenImplementerSession: undefined }
-                    : undefined,
-                }
-              : item,
-          ),
-        },
-        "task.tdd_context_rotated",
-        {
-          taskId: task.id,
-          maxContextTurns,
-          turns: rotatedTurns,
-          role: "green-implementer",
-        },
-      );
-      task = {
-        ...task,
-        tddLoop: task.tddLoop
-          ? { ...task.tddLoop, greenImplementerSession: undefined }
-          : undefined,
-      };
-      episode = undefined;
-    }
-    const reuseContext =
-      Boolean(episode?.providerSessionId) && (task.integrityViolationCount ?? 0) === 0;
     const invocationKind: InvocationKind =
-      pendingAttempts > 0 || task.attempts.implementation > 0 || task.reviewSummary
+      task.attempts.implementation > 0 || task.reviewSummary
         ? "implementation-repair"
-        : episode?.providerSessionId
-          ? "continuation"
-          : "initial";
-    const pending = task.tddLoop?.pendingRound;
-    const protectedTests =
-      task.redCheckpointPaths.length > 0 ? task.redCheckpointPaths : task.testPaths;
-    const testCommand = this.resolvedTestCommand(task);
-    const fullImplementerInput = task.tdd
-      ? {
-          task: taskForPacket(task),
-          round: pendingRoundNumber(task.tddLoop),
-          testPathsAdded: pending?.testPathsAdded ?? [],
-          allProtectedTestPaths: protectedTests,
-          behaviorsAdded: pending?.behaviorsAdded ?? [],
-          edgeCasesAdded: pending?.edgeCasesAdded ?? [],
-          testCommand,
-          verifiedCommandOutput: recentEvidenceOutput(task.evidence),
-          reviewFeedback: task.reviewSummary,
-        }
-      : {
-          task: taskForPacket(task),
-          verifiedCommandOutput: recentEvidenceOutput(task.evidence),
-          reviewFeedback: task.reviewSummary,
-        };
-    const continuationInput = reuseContext
-      ? task.tdd
+        : "initial";
+    const fullImplementerInput = {
+      task: taskForPacket(task),
+      verifiedCommandOutput: recentEvidenceOutput(task.evidence),
+      reviewFeedback: task.reviewSummary,
+    };
+    const continuationInput =
+      task.attempts.implementation > 0 || task.reviewSummary
         ? {
-            round: pendingRoundNumber(task.tddLoop),
-            testPathsAdded: pending?.testPathsAdded ?? [],
-            behaviorsAdded: pending?.behaviorsAdded ?? [],
-            edgeCasesAdded: pending?.edgeCasesAdded ?? [],
-            testCommand,
-            lastGreenSummary:
-              task.tddLoop?.completedRounds.at(-1)?.outcome === "already-covered"
-                ? `Round ${task.tddLoop.completedRounds.at(-1)!.number} already covered`
-                : task.tddLoop?.completedRounds.length
-                  ? `Round ${task.tddLoop.completedRounds.at(-1)!.number} independently verified`
-                  : undefined,
-            verifiedCommandOutput: recentEvidenceOutput(task.evidence),
-            reviewFeedback: task.reviewSummary,
-            instruction: "Implement this round without modifying tests.",
-          }
-        : {
             verifiedCommandOutput: recentEvidenceOutput(task.evidence),
             reviewFeedback: task.reviewSummary,
             instruction: "Continue from the latest verified command output and review feedback.",
           }
-      : undefined;
+        : undefined;
 
-    state = await this.ctx.store.record(state, "task.green_requested", {
+    state = await this.ctx.store.record(state, "task.implementation_requested", {
       taskId: task.id,
-      round: pendingRoundNumber(task.tddLoop),
       invocationKind,
-      reuseContext,
     });
 
     const invocation = await this.ctx.agents.invokeInEpisode({
@@ -628,9 +149,13 @@ export class TaskExecutionService {
       objective: `Implement or repair the behavior in “${task.title}”`,
       input: fullImplementerInput,
       continuationInput,
-      expectedOutput: task.tdd ? GREEN_IMPLEMENTER_EXPECTED_OUTPUT : "{summary,changedFiles}",
-      schema: task.tdd ? GreenImplementerOutputSchema : WorkerOutputSchema,
-      constraints: ["Do not commit", "Do not weaken tests", "Stop after this one task"],
+      expectedOutput: "{summary,changedFiles}",
+      schema: WorkerOutputSchema,
+      constraints: [
+        "Do not commit",
+        "Do not write or edit tests",
+        "Stop after this one task",
+      ],
       knowledgeQuery: [task.title, task.description, ...task.acceptanceCriteria].join(" "),
       knowledgeFallbackQuery: compactDomainSeed(
         state.idea,
@@ -638,8 +163,6 @@ export class TaskExecutionService {
         task.title,
         task.description,
       ),
-      providerSessionId: reuseContext ? episode?.providerSessionId : undefined,
-      previousGuidanceFingerprint: reuseContext ? episode?.guidanceFingerprint : undefined,
       signal: this.ctx.signalFor(state.runId),
       causal: {
         taskId: task.id,
@@ -648,38 +171,28 @@ export class TaskExecutionService {
         invocationKind,
         trigger: {
           event:
-            pendingAttempts > 0 || task.attempts.implementation > 0 || task.reviewSummary
+            task.attempts.implementation > 0 || task.reviewSummary
               ? "task.implementation_repair_needed"
               : "task.implementing",
           classification: category,
           summary:
-            pendingAttempts > 0 || task.attempts.implementation > 0 || task.reviewSummary
+            task.attempts.implementation > 0 || task.reviewSummary
               ? "implementation repair from verification evidence"
               : "initial implementation",
           evidenceFingerprint: task.evidenceFingerprint,
         },
       },
     });
-    const result = invocation.value;
-    task = {
-      ...task,
-      tddLoop: withGreenImplementerSession(task.tddLoop, {
-        providerSessionId: invocation.providerSessionId,
-        guidanceFingerprint: invocation.guidanceFingerprint ?? episode?.guidanceFingerprint,
-        turns: (episode?.turns ?? 0) + 1,
-      }),
-    };
+    const workerResult = invocation.value as { summary: string; changedFiles: string[] };
 
-    if (task.tdd) {
-      return this.finishTddGreenRound(state, task, result as GreenImplementerOutput);
-    }
-
-    const workerResult = result as { summary: string; changedFiles: string[] };
-    const integrity = await this.enforceTestIntegrity(state, task, workerResult.changedFiles);
-    state = integrity.state;
-    task = integrity.task;
-    if (integrity.restoredOnly) {
-      return state;
+    const testPatterns = this.ctx.config.workflow.testPathPatterns;
+    const testEdits = workerResult.changedFiles.filter((file) => isTestPath(file, testPatterns));
+    if (testEdits.length > 0) {
+      throw new HarnessFailure(
+        `Implementer must not write tests during executing; test paths: ${testEdits.join(", ")}`,
+        "contract",
+        true,
+      );
     }
 
     const evidence = await this.runTargetedTest(state.runId, task, "test");
@@ -701,7 +214,7 @@ export class TaskExecutionService {
       return this.updateTask(
         await this.ctx.withTreeFingerprint(state),
         updated,
-        "task.green_observed",
+        "task.implementation_verified",
       );
     }
 
@@ -730,239 +243,7 @@ export class TaskExecutionService {
     );
   }
 
-  private async finishTddGreenRound(
-    state: RunState,
-    task: BuildTask,
-    result: GreenImplementerOutput,
-  ): Promise<RunState> {
-    const integrity = await this.enforceTestIntegrity(state, task, result.changedFiles);
-    state = integrity.state;
-    task = integrity.task;
-    if (integrity.restoredOnly) {
-      return state;
-    }
-
-    const attempts = {
-      ...task.attempts,
-      implementation: task.attempts.implementation + 1,
-    };
-
-    if (result.status === "test_issue") {
-      const routeGuard = canRouteTestIssue({ output: result, tddLoop: ensureTddLoop(task) });
-      if (!routeGuard.ok) {
-        throw new HarnessFailure(routeGuard.reason, "contract", true);
-      }
-      const issueEvidence = {
-        purpose: "tdd:test-issue",
-        command: "agent-reported",
-        exitCode: 1,
-        passed: false,
-        stdout: "",
-        stderr: `${result.testPath}: ${result.reason}`.slice(0, 500),
-        durationMs: 0,
-        at: new Date().toISOString(),
-      };
-      const fingerprint = await this.fingerprintFor(
-        { ...task, reviewSummary: result.reason },
-        issueEvidence,
-        "test-issue",
-      );
-      if (task.acceptedTestRepairFingerprints.includes(fingerprint)) {
-        return this.blockNoProgress(
-          state,
-          {
-            ...task,
-            attempts,
-            changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
-            evidence: [...task.evidence, issueEvidence],
-          },
-          fingerprint,
-          "Identical test issue already repaired once for this task",
-        );
-      }
-      const edge = repairEdgeKey(fingerprint, "implementer", "red-writer");
-      const gate = evaluateRepairProgress({
-        fingerprint,
-        lastFingerprint: task.evidenceFingerprint,
-        seenFingerprints: task.seenEvidenceFingerprints,
-        seenEdges: task.seenRepairEdges,
-        fromRole: "implementer",
-        toRole: "red-writer",
-      });
-      if (!gate.allowed) {
-        return this.blockNoProgress(
-          state,
-          {
-            ...task,
-            attempts,
-            changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
-            evidence: [...task.evidence, issueEvidence],
-          },
-          gate.fingerprint,
-          gate.summary,
-        );
-      }
-      const updated: BuildTask = {
-        ...task,
-        attempts,
-        changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
-        evidence: [...task.evidence, issueEvidence],
-        evidenceFingerprint: fingerprint,
-        // Edge tracks the report; acceptedTestRepairFingerprints tracks one accepted repair.
-        // Do not put F in seenEvidenceFingerprints or GREEN resume after repair false-blocks.
-        seenRepairEdges: unique([...task.seenRepairEdges, edge]),
-        tddLoop: withTestRepairPendingRound(ensureTddLoop(task)),
-        step: "writing_tests",
-        status: "active",
-        failure: undefined,
-        reviewSummary: `test_issue: ${result.testPath}: ${result.reason}`.slice(0, 500),
-      };
-      return this.updateTask(
-        await this.ctx.withTreeFingerprint(state),
-        updated,
-        "task.test_issue_reported",
-        {
-          round: pendingRoundNumber(updated.tddLoop),
-          testPath: result.testPath,
-          evidenceFingerprint: fingerprint,
-        },
-      );
-    }
-
-    const testPatterns = this.ctx.config.workflow.testPathPatterns;
-    const productionChanges = result.changedFiles.filter(
-      (file) => !isTestPath(file, testPatterns),
-    );
-    const alreadyGreenWithProduction =
-      result.status === "already_green" && productionChanges.length > 0;
-    const claimStatus =
-      alreadyGreenWithProduction ? ("green" as const) : result.status;
-
-    const evidence = await this.runTargetedTest(state.runId, task, "tdd:green");
-    if (evidence.passed) {
-      const loop = ensureTddLoop(task);
-      if (loop.finalRepairPending) {
-        const updated: BuildTask = {
-          ...task,
-          attempts,
-          changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
-          evidence: [...task.evidence, evidence],
-          tddLoop: withFinalRepairCleared(loop),
-          step: "writing_tests",
-          status: "active",
-          failure: undefined,
-          reviewSummary: undefined,
-        };
-        return this.updateTask(
-          await this.ctx.withTreeFingerprint(state),
-          updated,
-          "task.green_observed",
-          {
-            finalRepair: true,
-            finalRepairAttempts: loop.finalRepairAttempts,
-          },
-        );
-      }
-      const completeGuard = canCompleteTddRound({
-        output: { ...result, status: claimStatus },
-        tddLoop: loop,
-        targetedEvidencePassed: true,
-      });
-      if (!completeGuard.ok) {
-        throw new HarnessFailure(completeGuard.reason, "contract", true);
-      }
-      const outcome =
-        claimStatus === "already_green" ? ("already-covered" as const) : ("implemented" as const);
-      const tddLoop = withCompletedTddRound(loop, {
-        outcome,
-        completedAt: new Date().toISOString(),
-      });
-      const updated: BuildTask = {
-        ...task,
-        attempts,
-        changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
-        evidence: [...task.evidence, evidence],
-        tddLoop,
-        step: "writing_tests",
-        status: "active",
-        failure: undefined,
-        reviewSummary: alreadyGreenWithProduction
-          ? "already_green claimed production changes; treated as green after verification"
-          : undefined,
-      };
-      let nextState = await this.ctx.withTreeFingerprint(state);
-      nextState = await this.ctx.store.record(nextState, "task.tdd_round_completed", {
-        taskId: updated.id,
-        round: loop.pendingRound?.number,
-        outcome,
-        testPathsAdded: loop.pendingRound?.testPathsAdded ?? [],
-      });
-      const event =
-        claimStatus === "already_green" ? "task.green_already_covered" : "task.green_observed";
-      return this.updateTask(nextState, updated, event, {
-        round: loop.pendingRound?.number,
-        outcome,
-      });
-    }
-
-    const fingerprint = await this.fingerprintFor(task, evidence, "verification");
-    const loop = ensureTddLoop(task);
-    const edge = repairEdgeKey(fingerprint, "implementer", "implementer");
-    if (loop.finalRepairPending && !loop.pendingRound) {
-      const updated: BuildTask = {
-        ...task,
-        attempts,
-        changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
-        evidence: [...task.evidence, evidence],
-        evidenceFingerprint: fingerprint,
-        seenEvidenceFingerprints: unique([...task.seenEvidenceFingerprints, fingerprint]),
-        seenRepairEdges: unique([...task.seenRepairEdges, edge]),
-        step: "implementing",
-        status: "active",
-        failure: undefined,
-      };
-      return this.updateTask(
-        await this.ctx.withTreeFingerprint(state),
-        updated,
-        "task.green_rejected",
-        { evidenceFingerprint: fingerprint, finalRepair: true },
-      );
-    }
-    const tddLoop = withIncrementedRoundImplementerAttempt(loop);
-    const canRetry = canRetryRoundImplementation(
-      tddLoop,
-      this.ctx.config.workflow.maxImplementationAttempts,
-    );
-    const updated: BuildTask = {
-      ...task,
-      attempts,
-      changedFiles: unique([...task.changedFiles, ...result.changedFiles]),
-      evidence: [...task.evidence, evidence],
-      evidenceFingerprint: fingerprint,
-      seenEvidenceFingerprints: unique([...task.seenEvidenceFingerprints, fingerprint]),
-      seenRepairEdges: unique([...task.seenRepairEdges, edge]),
-      tddLoop,
-      step: canRetry ? "implementing" : "failed",
-      status: canRetry ? "active" : "failed",
-      failure: canRetry
-        ? undefined
-        : `Targeted test failed after ${tddLoop.pendingRound?.implementerAttempts ?? 0} implementation attempts in round ${pendingRoundNumber(tddLoop)}`,
-    };
-    return this.updateTask(
-      await this.ctx.withTreeFingerprint(state),
-      updated,
-      canRetry ? "task.green_rejected" : "task.implementation_exhausted",
-      { evidenceFingerprint: fingerprint, round: pendingRoundNumber(tddLoop) },
-    );
-  }
-
   async verifyTask(state: RunState, task: BuildTask): Promise<RunState> {
-    if (task.tdd) {
-      const entry = canEnterFinalVerification(task.tddLoop);
-      if (!entry.ok) {
-        throw new HarnessFailure(entry.reason, "contract", true);
-      }
-    }
     const evidence = [];
     for (const verification of this.ctx.config.commands.verification) {
       const result = await this.ctx.deps.commands.run(verification.command, {
@@ -978,17 +259,10 @@ export class TaskExecutionService {
     }
     const passed = evidence.every((item) => item.passed);
     const maxAttempts = this.ctx.config.workflow.maxImplementationAttempts;
-    const canRepair = task.tdd
-      ? canRetryFinalRepair(task.tddLoop, maxAttempts)
-      : task.attempts.implementation < maxAttempts;
-    const tddLoop =
-      !passed && canRepair && task.tdd
-        ? withFinalRepairRouting(ensureTddLoop(task))
-        : task.tddLoop;
+    const canRepair = task.attempts.implementation < maxAttempts;
     const updated: BuildTask = {
       ...task,
       evidence: [...task.evidence, ...evidence],
-      tddLoop,
       step: passed ? "reviewing" : canRepair ? "implementing" : "failed",
       status: passed || canRepair ? "active" : "failed",
       failure:
@@ -1000,18 +274,12 @@ export class TaskExecutionService {
       await this.ctx.withTreeFingerprint(state),
       updated,
       passed ? "task.gates_passed" : "task.gates_failed",
-      task.tdd && !passed
-        ? {
-            finalRepairAttempts: tddLoop?.finalRepairAttempts,
-            finalRepairPending: tddLoop?.finalRepairPending,
-          }
-        : {},
     );
   }
 
   async reviewTask(state: RunState, task: BuildTask): Promise<RunState> {
     const reviewBaseSha =
-      task.tdd && this.ctx.config.git.enabled ? task.redBaseSha : undefined;
+      this.ctx.config.git.enabled ? this.ctx.workspace.baseSha : undefined;
     const changedFiles = !this.ctx.config.git.enabled
       ? task.changedFiles
       : reviewBaseSha
@@ -1025,7 +293,6 @@ export class TaskExecutionService {
             reviewBaseSha ? { baseRef: reviewBaseSha } : undefined,
           )
         : { diff: "", omittedFiles: [] as string[], truncated: false };
-    const completedRounds = task.tddLoop?.completedRounds ?? [];
     const review = await this.ctx.agents.invoke({
       runId: state.runId,
       role: "reviewer",
@@ -1036,23 +303,7 @@ export class TaskExecutionService {
         commandEvidence: recentEvidenceOutput(task.evidence),
         diff: diffResult.diff,
         diffOmittedFiles: diffResult.omittedFiles,
-        ...(task.tdd
-          ? {
-              coverageAssessment: task.tddLoop?.coverage?.finalAssessment,
-              completedRounds: completedRounds.map((round) => ({
-                number: round.number,
-                outcome: round.outcome,
-                behaviorsAdded: round.behaviorsAdded,
-                edgeCasesAdded: round.edgeCasesAdded,
-                testPathsAdded: round.testPathsAdded,
-              })),
-              coverageLedger: {
-                behaviors: task.tddLoop?.coverage?.behaviors ?? [],
-                edgeCases: task.tddLoop?.coverage?.edgeCases ?? [],
-              },
-              reviewDiffBase: reviewBaseSha,
-            }
-          : {}),
+        reviewDiffBase: reviewBaseSha,
       },
       expectedOutput: REVIEW_EXPECTED_OUTPUT,
       schema: ReviewOutputSchema,
@@ -1082,35 +333,22 @@ export class TaskExecutionService {
     let status: BuildTask["status"] = "failed";
     let failure: string | undefined =
       "Review failed and repair budget is exhausted";
-    let tddLoop = task.tddLoop;
 
     if (approved) {
       step = "committing";
       status = "active";
       failure = undefined;
-    } else if (task.tdd) {
-      if (route === "test-coverage" && reviewBudget) {
-        step = "writing_tests";
-        status = "active";
-        failure = undefined;
-      } else if (route === "production" && reviewBudget && canRetryFinalRepair(tddLoop, maxAttempts)) {
-        tddLoop = withFinalRepairRouting(ensureTddLoop(task));
+    } else if (route === "production" || route === "none") {
+      const canRepair = reviewBudget && task.attempts.implementation < maxAttempts;
+      if (canRepair) {
         step = "implementing";
         status = "active";
         failure = undefined;
-      } else if (route === "none" && reviewBudget) {
-        // approved=false with only advisory findings: treat as production repair when budget remains.
-        if (canRetryFinalRepair(tddLoop, maxAttempts)) {
-          tddLoop = withFinalRepairRouting(ensureTddLoop(task));
-          step = "implementing";
-          status = "active";
-          failure = undefined;
-        }
       }
-    } else {
-      const canRepair =
-        reviewBudget && task.attempts.implementation < maxAttempts;
-      if (canRepair) {
+    } else if (route === "test-coverage") {
+      // No task-level test writer yet; record for final review and continue if only advisory-blocking.
+      // Blocking test-coverage without a production finding is advisory at task level.
+      if (reviewBudget && task.attempts.implementation < maxAttempts) {
         step = "implementing";
         status = "active";
         failure = undefined;
@@ -1121,24 +359,15 @@ export class TaskExecutionService {
       ...task,
       attempts,
       reviewSummary,
-      tddLoop,
       step,
       status,
       failure,
     };
-    // diffForPaths may run `git add --intent-to-add`, which changes porcelain; re-stamp so the
-    // next advance does not false-block on workspace divergence.
     return this.updateTask(
       await this.ctx.withTreeFingerprint(state),
       updated,
       approved ? "task.review_passed" : "task.review_failed",
-      task.tdd && !approved
-        ? {
-            reviewRepairRoute: route,
-            finalRepairAttempts: tddLoop?.finalRepairAttempts,
-            finalRepairPending: tddLoop?.finalRepairPending,
-          }
-        : {},
+      approved ? {} : { reviewRepairRoute: route },
     );
   }
 
@@ -1156,23 +385,7 @@ export class TaskExecutionService {
         )
       : MessageOutputSchema.parse(fallback);
     assertCanMarkTaskDone(task);
-    const checkpointShas = unique([
-      ...task.redCheckpointHistory,
-      ...(task.redCheckpointSha ? [task.redCheckpointSha] : []),
-    ]);
-    const commitSha =
-      checkpointShas.length > 0
-        ? await this.ctx.git.squashCheckpointsIntoTaskCommit({
-            taskId: task.id,
-            message,
-            reportedPaths: task.changedFiles,
-            redCheckpointShas: checkpointShas,
-            expectedBranch: state.branchName,
-            baseSha: this.ctx.workspace.baseSha,
-          })
-        : await this.ctx.git.commitTask(task.id, message, task.changedFiles, {
-            redCheckpointShas: checkpointShas,
-          });
+    const commitSha = await this.ctx.git.commitTask(task.id, message, task.changedFiles);
     const graphifyUpdated = includesSourcePath(
       task.changedFiles,
       this.ctx.config.knowledge.graphify.sourceExtensions,
@@ -1183,7 +396,7 @@ export class TaskExecutionService {
       await this.ctx.withTreeFingerprint(state),
       { ...task, status: "done", step: "done", commitSha },
       "task.committed",
-      { commitSha, graphifyUpdated, redCheckpointShas: checkpointShas },
+      { commitSha, graphifyUpdated },
     );
   }
 
@@ -1253,7 +466,6 @@ export class TaskExecutionService {
     this.ctx.bindWorkspace(workspace);
 
     let next: RunState = { ...state, branchName: ensured.branchName };
-    // Audit when we first register a delivery branch for this run (create or attach).
     if (!existing || ensured.created) {
       next = await this.ctx.store.record(next, "run.branch_created", {
         titleSlug,
@@ -1340,59 +552,6 @@ export class TaskExecutionService {
     );
   }
 
-  async setTdd(runId: string, tdd: boolean, taskId?: string): Promise<RunState> {
-    return this.ctx.store.withLock(runId, async () => {
-      let state = await this.ctx.store.load(runId);
-      if (terminal(state.phase)) {
-        throw new Error(`Run ${runId} is already ${state.phase}`);
-      }
-
-      if (taskId) {
-        const task = state.tasks.find((item) => item.id === taskId);
-        if (!task) throw new Error(`Unknown task id: ${taskId}`);
-        if (!canToggleTaskTdd(task)) {
-          throw new Error(
-            `Cannot change TDD for task ${taskId} once past pending (step=${task.step})`,
-          );
-        }
-        state = await this.updateTask(
-          state,
-          { ...task, tdd },
-          "task.tdd_updated",
-          { tdd },
-        );
-        await this.ctx.syncArtifacts(state);
-        return state;
-      }
-
-      const previous = state.tasks;
-      const tasks = previous.map((task) => (canToggleTaskTdd(task) ? { ...task, tdd } : task));
-      const tasksUpdated = tasks.filter((task, index) => task.tdd !== previous[index]?.tdd).length;
-      if (this.ctx.config.workflow.tdd === tdd) {
-        state = await this.ctx.store.record(
-          { ...state, tasks },
-          "run.tdd_updated",
-          { tdd, tasksUpdated },
-        );
-      } else {
-        const result = await updateRunConfig(
-          this.ctx,
-          state.runId,
-          state.configRevision ?? 0,
-          { workflow: { tdd } },
-          { reason: "tdd", detail: { tdd, tasksUpdated } },
-          {
-            alreadyLocked: true,
-            transformState: (next) => ({ ...next, tasks }),
-          },
-        );
-        state = result.state;
-      }
-      await this.ctx.syncArtifacts(state);
-      return state;
-    });
-  }
-
   async setRag(runId: string, rag: boolean): Promise<RunState> {
     return this.ctx.store.withLock(runId, async () => {
       let state = await this.ctx.store.load(runId);
@@ -1461,200 +620,6 @@ export class TaskExecutionService {
     });
   }
 
-  private async establishRedCheckpoint(
-    task: BuildTask,
-    candidatePaths: string[],
-  ): Promise<BuildTask> {
-    if (!this.ctx.config.git.enabled) {
-      return {
-        ...task,
-        redCheckpointPaths: unique([...task.redCheckpointPaths, ...candidatePaths]),
-      };
-    }
-    const existing = await this.ctx.git.findRedCheckpoint(task.id);
-    const testPatterns = this.ctx.config.workflow.testPathPatterns;
-    const allowed = unique(
-      (candidatePaths.length > 0 ? candidatePaths : task.testPaths).filter((file) =>
-        isTestPath(file, testPatterns),
-      ),
-    );
-    if (existing && task.redCheckpointSha === existing.sha) {
-      // Allow a new checkpoint when dirty test paths advanced past the current HEAD checkpoint.
-      const dirty = new Set(await this.ctx.git.changedFiles());
-      const dirtyAllowed = allowed.filter((file) => dirty.has(file));
-      if (dirtyAllowed.length === 0) {
-        return task;
-      }
-    }
-    if (existing && !task.redCheckpointSha) {
-      return {
-        ...task,
-        redBaseSha: task.redBaseSha ?? existing.baseSha,
-        redCheckpointSha: existing.sha,
-        redCheckpointNumber: (task.redCheckpointNumber ?? 0) + 1,
-        redCheckpointPaths: unique([
-          ...task.redCheckpointPaths,
-          ...(existing.paths.length > 0 ? existing.paths : allowed),
-        ]),
-        redCheckpointHistory: unique([...task.redCheckpointHistory, existing.sha]),
-      };
-    }
-    const committed = await this.ctx.git.commitRedCheckpoint({
-      taskId: task.id,
-      taskTitle: task.title,
-      paths: allowed.length > 0 ? allowed : task.testPaths,
-      round: pendingRoundNumber(task.tddLoop),
-    });
-    if (!committed) return task;
-    return {
-      ...task,
-      // Oldest checkpoint parent wins; never overwrite after round one.
-      redBaseSha: task.redBaseSha ?? committed.baseSha,
-      redCheckpointSha: committed.sha,
-      redCheckpointNumber: (task.redCheckpointNumber ?? 0) + 1,
-      redCheckpointPaths: unique([...task.redCheckpointPaths, ...committed.paths]),
-      redCheckpointHistory: unique([...task.redCheckpointHistory, committed.sha]),
-      changedFiles: unique([...task.changedFiles, ...committed.paths]),
-      testPaths: unique([
-        ...task.testPaths,
-        ...committed.paths.filter((file) => isTestPath(file, testPatterns)),
-      ]),
-    };
-  }
-
-  private async enforceTestIntegrity(
-    state: RunState,
-    task: BuildTask,
-    reportedChangedFiles: string[],
-  ): Promise<{ state: RunState; task: BuildTask; restoredOnly: boolean }> {
-    const testPatterns = this.ctx.config.workflow.testPathPatterns;
-    // Integrity protects recorded test paths only — scaffolds may be replaced by the implementer.
-    const recordedAll =
-      task.redCheckpointPaths.length > 0 ? task.redCheckpointPaths : task.testPaths;
-    const recorded = recordedAll.filter((file) => isTestPath(file, testPatterns));
-    if (recorded.length === 0) {
-      return { state, task, restoredOnly: false };
-    }
-    if (!this.ctx.config.git.enabled || !task.redCheckpointSha) {
-      // Legacy / git-disabled fallback: detect reported or porcelain test edits.
-      const observedPaths = this.ctx.config.git.enabled
-        ? await this.ctx.git.changedFiles()
-        : reportedChangedFiles;
-      const touchedTests = observedPaths.filter((file) =>
-        recorded.some((testPath) => normalizePathKey(testPath) === normalizePathKey(file)),
-      );
-      if (touchedTests.length === 0) {
-        return { state, task, restoredOnly: false };
-      }
-      const attempts = {
-        ...task.attempts,
-        implementation: task.attempts.implementation + 1,
-      };
-      const exhausted = attempts.implementation >= this.ctx.config.workflow.maxImplementationAttempts;
-      const failure = `Implementer modified recorded test files: ${touchedTests.join(", ")}`;
-      const updated: BuildTask = {
-        ...task,
-        attempts,
-        changedFiles: unique([...task.changedFiles, ...reportedChangedFiles]),
-        evidence: [
-          ...task.evidence,
-          {
-            purpose: "guard:test-tamper",
-            command: "deterministic-test-path-guard",
-            exitCode: 1,
-            passed: false,
-            stdout: "",
-            stderr: failure,
-            durationMs: 0,
-            at: new Date().toISOString(),
-          },
-        ],
-        step: exhausted ? "failed" : "implementing",
-        status: exhausted ? "failed" : "active",
-        failure: exhausted ? failure : undefined,
-        reviewSummary: failure,
-      };
-      const nextState = await this.updateTask(
-        await this.ctx.withTreeFingerprint(state),
-        updated,
-        "task.implementation_test_tamper",
-        { passed: false },
-      );
-      return { state: nextState, task: updated, restoredOnly: true };
-    }
-    const touched = await this.ctx.git.pathsChangedVersusSha(task.redCheckpointSha, recorded);
-    if (touched.length === 0) {
-      return { state, task, restoredOnly: false };
-    }
-    await this.ctx.git.restorePathsFromSha(task.redCheckpointSha, touched);
-    const dirtyAfter = await this.ctx.git.changedFiles();
-    const productionDirty = dirtyAfter.filter(
-      (file) =>
-        !recorded.some((testPath) => normalizePathKey(testPath) === normalizePathKey(file)),
-    );
-    const violationCount = (task.integrityViolationCount ?? 0) + 1;
-    const releaseContext = violationCount >= 2;
-    let taskAfterRelease = task;
-    if (releaseContext) {
-      taskAfterRelease = await this.ctx.releaseTaskWorkerSessions(task);
-    }
-    const failIntegrity = violationCount >= 3 && productionDirty.length === 0;
-    if (failIntegrity && !releaseContext) {
-      taskAfterRelease = await this.ctx.releaseTaskWorkerSessions(taskAfterRelease);
-    }
-    const updated: BuildTask = {
-      ...taskAfterRelease,
-      integrityViolationCount: violationCount,
-      tddLoop: taskAfterRelease.tddLoop,
-      changedFiles: unique([...task.changedFiles, ...reportedChangedFiles, ...productionDirty]),
-      evidence: [
-        ...task.evidence,
-        {
-          purpose: "guard:test-integrity",
-          command: "restore-from-red-checkpoint",
-          exitCode: failIntegrity ? 1 : 0,
-          passed: !failIntegrity,
-          stdout: `Restored ${touched.join(", ")} from ${task.redCheckpointSha}`,
-          stderr: failIntegrity ? "Repeated test integrity violations without production progress" : "",
-          durationMs: 0,
-          at: new Date().toISOString(),
-        },
-      ],
-      reviewSummary: `Restored recorded tests from RED checkpoint: ${touched.join(", ")}`,
-      step: failIntegrity ? "failed" : "implementing",
-      status: failIntegrity ? "failed" : "active",
-      failure: failIntegrity
-        ? "Repeated test integrity violations without production progress"
-        : undefined,
-    };
-    // Restoration alone does not consume an implementation attempt.
-    const nextState = await this.updateTask(
-      await this.ctx.withTreeFingerprint(state),
-      updated,
-      failIntegrity ? "task.test_integrity_exhausted" : "test_integrity.restored",
-      {
-        restoredPaths: touched,
-        redCheckpointSha: task.redCheckpointSha,
-        consumedImplementationAttempt: false,
-        releasedProviderContext: releaseContext,
-        kind: "test_integrity",
-      },
-    );
-    return {
-      state: nextState,
-      task: updated,
-      restoredOnly: failIntegrity || productionDirty.length === 0,
-    };
-  }
-
-  private resolvedTestCommand(task: BuildTask): string {
-    const primary = this.ctx.config.commands.verification[0]?.command ?? "(unconfigured)";
-    if (!task.testFilter) return primary;
-    const template = this.ctx.config.commands.testTargetTemplate;
-    if (!template || !template.includes("{filter}")) return primary;
-    return template.replaceAll("{filter}", task.testFilter);
-  }
-
   private async fingerprintFor(
     task: BuildTask,
     evidence: BuildTask["evidence"][number] | undefined,
@@ -1666,7 +631,6 @@ export class TaskExecutionService {
       taskId: task.id,
       step: task.step,
       sourceTreeState,
-      redCheckpointSha: task.redCheckpointSha,
       failingTestIds: failingTestIdsFromEvidence(evidence),
       failureCategory:
         fallbackCategory === "test-issue"
@@ -1674,8 +638,6 @@ export class TaskExecutionService {
           : failureCategoryFromEvidence(evidence, fallbackCategory),
       reviewFinding: task.reviewSummary,
       frozenConfigHash: this.ctx.config.workflow.maxImplementationAttempts.toString(),
-      // Constant git-disabled tree state would otherwise collide across rounds.
-      tddRound: gitEnabled ? undefined : pendingRoundNumber(task.tddLoop),
     });
   }
 
@@ -1716,6 +678,4 @@ export class TaskExecutionService {
       kind: "no_progress",
     });
   }
-
 }
-

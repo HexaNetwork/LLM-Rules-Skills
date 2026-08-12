@@ -14,6 +14,8 @@ import {
   PLANNER_EXPECTED_OUTPUT,
   PRD_EXPECTED_OUTPUT,
   PrdSchema,
+  SCENARIO_PLANNER_EXPECTED_OUTPUT,
+  ScenarioPlannerOutputSchema,
   ProjectProfilerOutputSchema,
   VerificationSettingsPatchSchema,
   type CommandEvidence,
@@ -125,13 +127,34 @@ export class PlanningService {
       working = baseline.state;
     }
 
-    // Plan approved (no planReady) but PRD not yet authored.
+    // Plan drafted but PRD not yet authored.
     if (working.plan && !working.prd) {
       return this.authorPrd(working);
     }
 
-    // PRD present but tasks not yet sliced.
-    if (working.prd && working.tasks.length === 0) {
+    // PRD present but scenarios not yet planned.
+    if (working.prd && working.scenarios.length === 0) {
+      return this.planScenarios(working);
+    }
+
+    // Scenarios present but the bundled gate has not been approved yet.
+    if (
+      working.prd &&
+      working.scenarios.length > 0 &&
+      working.tasks.length === 0 &&
+      !pendingPlanReady(working) &&
+      !working.planConfirmedAt
+    ) {
+      return this.openBundledPlanGate(working);
+    }
+
+    // Gate approved (planConfirmedAt set, planReady cleared) but tasks not yet sliced.
+    if (
+      working.prd &&
+      working.scenarios.length > 0 &&
+      working.tasks.length === 0 &&
+      working.planConfirmedAt
+    ) {
       return this.sliceIssues(working);
     }
 
@@ -160,8 +183,10 @@ export class PlanningService {
           {
             ...state,
             planReady: undefined,
+            planConfirmedAt: undefined,
             plan: undefined,
             prd: undefined,
+            scenarios: [],
             tasks: [],
             proposedInstalls: [],
             planFeedback: feedback,
@@ -188,6 +213,7 @@ export class PlanningService {
           ...state,
           plan,
           planReady: undefined,
+          planConfirmedAt: new Date().toISOString(),
           planFeedback: undefined,
           phase: "planning",
         },
@@ -272,12 +298,13 @@ export class PlanningService {
 
     const transition = applyHighLevelPlan(working, invocation.value, now);
 
-    // Persist the plan first so a dirty-tree block does not discard the gate.
+    // Persist the plan first so a dirty-tree block does not discard planning progress.
+    // Stay in `planning` so retry resumes the cold path (PRD → scenarios → gate).
     if (this.ctx.config.git.enabled) {
       const dirty = await this.ctx.git.changedFiles();
       if (dirty.length > 0) {
         await this.ctx.store.persistTransition(working.runId, {
-          state: { ...transition.state, phase: "awaiting_input" },
+          state: transition.state,
           events: transition.events,
         });
         throw new HarnessFailure(
@@ -290,7 +317,8 @@ export class PlanningService {
 
     const persisted = await this.ctx.store.persistTransition(working.runId, transition);
     await this.ctx.syncArtifacts(persisted);
-    return persisted;
+    // Continue cold path: PRD → scenarios → bundled gate (no operator stop yet).
+    return this.authorPrd(persisted);
   }
 
   private async authorPrd(state: RunState): Promise<RunState> {
@@ -358,6 +386,92 @@ export class PlanningService {
       }
     }
 
+    // Continue cold path into scenario planning.
+    return this.planScenarios(next);
+  }
+
+  private async planScenarios(state: RunState): Promise<RunState> {
+    const prd = state.prd;
+    if (!prd) throw new Error("Cannot plan scenarios without a PRD");
+    const plan = state.plan;
+    if (!plan) throw new Error("Cannot plan scenarios without a plan");
+
+    const output = await this.ctx.agents.invoke({
+      runId: state.runId,
+      role: "scenario-planner",
+      objective:
+        "Author intent-level test scenarios covering the PRD user stories and plan approach",
+      input: {
+        prd,
+        plan,
+        userStories: prd.userStories,
+        confirmedBrief: state.reflectBrief?.confirmed,
+        resolutions: state.grillResolutions,
+      },
+      expectedOutput: SCENARIO_PLANNER_EXPECTED_OUTPUT,
+      schema: ScenarioPlannerOutputSchema,
+      knowledgeQuery: [
+        prd.summary,
+        ...prd.userStories,
+        plan.summary,
+        compactDomainSeed(state.reflectBrief?.confirmed),
+      ]
+        .filter(Boolean)
+        .join(" "),
+      knowledgeFallbackQuery: compactDomainSeed(prd.summary, ...prd.userStories),
+      signal: this.ctx.signalFor(state.runId),
+    });
+
+    const scenarios = output.scenarios.map((scenario) => ({
+      ...scenario,
+      taskIds: [] as string[],
+      status: "pending" as const,
+      attempts: 0,
+      writerAttempts: 0,
+      repairAttempts: 0,
+      testPaths: [] as string[],
+      seenEvidenceFingerprints: [] as string[],
+      seenRepairEdges: [] as string[],
+      reviewFindings: [] as string[],
+    }));
+    const next = await this.ctx.store.record(
+      {
+        ...state,
+        scenarios,
+        phase: "planning",
+      },
+      "scenarios.planned",
+      { count: scenarios.length, summary: output.summary },
+    );
+    await this.ctx.syncArtifacts(next);
+    return this.openBundledPlanGate(next);
+  }
+
+  private async openBundledPlanGate(state: RunState): Promise<RunState> {
+    const plan = state.plan;
+    if (!plan) throw new Error("Cannot open plan gate without a plan");
+    if (!state.prd) throw new Error("Cannot open plan gate without a PRD");
+    if (state.scenarios.length === 0) {
+      throw new Error("Cannot open plan gate without scenarios");
+    }
+    const now = new Date().toISOString();
+    const next = await this.ctx.store.record(
+      {
+        ...state,
+        planReady: {
+          summary: `${plan.summary} · ${state.scenarios.length} scenario(s)`,
+          readyAt: now,
+        },
+        phase: "awaiting_input",
+      },
+      "plan.ready",
+      {
+        summary: plan.summary,
+        scenarios: state.scenarios.length,
+        prdSummary: state.prd.summary,
+      },
+    );
+    await this.ctx.syncArtifacts(next);
     return next;
   }
 
@@ -369,13 +483,13 @@ export class PlanningService {
       runId: state.runId,
       role: "issue-slicer",
       objective:
-        "Turn the local PRD into dependency-ordered tracer-bullet implementation tickets",
+        "Turn the local PRD into dependency-ordered tracer-bullet implementation tickets tagged with scenario ids",
       input: {
         prd,
         plan: state.plan,
+        scenarios: state.scenarios,
         confirmedBrief: state.reflectBrief?.confirmed,
         resolutions: state.grillResolutions,
-        defaultTdd: this.ctx.config.workflow.tdd,
         verificationCommands: this.ctx.config.commands.verification,
         testTargetTemplate: this.ctx.config.commands.testTargetTemplate,
       },
@@ -396,7 +510,6 @@ export class PlanningService {
 
     const now = new Date().toISOString();
     const transition = applyPlan(state, output, now, {
-      tdd: this.ctx.config.workflow.tdd,
       branchName: state.branchName,
     });
 

@@ -1005,7 +1005,7 @@ export class RecoveryService {
 
   /**
    * Toggle TDD for the run default and/or a still-pending task.
-   * Refuses once a task has entered writing_tests / implementing work.
+   * Refuses once a task has entered implementing work.
    */
 }
 

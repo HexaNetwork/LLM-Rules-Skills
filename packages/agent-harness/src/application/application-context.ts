@@ -278,27 +278,9 @@ export class ApplicationContext {
     await this.tracker.sync(state);
   }
 
-  /** Release both retained TDD worker sessions (red-writer + green-implementer). */
+  /** Release any retained worker sessions for a finished task. */
   async releaseTaskWorkerSessions(task: BuildTask): Promise<BuildTask> {
-    const red = task.tddLoop?.redWriterSession;
-    const green = task.tddLoop?.greenImplementerSession;
-    if (!red && !green) return task;
-    if (red?.providerSessionId) {
-      await this.agents.releaseProviderSession(red.providerSessionId).catch(() => undefined);
-    }
-    if (green?.providerSessionId) {
-      await this.agents.releaseProviderSession(green.providerSessionId).catch(() => undefined);
-    }
-    return {
-      ...task,
-      tddLoop: task.tddLoop
-        ? {
-            ...task.tddLoop,
-            redWriterSession: undefined,
-            greenImplementerSession: undefined,
-          }
-        : undefined,
-    };
+    return task;
   }
 
   async releaseAllTaskWorkerSessions(state: RunState): Promise<RunState> {

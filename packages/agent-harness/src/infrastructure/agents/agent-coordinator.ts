@@ -50,7 +50,8 @@ type CausalMeta = {
 
 /** Roles that get a tighter document context budget (soft diversity + lower limit). */
 const WORKER_RETRIEVAL_ROLES = new Set<AgentRole>([
-  "red-writer",
+  "scenario-writer",
+  "unit-test-writer",
   "implementer",
   "reviewer",
   "fixer",

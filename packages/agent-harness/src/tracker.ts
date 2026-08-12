@@ -5,9 +5,8 @@ import type {
   OpenUnknown,
   Prd,
   RunState,
-  TddLoop,
+  TestScenario,
 } from "./domain.js";
-import { activeTddRoleLabel, describeActiveTddStatus, pendingRoundNumber } from "./domain.js";
 import { RunStore } from "./store.js";
 
 export interface TrackerPort {
@@ -44,6 +43,11 @@ export class LocalTracker implements TrackerPort {
     }
     if (state.prd) {
       paths.push(await this.store.writeText(state.runId, "prd.md", renderPrd(state.prd)));
+    }
+    if (state.scenarios.length > 0) {
+      paths.push(
+        await this.store.writeText(state.runId, "scenarios.md", renderScenarios(state.scenarios)),
+      );
     }
     for (const task of state.tasks) {
       paths.push(
@@ -197,13 +201,37 @@ ${prd.furtherNotes.trim() || "_None._"}
 `;
 }
 
+function renderScenarios(scenarios: TestScenario[]): string {
+  return `# Test scenarios
+
+${scenarios
+  .map(
+    (scenario) => `## ${escapeHeading(scenario.id)} — ${escapeHeading(scenario.title)}
+
+**Kind:** ${scenario.kind}  
+**Status:** ${scenario.status}  
+**Tasks:** ${scenario.taskIds.length ? scenario.taskIds.join(", ") : "None"}
+
+**Intent:** ${scenario.intent}
+
+- **Given:** ${scenario.given}
+- **When:** ${scenario.when}
+- **Then:** ${scenario.then}
+`,
+  )
+  .join("\n")}`;
+}
+
 function renderTask(task: BuildTask): string {
+  const scenarioLine =
+    task.scenarioIds.length > 0
+      ? `**Scenarios:** ${task.scenarioIds.join(", ")}\n`
+      : "";
   return `# ${escapeHeading(task.title)}
 
 **Status:** ${task.status} / ${task.step}  
 **Blocked by:** ${task.blockedBy.length ? task.blockedBy.join(", ") : "None"}  
-**TDD:** ${task.tdd ? "on" : "off"}
-
+${scenarioLine}
 ## What to build
 
 ${task.description}
@@ -212,7 +240,7 @@ ${task.description}
 
 ${task.acceptanceCriteria.map((criterion) => `- [${task.status === "done" ? "x" : " "}] ${criterion}`).join("\n")}
 
-${renderTddLoop(task)}## Verification
+## Verification
 
 ${
   task.evidence.length
@@ -220,92 +248,6 @@ ${
     : "_Not run._"
 }
 `;
-}
-
-function renderTddLoop(task: BuildTask): string {
-  if (!task.tdd) return "";
-  const loop = task.tddLoop;
-  if (!loop) {
-    return `## TDD loop
-
-_Not started._
-
-`;
-  }
-  const status = describeActiveTddStatus(task);
-  const role = activeTddRoleLabel(task) ?? task.step;
-  const lines = [
-    "## TDD loop",
-    "",
-    `**Round:** ${pendingRoundNumber(loop)} · **Active role:** ${role}`,
-    `**Verified green:** ${loop.atVerifiedGreen ? "yes" : "no"} · **Completed rounds:** ${loop.completedRounds.length}`,
-    `**Retained sessions:** red ${loop.redWriterSession?.turns ?? 0} turns · green ${loop.greenImplementerSession?.turns ?? 0} turns`,
-  ];
-  if (status) lines.push(`**Status:** ${status}`);
-  lines.push("", renderPendingRound(loop), renderCompletedRounds(loop), renderCoverage(loop, task));
-  return `${lines.filter((line, index, all) => !(line === "" && all[index + 1] === "")).join("\n").trim()}\n\n`;
-}
-
-function renderPendingRound(loop: TddLoop): string {
-  const pending = loop.pendingRound;
-  if (!pending) return "### Pending round\n\n_None open._\n";
-  return `### Pending round ${pending.number} (${pending.mode})
-
-- **Behaviors:** ${formatBulletList(pending.behaviorsAdded)}
-- **Edge cases:** ${formatBulletList(pending.edgeCasesAdded)}
-- **Tests:** ${formatBulletList(pending.testPathsAdded)}
-- **Implementer attempts:** ${pending.implementerAttempts}
-- **Checkpoint:** ${pending.redCheckpointSha ? `\`${pending.redCheckpointSha.slice(0, 12)}\`` : "_not committed_"}
-`;
-}
-
-function renderCompletedRounds(loop: TddLoop): string {
-  if (loop.completedRounds.length === 0) return "### Completed rounds\n\n_None yet._\n";
-  return `### Completed rounds
-
-${loop.completedRounds
-  .map((round) => {
-    const outcomeLabel =
-      round.outcome === "already-covered" ? "already-covered (no production delta)" : round.outcome;
-    return `#### Round ${round.number} — ${outcomeLabel}
-
-- **Behaviors:** ${formatBulletList(round.behaviorsAdded)}
-- **Edge cases:** ${formatBulletList(round.edgeCasesAdded)}
-- **Tests:** ${formatBulletList(round.testPathsAdded)}
-- **Targeted verification:** \`${round.targetedEvidencePurpose}\`
-- **Checkpoint:** ${round.redCheckpointSha ? `\`${round.redCheckpointSha.slice(0, 12)}\`` : "_n/a_"}
-- **Completed:** ${round.completedAt}
-`;
-  })
-  .join("\n")}`;
-}
-
-function renderCoverage(loop: TddLoop, task: BuildTask): string {
-  const coverage = loop.coverage;
-  const lines = [
-    "### Coverage ledger",
-    "",
-    `- **Behaviors covered:** ${formatBulletList(coverage.behaviors)}`,
-    `- **Edge cases covered:** ${formatBulletList(coverage.edgeCases)}`,
-  ];
-  const assessment = coverage.finalAssessment;
-  if (!assessment) {
-    lines.push("", "_Final coverage assessment appears when the red-writer declares done._");
-    return `${lines.join("\n")}\n`;
-  }
-  lines.push("", "#### Final coverage assessment", "", assessment.edgeCaseRationale, "");
-  for (const item of assessment.acceptanceCriteria) {
-    const criterion = task.acceptanceCriteria[item.criterionIndex] ?? `criterion ${item.criterionIndex}`;
-    lines.push(
-      `- [${item.covered ? "x" : " "}] ${criterion}`,
-      `  - Verification: ${item.verificationMode}`,
-      ...(item.verificationMode === "automated-test"
-        ? [`  - Tests: ${formatBulletList(item.testPaths)}`]
-        : []),
-      `  - ${item.rationale}`,
-    );
-  }
-  return `${lines.join("\n")}\n`;
 }
 
 function formatBulletList(items: readonly string[]): string {

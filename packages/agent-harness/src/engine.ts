@@ -18,6 +18,9 @@ import { RecoveryService } from "./application/recovery-service.js";
 import { RunAdvancer } from "./application/run-advancer.js";
 import { RunLifecycleService } from "./application/run-lifecycle-service.js";
 import { TaskExecutionService } from "./application/task-execution-service.js";
+import { ScenarioTestingService } from "./application/scenario-testing-service.js";
+import { CrystallizingService } from "./application/crystallizing-service.js";
+import { FinalReviewService } from "./application/final-review-service.js";
 
 export type { HarnessDependencies } from "./application/dependencies.js";
 export type { CancelResult, CleanupResult, MigrateWorkspaceResult } from "./application/helpers.js";
@@ -60,12 +63,18 @@ export class HarnessEngine {
     this.execution = new TaskExecutionService(ctx);
     this.recovery = new RecoveryService(ctx, this.interview);
     this.lifecycle = new RunLifecycleService(ctx, this.recovery);
+    const scenarioTesting = new ScenarioTestingService(ctx);
+    const crystallizing = new CrystallizingService(ctx);
+    const finalReview = new FinalReviewService(ctx);
     this.advancer = new RunAdvancer(
       ctx,
       this.interview,
       this.planning,
       this.execution,
       this.recovery,
+      scenarioTesting,
+      crystallizing,
+      finalReview,
     );
     ctx.setPhaseStepper((state) => this.advancer.advanceOne(state));
   }
@@ -213,10 +222,6 @@ export class HarnessEngine {
     },
   ): Promise<RunState> {
     return this.recovery.applyApprovedFix(runId, options);
-  }
-
-  setTdd(runId: string, tdd: boolean, taskId?: string): Promise<RunState> {
-    return this.execution.setTdd(runId, tdd, taskId);
   }
 
   setRag(runId: string, rag: boolean): Promise<RunState> {

@@ -29,9 +29,17 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "When continuing to author a PRD, expand the approved plan into the PRD sections without inventing scope.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
+  "scenario-planner": [
+    "Do not edit the working tree. Author intent-level test scenarios only — not executable test code or tickets.",
+    "Cover the PRD user stories and plan approach with happy-path and error-path scenarios.",
+    "Each scenario must state intent, given, when, and then in operator-readable language.",
+    "Use stable scenario ids that issue-slicer can reference later.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
+  ],
   "issue-slicer": [
     "Do not edit the working tree. Produce executable tracer-bullet tickets only.",
     "Slice the supplied local PRD into narrow, complete vertical slices — not horizontal layers.",
+    "Tag each task with scenarioIds from the supplied scenario register when the task contributes to that scenario.",
     "Each task must be verifiable in one fresh agent context.",
     "Declare only genuine blocking edges and use the agreed domain vocabulary.",
     "Propose dependency installs needed before implementation in proposedInstalls; do not install them yourself.",
@@ -42,33 +50,32 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "Preserve every acceptance criterion, constraint, selected guidance block, evidence block, and output contract.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
-  "red-writer": [
-    "Edit test files only. Do not add production scaffolds, configuration, localization, implementation wiring, or real behavior.",
-    "Do not run test, compile, build, lint, verification, or other shell commands. The harness owns all command execution.",
-    "Add the minimum discriminating test evidence for one uncovered observable behavior, normally one test method. Use parameterized cases when several examples express the same rule; cases are not separate behaviors.",
-    "Before adding a test, name the distinct plausible defect it detects. Do not add it when an existing test would already fail for substantially the same defect.",
-    "Use one authoritative public seam per behavioral rule. Add lower-level coverage only for independently complex logic or materially better failure diagnosis.",
-    "Add an edge case only when an acceptance criterion requires it, it protects a demonstrated regression, it distinguishes a materially different implementation, or it guards a high-impact failure. Do not enumerate generic edge-case categories by default.",
-    "Treat checked-in configuration values as operator-owned inputs: never assert their exact values, entries, ordering, or enabled identifiers. Test configuration behavior with synthetic min/max boundaries, missing or malformed values, defaults, and validation rules only when those behaviors are part of the software contract. Mark criteria that only select operator-owned values as not-validated; do not validate them another way.",
-    "Reference production types, functions, methods, fields, routes, schema members, or other public interfaces that do not exist yet when that is what the seam requires. Compilation or equivalent pre-execution failure is acceptable until GREEN.",
-    "Test public behavior at the agreed seam with independent expected values. Build on accumulated tests and do not duplicate already covered behaviors.",
-    "At a verified-GREEN checkpoint, default to done. Continue only for a named uncovered acceptance criterion or a distinct high-risk defect the accumulated tests would not detect. Done means sufficient evidence, not exhaustive coverage, and must not change files.",
-    "In the final assessment use automated-test for criteria proven by named test paths, command or inspection for legitimate non-test verification, and not-validated for operator-owned value selections. Non-test modes must have no test paths.",
-    "Do not commit, push, or open a pull request.",
+  "scenario-writer": [
+    "Edit the working tree but never commit, push, or open a pull request.",
+    "Implement the supplied scenario intent as automated tests only — do not change production code.",
+    "Changed files must match the configured test path patterns.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
+  ],
+  "unit-test-writer": [
+    "Edit the working tree but never commit, push, or open a pull request.",
+    "Write unit tests that crystallize current production behavior and raise coverage — do not change production code.",
+    "Changed files must match the configured test path patterns.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   implementer: [
     "Edit the working tree but never commit, push, or open a pull request.",
     "Treat supplied command output as ground truth and fix the reported behavior.",
-    "Do not edit, weaken, delete, or bypass tests.",
+    "Do not write, edit, weaken, delete, or bypass tests during implementation; tests are authored in later run phases.",
+    "During scenario_testing repairs, do not edit scenario test paths supplied in the packet.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   reviewer: [
     "Do not edit files.",
     "Block only for a demonstrable correctness, security, or acceptance failure.",
     "Use advisory findings for optional improvements.",
-    "Every finding must include kind: production (implementation fix), test-coverage (missing tests), or advisory.",
-    "Honor acceptance-criterion verification modes. Operator-owned configuration values marked not-validated are intentionally outside validation; do not request tests, inspection, or command checks for their selected values.",
+    "Every finding must include kind: production, test-coverage, test-design, scenario-intent, or advisory.",
+    "During per-task review, focus on intent-conformance of production changes; test evidence may arrive in later run phases.",
+    "During final_review, consider the full base..HEAD diff plus scenario and coverage evidence.",
     "The diff is the primary evidence. Read the listed omitted files from disk before commenting on them.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
@@ -107,39 +114,16 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
   ],
 };
 
-/** Extra implementer rules applied when the work packet is for a TDD task. */
-export const GREEN_IMPLEMENTER_RULES: readonly string[] = [
-  "You are the green-implementer for this TDD task.",
-  "Edit production paths only; never edit, weaken, delete, or bypass recorded tests.",
-  "Return status green when you implemented the current batch, already_green when the batch already passes without needed production changes, or test_issue when a test is defective or contradicts the agreed seam.",
-  "On test_issue, do not modify the test; report the path, reason, and evidence so the red-writer can repair it.",
-  "Focus on the current coherent batch while respecting the overall public contract; do not intentionally anticipate uncovered behaviors.",
-];
-
 export function roleRulesFor(role: AgentRole): readonly string[] {
   return ROLE_RULES[role];
 }
 
 export function roleRulesForPacket(packet: WorkPacket): readonly string[] {
-  if (packet.role === "implementer" && isTddWorkPacket(packet)) {
-    return [...ROLE_RULES.implementer, ...GREEN_IMPLEMENTER_RULES];
-  }
   return ROLE_RULES[packet.role];
 }
 
 function roleLabelForPacket(packet: WorkPacket): string {
-  if (packet.role === "implementer" && isTddWorkPacket(packet)) return "green-implementer";
   return packet.role;
-}
-
-function isTddWorkPacket(packet: WorkPacket): boolean {
-  if (!isRecord(packet.input)) return false;
-  const task = packet.input.task;
-  return isRecord(task) && task.tdd === true;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Role intro + role rules + compiled guidance pack (no WORK PACKET). */

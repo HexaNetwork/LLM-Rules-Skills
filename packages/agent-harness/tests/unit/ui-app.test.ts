@@ -164,6 +164,10 @@ describe("dashboard document", () => {
     expect(html).toContain("confirm_grill");
     expect(html).toContain("Grilling complete — review before planning");
     expect(html).toContain("!s.grillReady");
+    expect(html).toContain("!s.planReady");
+    expect(html).toContain("!s.verificationReady");
+    expect(html).toContain("!s.verificationBaselineReady");
+    expect(html).toContain("!pendingInstallNotes");
     expect(html).toContain("Review plan, PRD, and scenarios");
     expect(html).toContain("Approve plan");
     expect(html).toContain("confirm_plan");
@@ -470,7 +474,7 @@ describe("dashboard document", () => {
     expect(script).not.toContain("Not created yet");
   });
 
-  it("shows an operator note box during grilling/awaiting_input with an ask-me-about-this toggle", () => {
+  it("shows an operator note box only during interview turns, not beside plan/verification gates", () => {
     const html = renderDashboard();
 
     expect(html).toContain("function renderNoteBox(s)");
@@ -478,6 +482,9 @@ describe("dashboard document", () => {
     expect(html).toContain("Ask me about this");
     expect(html).toContain("will be sent with your next answer");
     expect(html).toContain("action: 'note'");
+    expect(html).toContain("!s.planReady");
+    expect(html).toContain("!s.verificationReady");
+    expect(html).toContain("!pendingInstallNotes");
   });
 
   it("shows pattern-matched remediation copy for common blocked-run causes, with the raw failure kept in a collapsed details", () => {

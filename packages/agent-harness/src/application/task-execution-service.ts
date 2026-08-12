@@ -127,6 +127,9 @@ export class TaskExecutionService {
       task: taskForPacket(task),
       verifiedCommandOutput: recentEvidenceOutput(task.evidence),
       reviewFeedback: task.reviewSummary,
+      verificationCommands: this.ctx.config.commands.verification.map(
+        (command) => command.command,
+      ),
     };
     const continuationInput =
       task.attempts.implementation > 0 || task.reviewSummary
@@ -195,7 +198,7 @@ export class TaskExecutionService {
       );
     }
 
-    const evidence = await this.runTargetedTest(state.runId, task, "test");
+    const evidence = await this.runTaskVerification(state.runId, "test");
     const attempts = {
       ...task.attempts,
       implementation: task.attempts.implementation + 1,
@@ -502,28 +505,9 @@ export class TaskExecutionService {
     }
   }
 
-  async runTargetedTest(runId: string, task: BuildTask, purpose: string) {
+  async runTaskVerification(runId: string, purpose: string) {
     const primary = this.ctx.config.commands.verification[0]!;
-    let command = primary.command;
-    if (task.testFilter) {
-      const template = this.ctx.config.commands.testTargetTemplate;
-      if (!template || !template.includes("{filter}")) {
-        throw new HarnessFailure(
-          `Task ${task.id} requires test filter ${task.testFilter}, but commands.testTargetTemplate is not configured`,
-          "config",
-          false,
-        );
-      }
-      if (!/^[A-Za-z0-9_.$*?/:\\[\]{}-]+$/.test(task.testFilter)) {
-        throw new HarnessFailure(
-          `Task ${task.id} has an unsafe test filter`,
-          "config",
-          false,
-        );
-      }
-      command = template.replaceAll("{filter}", task.testFilter);
-    }
-    const result = await this.ctx.deps.commands.run(command, {
+    const result = await this.ctx.deps.commands.run(primary.command, {
       cwd: this.ctx.paths.workspaceRoot,
       timeoutMs: primary.timeoutMs,
       signal: this.ctx.signalFor(runId),

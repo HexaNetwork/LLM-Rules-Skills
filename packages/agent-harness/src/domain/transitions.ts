@@ -469,7 +469,6 @@ export function materializeTasks(
       acceptanceCriteria: string[];
       affectedPaths?: string[];
       blockedBy: string[];
-      testFilter?: string;
       scenarioIds?: string[];
     }>;
   },
@@ -507,7 +506,6 @@ export function materializeTasks(
       acceptanceCriteria: task.acceptanceCriteria,
       affectedPaths: task.affectedPaths ?? [],
       blockedBy: task.blockedBy.map((id) => idMap.get(id) ?? id),
-      testFilter: task.testFilter,
       status: "pending" as const,
       step: "pending" as const,
       attempts: { implementation: 0, review: 0 },

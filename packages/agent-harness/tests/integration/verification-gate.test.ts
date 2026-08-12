@@ -141,7 +141,9 @@ describe("verification gate integration", () => {
     const slicerCall = scripted.calls.find((call) => call.role === "issue-slicer");
     expect(slicerCall).toBeTruthy();
     const slicerPayload = JSON.stringify(slicerCall?.input);
-    expect(slicerPayload).toContain("npm run test:unit");
+    expect(slicerPayload).not.toContain("npm run test:unit");
+    expect(slicerPayload).not.toMatch(/"testTargetTemplate"\s*:/);
+    expect(slicerPayload).not.toMatch(/"verificationCommands"\s*:/);
     expect(slicerPayload).toContain("confirmedBrief");
     expect(slicerPayload).not.toMatch(/"idea"\s*:/);
     expect(state.tasks[0]?.id).toBe("greet");

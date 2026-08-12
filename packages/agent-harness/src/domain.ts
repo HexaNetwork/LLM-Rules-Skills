@@ -372,7 +372,6 @@ export const BuildTaskSchema = z.object({
   // has made its first edit. Defaults preserve old task artifacts.
   affectedPaths: z.array(z.string().min(1)).default([]),
   blockedBy: z.array(z.string()).default([]),
-  testFilter: z.string().min(1).optional(),
   status: z.enum(["pending", "active", "done", "failed"]),
   step: TaskStepSchema,
   attempts: z.object({
@@ -672,7 +671,6 @@ export const IssueSlicerOutputSchema = z.object({
         acceptanceCriteria: z.array(z.string().min(1)).min(1),
         affectedPaths: z.array(z.string().min(1)).default([]),
         blockedBy: z.array(z.string()),
-        testFilter: z.string().min(1).optional(),
         scenarioIds: z.array(z.string().min(1)).default([]),
       }),
     )
@@ -693,7 +691,7 @@ export const IssueSlicerOutputSchema = z.object({
 export type IssueSlicerOutput = z.infer<typeof IssueSlicerOutputSchema>;
 
 export const ISSUE_SLICER_EXPECTED_OUTPUT =
-  "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,testFilter?,scenarioIds?}],proposedInstalls?:[{id,manager,packages,reason,command?}]}";
+  "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,scenarioIds?}],proposedInstalls?:[{id,manager,packages,reason,command?}]}";
 
 export const PromptBuilderOutputSchema = z.object({
   prompt: z.string().min(1),

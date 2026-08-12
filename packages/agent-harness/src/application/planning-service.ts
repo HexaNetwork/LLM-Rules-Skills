@@ -491,8 +491,6 @@ export class PlanningService {
         scenarios: state.scenarios,
         confirmedBrief: state.reflectBrief?.confirmed,
         resolutions: state.grillResolutions,
-        verificationCommands: this.ctx.config.commands.verification,
-        testTargetTemplate: this.ctx.config.commands.testTargetTemplate,
       },
       expectedOutput: ISSUE_SLICER_EXPECTED_OUTPUT,
       schema: IssueSlicerOutputSchema,

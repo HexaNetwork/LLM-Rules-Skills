@@ -308,11 +308,11 @@ New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI
 
 ## Trust boundary
 
-The harness executes config-owned shell commands in the repository root with a minimal child-process environment. Full verification uses the ordered `commands.verification` collection. Per-task targeting uses only a validated `task.testFilter`, interpolated into the config-owned `commands.testTargetTemplate`; tasks cannot author shell commands.
+The harness executes config-owned shell commands in the repository root with a minimal child-process environment. Full verification uses the ordered `commands.verification` collection. Scenario-level targeted runs interpolate a real, recorded test path into the config-owned `commands.testTargetTemplate`; workers cannot author shell commands.
 
 Keep verification configuration under review and run the harness in a container or VM when the repository or knowledge index may contain untrusted material.
 
-This boundary is enforced by schema validation: verification commands originate in confirmed configuration, and test filters accept only the restricted identifier syntax used by supported test runners.
+This boundary is enforced by schema validation: verification commands originate in confirmed configuration, and targeted scenario runs substitute only recorded test artifact paths.
 
 ## Testing
 

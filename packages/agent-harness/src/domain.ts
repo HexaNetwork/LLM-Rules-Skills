@@ -285,6 +285,10 @@ export const ProjectProfilerOutputSchema = z.object({
 });
 export type ProjectProfilerOutput = z.infer<typeof ProjectProfilerOutputSchema>;
 
+/** Example shape for project-profiler; must stay valid against ProjectProfilerOutputSchema (no commands.test). */
+export const PROJECT_PROFILER_EXPECTED_OUTPUT =
+  '{"summary":"concise explanation","configPatch":{"workflow":{"testPathPatterns":[]},"commands":{"verification":[{"id":"test","command":"…","timeoutMs":600000}],"testTargetTemplate":"… {filter}"}}}';
+
 export const CommandEvidenceSchema = z.object({
   purpose: z.string(),
   command: z.string(),

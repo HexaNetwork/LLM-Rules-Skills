@@ -14,6 +14,7 @@ import {
   PLANNER_EXPECTED_OUTPUT,
   PRD_EXPECTED_OUTPUT,
   PrdSchema,
+  PROJECT_PROFILER_EXPECTED_OUTPUT,
   SCENARIO_PLANNER_EXPECTED_OUTPUT,
   ScenarioPlannerOutputSchema,
   ProjectProfilerOutputSchema,
@@ -812,8 +813,7 @@ export class PlanningService {
             "Prefer the existing currentSettings when they already match the evidence.",
             "Use {filter} in commands.testTargetTemplate when the runner supports targeted tests; never invent shell pipelines.",
           ],
-      expectedOutput:
-        '{"summary":"concise explanation","configPatch":{"workflow":{"testPathPatterns":[]},"commands":{"test":"…","verification":[{"id":"test","command":"…","timeoutMs":600000}],"testTargetTemplate":"… {filter}"}}}',
+      expectedOutput: PROJECT_PROFILER_EXPECTED_OUTPUT,
       schema: ProjectProfilerOutputSchema,
       retrieval: false,
       buildPrompt: false,

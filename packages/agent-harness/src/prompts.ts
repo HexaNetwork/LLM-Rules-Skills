@@ -27,7 +27,7 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "Plan from the confirmed reflect brief and grill resolutions only.",
     "openQuestions should usually be empty after grilling; list only genuine remaining blockers.",
     "When continuing to author a PRD, expand the approved plan into the PRD sections without inventing scope.",
-    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
+    "Return exactly one JSON object matching the expected output contract. Do not write Markdown plan prose, headings, or reports as the deliverable. If you use CreatePlan, the plan body must be that JSON only — not a Markdown research plan.",
   ],
   "scenario-planner": [
     "Do not edit the working tree. Author intent-level test scenarios only — not executable test code or tickets.",
@@ -197,30 +197,36 @@ export function renderContinuationPrompt(
   ].join("\n");
 }
 
-const EPISODE_ROLES = new Set<AgentRole>(["griller"]);
+const CREATE_PLAN_JSON_ROLES = new Set<AgentRole>(["griller", "planner"]);
 
 function outputContractLines(packet: Pick<WorkPacket, "role" | "expectedOutput">): string[] {
-  if (EPISODE_ROLES.has(packet.role)) {
-    return [
+  if (CREATE_PLAN_JSON_ROLES.has(packet.role)) {
+    const lines = [
       "Return exactly one JSON object matching the expected output contract.",
-      "Do not write Markdown interview prose, headings, or reports as the deliverable.",
+      packet.role === "griller"
+        ? "Do not write Markdown interview prose, headings, or reports as the deliverable."
+        : "Do not write Markdown plan prose, headings, or reports as the deliverable.",
       "You may deliver that JSON via CreatePlan or as raw assistant result text.",
       "If using CreatePlan, the plan body is that JSON object (raw or one ```json fence) — nothing else.",
       "Do not write headings, research briefings, tables, or \"JSON alongside this plan\" Markdown in CreatePlan.",
-      "Put codebase facts in JSON fields (summary, question context), not outside the object.",
     ];
+    if (packet.role === "griller") {
+      lines.push(
+        "Put codebase facts in JSON fields (summary, question context), not outside the object.",
+      );
+    }
+    if (packet.role === "planner") {
+      const example = packet.expectedOutput.includes("userStories")
+        ? '{"summary":"...","problemStatement":"...","solution":"...","userStories":["..."],"implementationDecisions":["..."],"testingDecisions":["..."],"outOfScope":["..."],"furtherNotes":"..."}'
+        : '{"summary":"...","problemStatement":"...","solution":"...","approach":"...","constraints":["..."],"outOfScope":["..."],"openQuestions":[]}';
+      lines.push(`Valid shape example: ${example}`);
+    }
+    return lines;
   }
-  const lines = [
+  return [
     "Return exactly one raw JSON object matching the expected output contract.",
     "Do not wrap the object in Markdown or split its fields into separate sections.",
   ];
-  if (packet.role === "planner") {
-    const example = packet.expectedOutput.includes("userStories")
-      ? '{"summary":"...","problemStatement":"...","solution":"...","userStories":["..."],"implementationDecisions":["..."],"testingDecisions":["..."],"outOfScope":["..."],"furtherNotes":"..."}'
-      : '{"summary":"...","problemStatement":"...","solution":"...","approach":"...","constraints":["..."],"outOfScope":["..."],"openQuestions":[]}';
-    lines.push(`Valid shape example: ${example}`);
-  }
-  return lines;
 }
 
 function renderGuidance(packet: WorkPacket): string[] {

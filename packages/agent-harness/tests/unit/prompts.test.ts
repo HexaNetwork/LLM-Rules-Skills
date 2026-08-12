@@ -3,6 +3,8 @@ import type { WorkPacket } from "../../src/domain.js";
 import {
   GRILL_EXPECTED_OUTPUT,
   PRD_EXPECTED_OUTPUT,
+  PROJECT_PROFILER_EXPECTED_OUTPUT,
+  ProjectProfilerOutputSchema,
   REFLECT_EXPECTED_OUTPUT} from "../../src/domain.js";
 import { renderContinuationPrompt, renderPrompt, renderPromptBuilderPrompt } from "../../src/prompts.js";
 
@@ -85,10 +87,13 @@ describe("prompt rendering", () => {
     expect(rendered).not.toContain("---\nname:");
   });
 
-  it("allows grillers to deliver JSON via CreatePlan or assistant result", () => {
+  it("allows grillers and planners to deliver JSON via CreatePlan or assistant result", () => {
     const grillPacket: WorkPacket = { ...packet, role: "griller" };
+    const plannerPacket: WorkPacket = { ...packet, role: "planner" };
     expect(renderPrompt(grillPacket)).toContain("CreatePlan");
     expect(renderContinuationPrompt(grillPacket)).toContain("CreatePlan");
+    expect(renderPrompt(plannerPacket)).toContain("CreatePlan");
+    expect(renderContinuationPrompt(plannerPacket)).toContain("CreatePlan");
     expect(renderPrompt(packet)).not.toContain("CreatePlan");
   });
 
@@ -143,6 +148,36 @@ describe("prompt rendering", () => {
     expect(GRILL_EXPECTED_OUTPUT).toContain("needs_input");
     expect(GRILL_EXPECTED_OUTPUT).toContain("ready_to_plan");
     expect(GRILL_EXPECTED_OUTPUT).toContain("resolutionSummaries");
+  });
+
+  it("keeps project-profiler expectedOutput free of rejected commands.test", () => {
+    // Models copy expectedOutput literally; a stale commands.test key forces schema-repair.
+    expect(PROJECT_PROFILER_EXPECTED_OUTPUT).not.toMatch(/"commands"\s*:\s*\{[^}]*"test"\s*:/);
+    expect(PROJECT_PROFILER_EXPECTED_OUTPUT).toContain('"verification"');
+    expect(PROJECT_PROFILER_EXPECTED_OUTPUT).toContain('"testTargetTemplate"');
+    expect(() =>
+      ProjectProfilerOutputSchema.parse({
+        summary: "ok",
+        configPatch: {
+          workflow: { testPathPatterns: ["tests/**"] },
+          commands: {
+            verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }],
+            testTargetTemplate: "npm test -- {filter}",
+          },
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      ProjectProfilerOutputSchema.parse({
+        summary: "bad",
+        configPatch: {
+          commands: {
+            test: "npm test",
+            verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }],
+          },
+        },
+      }),
+    ).toThrow(/Unrecognized key/);
   });
 
   it("asks the reflector for a concise feature title", () => {
@@ -284,6 +319,25 @@ describe("prompt rendering", () => {
     expect(rendered).toContain("Return exactly one JSON object matching the expected output contract.");
     expect(rendered).toContain("plan body must be that JSON only");
     expect(rendered).toContain("research briefings");
+    expect(rendered).not.toContain("Do not wrap the object in Markdown");
+  });
+
+  it("keeps planner CreatePlan delivery while forbidding Markdown research plans", () => {
+    const plannerPacket: WorkPacket = {
+      ...packet,
+      role: "planner",
+      expectedOutput: "{summary,problemStatement,solution,approach,constraints?,outOfScope?,openQuestions?}",
+    };
+    const rendered = renderPrompt(plannerPacket);
+    const workPacketIndex = rendered.indexOf("WORK PACKET");
+    const afterPacket = rendered.slice(workPacketIndex);
+    expect(afterPacket).toContain("Do not write Markdown plan prose, headings, or reports as the deliverable.");
+    expect(afterPacket).toContain("You may deliver that JSON via CreatePlan");
+    expect(afterPacket).toContain("If using CreatePlan, the plan body is that JSON object");
+    expect(afterPacket).toContain('"JSON alongside this plan"');
+    expect(afterPacket).toContain("Valid shape example:");
+    expect(afterPacket).toContain('"problemStatement"');
+    expect(rendered).toContain("plan body must be that JSON only");
     expect(rendered).not.toContain("Do not wrap the object in Markdown");
   });
 });

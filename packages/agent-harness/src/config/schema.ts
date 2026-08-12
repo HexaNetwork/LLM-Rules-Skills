@@ -5,8 +5,10 @@ import { AgentRoleSchema, type AgentRole } from "../domain.js";
 /** Structural Graphify lookup is valuable for workers that edit or review code. */
 const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
   "planner",
+  "scenario-planner",
   "issue-slicer",
-  "red-writer",
+  "scenario-writer",
+  "unit-test-writer",
   "implementer",
   "reviewer",
 ];
@@ -15,7 +17,7 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  * Bumped when the frozen run-config shape or configuration-hash algorithm changes
  * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
  */
-export const CONFIG_VERSION = 12;
+export const CONFIG_VERSION = 14;
 
 export const VerificationCommandSchema = z.object({
   id: z.string().min(1),
@@ -71,13 +73,14 @@ const GuidanceAssignmentsObjectSchema = z.object({
   reflector: GuidanceAssignmentSchema,
   griller: GuidanceAssignmentSchema,
   planner: GuidanceAssignmentSchema,
+  "scenario-planner": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
   "issue-slicer": GuidanceAssignmentSchema.default({
     rules: [],
     skills: ["prd-to-issues", "domain-modeling", "improve-codebase-architecture"],
   }),
   "prompt-builder": GuidanceAssignmentSchema,
-  // Default keeps older assignment maps valid when this role is introduced.
-  "red-writer": GuidanceAssignmentSchema.default({ rules: [], skills: ["red-writer-tdd"] }),
+  "scenario-writer": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
+  "unit-test-writer": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
   implementer: GuidanceAssignmentSchema,
   reviewer: GuidanceAssignmentSchema,
   "message-writer": GuidanceAssignmentSchema,
@@ -87,13 +90,15 @@ const GuidanceAssignmentsObjectSchema = z.object({
   "project-profiler": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
 }).strict();
 
-/** Strip the deleted test-writer role from legacy assignment maps before strict parse. */
+/** Strip deleted roles from legacy assignment maps before strict parse. */
 const GuidanceAssignmentsSchema = z.preprocess((value) => {
-  if (value && typeof value === "object" && !Array.isArray(value) && "test-writer" in value) {
-    const { ["test-writer"]: _removed, ...rest } = value as Record<string, unknown>;
-    return rest;
-  }
-  return value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const {
+    ["test-writer"]: _testWriter,
+    ["red-writer"]: _redWriter,
+    ...rest
+  } = value as Record<string, unknown>;
+  return rest;
 }, GuidanceAssignmentsObjectSchema);
 
 /** Authoritative guidance map applied when `knowledge.guidance.assignments` is omitted. */
@@ -101,16 +106,18 @@ export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsObj
   reflector: { rules: [], skills: ["domain-modeling"] },
   griller: { rules: [], skills: ["grill-me", "domain-modeling"] },
   planner: { rules: [], skills: ["domain-modeling", "to-prd"] },
+  "scenario-planner": { rules: [], skills: [] },
   "issue-slicer": {
     rules: [],
     skills: ["prd-to-issues", "domain-modeling", "improve-codebase-architecture"],
   },
   "prompt-builder": { rules: [], skills: [] },
-  "red-writer": { rules: [], skills: ["red-writer-tdd"] },
-  implementer: { rules: [], skills: ["tdd"] },
+  "scenario-writer": { rules: [], skills: [] },
+  "unit-test-writer": { rules: [], skills: [] },
+  implementer: { rules: [], skills: [] },
   reviewer: { rules: [], skills: ["code-review"] },
   "message-writer": { rules: [], skills: [] },
-  fixer: { rules: [], skills: ["diagnose", "tdd"] },
+  fixer: { rules: [], skills: ["diagnose"] },
   "config-fixer": { rules: [], skills: [] },
   "project-profiler": { rules: [], skills: [] },
 };
@@ -175,7 +182,6 @@ export const HarnessConfigSchema = z.object({
     .default({}),
   workflow: z
     .object({
-      tdd: z.boolean().default(true),
       /** Document RAG into work packets; independent of Graphify and guidance. */
       rag: z.boolean().default(true),
       // Hard spend ceilings enforced between steps; 0 = unlimited.
@@ -188,11 +194,19 @@ export const HarnessConfigSchema = z.object({
       maxContextTurns: z.number().int().nonnegative().default(0),
       // Automatic in-place retries for transient provider failures inside advance().
       maxProviderRetries: z.number().int().min(0).max(5).default(2),
-      // Per-round RED schema/path/test-repair revision limit — not RED/GREEN round count.
-      maxTestAttempts: z.number().int().positive().max(10).default(2),
-      // Per-round GREEN attempt limit; resets after each verified GREEN round.
+      // Implementation attempt limit per task during executing.
       maxImplementationAttempts: z.number().int().positive().max(10).default(3),
       maxReviewAttempts: z.number().int().positive().max(10).default(2),
+      // Holistic final-review attempts after crystallizing (separate from per-task budgets).
+      maxFinalReviewAttempts: z.number().int().positive().max(10).default(2),
+      coverage: z
+        .object({
+          enabled: z.boolean().default(false),
+          threshold: z.number().min(0).max(1).default(0.9),
+          scope: z.enum(["changed", "all"]).default("changed"),
+          maxAttempts: z.number().int().positive().max(10).default(3),
+        })
+        .default({}),
       // Grill-me reuses one provider session for this many Q→A turns, then
       // rolls to a fresh agent with a compact brief of resolutions so far.
       maxGrillQuestionsPerEpisode: z.number().int().positive().max(50).default(5),
@@ -212,7 +226,7 @@ export const HarnessConfigSchema = z.object({
       graphifyCharacters: z.number().int().positive().default(3_000),
       // Per-task commit subjects use the deterministic fallback unless enabled.
       generateCommitMessages: z.boolean().default(false),
-      // Globs that mark paths as test files for red-writer legality checks.
+      // Globs that mark paths as test files for test-writer path validation.
       testPathPatterns: z.array(z.string().min(1)).default([
         "tests/**",
         "test/**",
@@ -236,6 +250,15 @@ export const HarnessConfigSchema = z.object({
       verification: z.array(VerificationCommandSchema).min(1),
       /** Config-owned targeted-test command. `{filter}` is replaced by the task filter. */
       testTargetTemplate: z.string().min(1).optional(),
+      /** Optional coverage measurement; required when workflow.coverage.enabled. */
+      coverage: z
+        .object({
+          command: z.string().min(1),
+          reportPath: z.string().min(1),
+          format: z.enum(["lcov", "cobertura", "clover"]),
+          timeoutMs: z.number().int().positive().default(10 * 60 * 1000),
+        })
+        .optional(),
       // Child processes intentionally start with a minimal environment. Projects
       // can opt individual non-secret variables back in when their test/build
       // command needs them.
@@ -355,6 +378,14 @@ export const HarnessConfigSchema = z.object({
     })
     .default({}),
   tracker: z.object({ kind: z.literal("local").default("local") }).default({}),
+}).superRefine((config, ctx) => {
+  if (config.workflow.coverage.enabled && !config.commands.coverage) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "commands.coverage is required when workflow.coverage.enabled is true",
+      path: ["commands", "coverage"],
+    });
+  }
 });
 
 export type HarnessConfig = z.infer<typeof HarnessConfigSchema>;
@@ -404,8 +435,17 @@ export const RunPolicyPatchSchema = z
         testPathPatterns: z.array(z.string().min(1)).max(500).optional(),
         maxRunTokens: z.number().int().nonnegative().optional(),
         maxRunCostUsd: z.number().nonnegative().optional(),
-        tdd: z.boolean().optional(),
         rag: z.boolean().optional(),
+        maxFinalReviewAttempts: z.number().int().positive().max(10).optional(),
+        coverage: z
+          .object({
+            enabled: z.boolean().optional(),
+            threshold: z.number().min(0).max(1).optional(),
+            scope: z.enum(["changed", "all"]).optional(),
+            maxAttempts: z.number().int().positive().max(10).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),
@@ -413,6 +453,15 @@ export const RunPolicyPatchSchema = z
       .object({
         verification: z.array(VerificationCommandSchema).min(1).optional(),
         testTargetTemplate: z.string().min(1).optional(),
+        coverage: z
+          .object({
+            command: z.string().min(1),
+            reportPath: z.string().min(1),
+            format: z.enum(["lcov", "cobertura", "clover"]),
+            timeoutMs: z.number().int().positive().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

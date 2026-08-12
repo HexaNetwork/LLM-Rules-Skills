@@ -15,7 +15,9 @@ import {
   type ReflectOutput,
   type RunPhase,
   type RunState,
+  type TestScenario,
 } from "../domain.js";
+import { HarnessFailure } from "../errors.js";
 import {
   assertAcyclic,
   assertCanAdvance,
@@ -38,7 +40,6 @@ export type GrillInput = {
 };
 
 export type PlanTransitionConfig = {
-  tdd: boolean;
   branchName?: string;
 };
 
@@ -311,13 +312,14 @@ export function applyHighLevelPlan(
   if (hasOpenQuestionBatch(state)) {
     throw new Error("Only one active question batch is allowed");
   }
+  // Intent-first: store the plan and stay in planning so PRD + scenarios run
+  // before the single combined operator gate.
   return {
     state: {
       ...state,
       plan,
-      planReady: { summary: plan.summary, readyAt: now },
       planFeedback: undefined,
-      phase: "awaiting_input",
+      phase: "planning",
       updatedAt: now,
     },
     events: [
@@ -340,7 +342,10 @@ export function applyPlan(
   if (hasOpenQuestionBatch(state)) {
     throw new Error("Only one active question batch is allowed");
   }
-  const tasks = materializeTasks(output, config);
+  const { tasks, scenarios } = materializeTasks(output, {
+    ...config,
+    scenarios: state.scenarios,
+  });
   assertAcyclic(tasks);
   const proposedInstalls = materializeProposedInstalls(output.proposedInstalls ?? []);
   const nextPhase: RunPhase = proposedInstalls.length > 0 ? "awaiting_input" : "executing";
@@ -354,6 +359,7 @@ export function applyPlan(
     state: {
       ...state,
       tasks,
+      scenarios,
       proposedInstalls,
       branchName: config.branchName ?? state.branchName,
       phase: nextPhase,
@@ -364,7 +370,6 @@ export function applyPlan(
         type: "tasks.materialized",
         detail: {
           tasks: tasks.length,
-          tdd: tasks.filter((task) => task.tdd).length,
           proposedInstalls: proposedInstalls.length,
           summary: output.summary,
         },
@@ -464,12 +469,14 @@ export function materializeTasks(
       acceptanceCriteria: string[];
       affectedPaths?: string[];
       blockedBy: string[];
-      tdd?: boolean;
       testFilter?: string;
+      scenarioIds?: string[];
     }>;
   },
-  config: PlanTransitionConfig,
-): BuildTask[] {
+  config: PlanTransitionConfig & { scenarios?: TestScenario[] } = {},
+): { tasks: BuildTask[]; scenarios: TestScenario[] } {
+  const scenarios = config.scenarios ?? [];
+  const knownScenarioIds = new Set(scenarios.map((scenario) => scenario.id));
   const idMap = new Map<string, string>();
   const used = new Set<string>();
   for (const [index, task] of output.tasks.entries()) {
@@ -482,28 +489,49 @@ export function materializeTasks(
     used.add(id);
     idMap.set(task.id, id);
   }
-  return output.tasks.map((task) => ({
-    id: idMap.get(task.id)!,
-    title: task.title,
-    description: task.description,
-    acceptanceCriteria: task.acceptanceCriteria,
-    affectedPaths: task.affectedPaths ?? [],
-    blockedBy: task.blockedBy.map((id) => idMap.get(id) ?? id),
-    tdd: task.tdd ?? config.tdd,
-    testFilter: task.testFilter,
-    status: "pending" as const,
-    step: "pending" as const,
-    attempts: { tests: 0, implementation: 0, review: 0 },
-    evidence: [],
-    testPaths: [],
-    redCheckpointPaths: [],
-    changedFiles: [],
-    redCheckpointHistory: [],
-    seenEvidenceFingerprints: [],
-    seenRepairEdges: [],
-    acceptedTestRepairFingerprints: [],
-    integrityViolationCount: 0,
+  const tasks = output.tasks.map((task) => {
+    const scenarioIds = task.scenarioIds ?? [];
+    for (const scenarioId of scenarioIds) {
+      if (!knownScenarioIds.has(scenarioId)) {
+        throw new HarnessFailure(
+          `${task.id} references unknown scenario ${scenarioId}`,
+          "internal",
+          false,
+        );
+      }
+    }
+    return {
+      id: idMap.get(task.id)!,
+      title: task.title,
+      description: task.description,
+      acceptanceCriteria: task.acceptanceCriteria,
+      affectedPaths: task.affectedPaths ?? [],
+      blockedBy: task.blockedBy.map((id) => idMap.get(id) ?? id),
+      testFilter: task.testFilter,
+      status: "pending" as const,
+      step: "pending" as const,
+      attempts: { implementation: 0, review: 0 },
+      evidence: [],
+      testPaths: [],
+      changedFiles: [],
+      seenEvidenceFingerprints: [],
+      seenRepairEdges: [],
+      scenarioIds,
+    };
+  });
+  const reverse = new Map<string, string[]>();
+  for (const task of tasks) {
+    for (const scenarioId of task.scenarioIds) {
+      const list = reverse.get(scenarioId) ?? [];
+      list.push(task.id);
+      reverse.set(scenarioId, list);
+    }
+  }
+  const nextScenarios = scenarios.map((scenario) => ({
+    ...scenario,
+    taskIds: reverse.get(scenario.id) ?? [],
   }));
+  return { tasks, scenarios: nextScenarios };
 }
 
 export function materializeProposedInstalls(

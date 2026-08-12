@@ -168,6 +168,28 @@ export const PlanReadyGateSchema = z.object({
 });
 export type PlanReadyGate = z.infer<typeof PlanReadyGateSchema>;
 
+export const TestScenarioSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  kind: z.enum(["happy-path", "error-path"]),
+  intent: z.string().min(1),
+  given: z.string().min(1),
+  when: z.string().min(1),
+  then: z.string().min(1),
+  taskIds: z.array(z.string()).default([]),
+  status: z.enum(["pending", "active", "passing", "failed"]).default("pending"),
+  attempts: z.number().int().nonnegative().default(0),
+  writerAttempts: z.number().int().nonnegative().default(0),
+  repairAttempts: z.number().int().nonnegative().default(0),
+  testPaths: z.array(z.string()).default([]),
+  evidenceFingerprint: z.string().optional(),
+  seenEvidenceFingerprints: z.array(z.string()).default([]),
+  seenRepairEdges: z.array(z.string()).default([]),
+  /** Findings handed back from final_review for scenario-intent repairs. */
+  reviewFindings: z.array(z.string()).default([]),
+});
+export type TestScenario = z.infer<typeof TestScenarioSchema>;
+
 /** High-level plan the operator reviews before PRD + issue slicing. */
 export const HighLevelPlanSchema = z.object({
   summary: z.string().min(1),
@@ -318,95 +340,24 @@ export const InstallLogEntrySchema = z.object({
 });
 export type InstallLogEntry = z.infer<typeof InstallLogEntrySchema>;
 
-/** Retained provider episode for a TDD worker role (red-writer or green-implementer). */
-export const WorkerEpisodeSchema = z.object({
-  providerSessionId: z.string().min(1).optional(),
-  guidanceFingerprint: z.string().optional(),
-  turns: z.number().int().nonnegative().default(0),
-});
-export type WorkerEpisode = z.infer<typeof WorkerEpisodeSchema>;
-
-export const TddPendingRoundSchema = z.object({
-  number: z.number().int().positive(),
-  // A test_issue repair flips mode in place; number and implementerAttempts are unchanged.
-  // Only a completed GREEN round clears the pending round and advances the round counter.
-  mode: z.enum(["feature", "test-repair"]),
-  redCheckpointSha: z.string().optional(),
-  testPathsAdded: z.array(z.string()).default([]),
-  behaviorsAdded: z.array(z.string().min(1)).default([]),
-  edgeCasesAdded: z.array(z.string().min(1)).default([]),
-  implementerAttempts: z.number().int().nonnegative().default(0),
-  startedAt: z.string(),
-});
-export type TddPendingRound = z.infer<typeof TddPendingRoundSchema>;
-
-/** Purpose recorded on completed-round ledger entries (matches CommandEvidence.purpose). */
-export const TDD_GREEN_EVIDENCE_PURPOSE = "tdd:green" as const;
-
-export const TddCompletedRoundSchema = z.object({
-  number: z.number().int().positive(),
-  outcome: z.enum(["implemented", "already-covered"]),
-  redCheckpointSha: z.string().optional(),
-  testPathsAdded: z.array(z.string()),
-  behaviorsAdded: z.array(z.string()),
-  edgeCasesAdded: z.array(z.string()),
-  targetedEvidencePurpose: z.string().default(TDD_GREEN_EVIDENCE_PURPOSE),
-  completedAt: z.string(),
-});
-export type TddCompletedRound = z.infer<typeof TddCompletedRoundSchema>;
-
-export const AcceptanceVerificationModeSchema = z.enum([
-  "automated-test",
-  "command",
-  "inspection",
-  "not-validated",
+/**
+ * Active task steps for the intent-first workflow.
+ * Legacy `writing_tests` / `red` remain readable so historical state.json files
+ * still parse in the UI read model; pre-redesign runs cannot be resumed.
+ */
+export const ActiveTaskStepSchema = z.enum([
+  "pending",
+  "implementing",
+  "verifying",
+  "reviewing",
+  "committing",
+  "done",
+  "failed",
 ]);
-export type AcceptanceVerificationMode = z.infer<typeof AcceptanceVerificationModeSchema>;
-
-export const TddAcceptanceCoverageItemSchema = z
-  .object({
-    criterionIndex: z.number().int().nonnegative(),
-    covered: z.boolean(),
-    verificationMode: AcceptanceVerificationModeSchema.default("automated-test"),
-    testPaths: z.array(z.string()).default([]),
-    rationale: z.string().min(1),
-  })
-  .superRefine((item, ctx) => {
-    if (item.verificationMode !== "automated-test" && item.testPaths.length > 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["testPaths"],
-        message: `${item.verificationMode} criteria may not claim automated test paths`,
-      });
-    }
-  });
-export type TddAcceptanceCoverageItem = z.infer<typeof TddAcceptanceCoverageItemSchema>;
-
-export const TddCoverageAssessmentSchema = z.object({
-  acceptanceCriteria: z.array(TddAcceptanceCoverageItemSchema),
-  edgeCaseRationale: z.string().min(1),
-});
-export type TddCoverageAssessment = z.infer<typeof TddCoverageAssessmentSchema>;
-
-export const TddCoverageLedgerSchema = z.object({
-  behaviors: z.array(z.string().min(1)).default([]),
-  edgeCases: z.array(z.string().min(1)).default([]),
-  finalAssessment: TddCoverageAssessmentSchema.optional(),
-});
-export type TddCoverageLedger = z.infer<typeof TddCoverageLedgerSchema>;
-
-export const TddLoopSchema = z.object({
-  round: z.number().int().positive().default(1),
-  atVerifiedGreen: z.boolean().default(false),
-  finalRepairPending: z.boolean().default(false),
-  finalRepairAttempts: z.number().int().nonnegative().default(0),
-  redWriterSession: WorkerEpisodeSchema.optional(),
-  greenImplementerSession: WorkerEpisodeSchema.optional(),
-  pendingRound: TddPendingRoundSchema.optional(),
-  completedRounds: z.array(TddCompletedRoundSchema).default([]),
-  coverage: TddCoverageLedgerSchema.default({}),
-});
-export type TddLoop = z.infer<typeof TddLoopSchema>;
+/** @deprecated Legacy TDD steps retained for read-only historical run artifacts. */
+export const LegacyTaskStepSchema = z.enum(["writing_tests", "red"]);
+export const TaskStepSchema = z.union([ActiveTaskStepSchema, LegacyTaskStepSchema]);
+export type TaskStep = z.infer<typeof TaskStepSchema>;
 
 export const BuildTaskSchema = z.object({
   id: z.string().min(1),
@@ -417,63 +368,35 @@ export const BuildTaskSchema = z.object({
   // has made its first edit. Defaults preserve old task artifacts.
   affectedPaths: z.array(z.string().min(1)).default([]),
   blockedBy: z.array(z.string()).default([]),
-  tdd: z.boolean(),
   testFilter: z.string().min(1).optional(),
   status: z.enum(["pending", "active", "done", "failed"]),
-  step: z.enum([
-    "pending",
-    "writing_tests",
-    "red",
-    "implementing",
-    "verifying",
-    "reviewing",
-    "committing",
-    "done",
-    "failed",
-  ]),
+  step: TaskStepSchema,
   attempts: z.object({
-    tests: z.number().int().nonnegative(),
     implementation: z.number().int().nonnegative(),
     review: z.number().int().nonnegative(),
   }),
   evidence: z.array(CommandEvidenceSchema).default([]),
-  // Test files from RED / test-repair; implementer edits to these are blocked.
+  // Scenario / unit test paths recorded after writing phases (not during executing).
   testPaths: z.array(z.string()).default([]),
-  // Paths committed into the RED checkpoint (test-only under the alternating loop).
-  // Integrity restores recorded test paths only.
-  redCheckpointPaths: z.array(z.string()).default([]),
   changedFiles: z.array(z.string()).default([]),
   reviewSummary: z.string().optional(),
   commitSha: z.string().optional(),
-  // Production tree SHA immediately before the RED checkpoint commit.
-  redBaseSha: z.string().optional(),
-  // Authoritative failing-test checkpoint commit SHA.
-  redCheckpointSha: z.string().optional(),
-  redCheckpointNumber: z.number().int().nonnegative().optional(),
-  // Prior RED checkpoint SHAs retained for provenance / final squash trailers.
-  redCheckpointHistory: z.array(z.string()).default([]),
   failure: z.string().optional(),
   // Last failed-transition fingerprint; identical evidence blocks another model call.
   evidenceFingerprint: z.string().optional(),
   seenEvidenceFingerprints: z.array(z.string()).default([]),
   // Role-transition edges already taken for a fingerprint (prevents ping-pong).
   seenRepairEdges: z.array(z.string()).default([]),
-  // Accepted test-repair fingerprints (at most one per implementation failure by default).
-  acceptedTestRepairFingerprints: z.array(z.string()).default([]),
-  integrityViolationCount: z.number().int().nonnegative().default(0),
-  // Alternating RED/GREEN loop ledger + retained worker episodes (TDD tasks).
-  tddLoop: TddLoopSchema.optional(),
+  // Scenario ids this task is tagged to cover (populated by the issue-slicer).
+  scenarioIds: z.array(z.string()).default([]),
 });
 export type BuildTask = z.infer<typeof BuildTaskSchema>;
 
 /** Defaults for newly introduced task-tracking fields (safe for manual test fixtures). */
 export const BUILD_TASK_TRACKING_DEFAULTS = {
-  redCheckpointPaths: [] as string[],
-  redCheckpointHistory: [] as string[],
   seenEvidenceFingerprints: [] as string[],
   seenRepairEdges: [] as string[],
-  acceptedTestRepairFingerprints: [] as string[],
-  integrityViolationCount: 0,
+  scenarioIds: [] as string[],
 };
 
 export const RunPhaseSchema = z.enum([
@@ -483,6 +406,9 @@ export const RunPhaseSchema = z.enum([
   "grilling",
   "planning",
   "executing",
+  "scenario_testing",
+  "crystallizing",
+  "final_review",
   "publishing",
   "completed",
   "blocked",
@@ -567,6 +493,20 @@ export const RunStateSchema = z.object({
   plan: HighLevelPlanSchema.optional(),
   // Local PRD authored after plan approval (synced to prd.md).
   prd: PrdSchema.optional(),
+  // Intent scenarios authored after the PRD; approved with the plan gate.
+  scenarios: z.array(TestScenarioSchema).default([]),
+  // Coverage measurement from the crystallizing phase (optional).
+  coverage: z
+    .object({
+      percentage: z.number().min(0).max(1),
+      scope: z.enum(["changed", "all"]),
+      fallback: z.boolean().default(false),
+      measuredAt: z.string(),
+      attempts: z.number().int().nonnegative().default(0),
+    })
+    .optional(),
+  // Holistic final-review attempt counter (separate from per-task budgets).
+  finalReviewAttempts: z.number().int().nonnegative().default(0),
   // Feedback that reopens planning; consumed on the next planner invoke.
   planFeedback: z.string().optional(),
   activeQuestionId: z.string().optional(),
@@ -589,6 +529,8 @@ export const RunStateSchema = z.object({
   plannerEpisode: PlannerEpisodeSchema.optional(),
   // Set when the planner finished a high-level plan; cleared by confirmPlan.
   planReady: PlanReadyGateSchema.optional(),
+  // Set when the operator approves the bundled plan/PRD/scenarios gate; cleared on feedback.
+  planConfirmedAt: z.string().optional(),
   // Set when project-profiler proposes verification settings; cleared on confirm.
   verificationReady: VerificationReadyGateSchema.optional(),
   // Set once the operator confirms verification; skips re-proposal on resume.
@@ -636,9 +578,11 @@ export const AgentRoleSchema = z.enum([
   "reflector",
   "griller",
   "planner",
+  "scenario-planner",
   "issue-slicer",
   "prompt-builder",
-  "red-writer",
+  "scenario-writer",
+  "unit-test-writer",
   "implementer",
   "reviewer",
   "message-writer",
@@ -691,6 +635,27 @@ export const PLANNER_EXPECTED_OUTPUT =
 export const PRD_EXPECTED_OUTPUT =
   "{summary:string,problemStatement:string,solution:string,userStories:[string],implementationDecisions:[string]?,testingDecisions:[string]?,outOfScope:[string]?,furtherNotes:string?}";
 
+export const ScenarioPlannerOutputSchema = z.object({
+  summary: z.string().min(1),
+  scenarios: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        title: z.string().min(1),
+        kind: z.enum(["happy-path", "error-path"]),
+        intent: z.string().min(1),
+        given: z.string().min(1),
+        when: z.string().min(1),
+        then: z.string().min(1),
+      }),
+    )
+    .min(1),
+});
+export type ScenarioPlannerOutput = z.infer<typeof ScenarioPlannerOutputSchema>;
+
+export const SCENARIO_PLANNER_EXPECTED_OUTPUT =
+  "{summary,scenarios:[{id,title,kind:'happy-path'|'error-path',intent,given,when,then}]}";
+
 /** Fresh issue-slicer output: executable BuildTasks (+ optional installs). */
 export const IssueSlicerOutputSchema = z.object({
   summary: z.string().min(1),
@@ -703,8 +668,8 @@ export const IssueSlicerOutputSchema = z.object({
         acceptanceCriteria: z.array(z.string().min(1)).min(1),
         affectedPaths: z.array(z.string().min(1)).default([]),
         blockedBy: z.array(z.string()),
-        tdd: z.boolean().optional(),
         testFilter: z.string().min(1).optional(),
+        scenarioIds: z.array(z.string().min(1)).default([]),
       }),
     )
     .min(1),
@@ -724,7 +689,7 @@ export const IssueSlicerOutputSchema = z.object({
 export type IssueSlicerOutput = z.infer<typeof IssueSlicerOutputSchema>;
 
 export const ISSUE_SLICER_EXPECTED_OUTPUT =
-  "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,tdd?,testFilter?}],proposedInstalls?:[{id,manager,packages,reason,command?}]}";
+  "{summary,tasks:[{id,title,description,acceptanceCriteria,affectedPaths?,blockedBy,testFilter?,scenarioIds?}],proposedInstalls?:[{id,manager,packages,reason,command?}]}";
 
 export const PromptBuilderOutputSchema = z.object({
   prompt: z.string().min(1),
@@ -736,52 +701,11 @@ export const WorkerOutputSchema = z.object({
 });
 export type WorkerOutput = z.infer<typeof WorkerOutputSchema>;
 
-/** Red-writer output for the alternating TDD loop (continue batch or declare done). */
-export const RedWriterOutputSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("continue"),
-    summary: z.string().min(1),
-    changedFiles: z.array(z.string()).min(1),
-    behaviorsAdded: z.array(z.string().min(1)).min(1),
-    edgeCasesAdded: z.array(z.string().min(1)).default([]),
-  }),
-  z.object({
-    status: z.literal("done"),
-    summary: z.string().min(1),
-    changedFiles: z.array(z.string()).length(0),
-    acceptanceCoverage: z.array(TddAcceptanceCoverageItemSchema),
-    edgeCaseRationale: z.string().min(1),
-  }),
-]);
-export type RedWriterOutput = z.infer<typeof RedWriterOutputSchema>;
-
-export const RED_WRITER_EXPECTED_OUTPUT =
-  "either {status:'continue',summary,changedFiles:[string] (min 1),behaviorsAdded:[string] (min 1),edgeCasesAdded?:[string]} or {status:'done',summary,changedFiles:[] (empty),acceptanceCoverage:[{criterionIndex,covered,verificationMode:'automated-test'|'command'|'inspection'|'not-validated',testPaths,rationale}],edgeCaseRationale}";
-
-/** Green-implementer output for the alternating TDD loop. */
-export const GreenImplementerOutputSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.enum(["green", "already_green"]),
-    summary: z.string().min(1),
-    changedFiles: z.array(z.string()),
-  }),
-  z.object({
-    status: z.literal("test_issue"),
-    summary: z.string().min(1),
-    changedFiles: z.array(z.string()),
-    testPath: z.string().min(1),
-    reason: z.string().min(1),
-    evidence: z.string().min(1),
-  }),
-]);
-export type GreenImplementerOutput = z.infer<typeof GreenImplementerOutputSchema>;
-
-export const GREEN_IMPLEMENTER_EXPECTED_OUTPUT =
-  "either {status:'green'|'already_green',summary,changedFiles:[string]} or {status:'test_issue',summary,changedFiles:[string],testPath,reason,evidence}";
-
 export const ReviewFindingKindSchema = z.enum([
   "production",
   "test-coverage",
+  "test-design",
+  "scenario-intent",
   "advisory",
 ]);
 export type ReviewFindingKind = z.infer<typeof ReviewFindingKindSchema>;
@@ -795,13 +719,36 @@ export const ReviewOutputSchema = z.object({
         severity: z.enum(["blocking", "advisory"]),
         kind: ReviewFindingKindSchema,
         message: z.string().min(1),
+        taskIds: z.array(z.string().min(1)).default([]),
       }),
     ),
 });
 export type ReviewOutput = z.infer<typeof ReviewOutputSchema>;
 
 export const REVIEW_EXPECTED_OUTPUT =
-  "{approved,summary,findings:[{severity:'blocking'|'advisory',kind:'production'|'test-coverage'|'advisory',message}]}";
+  "{approved,summary,findings:[{severity:'blocking'|'advisory',kind:'production'|'test-coverage'|'test-design'|'scenario-intent'|'advisory',message,taskIds?:[string]}]}";
+
+export const ScenarioWriterOutputSchema = z.object({
+  status: z.literal("implemented"),
+  summary: z.string().min(1),
+  testPaths: z.array(z.string().min(1)).min(1),
+  changedFiles: z.array(z.string()).default([]),
+});
+export type ScenarioWriterOutput = z.infer<typeof ScenarioWriterOutputSchema>;
+
+export const SCENARIO_WRITER_EXPECTED_OUTPUT =
+  "{status:'implemented',summary,testPaths:[string] (min 1),changedFiles?:[string]}";
+
+export const UnitTestWriterOutputSchema = z.object({
+  status: z.literal("implemented"),
+  summary: z.string().min(1),
+  testPaths: z.array(z.string().min(1)).min(1),
+  changedFiles: z.array(z.string()).default([]),
+});
+export type UnitTestWriterOutput = z.infer<typeof UnitTestWriterOutputSchema>;
+
+export const UNIT_TEST_WRITER_EXPECTED_OUTPUT =
+  "{status:'implemented',summary,testPaths:[string] (min 1),changedFiles?:[string]}";
 
 export const MessageOutputSchema = z.object({
   subject: z.string().min(1).max(100),
@@ -903,7 +850,6 @@ export function createRunState(
 
 export * from "./domain/domain-artifacts.js";
 export * from "./domain/policies.js";
-export * from "./domain/tdd-loop.js";
 export * from "./domain/transitions.js";
 export * from "./domain/workspace.js";
 export * from "./domain/workspace-cleanup.js";

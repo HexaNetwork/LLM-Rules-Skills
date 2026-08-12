@@ -98,15 +98,6 @@ export function assertDependenciesExecutable(tasks: BuildTask[]): void {
   }
 }
 
-/** Operator may toggle TDD only before the task starts. */
-export function canToggleTaskTdd(task: BuildTask): boolean {
-  return task.status === "pending" && task.step === "pending";
-}
-
-export function isTddEligible(task: BuildTask): boolean {
-  return task.tdd === true;
-}
-
 export function isTestPath(filePath: string, patterns: readonly string[]): boolean {
   const normalized = filePath.replaceAll("\\", "/");
   return patterns.some((pattern) => matchesGlob(pattern, normalized));
@@ -123,14 +114,9 @@ export function includesSourcePath(paths: string[], extensions: readonly string[
 }
 
 export type AttemptBudgets = {
-  maxTestAttempts: number;
   maxImplementationAttempts: number;
   maxReviewAttempts: number;
 };
-
-export function canRetryTests(task: BuildTask, budgets: AttemptBudgets): boolean {
-  return task.attempts.tests < budgets.maxTestAttempts;
-}
 
 export function canRetryImplementation(task: BuildTask, budgets: AttemptBudgets): boolean {
   return task.attempts.implementation < budgets.maxImplementationAttempts;
@@ -155,8 +141,41 @@ export function hasOpenQuestionBatch(state: RunState): boolean {
 export function canMarkTaskDone(task: BuildTask): boolean {
   if (task.status === "done" && task.step === "done") return true;
   if (task.step !== "committing") return false;
-  const requiredPurpose = task.tdd ? "tdd:green" : "test";
-  return task.evidence.some((item) => item.purpose === requiredPurpose && item.passed);
+  return task.evidence.some((item) => item.purpose === "test" && item.passed);
+}
+
+/** Structured review routing: production → implementer. Never parse prose. */
+export type ReviewRepairRoute =
+  | "production"
+  | "test-coverage"
+  | "test-design"
+  | "scenario-intent"
+  | "none";
+
+export function reviewRepairRoute(
+  findings: ReadonlyArray<{
+    severity: "blocking" | "advisory";
+    kind: "production" | "test-coverage" | "advisory" | "test-design" | "scenario-intent";
+  }>,
+): ReviewRepairRoute {
+  const blocking = findings.filter((finding) => finding.severity === "blocking");
+  if (blocking.some((finding) => finding.kind === "production")) {
+    return "production";
+  }
+  if (blocking.some((finding) => finding.kind === "scenario-intent")) {
+    return "scenario-intent";
+  }
+  if (blocking.some((finding) => finding.kind === "test-design")) {
+    return "test-design";
+  }
+  if (blocking.some((finding) => finding.kind === "test-coverage")) {
+    return "test-coverage";
+  }
+  // Unexpected blocking+advisory-kind: treat as production repair.
+  if (blocking.length > 0) {
+    return "production";
+  }
+  return "none";
 }
 
 export function assertCanMarkTaskDone(task: BuildTask): void {

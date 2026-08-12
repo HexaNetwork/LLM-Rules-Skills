@@ -42,7 +42,6 @@ agent:
   schemaRepairAttempts: 1
 
 workflow:
-  tdd: true
   # Document RAG into work packets (independent of Graphify / guidance).
   rag: true
   # Hard spend ceilings (0 = unlimited); enforced between steps, never mid-step.
@@ -54,13 +53,17 @@ workflow:
   maxContextTurns: 0
   # Transient provider failures retry in-place (backoff 1s/4s/16s).
   maxProviderRetries: 2
-  # Per-round RED schema/path/test-repair revision limit — not the number of
-  # RED/GREEN rounds. Ordinary alternating rounds are unbounded.
-  maxTestAttempts: 2
-  # Per-round GREEN implementation attempt limit; resets after each verified
-  # GREEN round. Final post-done repairs use tddLoop.finalRepairAttempts.
+  # Implementation attempt limit per task during executing.
   maxImplementationAttempts: 3
   maxReviewAttempts: 2
+  # Holistic final-review attempts after crystallizing.
+  maxFinalReviewAttempts: 2
+  # Coverage gate during crystallizing (disabled by default).
+  coverage:
+    enabled: false
+    threshold: 0.9
+    scope: changed
+    maxAttempts: 3
   maxGrillQuestionsPerEpisode: 5
   staleAnswerMinutes: 30
   grillQuestionsPerBatch: 3
@@ -75,7 +78,7 @@ workflow:
   graphifyCharacters: 3000
   # Deterministic commit subjects by default; PR bodies still use the model.
   generateCommitMessages: false
-  # Paths the red-writer may edit; tune for Go (_test.go), Maven (src/test), etc.
+  # Paths treated as tests for test-writer path validation; tune for Go (_test.go), Maven (src/test), etc.
   testPathPatterns:
     - tests/**
     - test/**
@@ -159,18 +162,24 @@ knowledge:
       planner:
         rules: []
         skills: [domain-modeling, to-prd]
+      scenario-planner:
+        rules: []
+        skills: []
       issue-slicer:
         rules: []
         skills: [prd-to-issues, domain-modeling, improve-codebase-architecture]
       prompt-builder:
         rules: []
         skills: []
-      red-writer:
+      scenario-writer:
         rules: []
-        skills: [red-writer-tdd]
+        skills: []
+      unit-test-writer:
+        rules: []
+        skills: []
       implementer:
         rules: []
-        skills: [tdd]
+        skills: []
       reviewer:
         rules: []
         skills: [code-review]
@@ -179,7 +188,7 @@ knowledge:
         skills: []
       fixer:
         rules: []
-        skills: [diagnose, tdd]
+        skills: [diagnose]
       config-fixer:
         rules: []
         skills: []

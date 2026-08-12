@@ -97,7 +97,7 @@ describe("reviewTask packet", () => {
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
         graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
     const backend = createFakeBackend({
-      reviewer: (request) => {
+      "task-reviewer": (request) => {
         const match = request.prompt.match(/\{[\s\S]*"changedFiles"[\s\S]*\}/);
         if (match) {
           try {
@@ -156,7 +156,7 @@ describe("reviewTask packet", () => {
         reviewDiffBase?: string;
       };
     };
-    expect(packet.role).toBe("reviewer");
+    expect(packet.role).toBe("task-reviewer");
     expect(packet.input.reviewDiffBase).toBe(baseSha);
     expect(packet.input.changedFiles).toEqual(
       expect.arrayContaining(["tests/round-1.test.ts", "src/feature.ts"]),
@@ -185,7 +185,7 @@ describe("reviewTask packet", () => {
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
         graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
     const backend = createFakeBackend({
-      reviewer: (request) => {
+      "task-reviewer": (request) => {
         reviewerPrompt = request.prompt;
         return { approved: true, summary: "ok", findings: [] };
       }});
@@ -207,12 +207,12 @@ describe("reviewTask packet", () => {
       role: string;
       input: { diff?: string; diffOmittedFiles?: string[]; changedFiles?: string[] };
     };
-    expect(packet.role).toBe("reviewer");
+    expect(packet.role).toBe("task-reviewer");
     expect(packet.input.diff).toContain("src/feature.ts");
     expect(packet.input.diff).toContain("export const feature = true;");
     expect(packet.input.diffOmittedFiles).toEqual([]);
     expect(reviewerPrompt).toContain(
-      "The diff is the primary evidence. Read the listed omitted files from disk before commenting on them.",
+      "The packet diff is the primary evidence. Read listed omitted files from disk before commenting on them.",
     );
   });
 
@@ -232,7 +232,7 @@ describe("reviewTask packet", () => {
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
         graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
     const backend = createFakeBackend({
-      reviewer: () => ({
+      "task-reviewer": () => ({
         approved: false,
         summary: "needs work",
         findings: [

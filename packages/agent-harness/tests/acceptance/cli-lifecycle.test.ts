@@ -88,6 +88,7 @@ describe("CLI acceptance lifecycle", () => {
               blockedBy: []}],
           proposedInstalls: []}},
       { role: "implementer", output: { summary: "Built", changedFiles: ["src/greet.ts"] } },
+      { role: "task-reviewer", output: { approved: true, summary: "ok", findings: [] } },
       { role: "reviewer", output: { approved: true, summary: "ok", findings: [] } }]);
 
     await withDiagnosticArtifacts({ testName: "acceptance-lifecycle", fixture }, async () => {

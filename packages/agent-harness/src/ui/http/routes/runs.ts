@@ -8,11 +8,11 @@ import {
   loadRunWorkspace,
   writeProjectSettings,
 } from "../../../config.js";
-import { openRunHarness } from "../../../application/run-engine-factory.js";
+import { openRunHarness, type OpenedRunHarness } from "../../../application/run-engine-factory.js";
+import { runInitialSetupThenAdvance } from "../../../application/run-setup.js";
 import { HarnessEngine } from "../../../engine.js";
 import { HighLevelPlanSchema, VerificationSettingsPatchSchema } from "../../../domain.js";
 import { GitService, pathToIgnoredArtifactGlob } from "../../../git.js";
-import { prepareGraphifyForRun } from "../../../graphify.js";
 import type { UiAppContext } from "../context.js";
 import {
   HttpError,
@@ -53,6 +53,24 @@ async function resolveBaseBranchOverride(
     throw new HttpError(400, `Unknown local branch: ${baseBranch}`);
   }
   return baseBranch;
+}
+
+function initialSetupFromOpened(
+  ctx: UiAppContext,
+  runId: string,
+  opened: OpenedRunHarness,
+) {
+  return {
+    runId,
+    config: opened.config,
+    store: ctx.store,
+    paths: opened.paths,
+    graphifyRunner: ctx.graphifyRunner,
+    git: opened.engine.git,
+    knowledge: opened.engine.knowledge,
+    advance: () => opened.engine.advance(runId),
+    onProgress: (message: string) => ctx.jobs.setDetail(runId, message),
+  };
 }
 
 /** @returns true when the request was handled. */
@@ -141,7 +159,10 @@ export async function handleRunsRoutes(
         },
       },
     });
-    const engine = new HarnessEngine(runConfig, { backend: ctx.backend });
+    const engine = new HarnessEngine(runConfig, {
+      backend: ctx.backend,
+      graphifyRunner: ctx.graphifyRunner,
+    });
     // Creating the durable run must be quick. A first semantic index may
     // take minutes for a large repository, so run it in the visible job
     // queue rather than holding the browser request open.
@@ -150,50 +171,12 @@ export async function handleRunsRoutes(
     const state = await engine.start(idea, runId, false, false);
     if (state.phase !== "blocked" && state.phase !== "cancelled" && state.phase !== "completed") {
       ctx.jobs.enqueue(runId, "index knowledge and reflect", async () => {
-        const latest = await ctx.store.load(runId);
-        if (latest.phase === "blocked" || latest.phase === "cancelled" || latest.phase === "completed") {
-          return;
-        }
         const opened = await openRunHarness(projectConfig, runId, {
           backend: ctx.backend,
           store: ctx.store,
+          graphifyRunner: ctx.graphifyRunner,
         });
-        ctx.jobs.setDetail(runId, "Checking Graphify for this project");
-        const graphifyReady = await prepareGraphifyForRun(
-          opened.config,
-          undefined,
-          opened.paths,
-        );
-        if (graphifyReady.enabled) {
-          ctx.jobs.setDetail(
-            runId,
-            graphifyReady.setupRan
-              ? "Repository graph built and ready"
-              : "Graphify repository graph is ready",
-          );
-        }
-        const beforeIndex = await ctx.store.load(runId);
-        if (
-          beforeIndex.phase === "blocked" ||
-          beforeIndex.phase === "cancelled" ||
-          beforeIndex.phase === "completed"
-        ) {
-          return;
-        }
-        await ctx.store.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>
-          opened.engine.knowledge.refresh((progress) => {
-            ctx.jobs.setDetail(runId, progress.message);
-          }),
-        );
-        const beforeAdvance = await ctx.store.load(runId);
-        if (
-          beforeAdvance.phase === "blocked" ||
-          beforeAdvance.phase === "cancelled" ||
-          beforeAdvance.phase === "completed"
-        ) {
-          return;
-        }
-        await opened.engine.advance(runId);
+        await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
       });
     }
     json(response, 202, { run: summarizeRun(state, ctx.jobs.get(runId)) });
@@ -298,7 +281,7 @@ export async function handleRunsRoutes(
     const opened = await openRunHarness(
       projectConfig,
       runId,
-      { backend: ctx.backend, store: ctx.store },
+      { backend: ctx.backend, store: ctx.store, graphifyRunner: ctx.graphifyRunner },
       {
         validateWorktree:
           action !== "cancel" && action !== "note" && action !== "stop",
@@ -310,10 +293,15 @@ export async function handleRunsRoutes(
     } else if (action === "resume") {
       // Jobs are intentionally process-local. A dashboard restart keeps the
       // durable run state but cannot safely assume that an interrupted
-      // provider call should be retried. Make recovery an explicit action,
-      // and rebuild knowledge first in case the index was cleared while
-      // the dashboard was stopped.
+      // provider call should be retried. Make recovery an explicit action.
+      // Runs still in `new` retry Graphify then the document index; later
+      // phases refresh the index in case it was cleared while stopped.
       ctx.jobs.enqueue(runId, "resume run", async () => {
+        const latest = await ctx.store.load(runId);
+        if (latest.phase === "new") {
+          await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
+          return;
+        }
         await ctx.store.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>
           engine.knowledge.refresh((progress) => {
             ctx.jobs.setDetail(runId, progress.message);
@@ -368,7 +356,11 @@ export async function handleRunsRoutes(
       const maxRunCostUsd = optionalNonNegativeNumber(body.maxRunCostUsd, "maxRunCostUsd");
       ctx.jobs.enqueue(runId, action, async () => {
         ctx.jobs.setDetail(runId, "Retrying the blocked transition");
-        await engine.retry(runId, { force, maxRunTokens, maxRunCostUsd });
+        const resumed = await engine.retry(runId, { force, maxRunTokens, maxRunCostUsd });
+        if (resumed.phase === "new") {
+          await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
+          return;
+        }
         await engine.advance(runId);
       });
     } else if (action === "commit_preflight") {

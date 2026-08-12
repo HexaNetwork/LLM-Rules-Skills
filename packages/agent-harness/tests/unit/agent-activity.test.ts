@@ -436,4 +436,27 @@ describe("deriveInvocationOutcome", () => {
       status: "implemented",
       summary: "ok"});
   });
+
+  it("keeps scenario-intent and test-design kinds for reviewer and task-reviewer", () => {
+    const output = {
+      approved: false,
+      summary: "scenario gap",
+      findings: [
+        { severity: "blocking", kind: "scenario-intent", message: "scenario not implemented" },
+        { severity: "blocking", kind: "test-design", message: "weak assertion" },
+      ],
+    };
+    expect(deriveInvocationOutcome("task-reviewer", output)).toEqual({
+      status: "blocking",
+      summary: "scenario gap",
+      blockingCount: 2,
+      repairRoute: "scenario-intent",
+    });
+    expect(deriveInvocationOutcome("reviewer", output)).toEqual({
+      status: "blocking",
+      summary: "scenario gap",
+      blockingCount: 2,
+      repairRoute: "scenario-intent",
+    });
+  });
 });

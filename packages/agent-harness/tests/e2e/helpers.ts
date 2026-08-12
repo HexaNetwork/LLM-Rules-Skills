@@ -90,6 +90,9 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
     role: "implementer",
     output: { summary: "Built", changedFiles: ["src/greet.ts"] }},
   {
+    role: "task-reviewer",
+    output: { approved: true, summary: "Looks good", findings: [] }},
+  {
     role: "reviewer",
     output: { approved: true, summary: "Looks good", findings: [] }}];
 

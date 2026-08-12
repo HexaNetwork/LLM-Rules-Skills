@@ -1410,7 +1410,7 @@ describe("durable idea-to-feature workflow", () => {
         if (request.role === "implementer" && result.providerSessionId) {
           implementerSessionIds.push(result.providerSessionId);
         }
-        if (request.role === "reviewer" && result.providerSessionId) {
+        if ((request.role === "reviewer" || request.role === "task-reviewer") && result.providerSessionId) {
           reviewerSessionIds.push(result.providerSessionId);
         }
         return result;
@@ -1483,7 +1483,7 @@ describe("durable idea-to-feature workflow", () => {
             providerSessionReused,
             submittedPrompt};
         }
-        if (request.role === "reviewer") {
+        if (request.role === "reviewer" || request.role === "task-reviewer") {
           return {
             output: { approved: true, summary: "ok", findings: [] },
             providerSessionId: "review-1",
@@ -1756,6 +1756,10 @@ describe("durable idea-to-feature workflow", () => {
       reviewer: (request) => {
         roles.push(request.role);
         return { approved: true, summary: "ok", findings: [] };
+      },
+      "task-reviewer": (request) => {
+        roles.push(request.role);
+        return { approved: true, summary: "ok", findings: [] };
       }});
     const engine = new HarnessEngine(config, { backend });
     const started = await engine.start("No TDD path");
@@ -1885,7 +1889,7 @@ describe("durable idea-to-feature workflow", () => {
               : request.prompt};
         }
 
-        if (request.role === "reviewer") {
+        if (request.role === "reviewer" || request.role === "task-reviewer") {
           return {
             output: { approved: true, summary: "ok", findings: [] },
             providerSessionId: "reviewer-session",
@@ -2080,7 +2084,7 @@ describe("durable idea-to-feature workflow", () => {
               : request.prompt};
         }
 
-        if (request.role === "reviewer") {
+        if (request.role === "reviewer" || request.role === "task-reviewer") {
           return {
             output: { approved: true, summary: "ok", findings: [] },
             providerSessionId: "reviewer-session",
@@ -2258,7 +2262,7 @@ describe("durable idea-to-feature workflow", () => {
             providerSessionReused: Boolean(request.providerSessionId),
             submittedPrompt: request.continuationPrompt ?? request.prompt};
         }
-        if (request.role === "reviewer") {
+        if (request.role === "reviewer" || request.role === "task-reviewer") {
           return {
             output: { approved: true, summary: "ok", findings: [] },
             providerSessionId: "rev",
@@ -2375,7 +2379,7 @@ describe("durable idea-to-feature workflow", () => {
             providerSessionReused: Boolean(request.providerSessionId),
             submittedPrompt: request.prompt};
         }
-        if (request.role === "reviewer") {
+        if (request.role === "reviewer" || request.role === "task-reviewer") {
           return {
             output: { approved: true, summary: "ok", findings: [] },
             providerSessionId: "rev",
@@ -2507,7 +2511,7 @@ describe("durable idea-to-feature workflow", () => {
             providerSessionReused: Boolean(request.providerSessionId),
             submittedPrompt: request.prompt};
         }
-        if (request.role === "reviewer") {
+        if (request.role === "reviewer" || request.role === "task-reviewer") {
           return {
             output: { approved: true, summary: "ok", findings: [] },
             providerSessionId: "review-session",
@@ -2612,7 +2616,7 @@ describe("durable idea-to-feature workflow", () => {
     let reviewCalls = 0;
     const backend: AgentBackend = {
       async run(request) {
-        if (request.role === "reviewer") {
+        if (request.role === "reviewer" || request.role === "task-reviewer") {
           reviewCalls += 1;
           if (reviewCalls === 1) {
             return {
@@ -2827,7 +2831,7 @@ describe("durable idea-to-feature workflow", () => {
             providerSessionReused: Boolean(request.providerSessionId),
             submittedPrompt: request.prompt};
         }
-        if (request.role === "reviewer") {
+        if (request.role === "reviewer" || request.role === "task-reviewer") {
           return {
             output: { approved: true, summary: "ok", findings: [] },
             providerSessionId: "review-session",

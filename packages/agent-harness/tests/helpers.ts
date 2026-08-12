@@ -42,6 +42,7 @@ export function planningRoleHandlers(options: {
 /** Post-slice roles that take a run through implement → scenario tests → final review. */
 export const INTENT_FIRST_EXECUTION_HANDLERS = {
   implementer: () => ({ summary: "Implemented", changedFiles: ["src/greet.ts"] }),
+  "task-reviewer": () => ({ approved: true, summary: "Looks good", findings: [] as const }),
   reviewer: () => ({ approved: true, summary: "Looks good", findings: [] as const }),
   "scenario-writer": () => ({
     status: "implemented" as const,

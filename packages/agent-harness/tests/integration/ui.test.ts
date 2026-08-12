@@ -9,6 +9,7 @@ import { createRunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/engine.js";
 import { GitService } from "../../src/git.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
+import type { GraphifyRunner } from "../../src/graphify.js";
 import {
   fixtureConfig,
   fixtureRoot,
@@ -1413,6 +1414,80 @@ describe("central dashboard", () => {
     ) as { git: { baseBranch: string } };
     expect(frozen.git.baseBranch).toBe("develop");
   });
+
+  it("records a Graphify setup failure from POST /api/runs as a blocked run", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true }}});
+    const graphifyRunner: GraphifyRunner = async (_executable, args) => {
+      if (args[0] === "--version") {
+        return { exitCode: 0, stdout: "graphify 1.0\n", stderr: "", timedOut: false };
+      }
+      return { exitCode: 1, stdout: "", stderr: "", timedOut: true };
+    };
+    ui = await startUiServer({
+      config,
+      backend: createFakeBackend({ reflector: () => REFLECT_OUTPUT }),
+      graphifyRunner,
+      port: 0,
+      token: "ui-test"});
+
+    const created = await request(ui, "/api/runs", {
+      method: "POST",
+      body: { idea: "Needs a repository graph" }});
+    expect(created.status).toBe(202);
+    const runId = ((await created.json()) as { run: { runId: string } }).run.runId;
+    const detail = await waitForBlocked(ui, runId);
+
+    expect(detail.state.phase).toBe("blocked");
+    expect(detail.state.blockedFrom).toBe("new");
+    expect(detail.state.failure).toMatch(/Graphify graph/i);
+  });
+
+  it("retries Graphify setup from a new-phase block and leaves new", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true }}});
+    let failUpdate = true;
+    const graphifyRunner: GraphifyRunner = async (_executable, args, options) => {
+      if (args[0] === "--version") {
+        return { exitCode: 0, stdout: "graphify 1.0\n", stderr: "", timedOut: false };
+      }
+      if (!failUpdate) {
+        await mkdir(path.join(options.cwd, "graphify-out"), { recursive: true });
+        await writeFile(path.join(options.cwd, "graphify-out", "graph.json"), "{}\n", "utf8");
+        return { exitCode: 0, stdout: "Updated graph\n", stderr: "", timedOut: false };
+      }
+      return { exitCode: 1, stdout: "", stderr: "", timedOut: true };
+    };
+    ui = await startUiServer({
+      config,
+      backend: createFakeBackend({ reflector: () => REFLECT_OUTPUT }),
+      graphifyRunner,
+      port: 0,
+      token: "ui-test"});
+
+    const created = await request(ui, "/api/runs", {
+      method: "POST",
+      body: { idea: "Retry Graphify after a timeout" }});
+    expect(created.status).toBe(202);
+    const runId = ((await created.json()) as { run: { runId: string } }).run.runId;
+    const blocked = await waitForBlocked(ui, runId);
+    expect(blocked.state.phase).toBe("blocked");
+    expect(blocked.state.blockedFrom).toBe("new");
+
+    failUpdate = false;
+    const retried = await request(ui, `/api/runs/${runId}/actions`, {
+      method: "POST",
+      body: { action: "retry" }});
+    expect(retried.status).toBe(202);
+    const detail = await waitForPhase(ui, runId, "awaiting_input");
+    expect(detail.state.phase).toBe("awaiting_input");
+  });
 });
 
 async function initGitRepo(root: string): Promise<void> {
@@ -1489,4 +1564,29 @@ async function waitForPhase(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out waiting for phase ${phase}`);
+}
+
+async function waitForBlocked(
+  ui: UiServer,
+  runId: string,
+): Promise<{
+  state: { phase: string; blockedFrom?: string; failure?: string };
+}> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const response = await request(ui, `/api/runs/${runId}`);
+    if (response.status !== 200) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      continue;
+    }
+    const body = (await response.json()) as {
+      state?: { phase: string; blockedFrom?: string; failure?: string };
+      job?: { status: string };
+    };
+    if (body.state?.phase === "blocked") {
+      return body as never;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Timed out waiting for blocked run");
 }

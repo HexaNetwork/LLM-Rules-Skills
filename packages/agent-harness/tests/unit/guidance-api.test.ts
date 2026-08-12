@@ -69,5 +69,10 @@ describe("GET /api/guidance/packs", () => {
     expect(reviewer!.promptPreview).toContain("You are the reviewer worker");
     expect(reviewer!.promptPreview).not.toContain("SELECTED GUIDANCE");
     expect(reviewer!.promptPreview).not.toContain("Reason:");
+    const taskReviewer = body.packs.find((pack) => pack.role === "task-reviewer");
+    expect(taskReviewer).toBeDefined();
+    expect(taskReviewer!.assignment.skills).toContain("task-review");
+    expect(taskReviewer!.promptPreview).toContain("You are the task-reviewer worker");
+    expect(taskReviewer!.roleRules.some((rule) => rule.includes("kind: production"))).toBe(true);
   });
 });

@@ -298,7 +298,7 @@ export class TaskExecutionService {
         : { diff: "", omittedFiles: [] as string[], truncated: false };
     const review = await this.ctx.agents.invoke({
       runId: state.runId,
-      role: "reviewer",
+      role: "task-reviewer",
       objective: `Independently review “${task.title}” against its acceptance criteria`,
       input: {
         task: taskForPacket(task),
@@ -341,21 +341,19 @@ export class TaskExecutionService {
       step = "committing";
       status = "active";
       failure = undefined;
-    } else if (route === "production" || route === "none") {
+    } else if (route === "production") {
       const canRepair = reviewBudget && task.attempts.implementation < maxAttempts;
       if (canRepair) {
         step = "implementing";
         status = "active";
         failure = undefined;
       }
-    } else if (route === "test-coverage") {
-      // No task-level test writer yet; record for final review and continue if only advisory-blocking.
-      // Blocking test-coverage without a production finding is advisory at task level.
-      if (reviewBudget && task.attempts.implementation < maxAttempts) {
-        step = "implementing";
-        status = "active";
-        failure = undefined;
-      }
+    } else {
+      // test-coverage, test-design, and scenario-intent are advisory at task level:
+      // record the findings and continue to commit. Tests are authored later.
+      step = "committing";
+      status = "active";
+      failure = undefined;
     }
 
     const updated: BuildTask = {

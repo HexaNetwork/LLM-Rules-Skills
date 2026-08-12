@@ -357,7 +357,15 @@ describe("LocalKnowledgeBase", () => {
         "roles: [reviewer]",
         "---",
         "",
-        "Review failed. Report ## Standards and ## Spec findings side by side."].join("\n")});
+        "Review failed. Report ## Standards and ## Spec findings side by side."].join("\n"),
+      "General/skills/task-review/SKILL.md": [
+        "---",
+        "name: task-review",
+        "description: Per-task production review when tests are authored later",
+        "roles: [task-reviewer]",
+        "---",
+        "",
+        "Review production only. Missing tests are advisory."].join("\n")});
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
       sharedRoot});
 
@@ -371,6 +379,12 @@ describe("LocalKnowledgeBase", () => {
     expect(reviewerSelected.map((item) => item.source)).not.toContain(
       "General/skills/implement-auto/SKILL.md",
     );
+
+    const taskReviewerSelected = await knowledge.selectGuidance(failureQuery, {
+      role: "task-reviewer",
+    });
+    expect(taskReviewerSelected.map((item) => item.source)).toEqual([
+      "General/skills/task-review/SKILL.md"]);
   });
 
   it("does not select project guidance that was never loaded for the active project", async () => {

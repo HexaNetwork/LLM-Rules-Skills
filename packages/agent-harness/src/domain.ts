@@ -588,6 +588,7 @@ export const AgentRoleSchema = z.enum([
   "unit-test-writer",
   "implementer",
   "reviewer",
+  "task-reviewer",
   "message-writer",
   "fixer",
   "config-fixer",

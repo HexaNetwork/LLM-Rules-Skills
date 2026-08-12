@@ -5,6 +5,7 @@ import path from "node:path";
 import type { AgentBackend } from "../agent.js";
 import { resolveHarnessPaths } from "../application/paths.js";
 import type { HarnessConfig } from "../config.js";
+import type { GraphifyRunner } from "../graphify.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { RunStore } from "../store.js";
 import { renderDashboard } from "./app.js";
@@ -34,6 +35,7 @@ export type UiServerOptions = {
   port?: number;
   token?: string;
   openBrowser?: boolean;
+  graphifyRunner?: GraphifyRunner;
 };
 
 export type UiServer = {
@@ -70,6 +72,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
     configPath: options.configPath,
     agentReadiness,
     jobs,
+    graphifyRunner: options.graphifyRunner,
   };
 
   const server = http.createServer(async (request, response) => {

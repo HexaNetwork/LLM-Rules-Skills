@@ -26,9 +26,13 @@ describe("token-conscious defaults", () => {
     expect(config.workflow.maxGrillQuestionsPerEpisode).toBe(5);
     expect(config.workflow.staleAnswerMinutes).toBe(30);
     expect(config.knowledge.graphify.enabled).toBe(false);
+    expect(config.knowledge.graphify.updateTimeoutMs).toBe(600_000);
+    expect(config.knowledge.graphify.queryTimeoutMs).toBe(15_000);
     expect(config.workflow.rag).toBe(true);
     expect(config.workflow).not.toHaveProperty("tdd");
     expect(config.knowledge.graphify.roles).toContain("implementer");
+    expect(config.knowledge.graphify.roles).toContain("reviewer");
+    expect(config.knowledge.graphify.roles).toContain("task-reviewer");
     expect(config.knowledge.graphify.roles).not.toContain("message-writer");
     expect(config.knowledge.graphify.roles).not.toContain("reflector");
     expect(config.knowledge.graphify.roles).not.toContain("griller");
@@ -101,6 +105,7 @@ describe("token-conscious defaults", () => {
     expect(defaultConfigYaml()).toContain("testPathPatterns:");
     expect(defaultConfigYaml()).toContain("sourceExtensions:");
     expect(defaultConfigYaml()).toContain("assignments:");
+    expect(defaultConfigYaml()).toContain("task-reviewer:");
     expect(defaultConfigYaml()).toContain("scope: project");
     expect(defaultConfigYaml()).toContain("Implementation attempt limit per task during executing");
     expect(defaultConfigYaml()).toContain("Paths treated as tests for test-writer path validation");
@@ -119,7 +124,9 @@ describe("token-conscious defaults", () => {
       model: "qwen3-embedding"});
     expect(deployed.knowledge.graphify).toMatchObject({
       enabled: true,
-      updateOnRefresh: false});
+      updateOnRefresh: false,
+      updateTimeoutMs: 600_000});
+    expect(defaultConfigYaml()).toContain("updateTimeoutMs: 600000");
     const documentOnly = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({ graphify: false })));
     expect(documentOnly.knowledge.graphify).toMatchObject({
       enabled: false,
@@ -138,6 +145,7 @@ describe("token-conscious defaults", () => {
       "unit-test-writer": { rules: [], skills: [] },
       implementer: { rules: ["no-legacy-fallback-code"], skills: [] },
       reviewer: { rules: [], skills: ["code-review"] },
+      "task-reviewer": { rules: [], skills: ["task-review"] },
       "message-writer": { rules: [], skills: [] },
       fixer: { rules: [], skills: ["diagnose"] },
       "config-fixer": { rules: [], skills: [] },
@@ -153,6 +161,12 @@ describe("token-conscious defaults", () => {
               "test-writer": { rules: [], skills: [] },
               "red-writer": { rules: [], skills: [] }}}}}).knowledge.guidance.assignments,
     ).toEqual(complete);
+    const { "task-reviewer": _taskReviewer, ...legacyWithoutTaskReviewer } = complete;
+    expect(
+      HarnessConfigSchema.parse({
+        knowledge: { guidance: { assignments: legacyWithoutTaskReviewer } },
+      }).knowledge.guidance.assignments?.["task-reviewer"],
+    ).toEqual({ rules: [], skills: ["task-review"] });
     expect(() => HarnessConfigSchema.parse({
       knowledge: { guidance: { assignments: { implementer: complete.implementer } } }})).toThrow();
   });

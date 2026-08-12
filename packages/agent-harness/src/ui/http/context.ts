@@ -1,5 +1,6 @@
 import type { AgentBackend } from "../../agent.js";
 import type { HarnessConfig } from "../../config.js";
+import type { GraphifyRunner } from "../../graphify.js";
 import type { LocalKnowledgeBase } from "../../knowledge.js";
 import type { RunStore } from "../../store.js";
 import type { RunJobService } from "../run-job-service.js";
@@ -13,4 +14,5 @@ export type UiAppContext = {
   configPath?: string;
   agentReadiness: { ready: boolean; message?: string };
   jobs: RunJobService;
+  graphifyRunner?: GraphifyRunner;
 };

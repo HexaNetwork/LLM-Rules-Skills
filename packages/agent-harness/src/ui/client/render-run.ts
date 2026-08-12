@@ -575,7 +575,10 @@ export const renderRunScript = `    function renderSidebar() {
       if (s.stoppedAfterTaskAt) {
         html += '<div class="card"><div class="alert warning"><div><strong>Stopped after task</strong><div class="muted" style="margin-top:5px">The current task finished and the next frontier task was not started. Resume continues from here. Cancel remains available to abort immediately.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       } else if (!state.detail.job && !["completed","cancelled","awaiting_input","blocked"].includes(s.phase) && !s.stopAfterTask) {
-        html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">Dashboard work does not continue automatically after a restart. Resume queues the next transition and refreshes the document index first.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
+        var pauseHint = s.phase === "new"
+          ? "Setup did not finish. Resume retries Graphify and indexing first."
+          : "Dashboard work does not continue automatically after a restart. Resume queues the next transition and refreshes the document index first.";
+        html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">' + pauseHint + '</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }
       var workspaceMeta = state.detail.workspace || {};
       if (!state.detail.job && workspaceMeta.kind === "legacy-shared") {
@@ -931,7 +934,7 @@ export const renderRunScript = `    function renderSidebar() {
 
     function timelineRoleClass(role) {
       if (role === 'implementer') return 'role-green';
-      if (role === 'reviewer') return 'role-review';
+      if (role === 'reviewer' || role === 'task-reviewer') return 'role-review';
       return 'role-other';
     }
 

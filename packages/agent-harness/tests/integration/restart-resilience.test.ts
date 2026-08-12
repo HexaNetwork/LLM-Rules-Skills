@@ -91,7 +91,7 @@ describe("Phase 5 restart resilience", () => {
             role: "implementer",
             output: { summary: "Built", changedFiles: ["src/greet.ts"] }},
           {
-            role: "reviewer",
+            role: "task-reviewer",
             output: { approved: true, summary: "ok", findings: [] }},
           {
             role: "scenario-writer",

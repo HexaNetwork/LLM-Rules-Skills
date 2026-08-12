@@ -11,6 +11,7 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
   "unit-test-writer",
   "implementer",
   "reviewer",
+  "task-reviewer",
 ];
 
 /**
@@ -83,6 +84,8 @@ const GuidanceAssignmentsObjectSchema = z.object({
   "unit-test-writer": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
   implementer: GuidanceAssignmentSchema,
   reviewer: GuidanceAssignmentSchema,
+  // Default keeps older assignment maps valid when this role is introduced.
+  "task-reviewer": GuidanceAssignmentSchema.default({ rules: [], skills: ["task-review"] }),
   "message-writer": GuidanceAssignmentSchema,
   fixer: GuidanceAssignmentSchema,
   // Default keeps older assignment maps valid when this role is introduced.
@@ -116,6 +119,7 @@ export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsObj
   "unit-test-writer": { rules: [], skills: [] },
   implementer: { rules: [], skills: [] },
   reviewer: { rules: [], skills: ["code-review"] },
+  "task-reviewer": { rules: [], skills: ["task-review"] },
   "message-writer": { rules: [], skills: [] },
   fixer: { rules: [], skills: ["diagnose"] },
   "config-fixer": { rules: [], skills: [] },
@@ -344,7 +348,8 @@ export const HarnessConfigSchema = z.object({
           enabled: z.boolean().default(false),
           command: z.string().min(1).default("graphify"),
           updateOnRefresh: z.boolean().default(false),
-          updateTimeoutMs: z.number().int().positive().default(120_000),
+          // First `graphify update` on a large repo often needs longer than 2 minutes.
+          updateTimeoutMs: z.number().int().positive().default(600_000),
           queryTimeoutMs: z.number().int().positive().default(15_000),
           queryBudgetTokens: z.number().int().positive().max(10_000).default(4_000),
           roles: z.array(AgentRoleSchema).default(REPOSITORY_LOOKUP_ROLES),

@@ -133,7 +133,7 @@ describe("Phase 5 scripted full lifecycle", () => {
             output: { summary: "Implemented greeting", changedFiles: ["src/greet.ts"] },
           },
           {
-            role: "reviewer",
+            role: "task-reviewer",
             output: { approved: true, summary: "Looks good", findings: [] },
           },
           {
@@ -233,7 +233,7 @@ describe("Phase 5 scripted full lifecycle", () => {
           "scenario-planner",
           "issue-slicer",
           "implementer",
-          "reviewer",
+          "task-reviewer",
           "scenario-writer",
           "reviewer",
         ]);

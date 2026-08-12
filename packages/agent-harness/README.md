@@ -191,6 +191,7 @@ knowledge:
       red-writer: { rules: [], skills: [red-writer-tdd] }
       implementer: { rules: [], skills: [] }
       reviewer: { rules: [], skills: [code-review] }
+      task-reviewer: { rules: [], skills: [task-review] }
       message-writer: { rules: [], skills: [] }
       fixer: { rules: [], skills: [diagnose, tdd] }
       config-fixer: { rules: [], skills: [] }
@@ -224,8 +225,8 @@ harness configs enable it by default. Install Graphify yourself
 `graphify-out/graph.json` with `graphify update` when the graph is missing.
 After each verified harness task commit that includes a source-file path, it
 runs `graphify update` again so the next task receives fresh structural
-context. Default Graphify roles are planner, scenario-planner, issue-slicer, scenario-writer, unit-test-writer, implementer, and
-reviewer (not reflector/griller). Project-specific
+context. Default Graphify roles are planner, scenario-planner, issue-slicer, scenario-writer, unit-test-writer, implementer, reviewer, and
+task-reviewer (not reflector/griller). Project-specific
 `knowledge.graphify.stopwords` merge over the built-in English and harness-meta
 lists. Enable `knowledge.graphify.updateOnRefresh` if a
 document-refresh-triggered rebuild is specifically desired. Graphify is invoked
@@ -246,10 +247,10 @@ The harness no longer runs a per-task RED/GREEN TDD loop. Testing is intent-firs
 
 1. **scenario-planner** authors happy/error-path scenarios after the PRD (approved with the plan gate).
 2. **issue-slicer** tags tasks with `scenarioIds`.
-3. **implementer** builds production code during `executing` and must not edit `workflow.testPathPatterns` paths. Cheap `commands.verification` gates and per-task review still run before each task commit.
+3. **implementer** builds production code during `executing` and must not edit `workflow.testPathPatterns` paths. Cheap `commands.verification` gates and per-task **task-reviewer** review still run before each task commit.
 4. **scenario-writer** turns scenario intent into tests during `scenario_testing`; the harness runs them and routes production vs test-defect repairs with fingerprint guards.
 5. Optional **crystallizing** uses `workflow.coverage` + `commands.coverage` (lcov / cobertura / clover) and **unit-test-writer** until the threshold or a no-progress stop.
-6. **final_review** is a holistic reviewer over `baseSha..HEAD` with scenario and coverage evidence. Blocking kinds route back to executing, scenario_testing, or crystallizing.
+6. **final_review** is a holistic **reviewer** over `baseSha..HEAD` with scenario and coverage evidence. Blocking kinds route back to executing, scenario_testing, or crystallizing.
 
 See [intent-first workflow](../../docs/plans/intent-first-workflow.md). Evidence-fingerprint / `no_progress` / `seenRepairEdges` machinery still prevents identical deterministic failures from re-invoking a model.
 

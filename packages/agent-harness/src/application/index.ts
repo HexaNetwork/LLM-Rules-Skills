@@ -86,6 +86,7 @@ export { PlanningService } from "./planning-service.js";
 export { RecoveryService } from "./recovery-service.js";
 export { RunAdvancer } from "./run-advancer.js";
 export { RunLifecycleService } from "./run-lifecycle-service.js";
+export { recordBlockedFromNew, runInitialSetupThenAdvance } from "./run-setup.js";
 export { TaskExecutionService } from "./task-execution-service.js";
 export { ScenarioTestingService } from "./scenario-testing-service.js";
 export { CrystallizingService } from "./crystallizing-service.js";

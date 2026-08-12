@@ -241,11 +241,11 @@ export function deriveInvocationOutcome(
     return { status: output.status, ...(summary ? { summary } : {}) };
   }
 
-  if (role === "reviewer") {
+  if (role === "reviewer" || role === "task-reviewer") {
     const findings = Array.isArray(output.findings) ? output.findings : [];
     const findingRows: Array<{
       severity: "blocking" | "advisory";
-      kind: "production" | "test-coverage" | "advisory";
+      kind: "production" | "test-coverage" | "test-design" | "scenario-intent" | "advisory";
     }> = [];
     for (const finding of findings) {
       if (!isRecord(finding)) continue;
@@ -256,6 +256,8 @@ export function deriveInvocationOutcome(
       const kind =
         finding.kind === "production" ||
         finding.kind === "test-coverage" ||
+        finding.kind === "test-design" ||
+        finding.kind === "scenario-intent" ||
         finding.kind === "advisory"
           ? finding.kind
           : ("advisory" as const);
@@ -424,7 +426,7 @@ function transitionCandidates(event: ActivityEventInput): TimelineCandidate[] {
       ];
     case "task.review_failed": {
       const route = detailString(detail, "reviewRepairRoute");
-      if (route === "production" || route === "test-coverage" || route === "none") {
+      if (route === "production") {
         return [routingTransition(event, "review", "implementer", "review → implementer")];
       }
       return [
@@ -435,8 +437,8 @@ function transitionCandidates(event: ActivityEventInput): TimelineCandidate[] {
             event: event.type,
             eventSequence: event.sequence,
             taskId,
-            summary: "Review blocking",
-            status: "blocking",
+            summary: "Review recorded",
+            status: "completed",
             detail,
           },
         },

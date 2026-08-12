@@ -109,6 +109,6 @@ knowledge:
     enabled: true
     command: graphify
     updateOnRefresh: true
-    updateTimeoutMs: 120000
+    updateTimeoutMs: 600000
     queryTimeoutMs: 15000
     queryBudgetTokens: 4000

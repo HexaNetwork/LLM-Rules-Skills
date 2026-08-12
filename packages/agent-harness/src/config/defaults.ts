@@ -183,6 +183,9 @@ knowledge:
       reviewer:
         rules: []
         skills: [code-review]
+      task-reviewer:
+        rules: []
+        skills: [task-review]
       message-writer:
         rules: []
         skills: []
@@ -219,7 +222,7 @@ knowledge:
     # after each verified source-file commit. Keep this false so a document
     # index refresh does not needlessly rebuild the repository graph.
     updateOnRefresh: false
-    updateTimeoutMs: 120000
+    updateTimeoutMs: 600000
     queryTimeoutMs: 15000
     # Larger CLI budget so seed nodes are present for harness re-ranking;
     # prompt size remains workflow.graphifyCharacters.

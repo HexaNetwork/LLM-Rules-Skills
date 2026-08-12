@@ -83,7 +83,7 @@ describe("verification gate integration", () => {
         role: "implementer",
         output: { summary: "Built", changedFiles: ["src/greet.ts"] }},
       {
-        role: "reviewer",
+        role: "task-reviewer",
         output: { approved: true, summary: "ok", findings: [] }},
       {
         role: "scenario-writer",
@@ -183,7 +183,7 @@ describe("verification gate integration", () => {
         role: "implementer",
         output: { summary: "Built", changedFiles: ["src/greet.ts"] }},
       {
-        role: "reviewer",
+        role: "task-reviewer",
         output: { approved: true, summary: "ok", findings: [] }},
       {
         role: "scenario-writer",

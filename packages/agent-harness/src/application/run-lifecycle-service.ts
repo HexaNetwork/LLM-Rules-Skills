@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { CONFIG_VERSION, configurationHash, writeRunWorkspace } from "../config.js";
 import { createRunState, type RunState } from "../domain.js";
-import { classifyFailure } from "../errors.js";
 import { prepareGraphifyForRun } from "../graphify.js";
 import { WorktreeManager } from "../git/worktree-manager.js";
 import type { ApplicationContext } from "./application-context.js";
 import { freezeRunComponents } from "./component-freeze.js";
 import type { RecoveryService } from "./recovery-service.js";
+import { recordBlockedFromNew } from "./run-setup.js";
 
 export class RunLifecycleService {
   constructor(
@@ -65,25 +65,7 @@ export class RunLifecycleService {
         );
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const classified = classifyFailure(error);
-      state = await this.ctx.store.record(
-        {
-          ...state,
-          phase: "blocked",
-          blockedFrom: "new",
-          failure: message,
-          blockedKind: classified.kind,
-          blockedRetriable: classified.retriable,
-        },
-        "run.blocked",
-        {
-          blockedFrom: "new",
-          error: message,
-          blockedKind: classified.kind,
-          blockedRetriable: classified.retriable,
-        },
-      );
+      state = await recordBlockedFromNew(this.ctx.store, state, error);
     }
     await this.ctx.syncArtifacts(state);
     return state;

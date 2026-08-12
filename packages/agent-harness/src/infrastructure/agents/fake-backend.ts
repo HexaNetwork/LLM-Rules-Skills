@@ -32,6 +32,10 @@ export function createFakeBackend(
     }),
     ...handlers,
   };
+  // Per-task review uses task-reviewer; reuse a reviewer stub when tests omit it.
+  if (withDefaults["task-reviewer"] === undefined && withDefaults.reviewer) {
+    withDefaults["task-reviewer"] = withDefaults.reviewer;
+  }
   return {
     workspaceCapabilities() {
       return { canRestrictWritableWorkspace: true, providerId: "fake" };

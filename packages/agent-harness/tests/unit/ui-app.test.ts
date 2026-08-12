@@ -82,6 +82,8 @@ describe("dashboard document", () => {
     expect(html).not.toContain("Control checkout is dirty");
     expect(html).not.toContain("run.control_checkout_notice");
     expect(html).toContain("Dashboard work does not continue automatically after a restart");
+    expect(html).toContain("Setup did not finish. Resume retries Graphify and indexing first.");
+    expect(html).toMatch(/phase === "new"[\s\S]{0,400}Setup did not finish/);
     expect(html).toContain("Confirm feature understanding");
     expect(html).toContain("Our recommendation:");
     expect(html).toContain("data-question-choice");

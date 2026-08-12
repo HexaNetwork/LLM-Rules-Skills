@@ -54,6 +54,7 @@ const WORKER_RETRIEVAL_ROLES = new Set<AgentRole>([
   "unit-test-writer",
   "implementer",
   "reviewer",
+  "task-reviewer",
   "fixer",
   "config-fixer",
   "message-writer",

@@ -242,6 +242,19 @@ describe("prompt rendering", () => {
     expect(rendered).toContain("test-coverage");
   });
 
+  it("tells task-reviewers to block only production findings and treat missing tests as advisory", () => {
+    const reviewPacket: WorkPacket = { ...packet, role: "task-reviewer" };
+    const rendered = renderPrompt(reviewPacket);
+    expect(rendered).toContain(
+      "The packet diff is the primary evidence. Read listed omitted files from disk before commenting on them.",
+    );
+    expect(rendered).toContain("kind: production");
+    expect(rendered).toContain(
+      "Missing tests, missing scenario implementations, and coverage gaps are expected at this phase",
+    );
+    expect(rendered).toContain("emit them only as advisory findings");
+  });
+
   it("tells the planner not to edit the working tree", () => {
     const plannerPacket: WorkPacket = { ...packet, role: "planner" };
     expect(renderPrompt(plannerPacket)).toContain(
@@ -281,7 +294,7 @@ describe("prompt rendering", () => {
   });
 
   it("requires schema-validated workers to return one raw JSON object after the work packet", () => {
-    for (const role of ["implementer", "reviewer"] as const) {
+    for (const role of ["implementer", "reviewer", "task-reviewer"] as const) {
       const rendered = renderPrompt({ ...packet, role });
       const workPacketIndex = rendered.indexOf("WORK PACKET");
       const noMarkdownIndex = rendered.indexOf(

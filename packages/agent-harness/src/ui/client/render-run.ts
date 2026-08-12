@@ -983,6 +983,7 @@ export const renderRunScript = `    function renderSidebar() {
           html += '<strong class="activity-role">' + esc(role) + '</strong>';
           html += '<span class="activity-task">' + esc(rowSummary) + '</span>';
           html += '<span class="activity-result">' + esc(rowResult) + '</span>';
+          html += '<span class="activity-tokens faint">' + esc(tokens) + esc(invCached) + (warnReason ? ' ⚠' : '') + '</span>';
           html += '<span class="activity-chevron" aria-hidden="true">›</span>';
           html += '</div></button>';
           if (invocationExpanded) {
@@ -1012,6 +1013,7 @@ export const renderRunScript = `    function renderSidebar() {
         html += '<strong class="activity-role">' + esc(entry.event === 'routing' ? 'Routing' : entry.event === 'task.gates_passed' || entry.event === 'task.gates_failed' ? 'Verification' : 'Harness') + '</strong>';
         html += '<span class="activity-task">' + esc(entry.summary || entry.event || 'transition') + '</span>';
         html += '<span class="activity-result">' + esc(entry.from || entry.to ? ((entry.from || '?') + ' → ' + (entry.to || '?')) : status) + '</span>';
+        html += '<span class="activity-tokens faint" aria-hidden="true"></span>';
         html += '<span class="activity-chevron" aria-hidden="true">›</span>';
         html += '</div></button>';
         if (expanded) {
@@ -1043,7 +1045,7 @@ export const renderRunScript = `    function renderSidebar() {
       html += '<div class="activity-view-head"><div class="activity-view-switch" role="tablist" aria-label="Activity view">';
       html += '<button type="button" class="btn small' + (mode === 'sequence' ? ' primary' : '') + '" data-activity-view="sequence" data-testid="activity-view-sequence">Execution sequence</button>';
       html += '<button type="button" class="btn small' + (mode === 'contexts' ? ' primary' : '') + '" data-activity-view="contexts" data-testid="activity-view-contexts">Provider contexts</button>';
-      html += '</div><div class="activity-view-help">' + (mode === 'sequence' ? 'Latest first · select an event to see its trigger, usage, and details.' : 'Select a context to see its invocations.') + '</div></div>';
+      html += '</div><div class="activity-view-help">' + (mode === 'sequence' ? 'Latest first · tokens on each step · select for trigger and details.' : 'Select a context to see its invocations.') + '</div></div>';
       if (mode === 'contexts') html += renderProviderContextActivity(contexts);
       else html += renderExecutionSequence(timeline, contexts);
       html += '</div>';

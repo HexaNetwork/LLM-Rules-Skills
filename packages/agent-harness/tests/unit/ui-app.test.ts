@@ -97,7 +97,7 @@ describe("dashboard document", () => {
     expect(html).toContain("activity-timeline");
     expect(html).toContain("activity-sequence");
     expect(html).toContain("activity-view-help");
-    expect(html).toContain("Latest first · select an event to see its trigger, usage, and details.");
+    expect(html).toContain("Latest first · tokens on each step · select for trigger and details.");
     expect(html).toContain("Execution sequence");
     expect(html).toContain("Provider contexts");
     expect(html).toContain('data-activity-view="sequence"');
@@ -106,6 +106,7 @@ describe("dashboard document", () => {
     expect(html).toContain("activityView");
     expect(html).toContain("function renderExecutionSequence");
     expect(html).toContain("timeline.slice().reverse().forEach");
+    expect(html).toContain('class="activity-tokens faint"');
     expect(html).toContain("function renderProviderContextActivity");
     expect(html).toContain("function displayActivityRole(role, _taskId)");
     expect(html).toContain("function renderRunVitals(s)");

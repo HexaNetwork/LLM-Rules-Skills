@@ -271,7 +271,7 @@ export function renderDashboard(): string {
     .activity-row:last-child { border-bottom:0; }
     .activity-row:hover, .activity-row.open { background:var(--surface); }
     .activity-row.warn { background:rgba(255,180,80,.045); }
-    .activity-row-main { display:grid; grid-template-columns:28px 66px minmax(84px,110px) minmax(180px,1fr) auto 16px; gap:10px; align-items:center; min-width:0; }
+    .activity-row-main { display:grid; grid-template-columns:28px 66px minmax(84px,110px) minmax(180px,1fr) auto auto 16px; gap:10px; align-items:center; min-width:0; }
     .activity-row-toggle { display:block; width:100%; text-align:left; background:transparent; border:0; color:inherit; padding:10px 12px; cursor:pointer; }
     .activity-row-detail { margin:0 12px 12px 116px; padding:10px 12px; border-left:1px solid var(--line); display:grid; gap:7px; color:var(--muted); font-size:12px; }
     .activity-row-detail .btn { justify-self:start; margin-top:3px; }
@@ -281,6 +281,7 @@ export function renderDashboard(): string {
     .activity-role { font-size:12px; font-weight:750; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .activity-task { color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .activity-result { color:var(--muted); font-size:11px; font-weight:650; white-space:nowrap; max-width:150px; overflow:hidden; text-overflow:ellipsis; }
+    .activity-tokens { font-variant-numeric:tabular-nums; font-size:11px; white-space:nowrap; text-align:right; justify-self:end; }
     .activity-chevron { color:var(--faint); font-size:11px; transition:transform .12s ease; }
     .activity-row.open .activity-chevron { transform:rotate(90deg); }
     .activity-row:before { content:""; position:absolute; left:0; top:8px; bottom:8px; width:2px; border-radius:2px; background:var(--line); }
@@ -391,7 +392,7 @@ export function renderDashboard(): string {
       .card.third, .card.half, .card.two-thirds { grid-column:span 12; }
       .knowledge-layout { grid-template-columns:1fr; }
       .guidance-layout { grid-template-columns:1fr; }
-      .activity-row-main { grid-template-columns:24px 58px minmax(80px,100px) minmax(140px,1fr) 16px; }
+      .activity-row-main { grid-template-columns:24px 58px minmax(80px,100px) minmax(140px,1fr) auto 16px; }
       .activity-result { display:none; }
       .activity-row-detail { margin-left:104px; }
     }
@@ -404,7 +405,7 @@ export function renderDashboard(): string {
       .content { padding-left:13px; padding-right:13px; }
       .activity-view-head { align-items:flex-start; }
       .activity-view-help { width:100%; }
-      .activity-row-main { grid-template-columns:24px minmax(76px,96px) minmax(0,1fr) 16px; gap:8px; }
+      .activity-row-main { grid-template-columns:24px minmax(76px,96px) minmax(0,1fr) auto 16px; gap:8px; }
       .activity-time { display:none; }
       .activity-row-detail { margin-left:48px; }
     }

@@ -21,7 +21,6 @@ import { migrateHome } from "../application/migrate-home.js";
 import { ProjectRegistry } from "../application/project-registry.js";
 import { formatBytes, reportProjectStorage } from "../application/storage-report.js";
 import { openRunHarness } from "../application/run-engine-factory.js";
-import { describeActiveTddStatus } from "../domain.js";
 import { HarnessEngine } from "../engine.js";
 import { GitService } from "../git.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
@@ -322,7 +321,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .option("--project <project-key>", "external project key")
     .option("--repository <path>", "registered repository path")
     .option("--home <path>", "harness home override")
-    .option("--tdd <mode>", "override TDD for this run: on or off")
     .option("--rag <mode>", "override document RAG for this run: on or off")
     .option("--base-branch <name>", "override local base branch for this run")
     .option("--no-advance", "create artifacts without launching agents")
@@ -334,7 +332,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         project?: string;
         repository?: string;
         home?: string;
-        tdd?: string;
         rag?: string;
         baseBranch?: string;
         advance: boolean;
@@ -342,7 +339,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         const resolved = await resolvedProjectConfig(options);
         const config = await applyRunOverrides(
           resolved.config,
-          options.tdd,
           options.baseBranch,
           options.rag,
         );
@@ -901,12 +897,11 @@ async function discoverDeploymentSources(project: string): Promise<string[]> {
 
 async function resolvedConfig(
   configPath: string | undefined,
-  tdd: string | undefined,
   baseBranch?: string,
   rag?: string,
 ): Promise<HarnessConfig> {
   const { config } = await resolvedProjectConfig({ config: configPath });
-  return applyRunOverrides(config, tdd, baseBranch, rag);
+  return applyRunOverrides(config, baseBranch, rag);
 }
 
 async function resolvedProjectConfig(options: {
@@ -941,15 +936,10 @@ async function resolvedProjectConfig(options: {
 
 async function applyRunOverrides(
   config: HarnessConfig,
-  tdd: string | undefined,
   baseBranch?: string,
   rag?: string,
 ): Promise<HarnessConfig> {
   let next = config;
-  if (tdd != null) {
-    if (tdd !== "on" && tdd !== "off") throw new Error("--tdd must be 'on' or 'off'");
-    next = { ...next, workflow: { ...next.workflow, tdd: tdd === "on" } };
-  }
   if (rag != null) {
     if (rag !== "on" && rag !== "off") throw new Error("--rag must be 'on' or 'off'");
     next = { ...next, workflow: { ...next.workflow, rag: rag === "on" } };
@@ -1056,17 +1046,6 @@ function printLockRemoval(
 function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {
   console.log(`Run ${state.runId}: ${state.phase}`);
   console.log(`Artifacts: ${state.runId}/state.json (under the configured state directory)`);
-  const activeTdd = state.tasks.find(
-    (task) => task.tdd && (task.status === "active" || task.status === "failed"),
-  );
-  if (activeTdd) {
-    const line = describeActiveTddStatus(activeTdd);
-    if (line) {
-      console.log(`TDD (${activeTdd.id}): ${line}`);
-    } else {
-      console.log(`TDD (${activeTdd.id}): ${activeTdd.status} / ${activeTdd.step}`);
-    }
-  }
   if (state.phase === "awaiting_input" && state.grillReady) {
     console.log(`Grilling complete: ${state.grillReady.summary}`);
     console.log(
@@ -1077,7 +1056,10 @@ function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {
     );
   }
   if (state.phase === "awaiting_input" && state.planReady) {
-    console.log(`High-level plan ready: ${state.planReady.summary}`);
+    console.log(`Plan / PRD / scenarios ready: ${state.planReady.summary}`);
+    if (state.scenarios.length > 0) {
+      console.log(`Scenarios: ${state.scenarios.map((item) => item.id).join(", ")}`);
+    }
     console.log(
       `Approve with: agent-harness confirm-plan --run-id ${state.runId}`,
     );
@@ -1102,6 +1084,20 @@ function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {
     console.log(
       `Or edit the command: agent-harness retry-verification-baseline --run-id ${state.runId} --verification-command "…"`,
     );
+  }
+  if (state.phase === "scenario_testing") {
+    const active = state.scenarios.find((item) => item.status === "active" || item.status === "pending");
+    console.log(
+      `Scenario testing: ${state.scenarios.filter((item) => item.status === "passing").length}/${state.scenarios.length} passing` +
+        (active ? ` · current ${active.id}` : ""),
+    );
+  }
+  if (state.phase === "crystallizing") {
+    const pct = state.coverage ? `${(state.coverage.percentage * 100).toFixed(1)}%` : "not measured";
+    console.log(`Crystallizing coverage: ${pct}`);
+  }
+  if (state.phase === "final_review") {
+    console.log(`Final review attempt ${state.finalReviewAttempts}`);
   }
   const question = state.questions.find((item) => item.id === state.activeQuestionId);
   if (question) {

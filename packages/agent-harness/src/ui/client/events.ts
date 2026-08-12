@@ -82,12 +82,11 @@ export const eventsScript = `    async function waitForJob(runId) {
                 : (landedPlanReady
                   ? 'Baseline passed — review the plan'
                   : 'Baseline passed — planning'))
-            : (action === 'set_tdd' ? 'TDD updated'
             : (action === 'set_rag' ? 'RAG updated'
             : (action === 'set_graphify' ? 'Graphify updated'
             : (action === 'commit_preflight' ? 'Working tree committed — continuing'
             : (action === 'accept_tree' ? 'Current tree accepted — continuing'
-            : (action === 'retry' ? 'Retry started' : 'Action completed'))))))))))));
+            : (action === 'retry' ? 'Retry started' : 'Action completed')))))))))));
         toast(doneMsg);
       } catch (error) {
         state.pinScrollTop = false;
@@ -241,12 +240,7 @@ export const eventsScript = `    async function waitForJob(runId) {
           runAction('cleanup', { discard: discardCleanup });
           return;
         }
-        if (target.dataset.action === 'set_tdd') {
-          runAction('set_tdd', {
-            tdd: target.dataset.tdd === 'true',
-            taskId: target.dataset.taskId || undefined
-          });
-        } else if (target.dataset.action === 'commit_preflight') {
+        if (target.dataset.action === 'commit_preflight') {
           runAction(target.dataset.action, { order: target.dataset.preflightOrder });
         } else if (target.dataset.action === 'ignore_artifacts') {
           var ignorePaths = [];
@@ -554,9 +548,6 @@ export const eventsScript = `    async function waitForJob(runId) {
       if (event.target.dataset && event.target.dataset.installId) {
         state.installSelections[event.target.dataset.installId] = event.target.value;
       }
-      if (event.target.id === 'runTddToggle') {
-        runAction('set_tdd', { tdd: event.target.checked });
-      }
       if (event.target.id === 'runRagToggle') {
         runAction('set_rag', { rag: event.target.checked });
       }
@@ -605,7 +596,7 @@ export const eventsScript = `    async function waitForJob(runId) {
       submit.textContent = 'Starting reflect…';
       setNewRunFeedback('Creating the durable run and queuing the reflector…', false);
       try {
-        var body = { idea:$("idea").value, tdd:$("tdd").checked, rag:$("rag").checked, graphify:$("graphify").checked, push:$("push").checked, openPullRequest:$("openPr").checked, smallModel:$("smallModel").value || undefined, capableModel:$("capableModel").value || undefined };
+        var body = { idea:$("idea").value, rag:$("rag").checked, graphify:$("graphify").checked, push:$("push").checked, openPullRequest:$("openPr").checked, smallModel:$("smallModel").value || undefined, capableModel:$("capableModel").value || undefined };
         var baseBranchSelect = $("baseBranch");
         if (baseBranchSelect && !baseBranchSelect.disabled && baseBranchSelect.value) body.baseBranch = baseBranchSelect.value;
         var data = await api('/api/runs',{method:'POST',body:body});
@@ -679,7 +670,6 @@ export const eventsScript = `    async function waitForJob(runId) {
 
     function applyDefaults() {
       if (!state.bootstrap) return;
-      $("tdd").checked = state.bootstrap.project.defaults.tdd;
       $("rag").checked = state.bootstrap.project.defaults.rag !== false;
       $("push").checked = state.bootstrap.project.defaults.push;
       $("openPr").checked = state.bootstrap.project.defaults.openPullRequest;

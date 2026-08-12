@@ -79,7 +79,6 @@ export async function handleRunsRoutes(
           branches: await new GitService(projectConfig).listLocalBranches(),
         },
         defaults: {
-          tdd: projectConfig.workflow.tdd,
           rag: projectConfig.workflow.rag,
           push: projectConfig.git.push,
           openPullRequest: projectConfig.git.openPullRequest,
@@ -110,7 +109,6 @@ export async function handleRunsRoutes(
     const body = await readJsonBody(request);
     const idea = requiredString(body.idea, "idea", 100_000);
     const runId = optionalString(body.runId, "runId", 100) ?? randomUUID();
-    const tdd = optionalBoolean(body.tdd, "tdd") ?? projectConfig.workflow.tdd;
     const rag = optionalBoolean(body.rag, "rag") ?? projectConfig.workflow.rag;
     const push = optionalBoolean(body.push, "push") ?? projectConfig.git.push;
     const openPullRequest =
@@ -123,7 +121,7 @@ export async function handleRunsRoutes(
     const baseBranch = await resolveBaseBranchOverride(projectConfig, baseBranchOverride);
     const runConfig = HarnessConfigSchema.parse({
       ...projectConfig,
-      workflow: { ...projectConfig.workflow, tdd, rag },
+      workflow: { ...projectConfig.workflow, rag },
       git: {
         ...projectConfig.git,
         baseBranch,
@@ -245,7 +243,6 @@ export async function handleRunsRoutes(
       : undefined;
     const retrievalPolicy = runConfig
       ? {
-          tdd: runConfig.workflow.tdd,
           rag: runConfig.workflow.rag,
           graphify: runConfig.knowledge.graphify.enabled,
         }
@@ -499,11 +496,6 @@ export async function handleRunsRoutes(
         const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId);
         await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
       });
-    } else if (action === "set_tdd") {
-      const tdd = optionalBoolean(body.tdd, "tdd");
-      if (tdd == null) throw new HttpError(400, "tdd must be a boolean");
-      const taskId = optionalString(body.taskId, "taskId", 200);
-      ctx.jobs.enqueue(runId, action, () => engine.setTdd(runId, tdd, taskId));
     } else if (action === "set_rag") {
       const rag = optionalBoolean(body.rag, "rag");
       if (rag == null) throw new HttpError(400, "rag must be a boolean");

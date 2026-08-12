@@ -284,7 +284,6 @@ export function renderDashboard(): string {
     .activity-chevron { color:var(--faint); font-size:11px; transition:transform .12s ease; }
     .activity-row.open .activity-chevron { transform:rotate(90deg); }
     .activity-row:before { content:""; position:absolute; left:0; top:8px; bottom:8px; width:2px; border-radius:2px; background:var(--line); }
-    .activity-row.role-red:before { background:#d9897a; }
     .activity-row.role-green:before { background:#8fbf7a; }
     .activity-row.role-review:before { background:#7aa0c4; }
     .activity-row.role-verify:before { background:#c4b07a; }
@@ -450,7 +449,6 @@ export function renderDashboard(): string {
         <div class="field"><label for="idea">What do you want to build?</label><textarea id="idea" name="idea" rows="7" required placeholder="Describe the outcome, the user, and any constraints you already know…"></textarea></div>
         <div class="form-feedback" id="newRunFeedback" hidden></div>
         <div class="field"><label for="ideaFile">Or load an idea file</label><input id="ideaFile" type="file" accept=".md,.txt,.json"></div>
-        <div class="switch-row"><div><strong>Test-driven development</strong><div class="faint">Write and verify RED before implementation.</div></div><input id="tdd" type="checkbox"></div>
         <div class="switch-row"><div><strong>Document RAG</strong><div class="faint">Retrieve project docs into agent work packets (independent of Graphify).</div></div><input id="rag" type="checkbox"></div>
         <div class="field" id="baseBranchField" hidden><label for="baseBranch">Start from branch</label><select id="baseBranch"></select><small class="faint">Creates the run worktree from this local branch tip. Does not switch or clean the project folder. PRs target it. Defaults to the project base branch.</small></div>
         <details><summary>Advanced run settings</summary><div style="padding-top:14px">

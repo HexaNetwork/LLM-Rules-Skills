@@ -437,7 +437,7 @@ export const renderRunScript = `    function renderSidebar() {
       return '<div class="card question-card" id="installApprovalCard"><div class="card-label">Approve dependency installs</div><p class="muted">The issue slicer proposed these installs before implementation. Accept or deny each item, then continue.</p>' + rows + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" class="btn" id="acceptAllInstallsBtn">Accept all</button><button type="button" class="btn" id="denyAllInstallsBtn">Deny all</button><button type="button" class="btn primary" id="submitInstallsBtn">Continue</button></div></div>';
     }
 
-    function renderPlanReady(gate, plan) {
+    function renderPlanReady(gate, plan, prd, scenarios) {
       var draft = state.planDraft || {};
       var summary = draft.summary != null ? draft.summary : (plan && plan.summary) || gate.summary || "";
       var problemStatement = draft.problemStatement != null ? draft.problemStatement : (plan && plan.problemStatement) || "";
@@ -446,7 +446,16 @@ export const renderRunScript = `    function renderSidebar() {
       var constraints = draft.constraints != null ? draft.constraints : ((plan && plan.constraints) || []).join("\\n");
       var outOfScope = draft.outOfScope != null ? draft.outOfScope : ((plan && plan.outOfScope) || []).join("\\n");
       var openQuestions = draft.openQuestions != null ? draft.openQuestions : ((plan && plan.openQuestions) || []).join("\\n");
-      return '<div class="card question-card" id="planReadyCard"><div class="card-label">Review high-level plan</div><p class="muted">Edit the plan if needed, then approve. Approving runs local PRD authoring and issue slicing automatically. Feedback discards edits and asks the planner to try again.</p><div class="resolution" style="margin:10px 0 12px"><strong>Gate summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div><form id="planReadyForm"><label class="muted" for="planSummary">Summary</label><textarea id="planSummary" rows="2" style="width:100%;margin:4px 0 10px">' + esc(summary) + '</textarea><label class="muted" for="planProblemStatement">Problem statement</label><textarea id="planProblemStatement" rows="3" style="width:100%;margin:4px 0 10px">' + esc(problemStatement) + '</textarea><label class="muted" for="planSolution">Solution</label><textarea id="planSolution" rows="3" style="width:100%;margin:4px 0 10px">' + esc(solution) + '</textarea><label class="muted" for="planApproach">Approach</label><textarea id="planApproach" rows="4" style="width:100%;margin:4px 0 10px">' + esc(approach) + '</textarea><label class="muted" for="planConstraints">Constraints (one per line)</label><textarea id="planConstraints" rows="3" style="width:100%;margin:4px 0 10px">' + esc(constraints) + '</textarea><label class="muted" for="planOutOfScope">Out of scope (one per line)</label><textarea id="planOutOfScope" rows="3" style="width:100%;margin:4px 0 10px">' + esc(outOfScope) + '</textarea><label class="muted" for="planOpenQuestions">Open questions (one per line)</label><textarea id="planOpenQuestions" rows="2" style="width:100%;margin:4px 0 10px">' + esc(openQuestions) + '</textarea><label class="muted" for="planFeedbackText">Optional feedback</label><textarea id="planFeedbackText" placeholder="Something the planner missed or got wrong…">' + esc(state.planFeedbackText) + '</textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" class="btn" id="sendPlanFeedbackBtn">Send feedback to planner</button><button type="button" class="btn primary" id="approvePlanBtn">Approve plan</button></div></form></div>';
+      var scenarioList = (scenarios || []).map(function (scenario) {
+        return '<div class="resolution" style="margin-top:10px"><strong>' + esc(scenario.id) + '</strong> <span class="tag">' + esc(scenario.kind || "") + '</span><div class="muted" style="margin-top:4px">' + esc(scenario.title || "") + '</div><div class="muted" style="margin-top:4px">' + esc(scenario.intent || "") + '</div><div class="faint" style="margin-top:4px">Given ' + esc(scenario.given || "") + ' · When ' + esc(scenario.when || "") + ' · Then ' + esc(scenario.then || "") + '</div></div>';
+      }).join("");
+      var prdBlock = prd
+        ? '<div class="resolution" style="margin:10px 0 12px"><strong>Local PRD</strong><div class="muted" style="margin-top:5px">' + esc(prd.summary || "") + '</div>' + ((prd.userStories || []).length ? '<ol style="margin:8px 0 0;padding-left:20px">' + prd.userStories.map(function (story) { return '<li>' + esc(story) + '</li>'; }).join("") + '</ol>' : '') + '</div>'
+        : "";
+      var scenariosBlock = scenarioList
+        ? '<div class="resolution" style="margin:10px 0 12px"><strong>Test scenarios</strong>' + scenarioList + '</div>'
+        : "";
+      return '<div class="card question-card" id="planReadyCard"><div class="card-label">Review plan, PRD, and scenarios</div><p class="muted">Edit the plan if needed, then approve. Approving slices implementation tasks from the PRD and scenario register. Feedback discards the plan, PRD, and scenarios and restarts planning.</p><div class="resolution" style="margin:10px 0 12px"><strong>Gate summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div>' + prdBlock + scenariosBlock + '<form id="planReadyForm"><label class="muted" for="planSummary">Summary</label><textarea id="planSummary" rows="2" style="width:100%;margin:4px 0 10px">' + esc(summary) + '</textarea><label class="muted" for="planProblemStatement">Problem statement</label><textarea id="planProblemStatement" rows="3" style="width:100%;margin:4px 0 10px">' + esc(problemStatement) + '</textarea><label class="muted" for="planSolution">Solution</label><textarea id="planSolution" rows="3" style="width:100%;margin:4px 0 10px">' + esc(solution) + '</textarea><label class="muted" for="planApproach">Approach</label><textarea id="planApproach" rows="4" style="width:100%;margin:4px 0 10px">' + esc(approach) + '</textarea><label class="muted" for="planConstraints">Constraints (one per line)</label><textarea id="planConstraints" rows="3" style="width:100%;margin:4px 0 10px">' + esc(constraints) + '</textarea><label class="muted" for="planOutOfScope">Out of scope (one per line)</label><textarea id="planOutOfScope" rows="3" style="width:100%;margin:4px 0 10px">' + esc(outOfScope) + '</textarea><label class="muted" for="planOpenQuestions">Open questions (one per line)</label><textarea id="planOpenQuestions" rows="2" style="width:100%;margin:4px 0 10px">' + esc(openQuestions) + '</textarea><label class="muted" for="planFeedbackText">Optional feedback</label><textarea id="planFeedbackText" placeholder="Something the planner missed or got wrong…">' + esc(state.planFeedbackText) + '</textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" class="btn" id="sendPlanFeedbackBtn">Send feedback to planner</button><button type="button" class="btn primary" id="approvePlanBtn">Approve plan</button></div></form></div>';
     }
 
     function renderPrdReadonly(prd) {
@@ -466,13 +475,6 @@ export const renderRunScript = `    function renderSidebar() {
 
     function renderGrillReady(gate) {
       return '<div class="card question-card" id="grillReadyCard"><div class="card-label">Grilling complete</div><p class="muted">The griller is ready to plan. Continue, or send feedback to reopen the interview.</p><div class="resolution" style="margin:10px 0 12px"><strong>Summary</strong><div class="muted" style="margin-top:5px">' + esc(gate.summary || "") + '</div></div><form id="grillReadyForm"><label class="muted" for="grillFeedbackText">Optional feedback</label><textarea id="grillFeedbackText" placeholder="Something the griller missed or got wrong…">' + esc(state.grillFeedbackText) + '</textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" class="btn" id="sendGrillFeedbackBtn">Send feedback to griller</button><button type="button" class="btn primary" id="continueToPlanningBtn">Continue to planning</button></div></form></div>';
-    }
-
-    function renderRunTddControl(s) {
-      var locked = ["completed","cancelled"].includes(s.phase);
-      var enabled = s.tasks.length ? s.tasks.some(function (t) { return t.tdd; }) : !!(state.bootstrap && state.bootstrap.project && state.bootstrap.project.defaults && state.bootstrap.project.defaults.tdd);
-      if (locked) return '<strong>' + (enabled ? "Enabled" : "Disabled") + '</strong>';
-      return '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runTddToggle"' + (enabled ? " checked" : "") + '> <strong>' + (enabled ? "Enabled" : "Disabled") + '</strong></label><div class="faint" style="margin-top:4px">Applies to the run default and pending tasks</div>';
     }
 
     function renderRunRetrievalToggles() {
@@ -543,12 +545,10 @@ export const renderRunScript = `    function renderSidebar() {
                     : jobAction === "retry_verification_baseline"
                       ? "Retrying the verification baseline"
                   : jobAction === "confirm_plan"
-                    ? "Authoring PRD and slicing issues"
+                    ? "Slicing issues from the approved plan"
                   : "An agent or deterministic command is working";
         if (jobDetail) thinkingDetail = jobDetail;
         if (activityText) thinkingDetail = activityText;
-        var tddStatus = activeTddStatusLine(s);
-        if (tddStatus) thinkingDetail = tddStatus + (thinkingDetail ? " · " + thinkingDetail : "");
         if (s.phase === "grilling" && unknowns.length && !activityText) thinkingDetail += " · " + openUnknownCount + " open unknown(s) remain";
         html += '<div class="thinking-strip" role="status" aria-live="polite"><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="thinking-copy"><strong>Thinking…</strong><span>' + esc(thinkingDetail) + '</span>' + (thinkingSince && !activityText ? '<span id="thinkingElapsed">' + esc(elapsed(thinkingSince)) + '</span>' : '') + '</div></div>';
       }
@@ -559,7 +559,7 @@ export const renderRunScript = `    function renderSidebar() {
         } else if (s.verificationBaselineReady) {
           html += renderVerificationBaselineReady(s.verificationBaselineReady);
         } else if (s.planReady) {
-          html += renderPlanReady(s.planReady, s.plan);
+          html += renderPlanReady(s.planReady, s.plan, s.prd, s.scenarios);
         } else if (pendingInstalls.length) {
           html += renderInstallApproval(pendingInstalls);
         } else if (s.grillReady) {
@@ -724,7 +724,6 @@ export const renderRunScript = `    function renderSidebar() {
       if (worktreePath) {
         html += '<div class="muted repo-label">Worktree' + copyPathBtn(worktreePath, "Copy worktree path") + '</div><div style="margin:4px 0 10px"><code title="' + attr(worktreePath) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(worktreePath) + '</code></div>';
       }
-      html += '<div class="muted">TDD</div><div style="margin-top:4px">' + renderRunTddControl(s) + '</div>';
       html += '<div class="muted" style="margin-top:10px">Retrieval</div>' + renderRunRetrievalToggles() + '</div>';
       html += renderInstallLogPanel();
       html += '</div>';
@@ -742,89 +741,8 @@ export const renderRunScript = `    function renderSidebar() {
       $("tabBody").innerHTML = html;
     }
 
-    function activeTddRoleLabel(task) {
-      if (!task || !task.tdd) return "";
-      var loop = task.tddLoop || {};
-      if (task.step === "writing_tests" || task.step === "red") {
-        return loop.pendingRound && loop.pendingRound.mode === "test-repair" ? "red-writer (test-repair)" : "red-writer";
-      }
-      if (task.step === "implementing") {
-        return loop.finalRepairPending ? "green-implementer (final-repair)" : "green-implementer";
-      }
-      if (task.step === "verifying") return "final-verification";
-      if (task.step === "reviewing") return "reviewer";
-      if (task.step === "committing") return "committing";
-      return "";
-    }
-
-    function tddRoundNumber(task) {
-      var loop = task && task.tddLoop;
-      if (!loop) return 1;
-      if (loop.pendingRound && loop.pendingRound.number) return loop.pendingRound.number;
-      return loop.round || 1;
-    }
-
-    function activeTddStatusLine(s) {
-      var task = (s.tasks || []).find(function (item) {
-        return item.tdd && (item.status === "active" || item.status === "failed");
-      });
-      if (!task) return "";
-      var loop = task.tddLoop || {};
-      var role = activeTddRoleLabel(task) || task.step;
-      var completed = (loop.completedRounds || []).length;
-      var redTurns = (loop.redWriterSession && loop.redWriterSession.turns) || 0;
-      var greenTurns = (loop.greenImplementerSession && loop.greenImplementerSession.turns) || 0;
-      var parts = ["TDD round " + tddRoundNumber(task), role, completed + " completed", "red " + redTurns + " turns", "green " + greenTurns + " turns"];
-      var pending = loop.pendingRound;
-      if (pending) {
-        var behaviors = (pending.behaviorsAdded || []).length;
-        var edges = (pending.edgeCasesAdded || []).length;
-        if (behaviors || edges) parts.push("batch " + behaviors + " behaviors / " + edges + " edge cases");
-      }
-      return parts.join(" · ");
-    }
-
-    function displayActivityRole(role, taskId) {
-      if (role !== "implementer" || !taskId || !state.detail || !state.detail.state) return role || "unknown";
-      var task = (state.detail.state.tasks || []).find(function (item) { return item.id === taskId; });
-      return task && task.tdd ? "green-implementer" : role;
-    }
-
-    function renderTaskTddDetails(task, taskKey) {
-      if (!task.tdd) return "";
-      var loop = task.tddLoop;
-      if (!loop) {
-        return '<details data-details-key="' + attr(taskKey + "-tdd") + '"><summary>TDD loop</summary><div class="muted" style="margin-top:8px">Not started.</div></details>';
-      }
-      var role = activeTddRoleLabel(task) || task.step;
-      var pending = loop.pendingRound;
-      var completed = loop.completedRounds || [];
-      var html = '<details data-details-key="' + attr(taskKey + "-tdd") + '"' + (task.status === "active" ? " open" : "") + '><summary>TDD loop · round ' + esc(String(tddRoundNumber(task))) + ' · ' + esc(role) + '</summary>';
-      html += '<div class="muted" style="margin-top:8px">' + esc(completed.length + " completed · red " + ((loop.redWriterSession && loop.redWriterSession.turns) || 0) + " turns · green " + ((loop.greenImplementerSession && loop.greenImplementerSession.turns) || 0) + " turns") + (loop.atVerifiedGreen ? " · at verified green" : "") + '</div>';
-      if (pending) {
-        html += '<div class="resolution" style="margin-top:10px"><strong>Current batch (round ' + esc(String(pending.number)) + ', ' + esc(pending.mode) + ')</strong>';
-        html += '<div class="muted" style="margin-top:5px">Behaviors: ' + esc((pending.behaviorsAdded || []).join("; ") || "none") + '</div>';
-        html += '<div class="muted" style="margin-top:4px">Edge cases: ' + esc((pending.edgeCasesAdded || []).join("; ") || "none") + '</div>';
-        html += '<div class="muted" style="margin-top:4px">Tests: ' + esc((pending.testPathsAdded || []).join("; ") || "none") + '</div></div>';
-      }
-      if (completed.length) {
-        html += '<div style="margin-top:10px">' + completed.map(function (round) {
-          var outcome = round.outcome === "already-covered" ? "already-covered" : round.outcome;
-          return '<div class="fog-entry" style="margin-bottom:8px"><div class="item-head"><div class="item-title">Round ' + esc(String(round.number)) + '</div><span class="tag">' + esc(outcome) + '</span></div><div class="muted" style="margin-top:4px">' + esc((round.behaviorsAdded || []).join("; ") || "no behaviors") + '</div>' + ((round.edgeCasesAdded || []).length ? '<div class="muted" style="margin-top:3px">Edge cases: ' + esc(round.edgeCasesAdded.join("; ")) + '</div>' : '') + '</div>';
-        }).join("") + '</div>';
-      }
-      var assessment = loop.coverage && loop.coverage.finalAssessment;
-      if (assessment) {
-        html += '<div class="resolution" style="margin-top:10px"><strong>Final coverage assessment</strong><div class="muted" style="margin-top:5px">' + esc(assessment.edgeCaseRationale || "") + '</div>';
-        html += '<ul style="margin:8px 0 0;padding-left:18px">' + (assessment.acceptanceCriteria || []).map(function (item) {
-          var criterion = (task.acceptanceCriteria && task.acceptanceCriteria[item.criterionIndex]) || ("criterion " + item.criterionIndex);
-          return '<li>' + (item.covered ? "✓ " : "○ ") + esc(criterion) + '<div class="faint">' + esc(item.verificationMode || "automated-test") + ' · ' + esc(item.rationale || "") + '</div></li>';
-        }).join("") + '</ul></div>';
-      } else if (loop.coverage && ((loop.coverage.behaviors || []).length || (loop.coverage.edgeCases || []).length)) {
-        html += '<div class="muted" style="margin-top:10px">Covered so far: ' + esc((loop.coverage.behaviors || []).length) + ' behaviors · ' + esc((loop.coverage.edgeCases || []).length) + ' edge cases</div>';
-      }
-      html += '</details>';
-      return html;
+    function displayActivityRole(role, _taskId) {
+      return role || "unknown";
     }
 
     function renderTasks(s) {
@@ -836,14 +754,8 @@ export const renderRunScript = `    function renderSidebar() {
         var taskKey = task.id || ("task-" + index);
         var criteria = '<ul>' + task.acceptanceCriteria.map(function (criterion) { return '<li>' + esc(criterion) + '</li>'; }).join("") + '</ul>';
         var evidence = task.evidence.length ? '<details data-details-key="' + attr(taskKey + "-evidence") + '"><summary>' + task.evidence.length + ' command result(s)</summary>' + task.evidence.map(function (item, evidenceIndex) { var output = [item.stderr,item.stdout].filter(Boolean).join(String.fromCharCode(10)); return '<div class="evidence"><div class="evidence-head"><span>' + esc(item.purpose) + ' · <code>' + esc(item.command) + '</code></span><strong class="' + (item.passed ? "pass" : "fail") + '">' + (item.passed ? "PASS" : "FAIL") + ' / ' + item.exitCode + '</strong></div>' + (output ? '<pre data-scroll-key="' + attr(taskKey + "-evidence-" + evidenceIndex) + '">' + esc(output.slice(-8000)) + '</pre>' : '') + '</div>'; }).join("") + '</details>' : '';
-        var canToggle = task.status === "pending" && task.step === "pending" && !["completed","cancelled"].includes(s.phase);
-        var tddControl = canToggle
-          ? '<button type="button" class="tag" data-action="set_tdd" data-task-id="' + attr(task.id) + '" data-tdd="' + (task.tdd ? "false" : "true") + '" title="Toggle TDD for this pending task">TDD ' + (task.tdd ? "on" : "off") + ' · click</button>'
-          : '<span class="tag" title="TDD is locked once the task starts">TDD ' + (task.tdd ? "on" : "off") + '</span>';
-        var tddBadge = task.tdd && task.status === "active"
-          ? '<span class="tag">round ' + esc(String(tddRoundNumber(task))) + ' · ' + esc(activeTddRoleLabel(task) || task.step) + '</span>'
-          : '';
-        return '<article class="item"><div class="item-head"><div><div class="card-label">Task ' + String(index + 1).padStart(2,"0") + '</div><div class="item-title">' + esc(task.title) + '</div><div class="muted" style="margin-top:5px">' + esc(task.description) + '</div></div><span class="badge ' + attr(task.status === "done" ? "completed" : task.status) + '">' + esc(task.status + " · " + task.step) + '</span></div><div class="tags">' + tddControl + tddBadge + (task.blockedBy.length ? '<span class="tag">after ' + esc(task.blockedBy.join(", ")) + '</span>' : '') + (task.commitSha ? '<span class="tag">' + esc(task.commitSha.slice(0,8)) + '</span>' : '') + '</div><details data-details-key="' + attr(taskKey + "-criteria") + '"><summary>Acceptance criteria</summary>' + criteria + '</details>' + renderTaskTddDetails(task, taskKey) + evidence + (task.failure ? '<div class="resolution" style="border-color:var(--red)">' + esc(task.failure) + '</div>' : '') + '</article>';
+        var scenarioTags = (task.scenarioIds || []).map(function (id) { return '<span class="tag">scenario ' + esc(id) + '</span>'; }).join('');
+        return '<article class="item"><div class="item-head"><div><div class="card-label">Task ' + String(index + 1).padStart(2,"0") + '</div><div class="item-title">' + esc(task.title) + '</div><div class="muted" style="margin-top:5px">' + esc(task.description) + '</div></div><span class="badge ' + attr(task.status === "done" ? "completed" : task.status) + '">' + esc(task.status + " · " + task.step) + '</span></div><div class="tags">' + scenarioTags + (task.blockedBy.length ? '<span class="tag">after ' + esc(task.blockedBy.join(", ")) + '</span>' : '') + (task.commitSha ? '<span class="tag">' + esc(task.commitSha.slice(0,8)) + '</span>' : '') + '</div><details data-details-key="' + attr(taskKey + "-criteria") + '"><summary>Acceptance criteria</summary>' + criteria + '</details>' + evidence + (task.failure ? '<div class="resolution" style="border-color:var(--red)">' + esc(task.failure) + '</div>' : '') + '</article>';
       }).join("") + '</div>' : '<div class="empty">Implementation tasks appear after grilling reaches shared understanding.</div>';
       $("tabBody").innerHTML = html;
     }
@@ -1009,7 +921,6 @@ export const renderRunScript = `    function renderSidebar() {
     }
 
     function timelineRoleClass(role) {
-      if (role === 'red-writer') return 'role-red';
       if (role === 'implementer') return 'role-green';
       if (role === 'reviewer') return 'role-review';
       return 'role-other';

@@ -9,6 +9,7 @@ import {
   FixerPlanSchema,
   WorkerOutputSchema,
   clearBlock,
+  decideDockerCleanup,
   decideWorktreeCleanup,
   isCancelSettled,
   isTerminalPhase,
@@ -20,7 +21,6 @@ import {
 } from "../domain.js";
 import { classifyFailure, HarnessFailure, RunCancelledError } from "../errors.js";
 import { commandEvidence, runApprovedInstall } from "../commands.js";
-import { WorktreeManager } from "../git/worktree-manager.js";
 import type { ApplicationContext } from "./application-context.js";
 import { applyFrozenConfigRepair } from "./frozen-config-repair.js";
 import type { InterviewService } from "./interview-service.js";
@@ -41,6 +41,10 @@ import {
 } from "./helpers.js";
 import { updateRunConfig } from "./update-run-config.js";
 import { accrueRunUsage } from "./usage-ledger.js";
+import { loadBundleImportState } from "./bundle-import-io.js";
+import { loadRunExecutionState, writeRunExecutionState } from "./execution-state-io.js";
+import { stopDockerWorkerSession } from "./docker-worker-session.js";
+import { commitsImportedOrReachable } from "./execution-diagnostics.js";
 
 const terminal = isTerminalPhase;
 
@@ -50,6 +54,8 @@ function cleanupRefusalMessage(reason: string): string {
       return "Refusing cleanup: run is still active. Cancel or complete it first.";
     case "dirty-worktree":
       return "Refusing cleanup: run worktree is dirty. Commit, stash, or discard local changes first.";
+    case "dirty-unexported-tree":
+      return "Refusing cleanup: Docker workspace has a dirty unexported tree. Export/import first, or pass --discard.";
     case "path-invalid":
       return "Refusing cleanup: recorded worktree path failed validation.";
     case "not-registered":
@@ -57,9 +63,15 @@ function cleanupRefusalMessage(reason: string): string {
     case "git-common-dir-mismatch":
       return "Refusing cleanup: worktree does not match the recorded Git common directory.";
     case "unpublished-requires-discard":
-      return "Refusing cleanup: commits are not reachable from a retained named ref. Pass --discard to explicitly discard unpublished work.";
+      return "Refusing cleanup: commits are not reachable from a retained named ref / import. Pass --discard to explicitly discard unpublished work.";
     case "not-git-worktree":
       return "Refusing cleanup: run is not a git-worktree workspace.";
+    case "not-docker-clone":
+      return "Refusing cleanup: run is not a docker-clone workspace.";
+    case "worker-still-running":
+      return "Refusing cleanup: Docker worker container is still running. Stop the worker first.";
+    case "active-rpc":
+      return "Refusing cleanup: Docker worker still has an active RPC session.";
     default:
       return `Refusing cleanup (${reason}).`;
   }
@@ -153,6 +165,23 @@ export class RecoveryService {
     }
     const recorded = await this.ctx.store.record(cancelled, "run.cancelled");
     await this.ctx.clearCancelRequest(state.runId);
+
+    // Docker: abort work, stop/remove the worker container, retain volume + unpublished commits.
+    try {
+      const workspace = await loadRunWorkspace(this.ctx.config, state.runId);
+      if (workspace.kind === "docker-clone") {
+        await stopDockerWorkerSession({
+          projectConfig: this.ctx.config,
+          runId: state.runId,
+          docker: this.ctx.docker,
+          containerName: workspace.containerName,
+          rpcShutdown: true,
+        });
+      }
+    } catch {
+      // Cancellation already recorded; container stop is best-effort.
+    }
+
     return recorded;
   }
 
@@ -695,8 +724,10 @@ export class RecoveryService {
   }
 
   /**
-   * Explicitly remove a settled run's registered worktree after conservative checks.
-   * Never prunes abandoned worktrees implicitly. Retains workspace.json, state, events, and branch.
+   * Explicitly remove a settled run's workspace after conservative checks.
+   * Worktree: remove registered linked worktree. Docker: stop worker, remove
+   * container, and remove the volume only when import/publish is durable or discard.
+   * Retains workspace.json, state, events, transport audit metadata, and branch.
    */
   async cleanup(
     runId: string,
@@ -707,9 +738,13 @@ export class RecoveryService {
       const workspace = await loadRunWorkspace(this.ctx.config, runId);
       this.ctx.bindWorkspace(workspace);
 
+      if (workspace.kind === "docker-clone") {
+        return this.cleanupDockerClone(state, workspace, options);
+      }
+
       if (workspace.kind !== "git-worktree") {
         throw new HarnessFailure(
-          `Cleanup only applies to git-worktree runs (this run is ${workspace.kind})`,
+          `Cleanup only applies to git-worktree or docker-clone runs (this run is ${workspace.kind})`,
           "workspace",
           false,
         );
@@ -724,12 +759,7 @@ export class RecoveryService {
         };
       }
 
-      const manager = new WorktreeManager({
-        controlRoot: this.ctx.paths.controlRoot,
-        stateRoot: this.ctx.paths.stateRoot,
-        worktreeRoot: this.ctx.paths.worktreeRoot,
-        store: this.ctx.store,
-      });
+      const manager = this.ctx.workspaceProvisioner;
       const inspection = await manager.inspectCleanupTarget(workspace);
       const retainedBranch = workspace.branchName ?? state.branchName;
       const decision = decideWorktreeCleanup({
@@ -749,7 +779,7 @@ export class RecoveryService {
         throw new HarnessFailure(cleanupRefusalMessage(decision.reason), "workspace", false);
       }
 
-      await manager.removeRegisteredWorktree(workspace, runId);
+      await manager.remove(workspace, runId);
       const removedAt = new Date().toISOString();
       const nextWorkspace = {
         ...workspace,
@@ -776,6 +806,109 @@ export class RecoveryService {
         retainedBranch,
       };
     });
+  }
+
+  private async cleanupDockerClone(
+    state: RunState,
+    workspace: Extract<Awaited<ReturnType<typeof loadRunWorkspace>>, { kind: "docker-clone" }>,
+    options?: { discard?: boolean },
+  ): Promise<CleanupResult> {
+    const runId = state.runId;
+    const retainedBranch = workspace.branchName ?? state.branchName;
+
+    if (workspace.removedAt) {
+      return {
+        state,
+        removed: false,
+        reason: "already-removed",
+        retainedBranch,
+      };
+    }
+
+    // Stop worker first so cleanup facts see a stopped container (idempotent).
+    await stopDockerWorkerSession({
+      projectConfig: this.ctx.config,
+      runId,
+      docker: this.ctx.docker,
+      containerName: workspace.containerName,
+      rpcShutdown: true,
+    }).catch(() => undefined);
+
+    const inspected = await this.ctx.docker.inspectContainer?.(workspace.containerName);
+    const workerStopped = !inspected || inspected.state !== "running";
+    const execution = await loadRunExecutionState(this.ctx.config, runId);
+    const activeRpc =
+      execution?.lifecycle === "running" ||
+      execution?.lifecycle === "exporting" ||
+      Boolean(execution?.hostPort && inspected?.state === "running");
+
+    const inspection = await this.ctx.workspaceProvisioner.inspectCleanupTarget(workspace);
+    const importState = await loadBundleImportState(this.ctx.config, runId);
+    const imported = commitsImportedOrReachable(importState);
+    const dirtyUnexportedTree =
+      inspection.dirty &&
+      !imported &&
+      importState?.status !== "export-ready" &&
+      importState?.status !== "quarantined" &&
+      importState?.status !== "validated" &&
+      importState?.status !== "promoted";
+
+    const decision = decideDockerCleanup({
+      phase: state.phase,
+      workspaceKind: "docker-clone",
+      alreadyRemoved: false,
+      workerStopped,
+      activeRpc: activeRpc && !workerStopped,
+      dirtyUnexportedTree,
+      commitsImportedOrReachable: imported || inspection.commitsReachableFromRetainedRef,
+      discard: options?.discard === true,
+    });
+
+    if (!decision.allow) {
+      throw new HarnessFailure(cleanupRefusalMessage(decision.reason), "workspace", false);
+    }
+
+    await this.ctx.workspaceProvisioner.remove(workspace, runId, {
+      removeVolume: decision.removeVolume,
+    });
+
+    const removedAt = new Date().toISOString();
+    const nextWorkspace = {
+      ...workspace,
+      removedAt,
+      branchName: retainedBranch ?? workspace.branchName,
+    };
+    await writeRunWorkspace(this.ctx.config, runId, nextWorkspace);
+    this.ctx.bindWorkspace(nextWorkspace);
+
+    if (execution) {
+      await writeRunExecutionState(this.ctx.config, runId, {
+        ...execution,
+        lifecycle: "stopped",
+        containerId: undefined,
+        hostPort: undefined,
+        updatedAt: removedAt,
+      });
+    }
+
+    const nextState = await this.ctx.store.record(state, "run.docker_workspace_removed", {
+      reason: decision.reason,
+      discarded: options?.discard === true,
+      removeVolume: decision.removeVolume,
+      ...(retainedBranch ? { retainedBranch } : {}),
+      ...(inspection.headSha ? { headSha: inspection.headSha } : {}),
+      ...(importState?.resultBundleHash
+        ? { resultBundleHash: importState.resultBundleHash }
+        : {}),
+      ...(importState?.seedBundleHash ? { seedBundleHash: importState.seedBundleHash } : {}),
+    });
+
+    return {
+      state: nextState,
+      removed: true,
+      reason: decision.reason,
+      retainedBranch,
+    };
   }
 
   /** Finish the current task, then halt before starting the next frontier task. */

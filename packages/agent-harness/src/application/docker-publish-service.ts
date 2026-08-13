@@ -1,0 +1,362 @@
+import path from "node:path";
+import type { HarnessConfig } from "../config/schema.js";
+import { loadRunWorkspace, writeRunWorkspace } from "../config/io.js";
+import {
+  MessageOutputSchema,
+  proposeDeliveryBranchName,
+  slugifyFeatureTitle,
+  type MessageOutput,
+  type RunState,
+} from "../domain.js";
+import {
+  BundleImportStateSchema,
+  type BundleImportState,
+} from "../domain/run-execution.js";
+import { HarnessFailure } from "../errors.js";
+import {
+  createHostPullRequest,
+  pushDeliveryBranch,
+  resumeOrImportResult,
+} from "../git/quarantine-import.js";
+import {
+  RESULT_BUNDLE_FILENAME,
+  RESULT_MANIFEST_FILENAME,
+  prepareResultExport,
+  readResultManifest,
+  type ResultBundleManifest,
+} from "../git/result-export.js";
+import type { RunStore } from "../store.js";
+import { WORKER_WORKSPACE_PATH } from "./paths.js";
+import {
+  hostTransportDirectory,
+  loadBundleImportState,
+  writeBundleImportState,
+} from "./bundle-import-io.js";
+import type { DockerMutationProxy } from "./docker-run-proxy.js";
+import { writeRunExecutionState, loadRunExecutionState } from "./execution-state-io.js";
+import type { RunWorkspace } from "../domain/workspace.js";
+
+export type WorkerPrepareExportResult = {
+  ok: true;
+  noChange: boolean;
+  tipSha: string;
+  baseSha: string;
+  treeSha: string;
+  bundleHash: string;
+  commitCount: number;
+  manifestRelativePath: string;
+  resultBundleRelativePath?: string;
+};
+
+/**
+ * Worker-side prepare-export: write result.bundle + manifest under the run's
+ * `transport/` directory (host-visible via /run-state mount) and persist
+ * `transport/import.json` as export-ready.
+ */
+export async function prepareDockerResultExport(input: {
+  config: HarnessConfig;
+  store: RunStore;
+  runId: string;
+  workspace: RunWorkspace;
+  workspacePath?: string;
+}): Promise<WorkerPrepareExportResult> {
+  const state = await input.store.load(input.runId);
+  const baseSha = input.workspace.baseSha;
+  if (!baseSha) {
+    throw new HarnessFailure("Docker export requires a frozen workspace baseSha", "execution", false);
+  }
+
+  // Run directory is store.runDirectory (host: …/runs/<id>; worker: /run-state).
+  const transportDirectory = path.join(input.store.runDirectory(input.runId), "transport");
+
+  const expectedCommitShas = state.tasks
+    .map((task) => task.commitSha)
+    .filter((sha): sha is string => typeof sha === "string" && sha.length > 0);
+
+  const exported = await prepareResultExport({
+    workspacePath: input.workspacePath ?? WORKER_WORKSPACE_PATH,
+    transportDirectory,
+    runId: input.runId,
+    baseSha,
+    expectedCommitShas,
+  });
+
+  const importState = BundleImportStateSchema.parse({
+    version: 1,
+    status: "export-ready",
+    resultBundleHash: exported.manifest.bundleHash,
+    resultBundleRelativePath: exported.manifest.noChange ? undefined : RESULT_BUNDLE_FILENAME,
+    manifestRelativePath: RESULT_MANIFEST_FILENAME,
+    quarantineRef: exported.quarantineRef,
+    exportRef: exported.exportRef,
+    tipSha: exported.manifest.tipSha,
+    baseSha: exported.manifest.baseSha,
+    treeSha: exported.manifest.treeSha,
+    commitCount: exported.manifest.commitCount,
+    objectCount: exported.manifest.objectCount,
+    changedBytes: exported.manifest.changedBytes,
+    bundleBytes: exported.manifest.bundleBytes,
+    noChange: exported.manifest.noChange,
+    updatedAt: new Date().toISOString(),
+  });
+  await input.store.writeJson(input.runId, "transport/import.json", importState);
+
+  await input.store.record(state, "run.bundle_exported", {
+    tipSha: importState.tipSha,
+    baseSha: importState.baseSha,
+    treeSha: importState.treeSha,
+    bundleHash: importState.resultBundleHash,
+    noChange: importState.noChange === true,
+    commitCount: importState.commitCount,
+  });
+
+  // Best-effort execution lifecycle stamp (host path helpers may not apply in worker).
+  try {
+    const execution = await loadRunExecutionState(input.config, input.runId);
+    if (execution) {
+      await writeRunExecutionState(input.config, input.runId, {
+        ...execution,
+        lifecycle: "exporting",
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  } catch {
+    // Worker may not resolve host state paths; import.json is authoritative.
+  }
+
+  return {
+    ok: true,
+    noChange: exported.manifest.noChange,
+    tipSha: exported.manifest.tipSha,
+    baseSha: exported.manifest.baseSha,
+    treeSha: exported.manifest.treeSha,
+    bundleHash: exported.manifest.bundleHash,
+    commitCount: exported.manifest.commitCount,
+    manifestRelativePath: RESULT_MANIFEST_FILENAME,
+    resultBundleRelativePath: exported.manifest.noChange ? undefined : RESULT_BUNDLE_FILENAME,
+  };
+}
+
+export function isDockerBundleExportReady(
+  importState: BundleImportState | undefined,
+): boolean {
+  if (!importState) return false;
+  return (
+    importState.status === "export-ready" ||
+    importState.status === "quarantined" ||
+    importState.status === "validated" ||
+    importState.status === "promoted"
+  );
+}
+
+/**
+ * Host control-plane completion for Docker publishing:
+ * prepare-export (RPC) → quarantine validate → atomic delivery-ref promotion →
+ * host-only push/PR. Never injects GitHub credentials into the container.
+ */
+export async function completeDockerHostPublish(input: {
+  projectConfig: HarnessConfig;
+  runConfig: HarnessConfig;
+  runId: string;
+  store: RunStore;
+  dockerProxy?: DockerMutationProxy;
+  /** Optional PR message; defaults to a deterministic fallback from run state. */
+  message?: MessageOutput;
+}): Promise<RunState> {
+  const { projectConfig, runConfig, runId, store } = input;
+
+  if (input.dockerProxy) {
+    await input.dockerProxy.invoke("prepare-export", {});
+  } else {
+    const existing = await loadBundleImportState(projectConfig, runId);
+    if (!isDockerBundleExportReady(existing)) {
+      throw new HarnessFailure(
+        "Docker publish requires prepare-export before host delivery",
+        "execution",
+        true,
+      );
+    }
+  }
+
+  let state = await store.load(runId);
+  const workspace = await loadRunWorkspace(projectConfig, runId);
+  const baseSha = workspace.baseSha;
+  if (!baseSha) {
+    throw new HarnessFailure("Docker publish requires frozen baseSha", "execution", false);
+  }
+
+  const transportDirectory = hostTransportDirectory(projectConfig, runId);
+  const manifest = await readResultManifest(
+    path.join(transportDirectory, RESULT_MANIFEST_FILENAME),
+  );
+
+  const title =
+    state.reflectBrief?.confirmedStructured?.proposedTitle ??
+    state.reflectBrief?.structured?.proposedTitle ??
+    state.idea;
+  const titleSlug = slugifyFeatureTitle(title);
+  const existingBranch = workspace.branchName ?? state.branchName;
+  const branchName =
+    existingBranch ??
+    proposeDeliveryBranchName({
+      branchPrefix: runConfig.git.branchPrefix,
+      title,
+      runId,
+    });
+
+  let importState =
+    (await loadBundleImportState(projectConfig, runId)) ??
+    BundleImportStateSchema.parse({
+      version: 1,
+      status: "export-ready",
+      updatedAt: new Date().toISOString(),
+    });
+
+  try {
+    if (importState.status !== "promoted") {
+      importState = await writeBundleImportState(projectConfig, runId, {
+        ...importState,
+        status: "quarantined",
+        quarantineRef: `refs/harness/quarantine/${runId}`,
+        tipSha: manifest.tipSha,
+        baseSha: manifest.baseSha,
+        treeSha: manifest.treeSha,
+        resultBundleHash: manifest.bundleHash,
+        noChange: manifest.noChange,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const imported = await resumeOrImportResult({
+        controlRoot: path.resolve(projectConfig.repositoryRoot),
+        runId,
+        transportDirectory,
+        baseSha,
+        limits: runConfig.execution.docker.bundleLimits,
+        submoduleLfs: runConfig.execution.docker.submoduleLfs,
+        ignoredArtifactPatterns: runConfig.git.ignoredArtifactPatterns,
+        deliveryBranchName: branchName,
+      });
+
+      state = await store.record(state, "run.bundle_validated", {
+        tipSha: imported.tipSha,
+        treeSha: imported.treeSha,
+        baseSha: imported.baseSha,
+        noChange: imported.noChange,
+      });
+
+      importState = await writeBundleImportState(projectConfig, runId, {
+        ...importState,
+        status: "validated",
+        tipSha: imported.tipSha,
+        treeSha: imported.treeSha,
+        baseSha: imported.baseSha,
+        resultBundleHash: imported.resultBundleHash,
+        deliveryBranch: imported.deliveryBranch,
+        deliveryRef: imported.deliveryRef,
+        noChange: imported.noChange,
+        rejectionReason: undefined,
+        updatedAt: new Date().toISOString(),
+      });
+
+      importState = await writeBundleImportState(projectConfig, runId, {
+        ...importState,
+        status: "promoted",
+        updatedAt: new Date().toISOString(),
+      });
+
+      state = await store.record(
+        { ...state, branchName: imported.deliveryBranch },
+        "run.bundle_imported",
+        {
+          tipSha: imported.tipSha,
+          deliveryBranch: imported.deliveryBranch,
+          deliveryRef: imported.deliveryRef,
+          noChange: imported.noChange,
+        },
+      );
+
+      if (!existingBranch) {
+        state = await store.record(state, "run.branch_created", {
+          titleSlug,
+          branchName: imported.deliveryBranch,
+          headSha: imported.tipSha,
+          created: true,
+          retainedExisting: false,
+        });
+      }
+
+      await writeRunWorkspace(projectConfig, runId, {
+        ...workspace,
+        branchName: imported.deliveryBranch,
+      });
+    } else if (!state.branchName && importState.deliveryBranch) {
+      state = { ...state, branchName: importState.deliveryBranch };
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await writeBundleImportState(projectConfig, runId, {
+      ...importState,
+      status: "rejected",
+      rejectionReason: reason,
+      updatedAt: new Date().toISOString(),
+    }).catch(() => undefined);
+    state = await store.record(state, "run.import_rejected", { reason });
+    throw error instanceof HarnessFailure
+      ? error
+      : new HarnessFailure(reason, "execution", true, {
+          cause: error instanceof Error ? error : undefined,
+        });
+  }
+
+  const message =
+    input.message ??
+    MessageOutputSchema.parse({
+      subject: `feat: ${state.idea}`.slice(0, 100),
+      body: state.tasks.map((task) => `- ${task.title}`).join("\n"),
+    });
+
+  let pullRequestUrl: string | undefined = state.pullRequestUrl;
+  const deliveryBranch = state.branchName ?? branchName;
+  if (runConfig.git.enabled && runConfig.git.push && deliveryBranch) {
+    const controlRoot = path.resolve(projectConfig.repositoryRoot);
+    await pushDeliveryBranch({
+      controlRoot,
+      remote: runConfig.git.remote,
+      branchName: deliveryBranch,
+    });
+    state = await store.record(state, "run.delivery_pushed", {
+      branchName: deliveryBranch,
+      remote: runConfig.git.remote,
+    });
+    if (runConfig.git.openPullRequest) {
+      pullRequestUrl = await createHostPullRequest({
+        controlRoot,
+        baseBranch: runConfig.git.baseBranch,
+        headBranch: deliveryBranch,
+        title: message.subject,
+        body: message.body,
+      });
+      state = await store.record(state, "run.delivery_pr_created", {
+        pullRequestUrl,
+        branchName: deliveryBranch,
+      });
+    }
+  }
+
+  const execution = await loadRunExecutionState(projectConfig, runId);
+  if (execution) {
+    await writeRunExecutionState(projectConfig, runId, {
+      ...execution,
+      lifecycle: "imported",
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  return store.record(
+    { ...state, phase: "completed", pullRequestUrl, branchName: deliveryBranch },
+    "run.completed",
+    { pullRequestUrl, dockerHostPublish: true },
+  );
+}
+
+export type { ResultBundleManifest };

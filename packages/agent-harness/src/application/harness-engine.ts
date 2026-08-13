@@ -95,6 +95,14 @@ export class HarnessEngine {
     return this.lifecycle.status(runId);
   }
 
+  /**
+   * After Approve & build (or cached digest reuse): stamp image.digest and create
+   * the Docker clone when workspace.json is still missing.
+   */
+  ensureDockerWorkspaceReady(runId: string): Promise<RunState> {
+    return this.lifecycle.ensureDockerWorkspaceReady(runId);
+  }
+
   generateRunAnalysisPrompt(runId: string) {
     return this.runAnalysis.generatePrompt(runId);
   }
@@ -184,6 +192,21 @@ export class HarnessEngine {
 
   cancel(runId: string): Promise<CancelResult> {
     return this.recovery.cancel(runId);
+  }
+
+  /** Durable cancel.request and/or in-process AbortSignal. */
+  isCancelRequested(runId: string): Promise<boolean> {
+    return this.ctx.isCancelRequested(runId);
+  }
+
+  /** Write durable cancel.request without completing cancellation (host pre-signal). */
+  writeCancelRequest(runId: string): Promise<void> {
+    return this.ctx.writeCancelRequest(runId);
+  }
+
+  /** True when this process holds an advance AbortController for the run. */
+  hasActiveAdvance(runId: string): boolean {
+    return this.ctx.cancellation.has(runId);
   }
 
   cleanup(runId: string, options?: { discard?: boolean }): Promise<CleanupResult> {

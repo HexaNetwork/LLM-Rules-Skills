@@ -310,12 +310,44 @@ async function submittedPrompt(
   return { prompt, source };
 }
 
+/** Operator-readable files under runs/<id>/execution-image/ (ADR 0015). */
+const EXECUTION_IMAGE_ARTIFACT_NAMES = [
+  "Dockerfile",
+  ".dockerignore",
+  "profile.json",
+  "profile.sha256",
+  "Dockerfile.sha256",
+  "validation.json",
+  "approval.json",
+  "image.digest",
+  "build.log",
+] as const;
+
+const EXECUTION_IMAGE_ARTIFACT_PATH =
+  /^execution-image\/(Dockerfile|\.dockerignore|profile\.json|profile\.sha256|Dockerfile\.sha256|validation\.json|approval\.json|image\.digest|build\.log)$/;
+
+export type UiExecutionImage = {
+  present: boolean;
+  files: string[];
+  dockerfile?: string;
+  dockerignore?: string;
+  profile?: Record<string, unknown>;
+  validation?: Record<string, unknown>;
+  approval?: Record<string, unknown>;
+  imageDigest?: string;
+  dockerfileHash?: string;
+  profileHash?: string;
+  buildLog?: string;
+};
+
 export async function listArtifacts(store: RunStore, runId: string): Promise<string[]> {
-  const grouped = await Promise.all(
-    ["issues", "tasks", "packets", "sessions"].map((directory) =>
-      store.listFiles(runId, directory),
-    ),
-  );
+  const [issues, tasks, packets, sessions, executionImage] = await Promise.all([
+    store.listFiles(runId, "issues"),
+    store.listFiles(runId, "tasks"),
+    store.listFiles(runId, "packets"),
+    store.listFiles(runId, "sessions"),
+    store.listFiles(runId, "execution-image"),
+  ]);
   const fixed = [
     "idea.md",
     "brief.md",
@@ -336,7 +368,14 @@ export async function listArtifacts(store: RunStore, runId: string): Promise<str
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  return [...available, ...grouped.flat()];
+  return [
+    ...available,
+    ...issues,
+    ...tasks,
+    ...packets,
+    ...sessions,
+    ...executionImage.filter((file) => allowedArtifact(file)),
+  ];
 }
 
 export function allowedArtifact(value: string): boolean {
@@ -353,8 +392,75 @@ export function allowedArtifact(value: string): boolean {
       "run-analysis-prompt.md",
     ].includes(value) ||
     /^(issues|tasks|packets|sessions)\/[A-Za-z0-9._-]+$/.test(value) ||
-    /^sessions\/[A-Za-z0-9][A-Za-z0-9._-]*\.steps\.jsonl$/.test(value)
+    /^sessions\/[A-Za-z0-9][A-Za-z0-9._-]*\.steps\.jsonl$/.test(value) ||
+    EXECUTION_IMAGE_ARTIFACT_PATH.test(value)
   );
+}
+
+/**
+ * Load generated execution-image artifacts for the run UI (Dockerfile review gate).
+ * Missing directory → `{ present: false }`; never throws ENOENT.
+ */
+export async function readExecutionImage(
+  store: RunStore,
+  runId: string,
+): Promise<UiExecutionImage> {
+  const listed = (await store.listFiles(runId, "execution-image")).filter((file) =>
+    allowedArtifact(file),
+  );
+  const readOptionalText = async (name: (typeof EXECUTION_IMAGE_ARTIFACT_NAMES)[number]) => {
+    try {
+      return await store.readText(runId, `execution-image/${name}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
+  const readOptionalJson = async (name: "profile.json" | "validation.json" | "approval.json") => {
+    const text = await readOptionalText(name);
+    if (text == null) return undefined;
+    try {
+      const parsed: unknown = JSON.parse(text);
+      return isRecord(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const dockerfile = await readOptionalText("Dockerfile");
+  const dockerignore = await readOptionalText(".dockerignore");
+  const profile = await readOptionalJson("profile.json");
+  const validation = await readOptionalJson("validation.json");
+  const approval = await readOptionalJson("approval.json");
+  const imageDigest = (await readOptionalText("image.digest"))?.trim();
+  const dockerfileHash = (await readOptionalText("Dockerfile.sha256"))?.trim();
+  const profileHash = (await readOptionalText("profile.sha256"))?.trim();
+  const buildLog = await readOptionalText("build.log");
+  const present = Boolean(dockerfile) || listed.length > 0;
+
+  let files = listed;
+  if (present && files.length === 0) {
+    const discovered: string[] = [];
+    for (const name of EXECUTION_IMAGE_ARTIFACT_NAMES) {
+      const text = await readOptionalText(name);
+      if (text != null) discovered.push(`execution-image/${name}`);
+    }
+    files = discovered;
+  }
+
+  return {
+    present,
+    files,
+    ...(dockerfile != null ? { dockerfile } : {}),
+    ...(dockerignore != null ? { dockerignore } : {}),
+    ...(profile ? { profile } : {}),
+    ...(validation ? { validation } : {}),
+    ...(approval ? { approval } : {}),
+    ...(imageDigest ? { imageDigest } : {}),
+    ...(dockerfileHash ? { dockerfileHash } : {}),
+    ...(profileHash ? { profileHash } : {}),
+    ...(buildLog != null ? { buildLog } : {}),
+  };
 }
 
 export async function readInstallLog(

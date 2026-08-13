@@ -634,12 +634,14 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
 
   program
     .command("cleanup")
-    .description("Remove a settled run's worktree after conservative safety checks")
+    .description(
+      "Remove a settled run workspace after conservative safety checks (worktree or Docker clone/volume)",
+    )
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
     .option(
       "--discard",
-      "explicitly discard unpublished commits not reachable from a retained named ref",
+      "explicitly discard unpublished commits not reachable from a retained named ref / import",
       false,
     )
     .action(async (options: { runId: string; config?: string; discard: boolean }) => {
@@ -652,7 +654,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       const result = await engine.cleanup(options.runId, { discard: options.discard });
       if (result.removed) {
         console.log(
-          `Removed worktree for ${options.runId} (${result.reason}` +
+          `Removed workspace for ${options.runId} (${result.reason}` +
             (result.retainedBranch ? `; retained branch ${result.retainedBranch}` : "") +
             ").",
         );
@@ -660,6 +662,627 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         console.log(`Cleanup no-op for ${options.runId} (${result.reason}).`);
       }
       printState(result.state);
+    });
+
+  const execution = program
+    .command("execution")
+    .description("Docker execution runtime status, diagnostics, and operator controls");
+
+  execution
+    .command("status")
+    .description("Show project execution runtime readiness (blocks Docker run creation when unhealthy)")
+    .option("--repository <path>", "registered project repository (loads harness-home config)")
+    .option("--config <path>", "config path")
+    .option("--json", "print JSON", false)
+    .action(async (options: { repository?: string; config?: string; json: boolean }) => {
+      const { config, path: configPath } = await resolvedProjectConfig({
+        config: options.config,
+        repository: options.repository,
+      });
+      void configPath;
+      const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
+      const { evaluateExecutionRuntimeStatus } = await import(
+        "../application/execution-runtime-status.js"
+      );
+      const { resolveHarnessPaths } = await import("../application/paths.js");
+      const paths = resolveHarnessPaths(config);
+      const status = await evaluateExecutionRuntimeStatus({
+        config,
+        docker: createDockerClient(),
+        repositoryRoot: paths.controlRoot,
+        projectStateRoot: paths.stateRoot,
+        collectEvidence: true,
+        probeDocker: true,
+      });
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return;
+      }
+      console.log(`Runtime: ${status.runtime} · ready=${status.ready}`);
+      for (const blocker of status.blockers) {
+        console.log(`- ${blocker.code}: ${blocker.message}`);
+        if (blocker.remediation) console.log(`  remediation: ${blocker.remediation}`);
+      }
+      if (status.networkNote) console.log(`Network: ${status.networkNote}`);
+    });
+
+  execution
+    .command("prepare-worker")
+    .description(
+      "Probe Docker readiness and build/pull the maintained worker image (install wizard / operator setup)",
+    )
+    .option("--repository <path>", "registered project repository (loads harness-home config)")
+    .option("--config <path>", "config path (alternative to --repository)")
+    .option("--image <ref>", "pull/reuse this image instead of building from docker/worker/Dockerfile")
+    .option("--tag <name:tag>", "local build tag", "agent-harness-worker:local")
+    .option("--package-root <path>", "agent-harness package root containing docker/worker/Dockerfile")
+    .option("--force-rebuild", "rebuild even when the local tag already exists", false)
+    .option(
+      "--write-settings",
+      "pin workerImageDigest into the project settings file after a successful prepare",
+      false,
+    )
+    .option(
+      "--enable-runtime",
+      "with --write-settings, also set execution.runtime=docker (default remains local)",
+      false,
+    )
+    .option("--json", "print JSON", false)
+    .action(
+      async (options: {
+        repository?: string;
+        config?: string;
+        image?: string;
+        tag: string;
+        packageRoot?: string;
+        forceRebuild: boolean;
+        writeSettings: boolean;
+        enableRuntime: boolean;
+        json: boolean;
+      }) => {
+        const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
+        const {
+          prepareMaintainedWorkerImage,
+          writeWorkerImageProjectSettings,
+          defaultPackageRoot,
+        } = await import("../application/prepare-worker-image.js");
+        const { evaluateExecutionRuntimeStatus } = await import(
+          "../application/execution-runtime-status.js"
+        );
+
+        const loaded = await resolvedProjectConfig({
+          config: options.config,
+          repository: options.repository,
+        });
+        let config = loaded.config;
+        const configPath = loaded.path;
+
+        const configuredWorker = config.execution?.docker?.workerImageDigest?.trim();
+        const pullImage = options.image?.trim() || configuredWorker || undefined;
+        const prepared = await prepareMaintainedWorkerImage({
+          docker: createDockerClient(),
+          packageRoot: options.packageRoot?.trim() || defaultPackageRoot(),
+          pullImage,
+          tag: options.tag,
+          reuseLocalTag: !options.forceRebuild,
+        });
+
+        let settingsWritten = false;
+        if (options.writeSettings) {
+          await writeWorkerImageProjectSettings({
+            configPath,
+            workerImageDigest: prepared.workerImageDigest,
+            enableDockerRuntime: options.enableRuntime,
+          });
+          settingsWritten = true;
+          const reloaded = await loadConfig(configPath);
+          config = reloaded.config;
+        }
+
+        const statusConfig =
+          options.enableRuntime && settingsWritten
+            ? config
+            : {
+                ...config,
+                execution: {
+                  ...config.execution,
+                  docker: {
+                    ...config.execution.docker,
+                    workerImageDigest: prepared.workerImageDigest,
+                  },
+                },
+              };
+
+        const status = await evaluateExecutionRuntimeStatus({
+          config: statusConfig,
+          docker: createDockerClient(),
+          repositoryRoot: config.repositoryRoot,
+          projectStateRoot: config.stateDirectory,
+          collectEvidence: true,
+          probeDocker: true,
+        });
+
+        const payload = {
+          ...prepared,
+          readiness: {
+            ready: prepared.readiness.ready,
+            osType: prepared.readiness.osType,
+            serverVersion: prepared.readiness.serverVersion,
+            checks: prepared.readiness.checks.map((check) => ({
+              id: check.id,
+              ok: check.ok,
+              detail: check.detail,
+            })),
+          },
+          settingsWritten,
+          enableRuntime: Boolean(options.enableRuntime && settingsWritten),
+          configPath,
+          status: {
+            runtime: status.runtime,
+            ready: status.ready,
+            blockers: status.blockers,
+          },
+        };
+
+        if (options.json) {
+          console.log(JSON.stringify(payload, null, 2));
+        } else {
+          console.log(
+            `Worker image ${prepared.source}: ${prepared.workerImageDigest} (tag ${prepared.tag})`,
+          );
+          console.log(`Docker ready=${prepared.readiness.ready}`);
+          if (settingsWritten) {
+            console.log(
+              `Wrote project settings${options.enableRuntime ? " (execution.runtime=docker)" : " (worker digest only)"}: ${configPath}`,
+            );
+          }
+          console.log(`Execution status ready=${status.ready} (runtime=${status.runtime})`);
+          for (const blocker of status.blockers) {
+            console.log(`- ${blocker.code}: ${blocker.message}`);
+            if (blocker.remediation) console.log(`  remediation: ${blocker.remediation}`);
+          }
+        }
+
+        if (!prepared.readiness.ready) {
+          process.exitCode = 1;
+        }
+      },
+    );
+
+  execution
+    .command("approve-base")
+    .description(
+      "Pull/pin known toolchain base images into the shared harness-home approvedBaseImages catalog (project-agnostic)",
+    )
+    .option("--repository <path>", "optional: detect one stack from a registered project")
+    .option("--config <path>", "optional project config path (writes there instead of harness home)")
+    .option("--home <path>", "harness home root (default: platform AGENT_HARNESS_HOME)")
+    .option(
+      "--image <ref>",
+      "override pull reference when approving a single stack",
+    )
+    .option(
+      "--stack <id>",
+      "approve one stack family (node|python|go|rust|jvm)",
+    )
+    .option(
+      "--all",
+      "approve every known stack family into the shared catalog (default when no --stack/--repository)",
+      false,
+    )
+    .option("--force-pull", "pull even when the image already exists locally", false)
+    .option(
+      "--write-settings",
+      "persist approvedBaseImages (harness-home config.yaml by default)",
+      false,
+    )
+    .option(
+      "--project-settings",
+      "with --write-settings, write the project config instead of harness-home (not recommended)",
+      false,
+    )
+    .option("--json", "print JSON", false)
+    .action(
+      async (options: {
+        repository?: string;
+        config?: string;
+        home?: string;
+        image?: string;
+        stack?: string;
+        all: boolean;
+        forcePull: boolean;
+        writeSettings: boolean;
+        projectSettings: boolean;
+        json: boolean;
+      }) => {
+        const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
+        const {
+          approveStackBaseImage,
+          approveKnownStackBaseImages,
+          writeApprovedBaseImagesSettings,
+          harnessHomeConfigPath,
+        } = await import("../application/approve-base-image.js");
+        const { evaluateExecutionRuntimeStatus } = await import(
+          "../application/execution-runtime-status.js"
+        );
+        const { KNOWN_STACK_BASE_FAMILIES } = await import(
+          "../application/execution-image-generator.js"
+        );
+        const { resolveHarnessHome } = await import("../application/harness-home.js");
+        const { access } = await import("node:fs/promises");
+
+        const home = resolveHarnessHome({ homeRoot: options.home });
+        const homeConfigPath = harnessHomeConfigPath(home);
+        try {
+          await access(homeConfigPath);
+        } catch {
+          await writeFile(homeConfigPath, defaultConfigYaml(), "utf8");
+        }
+
+        const stackOption = options.stack?.trim();
+        if (stackOption && !(stackOption in KNOWN_STACK_BASE_FAMILIES)) {
+          throw new Error(
+            `Unknown --stack ${stackOption}. Expected one of: ${Object.keys(KNOWN_STACK_BASE_FAMILIES).join(", ")}`,
+          );
+        }
+
+        const wantsAll =
+          options.all ||
+          (!stackOption && !options.repository?.trim() && !options.image?.trim());
+
+        let existingApprovedBaseImages: string[] = [];
+        let projectConfig: HarnessConfig | undefined;
+        let projectConfigPath: string | undefined;
+        if (options.config || options.repository) {
+          const loaded = await resolvedProjectConfig({
+            config: options.config,
+            repository: options.repository,
+            home: options.home,
+          });
+          projectConfig = loaded.config;
+          projectConfigPath = loaded.path;
+          existingApprovedBaseImages = loaded.config.execution?.docker?.approvedBaseImages ?? [];
+        } else {
+          const homeLoaded = await loadConfig(homeConfigPath);
+          existingApprovedBaseImages =
+            homeLoaded.config.execution?.docker?.approvedBaseImages ?? [];
+        }
+
+        const docker = createDockerClient();
+        let approvedBaseImages: string[];
+        let bases: Array<{
+          stack: string;
+          family: string;
+          baseImageDigest: string;
+          source: string;
+        }>;
+
+        if (wantsAll) {
+          const approved = await approveKnownStackBaseImages({
+            docker,
+            existingApprovedBaseImages,
+            reuseLocal: !options.forcePull,
+          });
+          approvedBaseImages = approved.approvedBaseImages;
+          bases = approved.bases;
+        } else {
+          const approved = await approveStackBaseImage({
+            docker,
+            repositoryRoot: projectConfig?.repositoryRoot,
+            existingApprovedBaseImages,
+            image: options.image?.trim() || undefined,
+            stack: stackOption as keyof typeof KNOWN_STACK_BASE_FAMILIES | undefined,
+            reuseLocal: !options.forcePull,
+          });
+          approvedBaseImages = approved.approvedBaseImages;
+          bases = [approved];
+        }
+
+        const writeToProject = Boolean(options.projectSettings && projectConfigPath);
+        const settingsPath = writeToProject ? projectConfigPath! : homeConfigPath;
+
+        let settingsWritten = false;
+        if (options.writeSettings) {
+          await writeApprovedBaseImagesSettings({
+            configPath: settingsPath,
+            approvedBaseImages,
+          });
+          settingsWritten = true;
+        }
+
+        let statusConfig: HarnessConfig;
+        if (projectConfig) {
+          statusConfig = {
+            ...projectConfig,
+            execution: {
+              ...projectConfig.execution,
+              docker: {
+                ...projectConfig.execution.docker,
+                approvedBaseImages,
+              },
+            },
+          };
+        } else {
+          const homeLoaded = await loadConfig(homeConfigPath);
+          statusConfig = {
+            ...homeLoaded.config,
+            execution: {
+              ...homeLoaded.config.execution,
+              docker: {
+                ...homeLoaded.config.execution.docker,
+                approvedBaseImages,
+              },
+            },
+          };
+        }
+
+        const status = await evaluateExecutionRuntimeStatus({
+          config: statusConfig,
+          docker,
+          repositoryRoot: statusConfig.repositoryRoot,
+          projectStateRoot: statusConfig.stateDirectory,
+          collectEvidence: Boolean(projectConfig),
+          probeDocker: true,
+          includePortBinding: false,
+        });
+
+        const payload = {
+          scope: writeToProject ? "project" : "harness-home",
+          bases,
+          approvedBaseImages,
+          settingsWritten,
+          configPath: settingsPath,
+          status: {
+            runtime: status.runtime,
+            ready: status.ready,
+            blockers: status.blockers,
+          },
+        };
+
+        if (options.json) {
+          console.log(JSON.stringify(payload, null, 2));
+        } else {
+          console.log(
+            `Approved ${bases.length} base image(s) for shared catalog (${payload.scope}):`,
+          );
+          for (const base of bases) {
+            console.log(`- ${base.stack}: ${base.baseImageDigest} (${base.source})`);
+          }
+          if (settingsWritten) {
+            console.log(`Wrote approvedBaseImages to ${settingsPath}`);
+          } else {
+            console.log("Dry run only — re-run with --write-settings to persist.");
+          }
+          console.log(`Execution status ready=${status.ready} (runtime=${status.runtime})`);
+          for (const blocker of status.blockers) {
+            console.log(`- ${blocker.code}: ${blocker.message}`);
+            if (blocker.remediation) console.log(`  remediation: ${blocker.remediation}`);
+          }
+        }
+      },
+    );
+
+  execution
+    .command("diagnostics")
+    .description("Redacted Docker/run diagnostics (inspect, digests, bundle hashes, worker health)")
+    .requiredOption("--run-id <id>", "run id")
+    .option("--config <path>", "config path")
+    .option("--json", "print JSON", true)
+    .action(async (options: { runId: string; config?: string; json: boolean }) => {
+      const { config } = await loadConfig(options.config);
+      const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
+      const { collectExecutionDiagnostics } = await import(
+        "../application/execution-diagnostics.js"
+      );
+      const { loadRunWorkspace } = await import("../config/io.js");
+      const { ensureDockerWorkerSession } = await import(
+        "../application/docker-worker-session.js"
+      );
+      const workspace = await loadRunWorkspace(config, options.runId).catch(() => undefined);
+      const docker = createDockerClient();
+      let workerHealth: { ok: boolean; detail?: string } | undefined;
+      if (workspace?.kind === "docker-clone") {
+        try {
+          const session = await ensureDockerWorkerSession({
+            projectConfig: config,
+            runId: options.runId,
+            docker,
+            startIfMissing: false,
+          });
+          await session.client.health();
+          workerHealth = { ok: true };
+        } catch (error) {
+          workerHealth = {
+            ok: false,
+            detail: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+      const diagnostics = await collectExecutionDiagnostics({
+        projectConfig: config,
+        runId: options.runId,
+        workspace,
+        docker,
+        workerHealth,
+      });
+      console.log(JSON.stringify(diagnostics, null, 2));
+    });
+
+  execution
+    .command("approve-image")
+    .description("Approve the generated execution Dockerfile for a run (non-interactive)")
+    .requiredOption("--run-id <id>", "run id")
+    .option("--config <path>", "config path")
+    .action(async (options: { runId: string; config?: string }) => {
+      const { config } = await loadConfig(options.config);
+      const runConfig = await loadRunConfig(config, options.runId);
+      const { resolveHarnessPaths } = await import("../application/paths.js");
+      const {
+        prepareExecutionImage,
+        approveExecutionImage,
+      } = await import("../application/execution-image-service.js");
+      const paths = resolveHarnessPaths(config);
+      const prepared = await prepareExecutionImage({
+        config: runConfig,
+        stateRoot: paths.stateRoot,
+        runId: options.runId,
+        projectStateRoot: paths.stateRoot,
+      });
+      if (prepared.status === "blocked") {
+        throw new Error(prepared.reason ?? "Execution image blocked");
+      }
+      if (!("generated" in prepared) || !prepared.generated) {
+        throw new Error("No generated image to approve");
+      }
+      const record = await approveExecutionImage({
+        stateRoot: paths.stateRoot,
+        runId: options.runId,
+        projectStateRoot: paths.stateRoot,
+        generated: prepared.generated,
+        cacheKey: prepared.cacheKey,
+      });
+      console.log(JSON.stringify(record, null, 2));
+    });
+
+  execution
+    .command("build-image")
+    .description("Build an approved execution image (retry after failure)")
+    .requiredOption("--run-id <id>", "run id")
+    .option("--config <path>", "config path")
+    .action(async (options: { runId: string; config?: string }) => {
+      const { config } = await loadConfig(options.config);
+      const runConfig = await loadRunConfig(config, options.runId);
+      const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
+      const { resolveHarnessPaths } = await import("../application/paths.js");
+      const { buildApprovedExecutionImage } = await import(
+        "../application/execution-image-service.js"
+      );
+      const paths = resolveHarnessPaths(config);
+      const result = await buildApprovedExecutionImage({
+        stateRoot: paths.stateRoot,
+        runId: options.runId,
+        projectStateRoot: paths.stateRoot,
+        docker: createDockerClient(),
+        tag: `agent-harness-run-${options.runId}`.toLowerCase().slice(0, 128),
+        timeoutMs: runConfig.execution?.docker?.buildTimeoutMs,
+        dockerPolicy: runConfig.execution?.docker,
+      });
+      console.log(JSON.stringify({ imageDigest: result.imageDigest }, null, 2));
+    });
+
+  execution
+    .command("approve-and-build-image")
+    .description("Approve the generated Dockerfile and build it (writes image.digest)")
+    .requiredOption("--run-id <id>", "run id")
+    .option("--config <path>", "config path")
+    .action(async (options: { runId: string; config?: string }) => {
+      const { config } = await loadConfig(options.config);
+      const runConfig = await loadRunConfig(config, options.runId);
+      const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
+      const { resolveHarnessPaths } = await import("../application/paths.js");
+      const { approveAndBuildExecutionImage } = await import(
+        "../application/execution-image-service.js"
+      );
+      const paths = resolveHarnessPaths(config);
+      const result = await approveAndBuildExecutionImage({
+        config: runConfig,
+        stateRoot: paths.stateRoot,
+        runId: options.runId,
+        projectStateRoot: paths.stateRoot,
+        repositoryRoot: paths.controlRoot,
+        docker: createDockerClient(),
+        tag: `agent-harness-run-${options.runId}`.toLowerCase().slice(0, 128),
+        timeoutMs: runConfig.execution?.docker?.buildTimeoutMs,
+        dockerPolicy: runConfig.execution?.docker,
+      });
+      console.log(JSON.stringify({ imageDigest: result.imageDigest }, null, 2));
+    });
+
+  execution
+    .command("recover-container")
+    .description("Recreate the worker container against the retained named volume (never reseed)")
+    .requiredOption("--run-id <id>", "run id")
+    .option("--config <path>", "config path")
+    .action(async (options: { runId: string; config?: string }) => {
+      const { config } = await loadConfig(options.config);
+      const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
+      const { loadRunWorkspace } = await import("../config/io.js");
+      const { ensureDockerWorkerSession } = await import(
+        "../application/docker-worker-session.js"
+      );
+      const workspace = await loadRunWorkspace(config, options.runId);
+      if (workspace.kind !== "docker-clone") {
+        throw new Error(`Run ${options.runId} is not a docker-clone workspace`);
+      }
+      const session = await ensureDockerWorkerSession({
+        projectConfig: config,
+        runId: options.runId,
+        docker: createDockerClient(),
+        image: workspace.imageDigest,
+        workspaceVolumeName: workspace.workspaceVolumeName,
+        startIfMissing: true,
+      });
+      console.log(
+        JSON.stringify(
+          {
+            containerName: session.execution.containerName,
+            hostPort: session.execution.hostPort,
+            lifecycle: session.execution.lifecycle,
+          },
+          null,
+          2,
+        ),
+      );
+    });
+
+  execution
+    .command("reconcile-orphans")
+    .description("Inspect harness-labeled containers; optionally remove conservative orphans")
+    .option("--config <path>", "config path")
+    .option("--apply", "remove containers that pass age/state checks (never volumes)", false)
+    .option("--json", "print JSON", false)
+    .action(async (options: { config?: string; apply: boolean; json: boolean }) => {
+      const { config } = await loadConfig(options.config);
+      const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
+      const { reconcileOrphanContainers } = await import("../application/orphan-reconciler.js");
+      const { loadRunWorkspace } = await import("../config/io.js");
+      const { resolveHarnessPaths } = await import("../application/paths.js");
+      const { RunStore } = await import("../store.js");
+      const paths = resolveHarnessPaths(config);
+      const store = new RunStore(config, paths.stateRoot);
+      await store.initialize();
+      const { states } = await store.listWithFailures();
+      const knownRuns = [];
+      for (const state of states) {
+        try {
+          const workspace = await loadRunWorkspace(config, state.runId);
+          if (workspace.kind !== "docker-clone") continue;
+          knownRuns.push({
+            runId: state.runId,
+            phase: state.phase,
+            removedAt: workspace.removedAt,
+            workspaceVolumeName: workspace.workspaceVolumeName,
+            containerName: workspace.containerName,
+          });
+        } catch {
+          // skip
+        }
+      }
+      const report = await reconcileOrphanContainers({
+        docker: createDockerClient(),
+        knownRuns,
+        apply: options.apply,
+      });
+      if (options.json) {
+        console.log(JSON.stringify(report, null, 2));
+        return;
+      }
+      console.log(`Inspected ${report.inspected} managed container(s); removed ${report.removed.length}.`);
+      for (const candidate of report.candidates) {
+        console.log(
+          `- ${candidate.name}: ${candidate.decision.action} (${candidate.decision.reason})`,
+        );
+      }
     });
 
   program
@@ -789,6 +1412,224 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       );
       console.log(JSON.stringify(results, null, 2));
     });
+
+  // Hidden: one-shot seed-bundle materialization inside an init container (slice 4).
+  program
+    .command("workspace-init", { hidden: true })
+    .description("Initialize /workspace from a read-only seed bundle (internal)")
+    .requiredOption("--workspace <path>", "clone root", "/workspace")
+    .requiredOption("--seed-bundle <path>", "read-only seed.bundle path")
+    .requiredOption("--base-sha <sha>", "exact detached checkout SHA")
+    .requiredOption("--run-id <id>", "run id for clone identity")
+    .requiredOption("--seed-bundle-hash <hash>", "sha256:… of the seed bundle")
+    .option("--generation <n>", "clone generation", "0")
+    .action(
+      async (options: {
+        workspace: string;
+        seedBundle: string;
+        baseSha: string;
+        runId: string;
+        seedBundleHash: string;
+        generation: string;
+      }) => {
+        const { initializeCloneFromSeedBundle } = await import("../git/bundle-transport.js");
+        await initializeCloneFromSeedBundle({
+          workspacePath: options.workspace,
+          seedBundlePath: options.seedBundle,
+          baseSha: options.baseSha,
+          identity: {
+            runId: options.runId,
+            baseSha: options.baseSha,
+            seedBundleHash: options.seedBundleHash,
+            generation: Number(options.generation) || 0,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        console.log(
+          JSON.stringify({
+            ok: true,
+            workspace: options.workspace,
+            baseSha: options.baseSha,
+          }),
+        );
+      },
+    );
+
+  program
+    .command("workspace-probe", { hidden: true })
+    .description("Probe clone identity / HEAD inside a workspace volume (internal)")
+    .requiredOption("--workspace <path>", "clone root", "/workspace")
+    .requiredOption("--base-sha <sha>", "recorded base SHA")
+    .requiredOption("--seed-bundle-hash <hash>", "recorded seed hash")
+    .option("--generation <n>", "clone generation", "0")
+    .option("--run-id <id>", "optional run id")
+    .action(
+      async (options: {
+        workspace: string;
+        baseSha: string;
+        seedBundleHash: string;
+        generation: string;
+        runId?: string;
+      }) => {
+        const { assertCloneReopenInvariants } = await import("../git/bundle-transport.js");
+        const facts = await assertCloneReopenInvariants({
+          workspacePath: options.workspace,
+          expected: {
+            ...(options.runId ? { runId: options.runId } : {}),
+            baseSha: options.baseSha,
+            seedBundleHash: options.seedBundleHash,
+            generation: Number(options.generation) || 0,
+          },
+        });
+        console.log(JSON.stringify(facts));
+      },
+    );
+
+  // Hidden: fail-closed sandbox isolation self-check inside a disposable probe container.
+  program
+    .command("sandbox-isolation-self-check", { hidden: true })
+    .description("Prove workspace write + sandbox deny of /run-state (internal)")
+    .requiredOption("--workspace <path>", "writable workspace root", "/workspace")
+    .requiredOption("--run-state <path>", "run-state mount", "/run-state")
+    .requiredOption("--rpc-secret <path>", "RPC secret path under run-state")
+    .action(
+      async (options: { workspace: string; runState: string; rpcSecret: string }) => {
+        const { access, readFile, writeFile } = await import("node:fs/promises");
+        const pathMod = await import("node:path");
+        const { evaluateSandboxIsolationSelfCheck } = await import(
+          "../application/sandbox-isolation-probe.js"
+        );
+        const { prohibitedAgentPathAccess } = await import(
+          "../infrastructure/agents/step-utils.js"
+        );
+
+        let workspaceWrite = false;
+        try {
+          await writeFile(
+            pathMod.join(options.workspace, ".harness-isolation-probe"),
+            "ok\n",
+            "utf8",
+          );
+          workspaceWrite = true;
+        } catch {
+          workspaceWrite = false;
+        }
+
+        // Unsandboxed visibility of /run-state proves the mount exists; Cursor
+        // sandbox + prohibitedAgentPathAccess must still deny agent tools.
+        let mountVisibleToUnsandboxed = false;
+        try {
+          await access(options.runState);
+          mountVisibleToUnsandboxed = true;
+        } catch {
+          mountVisibleToUnsandboxed = false;
+        }
+
+        const policyDeniesRunStateRead =
+          prohibitedAgentPathAccess({ path: options.runState }, options.workspace) != null ||
+          prohibitedAgentPathAccess(
+            { path: pathMod.join(options.runState, "probe-marker.txt") },
+            options.workspace,
+          ) != null;
+        const policyDeniesRpcSecret =
+          prohibitedAgentPathAccess({ path: options.rpcSecret }, options.workspace) != null;
+        const policyDeniesOutside =
+          prohibitedAgentPathAccess({ path: "/etc/passwd" }, options.workspace) != null;
+
+        // Attempt real FS write to run-state (unsandboxed process may succeed);
+        // report denial based on sandbox policy, not unsandboxed FS.
+        let unsandboxedWroteRunState = false;
+        try {
+          await writeFile(
+            pathMod.join(options.runState, ".probe-should-not-be-agent-writable"),
+            "x\n",
+            "utf8",
+          );
+          unsandboxedWroteRunState = true;
+        } catch {
+          unsandboxedWroteRunState = false;
+        }
+
+        let unsandboxedReadSecret = false;
+        try {
+          await readFile(options.rpcSecret, "utf8");
+          unsandboxedReadSecret = true;
+        } catch {
+          unsandboxedReadSecret = false;
+        }
+
+        const evaluated = evaluateSandboxIsolationSelfCheck({
+          workspaceWritable: workspaceWrite,
+          // Fail closed: agent sandbox policy must deny these even if the
+          // unsandboxed worker process can see the mount.
+          canReadRunState: !policyDeniesRunStateRead,
+          canWriteRunState: !policyDeniesRunStateRead,
+          canReadRpcSecret: !policyDeniesRpcSecret,
+          canAccessOutsideWorkspace: !policyDeniesOutside,
+        });
+
+        const payload = {
+          ...evaluated,
+          mountVisibleToUnsandboxed,
+          unsandboxedWroteRunState,
+          unsandboxedReadSecret,
+          note:
+            "Filesystem isolation ≠ exfiltration-proof networking; Cursor sandboxEnabled is required at agent runtime.",
+        };
+        console.log(JSON.stringify(payload));
+        if (!evaluated.ok) process.exitCode = 1;
+      },
+    );
+
+  // Hidden container entrypoint (not listed in --help). Matches WORKER_IMAGE_BINARY_PATH
+  // semantics: long-lived authenticated RPC worker for one run.
+  program
+    .command("worker", { hidden: true })
+    .description("Run the per-run Docker worker RPC server (internal)")
+    .requiredOption("--run-id <id>", "run id")
+    .option("--listen <host:port>", "bind address", "0.0.0.0:8787")
+    .option("--secret-file <path>", "read-only RPC token file")
+    .option("--run-state <path>", "mounted run-state directory", "/run-state")
+    .option("--fake-backend", "use FakeBackend (tests/dev)", false)
+    .action(
+      async (options: {
+        runId: string;
+        listen: string;
+        secretFile?: string;
+        runState: string;
+        fakeBackend: boolean;
+      }) => {
+        const { runWorker } = await import("../worker/run-worker.js");
+        const listen = options.listen.trim();
+        const colon = listen.lastIndexOf(":");
+        if (colon < 0) throw new Error(`Invalid --listen ${listen}; expected host:port`);
+        const host = listen.slice(0, colon) || "0.0.0.0";
+        const port = Number(listen.slice(colon + 1));
+        if (!Number.isFinite(port) || port <= 0) {
+          throw new Error(`Invalid --listen port in ${listen}`);
+        }
+        const worker = await runWorker({
+          runId: options.runId,
+          host,
+          port,
+          secretFile: options.secretFile,
+          runStatePath: options.runState,
+          fakeBackend: options.fakeBackend,
+        });
+        const shutdown = async () => {
+          await worker.close();
+          process.exit(0);
+        };
+        process.on("SIGTERM", () => {
+          void shutdown();
+        });
+        process.on("SIGINT", () => {
+          void shutdown();
+        });
+        // Keep the process alive until shutdown RPC / signal.
+        await new Promise(() => undefined);
+      },
+    );
   
   return program;
 }

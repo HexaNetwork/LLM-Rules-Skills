@@ -2,7 +2,11 @@ import path from "node:path";
 import { HarnessFailure } from "../errors.js";
 import type { AgentBackend } from "../infrastructure/agents/types.js";
 import { isPathUnderControlRoot, pathsEqual } from "./harness-home.js";
-import type { HarnessPaths } from "./paths.js";
+import {
+  WORKER_RUN_STATE_PATH,
+  WORKER_WORKSPACE_PATH,
+  type HarnessPaths,
+} from "./paths.js";
 
 /** Declared provider ability to restrict the writable workspace root. */
 export type WorkspaceCapabilities = {
@@ -20,6 +24,13 @@ export type IsolationCheckInput = {
   capabilities: WorkspaceCapabilities;
   /** Optional cwd that will be passed to the agent. */
   agentCwd?: string;
+  /**
+   * When true, treat `/workspace` and `/run-state` as opaque container paths
+   * (Docker worker). Slice 5 isolation probes gate advertising restrict capability.
+   */
+  containerExecution?: boolean;
+  /** Set after fail-closed sandbox probe succeeds (slice 5); defaults false. */
+  sandboxIsolationProbePassed?: boolean;
 };
 
 export type IsolationCheckResult = {
@@ -29,33 +40,96 @@ export type IsolationCheckResult = {
 };
 
 /**
- * Enforce the agent isolation boundary: writable root is the run worktree,
- * harness home is never exposed as a writable mount.
+ * Normalize path comparisons for host paths and Docker worker constants.
+ * On Windows, `path.resolve("/workspace")` becomes a drive-rooted path — keep
+ * container constants opaque so isolation checks stay meaningful.
+ */
+export function normalizeExecutionPath(value: string): string {
+  const normalized = value.replaceAll("\\", "/");
+  if (
+    normalized === WORKER_WORKSPACE_PATH ||
+    normalized === WORKER_RUN_STATE_PATH ||
+    normalized.startsWith(`${WORKER_WORKSPACE_PATH}/`) ||
+    normalized.startsWith(`${WORKER_RUN_STATE_PATH}/`)
+  ) {
+    return normalized;
+  }
+  return path.resolve(value).replaceAll("\\", "/");
+}
+
+function executionPathsEqual(left: string, right: string): boolean {
+  const a = normalizeExecutionPath(left);
+  const b = normalizeExecutionPath(right);
+  if (process.platform === "win32" && !a.startsWith("/") && !b.startsWith("/")) {
+    return a.toLowerCase() === b.toLowerCase();
+  }
+  return a === b;
+}
+
+function isUnderExecutionRoot(child: string, parent: string): boolean {
+  const childKey = normalizeExecutionPath(child);
+  const parentKey = normalizeExecutionPath(parent).replace(/\/+$/, "");
+  if (childKey === parentKey) return true;
+  const prefix = parentKey.endsWith("/") ? parentKey : `${parentKey}/`;
+  if (process.platform === "win32" && !childKey.startsWith("/") && !parentKey.startsWith("/")) {
+    return childKey.toLowerCase().startsWith(prefix.toLowerCase());
+  }
+  return childKey.startsWith(prefix);
+}
+
+/**
+ * Enforce the agent isolation boundary: writable root is the run worktree
+ * (or `/workspace` in Docker), harness home / `/run-state` are never writable mounts.
  */
 export function checkWorkspaceIsolation(input: IsolationCheckInput): IsolationCheckResult {
   const issues: string[] = [];
-  const writable = path.resolve(input.agentCwd ?? input.paths.workspaceRoot);
+  const container =
+    input.containerExecution === true ||
+    input.paths.workspaceRoot === WORKER_WORKSPACE_PATH ||
+    (input.agentCwd != null && normalizeExecutionPath(input.agentCwd) === WORKER_WORKSPACE_PATH);
+  const writable = normalizeExecutionPath(input.agentCwd ?? input.paths.workspaceRoot);
   const homeRoot = path.resolve(input.homeRoot);
 
-  if (isPathUnderControlRoot(writable, homeRoot) || pathsEqual(writable, homeRoot)) {
+  if (!container && (isPathUnderControlRoot(writable, homeRoot) || pathsEqual(writable, homeRoot))) {
     issues.push(
       `Agent writable workspace must not be the harness home (${homeRoot}); got ${writable}`,
     );
   }
 
-  if (
+  if (container) {
+    if (writable !== WORKER_WORKSPACE_PATH && !writable.startsWith(`${WORKER_WORKSPACE_PATH}/`)) {
+      issues.push(
+        `Docker agent writable workspace must be ${WORKER_WORKSPACE_PATH}; got ${writable}`,
+      );
+    }
+    if (writable === WORKER_RUN_STATE_PATH || writable.startsWith(`${WORKER_RUN_STATE_PATH}/`)) {
+      issues.push(`Agent writable workspace must not be ${WORKER_RUN_STATE_PATH}`);
+    }
+  } else if (
     input.paths.workspaceRoot !== input.paths.controlRoot &&
-    !pathsEqual(writable, input.paths.workspaceRoot) &&
-    !isPathUnderControlRoot(writable, input.paths.workspaceRoot)
+    !executionPathsEqual(writable, input.paths.workspaceRoot) &&
+    !isUnderExecutionRoot(writable, input.paths.workspaceRoot)
   ) {
     issues.push(
       `Agent writable workspace ${writable} is outside the run worktree ${input.paths.workspaceRoot}`,
     );
   }
 
-  if (input.strictIsolation && !input.capabilities.canRestrictWritableWorkspace) {
+  const canRestrict = input.capabilities.canRestrictWritableWorkspace;
+
+  if (input.strictIsolation && !canRestrict) {
     issues.push(
       `Strict isolation is enabled but provider ${input.capabilities.providerId} cannot restrict the writable workspace.`,
+    );
+  }
+
+  if (
+    input.strictIsolation &&
+    container &&
+    input.sandboxIsolationProbePassed !== true
+  ) {
+    issues.push(
+      "Strict isolation is enabled for Docker but the sandbox isolation probe has not passed yet.",
     );
   }
 
@@ -78,8 +152,26 @@ export function assertWorkspaceIsolation(input: IsolationCheckInput): IsolationC
 export function capabilitiesForBackend(
   backend: AgentBackend,
   providerId = "cursor",
+  options?: {
+    runtime?: "local" | "docker";
+    sandboxIsolationProbePassed?: boolean;
+  },
 ): WorkspaceCapabilities {
   const advertised = backend.workspaceCapabilities?.();
+  if (options?.runtime === "docker") {
+    // Fail-closed: advertise restrict capability only after isolation probe succeeds.
+    const probePassed = options.sandboxIsolationProbePassed === true;
+    if (advertised) {
+      return {
+        ...advertised,
+        canRestrictWritableWorkspace: probePassed && advertised.canRestrictWritableWorkspace,
+      };
+    }
+    return {
+      canRestrictWritableWorkspace: probePassed,
+      providerId,
+    };
+  }
   if (advertised) return advertised;
   if (providerId === "cursor") {
     return { canRestrictWritableWorkspace: true, providerId };
@@ -91,7 +183,9 @@ export function capabilitiesForBackend(
  * Test helper: list roots that must not appear as agent-writable mounts.
  */
 export function forbiddenAgentWritableRoots(paths: HarnessPaths, homeRoot: string): string[] {
-  return [path.resolve(homeRoot), path.resolve(paths.stateRoot)].filter(
-    (root) => !pathsEqual(root, paths.workspaceRoot),
-  );
+  const roots = [path.resolve(homeRoot), path.resolve(paths.stateRoot)];
+  if (paths.workspaceRoot === WORKER_WORKSPACE_PATH) {
+    roots.push(WORKER_RUN_STATE_PATH);
+  }
+  return roots.filter((root) => !executionPathsEqual(root, paths.workspaceRoot));
 }

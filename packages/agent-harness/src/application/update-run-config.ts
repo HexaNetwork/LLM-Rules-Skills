@@ -80,6 +80,54 @@ async function applyUpdateRunConfig(
       ? { commands: { ...frozen.commands, ...parsedPatch.commands } }
       : {}),
     ...(parsedPatch.git ? { git: { ...frozen.git, ...parsedPatch.git } } : {}),
+    ...(parsedPatch.execution
+      ? {
+          execution: {
+            ...frozen.execution,
+            ...parsedPatch.execution,
+            ...(parsedPatch.execution.docker
+              ? {
+                  docker: {
+                    ...frozen.execution.docker,
+                    ...parsedPatch.execution.docker,
+                    ...(parsedPatch.execution.docker.limits
+                      ? {
+                          limits: {
+                            ...frozen.execution.docker.limits,
+                            ...parsedPatch.execution.docker.limits,
+                          },
+                        }
+                      : {}),
+                    ...(parsedPatch.execution.docker.network
+                      ? {
+                          network: {
+                            ...frozen.execution.docker.network,
+                            ...parsedPatch.execution.docker.network,
+                          },
+                        }
+                      : {}),
+                    ...(parsedPatch.execution.docker.submoduleLfs
+                      ? {
+                          submoduleLfs: {
+                            ...frozen.execution.docker.submoduleLfs,
+                            ...parsedPatch.execution.docker.submoduleLfs,
+                          },
+                        }
+                      : {}),
+                    ...(parsedPatch.execution.docker.bundleLimits
+                      ? {
+                          bundleLimits: {
+                            ...frozen.execution.docker.bundleLimits,
+                            ...parsedPatch.execution.docker.bundleLimits,
+                          },
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
     ...(parsedPatch.knowledge
       ? {
           knowledge: {
@@ -148,6 +196,7 @@ async function applyUpdateRunConfig(
   ctx.config.commands = nextConfig.commands;
   ctx.config.git = nextConfig.git;
   ctx.config.knowledge = nextConfig.knowledge;
+  ctx.config.execution = nextConfig.execution;
 
   return {
     state: persisted,

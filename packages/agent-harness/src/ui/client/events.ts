@@ -239,11 +239,20 @@ export const eventsScript = `    async function waitForJob(runId) {
         if (target.dataset.action === 'stop' && !confirm('Finish the current task, then stop before starting the next one?')) return;
         if (target.dataset.action === 'cleanup') {
           var discardCleanup = target.dataset.discard === 'true';
+          var isDockerCleanup = state.detail && state.detail.workspace && state.detail.workspace.kind === 'docker-clone';
           var cleanupPrompt = discardCleanup
-            ? 'Discard unpublished commits that are not on a retained named ref, then remove the worktree?'
-            : 'Remove this run worktree after safety checks? State, events, and retained branches stay on disk.';
+            ? (isDockerCleanup
+              ? 'Discard unpublished Docker volume commits, then remove the container and volume?'
+              : 'Discard unpublished commits that are not on a retained named ref, then remove the worktree?')
+            : (isDockerCleanup
+              ? 'Remove this Docker container (and volume after import/publish durability)? State, events, and transport audit stay on disk.'
+              : 'Remove this run worktree after safety checks? State, events, and retained branches stay on disk.');
           if (!confirm(cleanupPrompt)) return;
           runAction('cleanup', { discard: discardCleanup });
+          return;
+        }
+        if (target.dataset.action === 'recover_container' || target.dataset.action === 'approve_execution_image' || target.dataset.action === 'build_execution_image' || target.dataset.action === 'approve_and_build_execution_image') {
+          runAction(target.dataset.action);
           return;
         }
         if (target.dataset.action === 'commit_preflight') {

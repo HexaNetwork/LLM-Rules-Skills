@@ -3,6 +3,10 @@
 .SYNOPSIS
   Pull the harness checkout, rebuild, and start the dashboard.
 
+.DESCRIPTION
+  When the target project has execution.runtime=docker and the daemon is down,
+  starts Docker Desktop (if installed) and waits briefly before launching UI.
+
 .EXAMPLE
   .\scripts\launch-agent-harness.ps1 -Project "C:\path\to\your-project"
 
@@ -20,6 +24,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib\user-settings.ps1")
+. (Join-Path $PSScriptRoot "lib\docker-ready.ps1")
 
 $HarnessRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Cli = Join-Path $HarnessRoot "packages\agent-harness\dist\cli.js"
@@ -99,6 +104,8 @@ if (-not (Test-Path -LiteralPath $Cli)) {
   Write-Host "Missing $Cli - run without -NoBuild, or build manually." -ForegroundColor Red
   exit 1
 }
+
+Ensure-AgentHarnessDockerForLaunch -Repository $Project
 
 $uiArgs = [System.Collections.Generic.List[string]]::new()
 $uiArgs.Add("ui") | Out-Null

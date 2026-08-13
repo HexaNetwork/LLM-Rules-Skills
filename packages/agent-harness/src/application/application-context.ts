@@ -32,6 +32,8 @@ import {
   type RunCancellationRegistry,
 } from "./cancellation-registry.js";
 import { applyWorkspaceToPaths, type HarnessPaths } from "./paths.js";
+import type { WorkspaceProvisioner } from "../workspace/index.js";
+import type { DockerClient } from "../infrastructure/container/types.js";
 export type { HarnessDependencies, ApplicationDependencies, ProjectContext };
 export type { HarnessPaths } from "./paths.js";
 
@@ -46,6 +48,8 @@ export class ApplicationContext {
   readonly deps: ApplicationDependencies;
   readonly repositoryIntelligence: RepositoryIntelligenceBroker;
   readonly repositoryIntelligenceRunner: ExecutableRunner;
+  readonly workspaceProvisioner: WorkspaceProvisioner;
+  readonly docker: DockerClient;
   readonly sleep: (ms: number) => Promise<void>;
   readonly cancellation: RunCancellationRegistry;
   readonly projectContext?: ProjectContext;
@@ -66,6 +70,8 @@ export class ApplicationContext {
     this.agents = this.deps.agents;
     this.repositoryIntelligence = this.deps.repositoryIntelligence;
     this.repositoryIntelligenceRunner = this.deps.repositoryIntelligenceRunner;
+    this.workspaceProvisioner = this.deps.workspaceProvisioner;
+    this.docker = this.deps.docker;
     this.sleep = this.deps.sleep;
     this.projectContext = this.deps.projectContext;
     this.cancellation = cancellation;

@@ -42,8 +42,46 @@ agent:
   timeoutMs: 1200000
   promptBuilder: false
   schemaRepairAttempts: 1
-  # Cursor uses its OS-level sandbox (WSL2-backed on Windows) for local tools.
+  # Cursor OS sandbox: available to the SDK on macOS/Linux. On Windows, run the
+  # harness under WSL2/Linux for the same boundary (native Windows node cannot).
   sandbox: true
+
+# Execution runtime is independent of agent.provider (LLM backend).
+# local = linked worktree (default); docker = opt-in container-local clone (ADR 0015).
+execution:
+  runtime: local
+  docker:
+    generatedImagesEnabled: true
+    # Shared digest-pinned toolchain catalog (prefer harness-home via
+    # agent-harness execution approve-base --all --write-settings).
+    approvedBaseImages: []
+    # workerImageDigest: sha256:...
+    buildPullPolicy: if-missing
+    buildTimeoutMs: 1200000
+    limits:
+      cpus: 2
+      memoryMb: 4096
+      pidsLimit: 256
+    network:
+      runtime: bridge
+      packageInstall: bridge
+    submoduleLfs:
+      submodules: reject
+      lfs: reject
+    bundleLimits:
+      maxBundleBytes: 536870912
+      maxObjectCount: 100000
+      maxChangedBytes: 268435456
+      maxCommitCount: 10000
+      sensitivePathPatterns:
+        - ".env"
+        - "**/.env"
+        - "**/.env.*"
+        - "**/credentials.json"
+        - "**/*secret*"
+        - "**/*.pem"
+        - "**/*.p12"
+    sandboxRequired: true
 
 workflow:
   # Document RAG into work packets (independent of repository intelligence / guidance).

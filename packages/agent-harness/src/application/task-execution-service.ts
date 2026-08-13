@@ -410,6 +410,28 @@ export class TaskExecutionService {
   }
 
   async publish(state: RunState): Promise<RunState> {
+    if ((this.ctx.config.execution?.runtime ?? "local") === "docker") {
+      const { prepareDockerResultExport, isDockerBundleExportReady } = await import(
+        "./docker-publish-service.js"
+      );
+      const { loadBundleImportState } = await import("./bundle-import-io.js");
+      // Idempotent: if export already ready, leave phase as publishing for the host.
+      const existing = await loadBundleImportState(this.ctx.config, state.runId).catch(
+        () => undefined,
+      );
+      if (!isDockerBundleExportReady(existing)) {
+        await prepareDockerResultExport({
+          config: this.ctx.config,
+          store: this.ctx.store,
+          runId: state.runId,
+          workspace: this.ctx.workspace,
+          workspacePath: this.ctx.paths.workspaceRoot,
+        });
+      }
+      // Host completes quarantine import + push/PR (credential boundary).
+      return this.ctx.store.load(state.runId);
+    }
+
     const fallback: MessageOutput = {
       subject: `feat: ${state.idea}`.slice(0, 100),
       body: state.tasks.map((task) => `- ${task.title}`).join("\n"),

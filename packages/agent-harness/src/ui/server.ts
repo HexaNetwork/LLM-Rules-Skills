@@ -26,7 +26,12 @@ import { handleGuidanceRoutes } from "./http/routes/guidance.js";
 import { handleKnowledgeRoutes } from "./http/routes/knowledge.js";
 import { handleRunsRoutes } from "./http/routes/runs.js";
 import { handleSettingsRoutes } from "./http/routes/settings.js";
+import { handleExecutionRoutes } from "./http/routes/execution.js";
 import { RunJobService } from "./run-job-service.js";
+import { createDockerClient } from "../infrastructure/container/docker-client.js";
+import { evaluateExecutionRuntimeStatus } from "../application/execution-runtime-status.js";
+import { reconcileOrphanContainers } from "../application/orphan-reconciler.js";
+import { loadRunWorkspace } from "../config/io.js";
 
 export type { UiJob } from "./run-job-service.js";
 export { parseAnswerBody } from "./http/request.js";
@@ -72,12 +77,91 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
   );
   const agentReadiness = options.backend.readiness?.() ?? { ready: true };
   const jobs = new RunJobService();
+  const docker = createDockerClient();
   await store.initialize();
+
+  // Conservative orphan pass at startup (report-only; never removes volumes).
+  try {
+    const { states } = await store.listWithFailures();
+    const knownRuns = [];
+    for (const state of states) {
+      try {
+        const workspace = await loadRunWorkspace(projectConfig, state.runId);
+        if (workspace.kind !== "docker-clone") continue;
+        knownRuns.push({
+          runId: state.runId,
+          phase: state.phase,
+          removedAt: workspace.removedAt,
+          workspaceVolumeName: workspace.workspaceVolumeName,
+          containerName: workspace.containerName,
+        });
+      } catch {
+        // skip
+      }
+    }
+    if (knownRuns.length > 0 || (projectConfig.execution?.runtime ?? "local") === "docker") {
+      await reconcileOrphanContainers({ docker, knownRuns, apply: false });
+    }
+  } catch {
+    // Orphan inspect failures must not block the dashboard.
+  }
+
+  /** Soft Docker status for UI polls — skip alpine port-binding; TTL + in-flight coalesce. */
+  const EXECUTION_STATUS_TTL_MS = 30_000;
+  let executionStatusCache:
+    | {
+        at: number;
+        status: Awaited<ReturnType<typeof evaluateExecutionRuntimeStatus>>;
+      }
+    | undefined;
+  let executionStatusInflight:
+    | Promise<Awaited<ReturnType<typeof evaluateExecutionRuntimeStatus>>>
+    | undefined;
+
+  const loadExecutionStatus = async (options?: {
+    force?: boolean;
+  }): Promise<Awaited<ReturnType<typeof evaluateExecutionRuntimeStatus>>> => {
+    const force = options?.force === true;
+    const now = Date.now();
+    if (
+      !force &&
+      executionStatusCache &&
+      now - executionStatusCache.at < EXECUTION_STATUS_TTL_MS
+    ) {
+      return executionStatusCache.status;
+    }
+    if (!force && executionStatusInflight) {
+      return executionStatusInflight;
+    }
+
+    const probe = evaluateExecutionRuntimeStatus({
+      config: projectConfig,
+      docker,
+      repositoryRoot: paths.controlRoot,
+      projectStateRoot: paths.stateRoot,
+      collectEvidence: true,
+      // Avoid slow/failing daemon probes when runtime is local.
+      probeDocker: (projectConfig.execution?.runtime ?? "local") === "docker",
+      // Bootstrap polls must not spawn alpine every ~2s; force=true still runs the bind probe.
+      includePortBinding: force,
+    }).then((status) => {
+      executionStatusCache = { at: Date.now(), status };
+      executionStatusInflight = undefined;
+      return status;
+    });
+
+    if (!force) {
+      executionStatusInflight = probe;
+    }
+    return probe;
+  };
 
   const ctx: UiAppContext = {
     getProjectConfig: () => projectConfig,
     setProjectConfig: (config) => {
       projectConfig = config;
+      executionStatusCache = undefined;
+      executionStatusInflight = undefined;
     },
     store,
     knowledge,
@@ -86,6 +170,8 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
     agentReadiness,
     jobs,
     repositoryIntelligenceRunner,
+    docker,
+    getExecutionStatus: loadExecutionStatus,
   };
 
   const server = http.createServer(async (request, response) => {
@@ -117,6 +203,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
       }
 
       if (await handleSettingsRoutes(request, response, url, ctx)) return;
+      if (await handleExecutionRoutes(request, response, url, ctx)) return;
       if (await handleRunsRoutes(request, response, url, ctx)) return;
       if (await handleKnowledgeRoutes(request, response, url, ctx)) return;
       if (await handleGuidanceRoutes(request, response, url, ctx)) return;

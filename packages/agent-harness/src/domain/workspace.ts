@@ -34,12 +34,12 @@ const WINDOWS_RESERVED_NAMES = new Set([
   "lpt9",
 ]);
 
-export const RunWorkspaceKindSchema = z.enum(["git-worktree", "git-disabled"]);
+export const RunWorkspaceKindSchema = z.enum(["git-worktree", "git-disabled", "docker-clone"]);
 export type RunWorkspaceKind = z.infer<typeof RunWorkspaceKindSchema>;
 
-export const RunWorkspaceSchema = z.object({
+const GitWorktreeWorkspaceSchema = z.object({
   version: z.literal(WORKSPACE_SCHEMA_VERSION),
-  kind: RunWorkspaceKindSchema,
+  kind: z.literal("git-worktree"),
   controlRoot: z.string().min(1),
   worktreePath: z.string().min(1).optional(),
   gitCommonDir: z.string().min(1).optional(),
@@ -49,7 +49,59 @@ export const RunWorkspaceSchema = z.object({
   createdAt: z.string().min(1),
   removedAt: z.string().min(1).optional(),
 });
+
+/**
+ * Git-disabled workspaces omit execution roots. Optional identity fields are
+ * retained so consumers can read shared optional keys without narrowing.
+ */
+const GitDisabledWorkspaceSchema = z.object({
+  version: z.literal(WORKSPACE_SCHEMA_VERSION),
+  kind: z.literal("git-disabled"),
+  controlRoot: z.string().min(1),
+  worktreePath: z.string().min(1).optional(),
+  gitCommonDir: z.string().min(1).optional(),
+  baseBranch: z.string().min(1).optional(),
+  baseSha: z.string().min(1).optional(),
+  branchName: z.string().min(1).optional(),
+  createdAt: z.string().min(1),
+  removedAt: z.string().min(1).optional(),
+});
+
+/**
+ * Stable Docker-clone identity (ADR 0015). Ephemeral container IDs and host ports
+ * are discovered at runtime and stored in execution.json — not here.
+ * Optional worktreePath/gitCommonDir stay unset (local-worktree fields).
+ */
+const DockerCloneWorkspaceSchema = z.object({
+  version: z.literal(WORKSPACE_SCHEMA_VERSION),
+  kind: z.literal("docker-clone"),
+  controlRoot: z.string().min(1),
+  containerName: z.string().min(1),
+  workspaceVolumeName: z.string().min(1),
+  /** Worker-visible workspace root inside the container. */
+  workspacePath: z.literal("/workspace").default("/workspace"),
+  imageDigest: z.string().min(1),
+  baseSha: z.string().min(1),
+  seedBundleHash: z.string().min(1),
+  /** Volume/container recreation generation; increments when identity is re-seeded. */
+  generation: z.number().int().nonnegative(),
+  baseBranch: z.string().min(1).optional(),
+  branchName: z.string().min(1).optional(),
+  worktreePath: z.string().min(1).optional(),
+  gitCommonDir: z.string().min(1).optional(),
+  createdAt: z.string().min(1),
+  removedAt: z.string().min(1).optional(),
+});
+
+export const RunWorkspaceSchema = z.discriminatedUnion("kind", [
+  GitWorktreeWorkspaceSchema,
+  GitDisabledWorkspaceSchema,
+  DockerCloneWorkspaceSchema,
+]);
 export type RunWorkspace = z.infer<typeof RunWorkspaceSchema>;
+export type GitWorktreeWorkspace = z.infer<typeof GitWorktreeWorkspaceSchema>;
+export type GitDisabledWorkspace = z.infer<typeof GitDisabledWorkspaceSchema>;
+export type DockerCloneWorkspace = z.infer<typeof DockerCloneWorkspaceSchema>;
 
 export const WorkspaceEvidenceSchema = z.object({
   headSha: z.string().min(1),
@@ -200,15 +252,28 @@ export function migrateRunWorkspace(
   }
 
   const parsed = RunWorkspaceSchema.parse(value);
+  if (parsed.kind === "git-worktree") {
+    return RunWorkspaceSchema.parse({
+      ...parsed,
+      controlRoot: canonicalizeWorkspacePath(parsed.controlRoot),
+      worktreePath: parsed.worktreePath
+        ? canonicalizeWorkspacePath(parsed.worktreePath)
+        : undefined,
+      gitCommonDir: parsed.gitCommonDir
+        ? canonicalizeWorkspacePath(parsed.gitCommonDir)
+        : undefined,
+    });
+  }
+  if (parsed.kind === "docker-clone") {
+    return RunWorkspaceSchema.parse({
+      ...parsed,
+      controlRoot: canonicalizeWorkspacePath(parsed.controlRoot),
+      workspacePath: "/workspace",
+    });
+  }
   return RunWorkspaceSchema.parse({
     ...parsed,
     controlRoot: canonicalizeWorkspacePath(parsed.controlRoot),
-    worktreePath: parsed.worktreePath
-      ? canonicalizeWorkspacePath(parsed.worktreePath)
-      : undefined,
-    gitCommonDir: parsed.gitCommonDir
-      ? canonicalizeWorkspacePath(parsed.gitCommonDir)
-      : undefined,
   });
 }
 

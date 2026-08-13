@@ -1,0 +1,8 @@
+# Build context is the agent-harness package root.
+*
+!package.json
+!dist/
+!dist/**
+!docker/
+!docker/worker/
+!docker/worker/**

@@ -2,6 +2,7 @@ export type FailureKind =
   | "provider" // transient backend/network/timeout — retry is likely to work
   | "workspace" // dirty tree, missing graph, unreported paths — human fixes, then retry
   | "config" // run config drift, version mismatch — retry cannot help
+  | "execution" // Docker/runtime readiness, unimplemented runtime, container lifecycle
   | "budget" // step/token/cost ceiling — retry only after raising the ceiling
   | "contract" // model could not satisfy the schema after repair attempts
   | "test_integrity" // recorded RED tests were edited after the checkpoint
@@ -64,6 +65,17 @@ function classifyByMessage(message: string): { kind: FailureKind; retriable: boo
   }
   if (CONFIG_FAILURE_PATTERN.test(message)) {
     return { kind: "config", retriable: false };
+  }
+  if (
+    /Docker execution|execution image|execution\.docker|Docker daemon|Linux containers|approvedBaseImages|workerImageDigest|execution-image|Approve and build/i.test(
+      message,
+    )
+  ) {
+    return {
+      kind: "execution",
+      retriable:
+        /build failed|requires operator approval|Approve and build|image\.digest/i.test(message),
+    };
   }
   if (/Task .+ failed:|could not satisfy|Validation error|schema/i.test(message)) {
     return { kind: "contract", retriable: /schema|Validation error|could not satisfy/i.test(message) };

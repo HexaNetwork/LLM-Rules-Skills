@@ -209,6 +209,115 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     maximumItemLength: 64,
     appliesTo: "new_runs",
   },
+  {
+    key: "execution.runtime",
+    category: "Execution runtime",
+    label: "Execution runtime",
+    description:
+      "Where new runs execute agents and commands. local = linked worktree (default). docker = isolated container clone. Frozen per run; never switch an in-progress run.",
+    type: "enum",
+    options: [
+      { value: "local", label: "Local worktree (default)" },
+      { value: "docker", label: "Docker (opt-in)" },
+    ],
+    appliesTo: "new_runs",
+  },
+  {
+    key: "execution.docker.generatedImagesEnabled",
+    category: "Execution runtime",
+    label: "Generated project images",
+    description:
+      "Allow generating a reviewed Dockerfile from stack evidence before Docker runs. Required for docker runtime.",
+    type: "boolean",
+    appliesTo: "new_runs",
+  },
+  {
+    key: "execution.docker.approvedBaseImages",
+    category: "Execution runtime",
+    label: "Approved base images",
+    description:
+      "Digest-pinned toolchain bases (one name@sha256:… per line). Prefer the shared harness-home catalog (`execution approve-base --all`); project entries overlay by family.",
+    type: "string-list",
+    maximumItems: 32,
+    maximumItemLength: 512,
+    appliesTo: "new_runs",
+  },
+  {
+    key: "execution.docker.workerImageDigest",
+    category: "Execution runtime",
+    label: "Worker image digest",
+    description:
+      "Digest-pinned maintained harness worker image (name@sha256:…). Copied into generated project images.",
+    type: "string",
+    maximum: 512,
+    appliesTo: "new_runs",
+  },
+  {
+    key: "execution.docker.buildPullPolicy",
+    category: "Execution runtime",
+    label: "Image build/pull policy",
+    description: "When to pull/rebuild execution images for new Docker runs.",
+    type: "enum",
+    options: [
+      { value: "if-missing", label: "If missing (default)" },
+      { value: "always", label: "Always" },
+      { value: "never", label: "Never (local cache only)" },
+    ],
+    appliesTo: "new_runs",
+  },
+  {
+    key: "execution.docker.network.runtime",
+    category: "Execution runtime",
+    label: "Runtime network mode",
+    description:
+      "Container network for agents. bridge (MVP) allows provider egress — filesystem isolation, not exfiltration-proof. none blocks egress.",
+    type: "enum",
+    options: [
+      { value: "bridge", label: "Bridge (default MVP)" },
+      { value: "none", label: "None (no egress)" },
+      { value: "allowlist-proxy", label: "Allowlist proxy (future)" },
+    ],
+    appliesTo: "new_runs",
+  },
+  {
+    key: "execution.docker.limits.cpus",
+    category: "Execution runtime",
+    label: "CPU limit",
+    description: "Per-run container CPU limit (e.g. 2 for two CPUs). Applies to new Docker runs.",
+    type: "integer",
+    minimum: 1,
+    maximum: 64,
+    appliesTo: "new_runs",
+  },
+  {
+    key: "execution.docker.limits.memoryMb",
+    category: "Execution runtime",
+    label: "Memory limit (MiB)",
+    description: "Per-run container memory limit in mebibytes.",
+    type: "integer",
+    minimum: 256,
+    maximum: 262144,
+    appliesTo: "new_runs",
+  },
+  {
+    key: "execution.docker.limits.pidsLimit",
+    category: "Execution runtime",
+    label: "PID limit",
+    description: "Per-run container process limit.",
+    type: "integer",
+    minimum: 64,
+    maximum: 100000,
+    appliesTo: "new_runs",
+  },
+  {
+    key: "execution.docker.sandboxRequired",
+    category: "Execution runtime",
+    label: "Require sandbox isolation probe",
+    description:
+      "Fail closed until the Cursor Linux sandbox probe proves /workspace write and /run-state deny for the image digest.",
+    type: "boolean",
+    appliesTo: "new_runs",
+  },
 ];
 
 export function projectSettings(config: HarnessConfig, configPath?: string): Record<string, unknown> {
@@ -253,6 +362,20 @@ export function projectSettings(config: HarnessConfig, configPath?: string): Rec
         config.knowledge.repositoryIntelligence.providers.codegraph.command,
       "knowledge.repositoryIntelligence.routes.search":
         config.knowledge.repositoryIntelligence.routes.search,
+      "execution.runtime": config.execution?.runtime ?? "local",
+      "execution.docker.generatedImagesEnabled":
+        config.execution?.docker?.generatedImagesEnabled ?? true,
+      "execution.docker.approvedBaseImages": config.execution?.docker?.approvedBaseImages ?? [],
+      "execution.docker.workerImageDigest": config.execution?.docker?.workerImageDigest ?? "",
+      "execution.docker.buildPullPolicy": config.execution?.docker?.buildPullPolicy ?? "if-missing",
+      "execution.docker.network.runtime": config.execution?.docker?.network?.runtime ?? "bridge",
+      "execution.docker.limits.cpus": Math.max(
+        1,
+        Math.round(config.execution?.docker?.limits?.cpus ?? 2),
+      ),
+      "execution.docker.limits.memoryMb": config.execution?.docker?.limits?.memoryMb ?? 4096,
+      "execution.docker.limits.pidsLimit": config.execution?.docker?.limits?.pidsLimit ?? 256,
+      "execution.docker.sandboxRequired": config.execution?.docker?.sandboxRequired ?? true,
     },
   };
 }
@@ -441,6 +564,55 @@ export async function handleSettingsRoutes(
     if (searchRoute == null) {
       throw new HttpError(400, "knowledge.repositoryIntelligence.routes.search is required");
     }
+    const executionRuntime = optionalEnum(
+      values["execution.runtime"],
+      "execution.runtime",
+      ["local", "docker"] as const,
+    );
+    const generatedImagesEnabled = optionalBoolean(
+      values["execution.docker.generatedImagesEnabled"],
+      "execution.docker.generatedImagesEnabled",
+    );
+    const approvedBaseImages = optionalStringArray(
+      values["execution.docker.approvedBaseImages"],
+      "execution.docker.approvedBaseImages",
+      512,
+    );
+    if (approvedBaseImages && approvedBaseImages.length > 32) {
+      throw new HttpError(400, "execution.docker.approvedBaseImages may contain at most 32 images");
+    }
+    const workerImageDigest = optionalString(
+      values["execution.docker.workerImageDigest"],
+      "execution.docker.workerImageDigest",
+      512,
+    );
+    const buildPullPolicy = optionalEnum(
+      values["execution.docker.buildPullPolicy"],
+      "execution.docker.buildPullPolicy",
+      ["if-missing", "always", "never"] as const,
+    );
+    const networkRuntime = optionalEnum(
+      values["execution.docker.network.runtime"],
+      "execution.docker.network.runtime",
+      ["bridge", "none", "allowlist-proxy"] as const,
+    );
+    const limitCpus = optionalInteger(values["execution.docker.limits.cpus"], "execution.docker.limits.cpus", 1, 64);
+    const limitMemoryMb = optionalInteger(
+      values["execution.docker.limits.memoryMb"],
+      "execution.docker.limits.memoryMb",
+      256,
+      262144,
+    );
+    const limitPids = optionalInteger(
+      values["execution.docker.limits.pidsLimit"],
+      "execution.docker.limits.pidsLimit",
+      64,
+      100000,
+    );
+    const sandboxRequired = optionalBoolean(
+      values["execution.docker.sandboxRequired"],
+      "execution.docker.sandboxRequired",
+    );
     const updated = await writeProjectSettings(ctx.configPath, {
       workflow: {
         maxGrillQuestionsPerEpisode,
@@ -489,6 +661,41 @@ export async function handleSettingsRoutes(
           },
         },
       },
+      ...(executionRuntime != null ||
+      generatedImagesEnabled != null ||
+      approvedBaseImages != null ||
+      workerImageDigest != null ||
+      buildPullPolicy != null ||
+      networkRuntime != null ||
+      limitCpus != null ||
+      limitMemoryMb != null ||
+      limitPids != null ||
+      sandboxRequired != null
+        ? {
+            execution: {
+              ...(executionRuntime != null ? { runtime: executionRuntime } : {}),
+              docker: {
+                ...(generatedImagesEnabled != null ? { generatedImagesEnabled } : {}),
+                ...(approvedBaseImages != null ? { approvedBaseImages } : {}),
+                ...(workerImageDigest != null
+                  ? { workerImageDigest: workerImageDigest || undefined }
+                  : {}),
+                ...(buildPullPolicy != null ? { buildPullPolicy } : {}),
+                ...(networkRuntime != null ? { network: { runtime: networkRuntime } } : {}),
+                ...(limitCpus != null || limitMemoryMb != null || limitPids != null
+                  ? {
+                      limits: {
+                        ...(limitCpus != null ? { cpus: limitCpus } : {}),
+                        ...(limitMemoryMb != null ? { memoryMb: limitMemoryMb } : {}),
+                        ...(limitPids != null ? { pidsLimit: limitPids } : {}),
+                      },
+                    }
+                  : {}),
+                ...(sandboxRequired != null ? { sandboxRequired } : {}),
+              },
+            },
+          }
+        : {}),
     });
     ctx.setProjectConfig(updated.config);
     json(response, 200, {

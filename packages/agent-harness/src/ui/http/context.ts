@@ -4,6 +4,8 @@ import type { ExecutableRunner } from "../../infrastructure/repository-intellige
 import type { LocalKnowledgeBase } from "../../knowledge.js";
 import type { RunStore } from "../../store.js";
 import type { RunJobService } from "../run-job-service.js";
+import type { DockerClient } from "../../infrastructure/container/types.js";
+import type { ExecutionRuntimeStatus } from "../../application/execution-runtime-status.js";
 
 export type UiAppContext = {
   getProjectConfig(): HarnessConfig;
@@ -15,4 +17,13 @@ export type UiAppContext = {
   agentReadiness: { ready: boolean; message?: string };
   jobs: RunJobService;
   repositoryIntelligenceRunner?: ExecutableRunner;
+  /** Optional argv Docker client for execution readiness probes. */
+  docker?: DockerClient;
+  /**
+   * Cached/lazy execution runtime status for bootstrap (slice 2 service API).
+   * Pass `{ force: true }` for create-run gates so policy/Docker changes are not stale.
+   */
+  getExecutionStatus?: (options?: {
+    force?: boolean;
+  }) => Promise<ExecutionRuntimeStatus>;
 };

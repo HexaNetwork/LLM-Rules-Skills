@@ -17,8 +17,13 @@
 - Clean-tree, branch, commit, push, and optional `gh pr create` ownership
 - Frozen per-run configuration and non-waiting run locks
 - Authenticated loopback dashboard for runs, questions, evidence, artifacts, and local knowledge
+- Opt-in Docker execution runtime (ADR 0015): generated reviewed images, per-run worker RPC, seed-bundle clones, quarantine import, host-only push/PR, recovery/cleanup, and installer/docs
 
 ## Deliberately deferred
+
+### Docker networking hardening
+
+MVP Docker runtime uses explicit `bridge` networking (filesystem isolation, **not** exfiltration-proof). Provider/package-registry allowlisted egress remains deferred and must land before any default flip away from local worktrees.
 
 ### External tracker adapters
 

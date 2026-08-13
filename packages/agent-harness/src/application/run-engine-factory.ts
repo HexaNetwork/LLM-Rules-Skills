@@ -2,8 +2,8 @@ import { loadRunConfig, loadRunWorkspace } from "../config/io.js";
 import type { HarnessConfig } from "../config/schema.js";
 import type { RunWorkspace } from "../domain/workspace.js";
 import { HarnessEngine } from "./harness-engine.js";
-import { WorktreeManager } from "../git/worktree-manager.js";
 import { RunStore } from "../store.js";
+import { resolveWorkspaceProvisioner } from "../workspace/index.js";
 import type { HarnessDependencies } from "./dependencies.js";
 import { resolveHarnessPaths, type HarnessPaths } from "./paths.js";
 
@@ -33,20 +33,27 @@ export async function openRunHarness(
   const workspace = await loadRunWorkspace(projectConfig, runId);
   const paths = resolveHarnessPaths(config, workspace);
 
-  if (workspace.kind === "git-worktree" && options.validateWorktree !== false) {
-    const store = dependencies.store ?? new RunStore(config, paths.stateRoot);
-    const manager = new WorktreeManager({
-      controlRoot: paths.controlRoot,
-      stateRoot: paths.stateRoot,
-      worktreeRoot: paths.worktreeRoot,
+  const store = dependencies.store ?? new RunStore(config, paths.stateRoot);
+  const workspaceProvisioner =
+    dependencies.workspaceProvisioner ??
+    resolveWorkspaceProvisioner(config, {
+      paths,
       store,
+      docker: dependencies.docker,
     });
-    await manager.open(workspace);
+
+  if (
+    (workspace.kind === "git-worktree" || workspace.kind === "docker-clone") &&
+    options.validateWorktree !== false
+  ) {
+    await workspaceProvisioner.open(workspace);
   }
 
   const engine = new HarnessEngine(config, {
     ...dependencies,
     paths,
+    store,
+    workspaceProvisioner,
   });
   engine.bindWorkspace(workspace);
   return { engine, config, paths, workspace };

@@ -94,6 +94,16 @@ export async function writeProjectSettings(
     const workflow = isRecord(value.workflow) ? value.workflow : {};
     const commands = isRecord(value.commands) ? value.commands : {};
     const git = isRecord(value.git) ? value.git : {};
+    const execution = isRecord(value.execution) ? value.execution : {};
+    const existingDocker = isRecord(execution.docker) ? execution.docker : {};
+    const existingLimits = isRecord(existingDocker.limits) ? existingDocker.limits : {};
+    const existingNetwork = isRecord(existingDocker.network) ? existingDocker.network : {};
+    const existingSubmoduleLfs = isRecord(existingDocker.submoduleLfs)
+      ? existingDocker.submoduleLfs
+      : {};
+    const existingBundleLimits = isRecord(existingDocker.bundleLimits)
+      ? existingDocker.bundleLimits
+      : {};
     const knowledge = isRecord(value.knowledge) ? value.knowledge : {};
     const existingRepositoryIntelligence = isRecord(knowledge.repositoryIntelligence)
       ? knowledge.repositoryIntelligence
@@ -105,6 +115,8 @@ export async function writeProjectSettings(
       ? existingRepositoryIntelligence.routes
       : {};
     const patchRi = parsedPatch.knowledge?.repositoryIntelligence;
+    const patchExecution = parsedPatch.execution;
+    const patchDocker = patchExecution?.docker;
     const candidate = {
       ...value,
       ...(parsedPatch.workflow
@@ -114,6 +126,44 @@ export async function writeProjectSettings(
         ? { commands: { ...commands, ...parsedPatch.commands } }
         : {}),
       ...(parsedPatch.git ? { git: { ...git, ...parsedPatch.git } } : {}),
+      ...(patchExecution
+        ? {
+            execution: {
+              ...execution,
+              ...patchExecution,
+              ...(patchDocker
+                ? {
+                    docker: {
+                      ...existingDocker,
+                      ...patchDocker,
+                      ...(patchDocker.limits
+                        ? { limits: { ...existingLimits, ...patchDocker.limits } }
+                        : {}),
+                      ...(patchDocker.network
+                        ? { network: { ...existingNetwork, ...patchDocker.network } }
+                        : {}),
+                      ...(patchDocker.submoduleLfs
+                        ? {
+                            submoduleLfs: {
+                              ...existingSubmoduleLfs,
+                              ...patchDocker.submoduleLfs,
+                            },
+                          }
+                        : {}),
+                      ...(patchDocker.bundleLimits
+                        ? {
+                            bundleLimits: {
+                              ...existingBundleLimits,
+                              ...patchDocker.bundleLimits,
+                            },
+                          }
+                        : {}),
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
       ...(patchRi
         ? {
             knowledge: {
@@ -232,4 +282,16 @@ export async function writeRunWorkspace(
 ): Promise<void> {
   const snapshot = runWorkspacePath(projectConfig, runId);
   await writeFile(snapshot, `${JSON.stringify(workspace, null, 2)}\n`, "utf8");
+}
+
+/** Host path for restartable execution.json (writers land with the Docker runtime slice). */
+export function runExecutionJsonPath(projectConfig: HarnessConfig, runId: string): string {
+  const { stateRoot } = resolveHarnessPaths(projectConfig);
+  return path.join(stateRoot, "runs", runId, "execution.json");
+}
+
+/** Host path for transport/import.json under the run directory. */
+export function runTransportImportPath(projectConfig: HarnessConfig, runId: string): string {
+  const { stateRoot } = resolveHarnessPaths(projectConfig);
+  return path.join(stateRoot, "runs", runId, "transport", "import.json");
 }

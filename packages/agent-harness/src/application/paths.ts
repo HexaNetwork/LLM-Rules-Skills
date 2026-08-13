@@ -7,6 +7,19 @@ import {
   type ProjectPaths,
 } from "./harness-home.js";
 
+/**
+ * Worker-visible bind mount for the current run's durable state (Docker mode).
+ * Host control plane keeps native `stateRoot` / run directories; the container sees
+ * only this run's state at `/run-state` (ADR 0015).
+ */
+export const WORKER_RUN_STATE_PATH = "/run-state" as const;
+
+/**
+ * Worker-visible workspace root inside a Docker run container.
+ * Local mode continues to use the host worktree path as `workspaceRoot`.
+ */
+export const WORKER_WORKSPACE_PATH = "/workspace" as const;
+
 /** Runtime filesystem roots for control-plane state vs run-scoped execution. */
 export type HarnessPaths = {
   controlRoot: string;
@@ -18,8 +31,8 @@ export type HarnessPaths = {
 
 /**
  * Derive harness roots from project/run config and optional workspace metadata.
- * `git-worktree` runs execute in the recorded worktree; legacy/git-disabled stay
- * on the control root.
+ * `git-worktree` runs execute in the recorded worktree; `docker-clone` uses the
+ * worker constant `/workspace`; git-disabled stays on the control root.
  *
  * Absolute `stateDirectory` values (external project state) are used as-is.
  * Relative values nest under `controlRoot` for legacy repository-local installs.
@@ -33,10 +46,7 @@ export function resolveHarnessPaths(
     ? path.resolve(config.stateDirectory)
     : path.resolve(controlRoot, config.stateDirectory);
   const worktreeRoot = resolveWorktreeRoot(config, controlRoot, stateRoot);
-  const workspaceRoot =
-    workspace?.kind === "git-worktree" && workspace.worktreePath
-      ? path.resolve(workspace.worktreePath)
-      : controlRoot;
+  const workspaceRoot = resolveExecutionWorkspaceRoot(workspace, controlRoot);
   return {
     controlRoot,
     stateRoot,
@@ -50,10 +60,7 @@ export function harnessPathsFromProject(
   project: ProjectPaths,
   workspace?: RunWorkspace | null,
 ): HarnessPaths {
-  const workspaceRoot =
-    workspace?.kind === "git-worktree" && workspace.worktreePath
-      ? path.resolve(workspace.worktreePath)
-      : project.controlRoot;
+  const workspaceRoot = resolveExecutionWorkspaceRoot(workspace, project.controlRoot);
   return {
     controlRoot: path.resolve(project.controlRoot),
     stateRoot: path.resolve(project.projectStateRoot),
@@ -64,10 +71,59 @@ export function harnessPathsFromProject(
 
 /** Mutate an existing paths object so services holding the reference see updates. */
 export function applyWorkspaceToPaths(paths: HarnessPaths, workspace: RunWorkspace): void {
-  paths.workspaceRoot =
-    workspace.kind === "git-worktree" && workspace.worktreePath
-      ? path.resolve(workspace.worktreePath)
-      : paths.controlRoot;
+  paths.workspaceRoot = resolveExecutionWorkspaceRoot(workspace, paths.controlRoot);
+}
+
+/**
+ * Host-native path to a run's restartable execution.json (not the worker view).
+ */
+export function runExecutionStatePath(stateRoot: string, runId: string): string {
+  return path.join(stateRoot, "runs", runId, "execution.json");
+}
+
+/**
+ * Host-native transport directory for seed/result bundles under one run directory.
+ */
+export function runTransportDirectory(stateRoot: string, runId: string): string {
+  return path.join(stateRoot, "runs", runId, "transport");
+}
+
+/** Host-native path to transport/import.json for bundle import state. */
+export function runBundleImportPath(stateRoot: string, runId: string): string {
+  return path.join(runTransportDirectory(stateRoot, runId), "import.json");
+}
+
+/**
+ * Host-native directory for generated execution-image artifacts
+ * (`Dockerfile`, hashes, validation, build log, digest) — never the control checkout.
+ */
+export function runExecutionImageDirectory(stateRoot: string, runId: string): string {
+  return path.join(stateRoot, "runs", runId, "execution-image");
+}
+
+/**
+ * Project-level execution-image cache metadata under harness home project state
+ * (digest reuse after verifying the local image still exists).
+ */
+export function projectExecutionImageCachePath(projectStateRoot: string): string {
+  return path.join(projectStateRoot, "execution-image-cache.json");
+}
+
+/**
+ * Resolve the execution-root path for agents/commands given workspace metadata.
+ * Local worktrees stay on the host path; Docker clones advertise `/workspace`.
+ */
+export function resolveExecutionWorkspaceRoot(
+  workspace: RunWorkspace | null | undefined,
+  controlRootFallback: string,
+): string {
+  if (workspace?.kind === "git-worktree" && workspace.worktreePath) {
+    return path.resolve(workspace.worktreePath);
+  }
+  if (workspace?.kind === "docker-clone") {
+    return WORKER_WORKSPACE_PATH;
+  }
+  return path.resolve(controlRootFallback);
 }
 
 /**

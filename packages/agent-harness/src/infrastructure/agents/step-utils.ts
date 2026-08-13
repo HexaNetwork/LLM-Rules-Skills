@@ -66,16 +66,25 @@ export function prohibitedAgentPathAccess(args: unknown, cwd: string): string | 
   if (/(^|\/)\.codegraph(?:\/|$)/m.test(text)) return ".codegraph";
   if (/(^|\/)graphify-out(?:\/|$)/m.test(text)) return "graphify-out";
 
+  const normalizedCwd = cwd.replaceAll("\\", "/").toLocaleLowerCase();
+  const containerWorkspace = normalizedCwd === "/workspace" || normalizedCwd.startsWith("/workspace/");
+  if (containerWorkspace) {
+    if (/(^|[\s"'])\/run-state(?:\/|$)/m.test(text)) return "run-state";
+    if (/(^|[\s"'])\/seed\.bundle(?:\/|$)/m.test(text)) return "seed-bundle";
+    if (/(^|[\s"'])\.\.\//m.test(text)) return "outside-workspace";
+    return undefined;
+  }
+
   const resolvedCwd = path.resolve(cwd);
   const worktreeRoot = path.dirname(resolvedCwd);
   if (!/-worktrees$/i.test(path.basename(worktreeRoot))) return undefined;
   const normalizedRoot = worktreeRoot.replaceAll("\\", "/").toLocaleLowerCase();
-  const normalizedCwd = resolvedCwd.replaceAll("\\", "/").toLocaleLowerCase();
+  const hostCwd = resolvedCwd.replaceAll("\\", "/").toLocaleLowerCase();
   const rootPrefix = `${normalizedRoot}/`;
   let offset = text.indexOf(rootPrefix);
   while (offset >= 0) {
     const referenced = text.slice(offset).split(/[\s"']/u, 1)[0] ?? "";
-    if (referenced && referenced !== normalizedCwd && !referenced.startsWith(`${normalizedCwd}/`)) {
+    if (referenced && referenced !== hostCwd && !referenced.startsWith(`${hostCwd}/`)) {
       return "sibling-worktree";
     }
     offset = text.indexOf(rootPrefix, offset + rootPrefix.length);

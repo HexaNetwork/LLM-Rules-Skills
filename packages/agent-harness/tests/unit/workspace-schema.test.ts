@@ -41,6 +41,28 @@ describe("RunWorkspaceSchema", () => {
     ).toBe("git-disabled");
   });
 
+  it("accepts a docker-clone record with stable identity only", () => {
+    const parsed = RunWorkspaceSchema.parse({
+      version: 1,
+      kind: "docker-clone",
+      controlRoot: "/repo",
+      containerName: "harness-run-abc",
+      workspaceVolumeName: "harness-ws-abc",
+      workspacePath: "/workspace",
+      imageDigest: "sha256:deadbeef",
+      baseSha: "abc123",
+      seedBundleHash: "bundlehash",
+      generation: 0,
+      createdAt: "2026-08-10T12:00:00.000Z",
+    });
+    expect(parsed.kind).toBe("docker-clone");
+    if (parsed.kind === "docker-clone") {
+      expect(parsed.workspacePath).toBe("/workspace");
+      expect(parsed.containerName).toBe("harness-run-abc");
+      expect(parsed.generation).toBe(0);
+    }
+  });
+
   it("rejects unknown versions, kinds, and legacy-shared", () => {
     expect(() =>
       RunWorkspaceSchema.parse({

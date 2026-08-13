@@ -248,9 +248,11 @@ version: 2
 repositoryRoot: .
 `) as unknown;
     const parsed = HarnessConfigSchema.parse(minimal);
-    expect(CONFIG_VERSION).toBe(15);
+    expect(CONFIG_VERSION).toBe(16);
     expect(parsed.agent.sandbox).toBe(true);
     expect(parsed.agent.promptBuilder).toBe(false);
+    expect(parsed.execution.runtime).toBe("local");
+    expect(parsed.execution.docker.sandboxRequired).toBe(true);
     expect(parsed.knowledge.guidance.enabled).toBe(true);
     expect(parsed.git.ignoredArtifactPatterns.length).toBeGreaterThan(0);
   });
@@ -301,6 +303,56 @@ repositoryRoot: .
       enabled: true,
       maxResults: 2,
       maxCharacters: 1_000});
+  });
+
+  it("defaults missing execution on older frozen configs to local runtime", () => {
+    const frozen = normalizeFrozenRunConfig({
+      repositoryRoot: "C:/tmp/project",
+      configVersion: 15,
+    });
+    expect(frozen.execution.runtime).toBe("local");
+    expect(frozen.execution.docker.network.runtime).toBe("bridge");
+    expect(configurationHash(frozen)).toBe(configurationHash({
+      ...frozen,
+      execution: { ...frozen.execution, docker: { ...frozen.execution.docker } },
+    }));
+  });
+
+  it("hashes execution policy but omits docker runtime stamp paths", () => {
+    const base = HarnessConfigSchema.parse({ repositoryRoot: "." });
+    const withDockerPolicy = {
+      ...base,
+      execution: {
+        ...base.execution,
+        runtime: "docker" as const,
+        docker: {
+          ...base.execution.docker,
+          workerImageDigest: "sha256:abc",
+          approvedBaseImages: ["node@sha256:base"],
+        },
+      },
+    };
+    expect(configurationPolicyDiff(base, withDockerPolicy)).toEqual(
+      expect.arrayContaining([
+        "execution.runtime",
+        "execution.docker.workerImageDigest",
+        "execution.docker.approvedBaseImages",
+      ]),
+    );
+    const stamped = {
+      ...withDockerPolicy,
+      execution: {
+        ...withDockerPolicy.execution,
+        docker: {
+          ...withDockerPolicy.execution.docker,
+          runtimeContainerId: "cid",
+          hostPort: 3456,
+          volumeName: "vol",
+          discoveredImageDigest: "sha256:discovered",
+        },
+      },
+    };
+    expect(configurationHash(withDockerPolicy)).toBe(configurationHash(stamped));
   });
 
   it("summarizes all policy changes that require an explicit run repair", () => {

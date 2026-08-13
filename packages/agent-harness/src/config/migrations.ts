@@ -99,6 +99,7 @@ function mapCodegraphSettings(codegraph: Record<string, unknown>): Record<string
  * Normalize a frozen per-run config snapshot into a HarnessConfig.
  * Snapshots without knowledge.guidance keep guidance disabled so
  * in-progress deliveries do not silently change retrieval behavior (ADR 0006).
+ * Older snapshots without `execution` receive the default local runtime.
  */
 export function normalizeFrozenRunConfig(raw: unknown): HarnessConfig {
   const rewritten = rewriteGraphifyConfigKeys(raw);
@@ -108,6 +109,11 @@ export function normalizeFrozenRunConfig(raw: unknown): HarnessConfig {
   const candidate: Record<string, unknown> = isRecord(withoutVersion)
     ? { ...withoutVersion }
     : {};
+
+  // Pre-CONFIG_VERSION 16 snapshots omit execution; default local preserves behavior.
+  if (!Object.hasOwn(candidate, "execution")) {
+    candidate.execution = { runtime: "local" };
+  }
 
   if (
     isRecord(candidate.knowledge) &&

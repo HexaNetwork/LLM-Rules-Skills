@@ -20,8 +20,14 @@ import type { LocalKnowledgeBase } from "../knowledge.js";
 import { LocalKnowledgeBase as LocalKnowledgeBaseImpl } from "../knowledge.js";
 import { RunStore } from "../store.js";
 import { LocalTracker, type TrackerPort } from "../tracker.js";
+import {
+  resolveWorkspaceProvisioner,
+  type WorkspaceProvisioner,
+} from "../workspace/index.js";
 import type { HarnessHomePaths, ProjectPaths } from "./harness-home.js";
 import { resolveHarnessPaths, type HarnessPaths } from "./paths.js";
+import type { DockerClient } from "../infrastructure/container/types.js";
+import { createDockerClient } from "../infrastructure/container/docker-client.js";
 
 export type Clock = { now(): Date };
 
@@ -54,6 +60,9 @@ export type ApplicationDependencies = {
   sleep(ms: number): Promise<void>;
   repositoryIntelligence: RepositoryIntelligenceBroker;
   repositoryIntelligenceRunner: ExecutableRunner;
+  workspaceProvisioner: WorkspaceProvisioner;
+  /** Argv Docker client (real or fake); used for Docker-mode readiness/image builds. */
+  docker: DockerClient;
   projectContext?: ProjectContext;
 };
 
@@ -66,6 +75,9 @@ export type HarnessDependencies = {
   git?: GitService;
   repositoryIntelligence?: RepositoryIntelligenceBroker;
   repositoryIntelligenceRunner?: ExecutableRunner;
+  workspaceProvisioner?: WorkspaceProvisioner;
+  /** Test seam / Docker-mode control plane; defaults to argv Docker CLI client. */
+  docker?: DockerClient;
   /** Test seam for provider-retry backoff; defaults to real wall-clock sleep. */
   sleep?: (ms: number) => Promise<void>;
   clock?: Clock;
@@ -88,6 +100,17 @@ export function createApplicationDependencies(
 ): ApplicationDependencies {
   const paths = dependencies.paths ?? resolveHarnessPaths(config);
   const store = dependencies.store ?? new RunStore(config, paths.stateRoot);
+  const docker = dependencies.docker ?? createDockerClient();
+  const workspaceProvisioner =
+    dependencies.workspaceProvisioner ??
+    resolveWorkspaceProvisioner(config, {
+      paths,
+      store,
+      docker,
+      projectKey: dependencies.projectContext?.paths
+        ? path.basename(dependencies.projectContext.paths.projectStateRoot)
+        : undefined,
+    });
   const repositoryIntelligenceRunner: ExecutableRunner =
     dependencies.repositoryIntelligenceRunner ??
     runExecutable;
@@ -130,6 +153,8 @@ export function createApplicationDependencies(
     sleep: dependencies.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     repositoryIntelligence,
     repositoryIntelligenceRunner,
+    workspaceProvisioner,
+    docker,
     projectContext: dependencies.projectContext,
   };
 }

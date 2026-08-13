@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; extends [ADR 0010](0010-per-run-worktrees.md)
+Accepted; extends [ADR 0010](0010-per-run-worktrees.md). Sibling linked worktrees remain the local-runtime default; container isolation is deferred to [ADR 0015](0015-docker-isolated-runs.md).
 
 ## Context
 
@@ -16,7 +16,7 @@ ADR 0010 separated the control root from the run execution root, but harness con
   - macOS: Application Support (`~/Library/Application Support/agent-harness`)
   - Linux: `$XDG_STATE_HOME/agent-harness`, else `~/.local/state/agent-harness`
 - **Explicit path contracts.** Compose `HarnessHomePaths` and per-project `ProjectPaths` (including an independent `worktreeRoot`). Derive run-bound `HarnessPaths` (`controlRoot`, `stateRoot`, `workspaceRoot`) from registration + `workspace.json`; services do not reconstruct roots ad hoc.
-- **Sibling worktrees by default.** New Git-enabled runs create linked worktrees under `<parent>/<repository-name>-worktrees/<safe-run-id>`, outside the control root, with an explicit project-level `worktreeRoot` override. Validate ownership and containment before create/remove. Git's required `.git/worktrees/<name>` administrative metadata under the common Git directory remains acceptable and is not harness state.
+- **Sibling worktrees by default.** New Git-enabled runs on the local execution runtime create linked worktrees under `<parent>/<repository-name>-worktrees/<safe-run-id>`, outside the control root, with an explicit project-level `worktreeRoot` override. Validate ownership and containment before create/remove. Git's required `.git/worktrees/<name>` administrative metadata under the common Git directory remains acceptable and is not harness state. Docker mode (ADR 0015) does not replace this sibling-worktree layout for `execution.runtime: local`.
 - **Project registration.** Project identity lives in the harness home (`projects/<project-key>/registration.json`). Discovery uses `--project`, `--repository`, or the current directory resolved to a registered control root. Do not silently register during run start/advance. Moved checkouts use explicit `project relink`.
 - **External configuration and frozen components.** Configuration and reusable rules/skills/workflows/agents resolve from the harness home (project then global then packaged). Freeze effective orchestration inputs into the run directory at creation; resume uses that snapshot.
 - **Agent isolation boundary.** Agents receive the run worktree as their writable workspace. Harness-home paths are not exposed as writable roots. Strict isolation refuses providers that cannot restrict the writable workspace.
@@ -28,7 +28,7 @@ ADR 0010 separated the control root from the run execution root, but harness con
 - Operators discover and manage worktrees beside the repository or under an explicit override volume.
 - Existing repository-local installs continue until migrated; automatic deletion of legacy data is out of scope.
 - Independent clones are distinct projects unless the operator links or aliases them.
-- OS-level sandboxing of arbitrary project commands remains a later design.
+- OS-level sandboxing of arbitrary project commands via an opt-in Docker execution runtime is specified in ADR 0015; local mode continues to use sibling linked worktrees and Cursor sandboxing where available.
 
 ### Migration rollback
 

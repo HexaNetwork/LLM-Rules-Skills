@@ -3,7 +3,6 @@ import { loadRunWorkspace } from "../config/io.js";
 import { normalizeFrozenRunConfig } from "../config/migrations.js";
 import { isTerminalPhase, type RunState } from "../domain.js";
 import { classifyFailure, HarnessFailure, RunCancelledError } from "../errors.js";
-import { WorktreeManager } from "../git/worktree-manager.js";
 import type { ApplicationContext } from "./application-context.js";
 import type { InterviewService } from "./interview-service.js";
 import type { PlanningService } from "./planning-service.js";
@@ -172,6 +171,31 @@ export class RunAdvancer {
               state = await this.recovery.completeCancellation(state);
               break;
             }
+            // Docker: after prepare-export, yield to the host for quarantine import + push/PR.
+            if (
+              state.phase === "publishing" &&
+              (this.ctx.config.execution?.runtime ?? "local") === "docker"
+            ) {
+              const { isDockerBundleExportReady } = await import("./docker-publish-service.js");
+              const { loadBundleImportState } = await import("./bundle-import-io.js");
+              const importState = await loadBundleImportState(this.ctx.config, runId).catch(
+                () => undefined,
+              );
+              // Worker store may hold import.json even when host path helpers fail.
+              let exportReady = isDockerBundleExportReady(importState);
+              if (!exportReady) {
+                try {
+                  const raw = await this.ctx.store.readJson(runId, "transport/import.json");
+                  const { BundleImportStateSchema } = await import("../domain/run-execution.js");
+                  exportReady = isDockerBundleExportReady(
+                    BundleImportStateSchema.parse(raw),
+                  );
+                } catch {
+                  exportReady = false;
+                }
+              }
+              if (exportReady) break;
+            }
             if (
               terminal(state.phase) ||
               state.phase === "awaiting_input" ||
@@ -273,13 +297,7 @@ export class RunAdvancer {
     const workspace = await loadRunWorkspace(this.ctx.config, runId);
     this.ctx.bindWorkspace(workspace);
     if (workspace.kind !== "git-worktree") return;
-    const manager = new WorktreeManager({
-      controlRoot: this.ctx.paths.controlRoot,
-      stateRoot: this.ctx.paths.stateRoot,
-      worktreeRoot: this.ctx.paths.worktreeRoot,
-      store: this.ctx.store,
-    });
-    await manager.open(workspace);
+    await this.ctx.workspaceProvisioner.open(workspace);
   }
 
   async ensureCompatibleConfiguration(state: RunState): Promise<RunState> {

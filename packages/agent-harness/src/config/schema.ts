@@ -18,7 +18,7 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  * Bumped when the frozen run-config shape or configuration-hash algorithm changes
  * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
  */
-export const CONFIG_VERSION = 15;
+export const CONFIG_VERSION = 16;
 
 export const VerificationCommandSchema = z.object({
   id: z.string().min(1),
@@ -43,6 +43,13 @@ const CONFIG_HASH_OMIT_PATHS = new Set([
   "baseSha",
   "branchName",
   "headSha",
+  // Docker runtime stamps (execution.json / inspect); never part of frozen policy.
+  "execution.docker.runtimeContainerId",
+  "execution.docker.hostPort",
+  "execution.docker.volumeName",
+  "execution.docker.discoveredImageId",
+  "execution.docker.discoveredImageDigest",
+  "execution.docker.translatedHostPaths",
 ]);
 
 /** Default build/generated globs ignored when deciding dirty / unreported paths. */
@@ -186,6 +193,87 @@ export const KnowledgeSourceSchema = z
   );
 export type KnowledgeSource = z.infer<typeof KnowledgeSourceSchema>;
 
+export const ExecutionRuntimeSchema = z.enum(["local", "docker"]);
+export type ExecutionRuntime = z.infer<typeof ExecutionRuntimeSchema>;
+
+const DockerResourceLimitsSchema = z
+  .object({
+    cpus: z.number().positive().default(2),
+    memoryMb: z.number().int().positive().default(4096),
+    pidsLimit: z.number().int().positive().default(256),
+  })
+  .strict();
+
+const DockerNetworkPolicySchema = z
+  .object({
+    /** Runtime egress for the long-lived worker (Cursor provider needs egress). */
+    runtime: z.enum(["bridge", "none", "allowlist-proxy"]).default("bridge"),
+    /** Networking while installing project packages inside the workspace volume. */
+    packageInstall: z.enum(["bridge", "none", "allowlist-proxy"]).default("bridge"),
+  })
+  .strict();
+
+const DockerSubmoduleLfsPolicySchema = z
+  .object({
+    submodules: z.enum(["reject"]).default("reject"),
+    lfs: z.enum(["reject"]).default("reject"),
+  })
+  .strict();
+
+const DockerBundleLimitsSchema = z
+  .object({
+    maxBundleBytes: z.number().int().positive().default(512 * 1024 * 1024),
+    maxObjectCount: z.number().int().positive().default(100_000),
+    maxChangedBytes: z.number().int().positive().default(256 * 1024 * 1024),
+    maxCommitCount: z.number().int().positive().default(10_000),
+    /**
+     * Globs rejected when present in the result-bundle changed-path set
+     * (path normalization uses `/`; basename-only patterns match any directory).
+     */
+    sensitivePathPatterns: z
+      .array(z.string().min(1))
+      .default([
+        ".env",
+        "**/.env",
+        "**/.env.*",
+        "**/credentials.json",
+        "**/*secret*",
+        "**/*.pem",
+        "**/*.p12",
+      ]),
+  })
+  .strict();
+
+/** Frozen Docker execution policy (ADR 0015). Runtime stamps live in execution.json. */
+export const DockerExecutionPolicySchema = z
+  .object({
+    generatedImagesEnabled: z.boolean().default(true),
+    approvedBaseImages: z.array(z.string().min(1)).default([]),
+    /** Digest-pinned maintained worker image (policy); discovered digests are not stored here. */
+    workerImageDigest: z.string().min(1).optional(),
+    buildPullPolicy: z.enum(["if-missing", "always", "never"]).default("if-missing"),
+    buildTimeoutMs: z.number().int().positive().default(20 * 60 * 1000),
+    limits: DockerResourceLimitsSchema.default({}),
+    network: DockerNetworkPolicySchema.default({}),
+    submoduleLfs: DockerSubmoduleLfsPolicySchema.default({}),
+    bundleLimits: DockerBundleLimitsSchema.default({}),
+    /** Require Cursor Linux sandbox isolation probes before agents run. */
+    sandboxRequired: z.boolean().default(true),
+  })
+  .strict()
+  .default({});
+
+export const ExecutionConfigSchema = z
+  .object({
+    /** Where agents/commands execute. Independent of agent.provider (LLM backend). */
+    runtime: ExecutionRuntimeSchema.default("local"),
+    docker: DockerExecutionPolicySchema.default({}),
+  })
+  .strict()
+  .default({});
+export type ExecutionConfig = z.infer<typeof ExecutionConfigSchema>;
+export type DockerExecutionPolicy = z.infer<typeof DockerExecutionPolicySchema>;
+
 export const HarnessConfigSchema = z.object({
   version: z.literal(2).default(2),
   repositoryRoot: z.string().default("."),
@@ -196,6 +284,8 @@ export const HarnessConfigSchema = z.object({
    * `<stateRoot>/worktrees`.
    */
   worktreeRoot: z.string().min(1).optional(),
+  /** Execution runtime policy (local worktree vs Docker). Not an LLM provider. */
+  execution: ExecutionConfigSchema.default({}),
   models: z
     .object({
       small: z.string().min(1),
@@ -425,6 +515,55 @@ export const ProjectSettingsPatchSchema = z
       })
       .strict()
       .optional(),
+    execution: z
+      .object({
+        runtime: ExecutionRuntimeSchema.optional(),
+        docker: z
+          .object({
+            generatedImagesEnabled: z.boolean().optional(),
+            approvedBaseImages: z.array(z.string().min(1)).optional(),
+            workerImageDigest: z.string().min(1).optional(),
+            buildPullPolicy: z.enum(["if-missing", "always", "never"]).optional(),
+            buildTimeoutMs: z.number().int().positive().optional(),
+            limits: z
+              .object({
+                cpus: z.number().positive().optional(),
+                memoryMb: z.number().int().positive().optional(),
+                pidsLimit: z.number().int().positive().optional(),
+              })
+              .strict()
+              .optional(),
+            network: z
+              .object({
+                runtime: z.enum(["bridge", "none", "allowlist-proxy"]).optional(),
+                packageInstall: z.enum(["bridge", "none", "allowlist-proxy"]).optional(),
+              })
+              .strict()
+              .optional(),
+            submoduleLfs: z
+              .object({
+                submodules: z.enum(["reject"]).optional(),
+                lfs: z.enum(["reject"]).optional(),
+              })
+              .strict()
+              .optional(),
+            bundleLimits: z
+              .object({
+                maxBundleBytes: z.number().int().positive().optional(),
+                maxObjectCount: z.number().int().positive().optional(),
+                maxChangedBytes: z.number().int().positive().optional(),
+                maxCommitCount: z.number().int().positive().optional(),
+                sensitivePathPatterns: z.array(z.string().min(1)).optional(),
+              })
+              .strict()
+              .optional(),
+            sandboxRequired: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
     knowledge: z
       .object({
         repositoryIntelligence: z
@@ -515,6 +654,55 @@ export const RunPolicyPatchSchema = z
         autoCommitPreflight: z.boolean().optional(),
         preflightCommitOrder: PreflightCommitOrderSchema.optional(),
         ignoredArtifactPatterns: z.array(z.string().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
+    execution: z
+      .object({
+        runtime: ExecutionRuntimeSchema.optional(),
+        docker: z
+          .object({
+            generatedImagesEnabled: z.boolean().optional(),
+            approvedBaseImages: z.array(z.string().min(1)).optional(),
+            workerImageDigest: z.string().min(1).optional(),
+            buildPullPolicy: z.enum(["if-missing", "always", "never"]).optional(),
+            buildTimeoutMs: z.number().int().positive().optional(),
+            limits: z
+              .object({
+                cpus: z.number().positive().optional(),
+                memoryMb: z.number().int().positive().optional(),
+                pidsLimit: z.number().int().positive().optional(),
+              })
+              .strict()
+              .optional(),
+            network: z
+              .object({
+                runtime: z.enum(["bridge", "none", "allowlist-proxy"]).optional(),
+                packageInstall: z.enum(["bridge", "none", "allowlist-proxy"]).optional(),
+              })
+              .strict()
+              .optional(),
+            submoduleLfs: z
+              .object({
+                submodules: z.enum(["reject"]).optional(),
+                lfs: z.enum(["reject"]).optional(),
+              })
+              .strict()
+              .optional(),
+            bundleLimits: z
+              .object({
+                maxBundleBytes: z.number().int().positive().optional(),
+                maxObjectCount: z.number().int().positive().optional(),
+                maxChangedBytes: z.number().int().positive().optional(),
+                maxCommitCount: z.number().int().positive().optional(),
+                sensitivePathPatterns: z.array(z.string().min(1)).optional(),
+              })
+              .strict()
+              .optional(),
+            sandboxRequired: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

@@ -130,6 +130,34 @@ jobs:
             packages/agent-harness/test-results/**
           if-no-files-found: ignore
 
+  docker-isolation:
+    name: docker-isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install
+        working-directory: .
+        run: npm ci
+      - name: Real-Docker isolation tests
+        run: npm run test:docker
+        env:
+          # Suite skips with an explicit capability reason if the daemon is unhealthy.
+          VITEST_MAX_WORKERS: "1"
+      - name: Upload diagnostic artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-harness-docker-isolation-diagnostics
+          path: |
+            packages/agent-harness/test-results/**
+          if-no-files-found: ignore
+
   provider-contract:
     name: provider-contract
     if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}

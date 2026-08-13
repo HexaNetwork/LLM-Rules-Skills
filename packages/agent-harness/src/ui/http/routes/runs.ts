@@ -6,6 +6,12 @@ import { loadRunConfig, loadRunWorkspace, writeProjectSettings } from "../../../
 import { openRunHarness, type OpenedRunHarness } from "../../../application/run-engine-factory.js";
 import { runInitialSetupThenAdvance } from "../../../application/run-setup.js";
 import { HarnessEngine } from "../../../application/harness-engine.js";
+import {
+  mapHostActionToWorkerRpc,
+  resolveDockerMutationProxy,
+} from "../../../application/docker-run-proxy.js";
+import { isDockerExecutionRuntime } from "../../../application/docker-worker-session.js";
+import { completeDockerHostPublish } from "../../../application/docker-publish-service.js";
 import { HighLevelPlanSchema, VerificationSettingsPatchSchema } from "../../../domain.js";
 import { GitService, pathToIgnoredArtifactGlob } from "../../../git.js";
 import type { UiAppContext } from "../context.js";
@@ -27,6 +33,7 @@ import {
   readActivity,
   readAgentActivity,
   readEvents,
+  readExecutionImage,
   readInstallLog,
   readSessionDetail,
   readSessionSummaries,
@@ -78,6 +85,14 @@ export async function handleRunsRoutes(
   if (request.method === "GET" && url.pathname === "/api/bootstrap") {
     const projectConfig = ctx.getProjectConfig();
     const { states: runs, failures } = await ctx.store.listWithFailures();
+    const execution =
+      ctx.getExecutionStatus !== undefined
+        ? await ctx.getExecutionStatus()
+        : {
+            runtime: projectConfig.execution?.runtime ?? "local",
+            ready: (projectConfig.execution?.runtime ?? "local") === "local",
+            blockers: [],
+          };
     json(response, 200, {
       project: {
         name: path.basename(projectConfig.repositoryRoot),
@@ -85,6 +100,7 @@ export async function handleRunsRoutes(
         configPath: ctx.configPath,
         models: projectConfig.models,
         agent: { provider: projectConfig.agent.provider, ...ctx.agentReadiness },
+        execution,
         repositoryIntelligence: {
           enabled: projectConfig.knowledge.repositoryIntelligence.enabled,
           routes: projectConfig.knowledge.repositoryIntelligence.routes,
@@ -132,6 +148,21 @@ export async function handleRunsRoutes(
       throw new HttpError(503, ctx.agentReadiness.message ?? "The configured agent backend is unavailable");
     }
     const projectConfig = ctx.getProjectConfig();
+    if ((projectConfig.execution?.runtime ?? "local") === "docker") {
+      const execution =
+        ctx.getExecutionStatus !== undefined
+          ? await ctx.getExecutionStatus({ force: true })
+          : { ready: false, blockers: [{ message: "Execution status unavailable" }] };
+      if (!execution.ready) {
+        const detail = execution.blockers
+          .map((blocker) => ("message" in blocker ? blocker.message : String(blocker)))
+          .join("; ");
+        throw new HttpError(
+          503,
+          detail || "Docker execution runtime is not ready for new runs",
+        );
+      }
+    }
     const body = await readJsonBody(request);
     const idea = requiredString(body.idea, "idea", 100_000);
     const runId = optionalString(body.runId, "runId", 100) ?? randomUUID();
@@ -209,7 +240,7 @@ export async function handleRunsRoutes(
       json(response, 200, { unchanged: true, signature });
       return true;
     }
-    const [events, sessions, agentActivity, artifacts, runConfig, installLog, workspace] =
+    const [events, sessions, agentActivity, artifacts, runConfig, installLog, workspace, executionState, importState, executionImage] =
       await Promise.all([
         readEvents(ctx.store, runId),
         readSessionSummaries(ctx.store, runId),
@@ -218,6 +249,15 @@ export async function handleRunsRoutes(
         loadRunConfig(projectConfig, runId).catch(() => null),
         readInstallLog(ctx.store, runId),
         loadRunWorkspace(projectConfig, runId).catch(() => null),
+        (async () => {
+          const { loadRunExecutionState } = await import("../../../application/execution-state-io.js");
+          return loadRunExecutionState(projectConfig, runId).catch(() => undefined);
+        })(),
+        (async () => {
+          const { loadBundleImportState } = await import("../../../application/bundle-import-io.js");
+          return loadBundleImportState(projectConfig, runId).catch(() => undefined);
+        })(),
+        readExecutionImage(ctx.store, runId),
       ]);
     // git.currentBranch spawns a subprocess; only pay for it when the UI
     // actually needs it (blocked runs), and never fold it into the signature.
@@ -244,11 +284,24 @@ export async function handleRunsRoutes(
     const deliveryWorkspace = workspace
       ? {
           kind: workspace.kind,
-          worktreePath: workspace.worktreePath,
-          baseBranch: workspace.baseBranch,
+          worktreePath: workspace.kind === "git-worktree" ? workspace.worktreePath : undefined,
+          containerName: workspace.kind === "docker-clone" ? workspace.containerName : undefined,
+          workspaceVolumeName:
+            workspace.kind === "docker-clone" ? workspace.workspaceVolumeName : undefined,
+          imageDigest: workspace.kind === "docker-clone" ? workspace.imageDigest : undefined,
+          workspacePath: workspace.kind === "docker-clone" ? workspace.workspacePath : undefined,
+          baseBranch: workspace.kind === "git-worktree" ? workspace.baseBranch : undefined,
           baseSha: workspace.baseSha,
           branchName: workspace.branchName ?? state.branchName,
           removedAt: workspace.removedAt,
+          executionLifecycle: executionState?.lifecycle,
+          importStatus: importState?.status,
+          importRejectionReason: importState?.rejectionReason,
+          resultBundleHash: importState?.resultBundleHash,
+          // Frozen runtime for this run — never offer switching.
+          frozenRuntime:
+            runConfig?.execution?.runtime ??
+            (workspace.kind === "docker-clone" ? "docker" : "local"),
         }
       : undefined;
     json(response, 200, {
@@ -260,6 +313,7 @@ export async function handleRunsRoutes(
       artifacts,
       activity,
       installLog,
+      executionImage,
       signature,
       ...(git ? { git } : {}),
       ...(ceilings ? { ceilings } : {}),
@@ -296,6 +350,7 @@ export async function handleRunsRoutes(
         backend: ctx.backend,
         store: ctx.store,
         repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
+        docker: ctx.docker,
       },
       {
         validateWorktree:
@@ -315,6 +370,91 @@ export async function handleRunsRoutes(
             repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
           })
         : opened.engine;
+
+    const dockerProxy =
+      isDockerExecutionRuntime(opened.config) && action !== "generate_analysis_prompt"
+        ? await resolveDockerMutationProxy({
+            projectConfig,
+            runConfig: opened.config,
+            runId,
+            docker: ctx.docker,
+          }).catch((error) => {
+            if (action === "cancel" || action === "stop") {
+              // Cancel/stop still write durable markers even when RPC is down.
+              return undefined;
+            }
+            throw error;
+          })
+        : undefined;
+
+    if (action === "stop") {
+      if (dockerProxy) {
+        const state = await dockerProxy.invoke("stop", {});
+        json(response, 200, { accepted: true, state });
+        return true;
+      }
+      const state = await engine.requestStop(runId);
+      json(response, 200, { accepted: true, state });
+      return true;
+    }
+
+    if (action === "cancel") {
+      // Durable cancel.request first (visible to the worker via /run-state mount),
+      // then RPC so the in-process controller aborts immediately.
+      await engine.writeCancelRequest(runId);
+      if (dockerProxy) {
+        const result = (await dockerProxy.invoke("cancel", {})) as {
+          pending?: boolean;
+          phase?: string;
+        };
+        const state = await ctx.store.load(runId);
+        json(response, result.pending ? 202 : 200, {
+          accepted: true,
+          pending: Boolean(result.pending),
+          state,
+        });
+        return true;
+      }
+      const result = await engine.cancel(runId);
+      json(response, result.pending ? 202 : 200, {
+        accepted: true,
+        pending: result.pending,
+        state: result.state,
+      });
+      return true;
+    }
+
+    const workerAction = mapHostActionToWorkerRpc(action);
+    if (
+      dockerProxy &&
+      (action === "continue" || action === "resume" || action === "advance")
+    ) {
+      const latest = await ctx.store.load(runId);
+      if (latest.phase === "publishing") {
+        // Host-only: quarantine import + push/PR (never container credentials).
+        ctx.jobs.enqueue(runId, action, async () => {
+          ctx.jobs.setDetail(runId, "Importing Docker result bundle on host");
+          await completeDockerHostPublish({
+            projectConfig,
+            runConfig: opened.config,
+            runId,
+            store: ctx.store,
+            dockerProxy,
+          });
+        });
+        json(response, 202, { accepted: true, job: ctx.jobs.get(runId) });
+        return true;
+      }
+    }
+    if (dockerProxy && workerAction) {
+      ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, `Proxying ${action} to Docker worker`);
+        await dockerProxy.invoke(workerAction, body);
+      });
+      json(response, 202, { accepted: true, job: ctx.jobs.get(runId) });
+      return true;
+    }
+
     if (action === "continue") {
       ctx.jobs.enqueue(runId, action, () => engine.advance(runId));
     } else if (action === "generate_analysis_prompt") {
@@ -331,6 +471,10 @@ export async function handleRunsRoutes(
       ctx.jobs.enqueue(runId, "resume run", async () => {
         const latest = await ctx.store.load(runId);
         if (latest.phase === "new") {
+          if ((opened.config.execution?.runtime ?? "local") === "docker") {
+            ctx.jobs.setDetail(runId, "Ensuring execution image and Docker workspace");
+            await opened.engine.ensureDockerWorkspaceReady(runId);
+          }
           await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
           return;
         }
@@ -390,6 +534,10 @@ export async function handleRunsRoutes(
         ctx.jobs.setDetail(runId, "Retrying the blocked transition");
         const resumed = await engine.retry(runId, { force, maxRunTokens, maxRunCostUsd });
         if (resumed.phase === "new") {
+          if ((opened.config.execution?.runtime ?? "local") === "docker") {
+            ctx.jobs.setDetail(runId, "Ensuring execution image and Docker workspace");
+            await opened.engine.ensureDockerWorkspaceReady(runId);
+          }
           await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
           return;
         }
@@ -404,8 +552,112 @@ export async function handleRunsRoutes(
     } else if (action === "cleanup") {
       const discard = optionalBoolean(body.discard, "discard") ?? false;
       ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, "Cleaning up run worktree");
+        ctx.jobs.setDetail(runId, "Cleaning up run workspace");
         await engine.cleanup(runId, { discard });
+      });
+    } else if (action === "recover_container") {
+      ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Recovering Docker worker against retained volume");
+        const workspace = await loadRunWorkspace(ctx.getProjectConfig(), runId);
+        if (workspace.kind !== "docker-clone") {
+          throw new HttpError(400, "Container recovery only applies to docker-clone runs");
+        }
+        if (!ctx.docker) throw new HttpError(503, "Docker client unavailable");
+        const { ensureDockerWorkerSession } = await import(
+          "../../../application/docker-worker-session.js"
+        );
+        await ensureDockerWorkerSession({
+          projectConfig: ctx.getProjectConfig(),
+          runId,
+          docker: ctx.docker,
+          image: workspace.imageDigest,
+          workspaceVolumeName: workspace.workspaceVolumeName,
+          startIfMissing: true,
+        });
+      });
+    } else if (action === "approve_execution_image") {
+      ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Approving generated execution image");
+        const paths = (await import("../../../application/paths.js")).resolveHarnessPaths(
+          ctx.getProjectConfig(),
+        );
+        const {
+          prepareExecutionImage,
+          approveExecutionImage,
+        } = await import("../../../application/execution-image-service.js");
+        const prepared = await prepareExecutionImage({
+          config: await loadRunConfig(ctx.getProjectConfig(), runId),
+          stateRoot: paths.stateRoot,
+          runId,
+          projectStateRoot: paths.stateRoot,
+        });
+        if (prepared.status === "blocked") {
+          throw new HttpError(409, prepared.reason ?? "Execution image is blocked");
+        }
+        if (!("generated" in prepared) || !prepared.generated || !("cacheKey" in prepared)) {
+          throw new HttpError(409, "No generated execution image to approve");
+        }
+        await approveExecutionImage({
+          stateRoot: paths.stateRoot,
+          runId,
+          projectStateRoot: paths.stateRoot,
+          generated: prepared.generated,
+          cacheKey: prepared.cacheKey,
+        });
+      });
+    } else if (action === "build_execution_image") {
+      ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Building approved execution image");
+        if (!ctx.docker) throw new HttpError(503, "Docker client unavailable");
+        const paths = (await import("../../../application/paths.js")).resolveHarnessPaths(
+          ctx.getProjectConfig(),
+        );
+        const runConfig = await loadRunConfig(ctx.getProjectConfig(), runId);
+        const { buildApprovedExecutionImage } = await import(
+          "../../../application/execution-image-service.js"
+        );
+        await buildApprovedExecutionImage({
+          stateRoot: paths.stateRoot,
+          runId,
+          projectStateRoot: paths.stateRoot,
+          docker: ctx.docker,
+          tag: `agent-harness-run-${runId}`.toLowerCase().slice(0, 128),
+          timeoutMs: runConfig.execution?.docker?.buildTimeoutMs,
+          dockerPolicy: runConfig.execution?.docker,
+        });
+      });
+    } else if (action === "approve_and_build_execution_image") {
+      ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Approving and building execution image");
+        if (!ctx.docker) throw new HttpError(503, "Docker client unavailable");
+        const paths = (await import("../../../application/paths.js")).resolveHarnessPaths(
+          ctx.getProjectConfig(),
+        );
+        const runConfig = await loadRunConfig(ctx.getProjectConfig(), runId);
+        const { approveAndBuildExecutionImage } = await import(
+          "../../../application/execution-image-service.js"
+        );
+        await approveAndBuildExecutionImage({
+          config: runConfig,
+          stateRoot: paths.stateRoot,
+          runId,
+          projectStateRoot: paths.stateRoot,
+          repositoryRoot: paths.controlRoot,
+          docker: ctx.docker,
+          tag: `agent-harness-run-${runId}`.toLowerCase().slice(0, 128),
+          timeoutMs: runConfig.execution?.docker?.buildTimeoutMs,
+          dockerPolicy: runConfig.execution?.docker,
+        });
+        ctx.jobs.setDetail(runId, "Creating Docker workspace and continuing setup");
+        let latest = await ctx.store.load(runId);
+        if (latest.phase === "blocked" && latest.blockedFrom === "new") {
+          latest = await engine.retry(runId, { force: true });
+        }
+        await opened.engine.ensureDockerWorkspaceReady(runId);
+        latest = await ctx.store.load(runId);
+        if (latest.phase === "new") {
+          await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
+        }
       });
     } else if (action === "accept_tree") {
       ctx.jobs.enqueue(runId, action, async () => {
@@ -513,20 +765,6 @@ export async function handleRunsRoutes(
       const enabled = optionalBoolean(body.repositoryIntelligence, "repositoryIntelligence");
       if (enabled == null) throw new HttpError(400, "repositoryIntelligence must be a boolean");
       ctx.jobs.enqueue(runId, action, () => engine.setRepositoryIntelligence(runId, enabled));
-    } else if (action === "stop") {
-      // Stop must not wait behind the work it is pausing after (same as cancel).
-      const state = await engine.requestStop(runId);
-      json(response, 200, { accepted: true, state });
-      return true;
-    } else if (action === "cancel") {
-      // Cancel must not wait behind the work it is aborting (or 409 on a busy run).
-      const result = await engine.cancel(runId);
-      json(response, result.pending ? 202 : 200, {
-        accepted: true,
-        pending: result.pending,
-        state: result.state,
-      });
-      return true;
     } else {
       throw new HttpError(400, `Unsupported action: ${action}`);
     }

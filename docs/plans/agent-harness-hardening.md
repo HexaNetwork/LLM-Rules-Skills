@@ -425,8 +425,8 @@ actually conflicts.
   no git state and must stay available while a run is executing.
 - Hold time is genuinely long — a two-hour `advance` blocks every other run. That is *correct*
   given one shared working tree, and it is the honest version of what the UI queue was already
-  doing. Document it in the README and point at the deferred worktree-isolation roadmap item as
-  the real fix.
+  doing. Document it in the README. Per-run worktrees (ADR 0010) address the shared-checkout
+  contention; opt-in Docker isolation is specified in ADR 0015 and does not replace local mode.
 
 **Tests** (`tests/integration/`): two concurrent `advance` calls — the second fails fast with a
 message naming the first run id, and does not corrupt either state file; `answerMany` succeeds

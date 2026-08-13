@@ -78,7 +78,7 @@ Answering a batch is keyboard-driven: `1`–`4` pick an option for the focused q
 
 Blocked runs key remediation on `blockedKind` (dirty tree, missing agent credential, missing repository-intelligence index, changed configuration, workspace divergence, provider, budget) with the raw failure kept in a collapsed section. Token/cost ceilings surface a raise-and-retry control. While an agent step is in flight, the header shows live activity from `activity.json` (role, model, elapsed, last step summary). The **Agent activity** tab defaults to a chronological **Execution sequence** (invocations interleaved with verification and routing transitions) and keeps **Provider contexts** as a secondary view for context reuse and token analysis. The Overview Usage card shows accrued tokens, cached total, and cost against any configured ceiling.
 
-Local Cursor workers run with `agent.sandbox: true` by default. Cursor applies its native cross-platform sandbox (Seatbelt on macOS, Landlock/seccomp on Linux, and WSL2 isolation on Windows) around local tools. Worker prompts also prohibit reading `.cursor`, `agent-transcripts`, raw `.gitnexus` / `.codegraph`, and sibling worktrees; conspicuous path-bearing tool calls are cancelled as defense in depth. Set `agent.sandbox: false` only for a runner where Cursor's sandbox is unavailable and the weaker prompt/detection boundary is acceptable.
+Local Cursor workers run with `agent.sandbox: true` by default. Cursor applies its OS sandbox on **macOS and Linux** SDK hosts (Seatbelt / Landlock+seccomp). On **Windows**, the local SDK does not enable sandboxing in a native `node.exe` process — install **WSL2** and run the harness under Linux/WSL for that boundary. Worker prompts also prohibit reading `.cursor`, `agent-transcripts`, raw `.gitnexus` / `.codegraph`, and sibling worktrees; conspicuous path-bearing tool calls are cancelled as defense in depth. Set `agent.sandbox: false` only when the OS sandbox is unavailable and the weaker prompt/detection boundary is acceptable.
 
 Background polling (~1.8s while the tab is visible) must not feel like a page reload. The server returns a cheap change `signature`, and an unchanged poll short-circuits before any payload is serialized. Focused HITL editors — and half-filled batch cards with no control currently focused — block silent rewrites, and scroll / `<details>` chrome is restored when a silent poll does rewrite the DOM. The full checklist lives in [docs/ui-polling.md](./docs/ui-polling.md).
 
@@ -352,12 +352,18 @@ Worktrees share Git objects with the main repo but can accumulate working trees 
 
 ```bash
 agent-harness cleanup --run-id <id>
-agent-harness cleanup --run-id <id> --discard   # unpublished commits not on a retained ref
+agent-harness cleanup --run-id <id> --discard   # unpublished commits not on a retained ref / import
+agent-harness execution status
+agent-harness execution diagnostics --run-id <id>
+agent-harness execution approve-image --run-id <id>
+agent-harness execution build-image --run-id <id>
+agent-harness execution recover-container --run-id <id>
+agent-harness execution reconcile-orphans [--apply]
 ```
 
-Cleanup verifies the recorded path, registration, run id, Git common directory, cleanliness, and publication/discard state before `git worktree remove`. It refuses dirty trees, active/non-settled runs, path mismatches, and unpublished detached history without `--discard`. It never runs `git worktree prune`. Completed published runs keep `workspace.json`, state, events, and the delivery branch; only the worktree directory is removed (`run.worktree_removed`).
+Cleanup verifies cleanliness and publication/discard state before removing a worktree or Docker container/volume. It refuses dirty trees, active/non-settled runs, path mismatches, running workers/active RPC, and unpublished history without `--discard`. It never runs `git worktree prune`. Completed published runs keep `workspace.json`, state, events, transport audit metadata, and the delivery branch; only the execution workspace is removed (`run.worktree_removed` / `run.docker_workspace_removed`).
 
-If a worktree is missing or moved, resume blocks with a recoverable workspace failure. Manual repair: restore the directory at the recorded path, or recreate a linked worktree at the recorded `baseSha`/`HEAD` with the same path, then resume.
+If a worktree is missing or moved, resume blocks with a recoverable workspace failure. Manual repair: restore the directory at the recorded path, or recreate a linked worktree at the recorded `baseSha`/`HEAD` with the same path, then resume. For Docker clones, a missing container may be recreated against the retained named volume (`execution recover-container`); a missing volume blocks with diagnostics rather than silently reseeding.
 
 ### Unsupported legacy installs
 
@@ -389,8 +395,9 @@ This boundary is enforced by schema validation: verification commands originate 
 From the monorepo root (or `packages/agent-harness`):
 
 ```bash
-npm run test:unit          # Vitest unit suite
+npm run test:unit          # Vitest unit suite (no Docker required)
 npm run test:integration   # Vitest integration suite (real FS / HTTP / ScriptedBackend)
+npm run test:docker        # Real-Docker isolation lane (skips with capability reason if daemon unavailable)
 npm run test:e2e:install   # once per machine: download Chromium for Playwright
 npm run test:e2e           # Playwright browser E2E against a real loopback UI
 npm run build              # required before acceptance tests that spawn dist/cli.js
@@ -398,9 +405,11 @@ npm run test:acceptance    # CLI acceptance via createCli injection + compiled b
 npm run test:all           # unit + integration + e2e + build + acceptance
 ```
 
+Docker execution mode (`execution.runtime: docker`) is opt-in. The install wizard can detect Docker and, when you confirm, run `agent-harness execution prepare-worker` (readiness probe + build/pull of the maintained worker image; optional project settings pin). Image digests for *project* runs are accepted only after a fail-closed sandbox isolation probe; `CURSOR_API_KEY` for the worker is a run-state secret file (not container env). Bridge networking is filesystem isolation, not exfiltration-proof. Configure via dashboard **Settings → Execution runtime** (freezes into new runs only). Operator controls: `execution prepare-worker`, image approve/build, container recovery, cleanup/discard, `GET /api/execution/status`, and the rest of the `agent-harness execution …` CLI. See [ADR 0015](../../docs/adr/0015-docker-isolated-runs.md) and [INSTALL.md](../../INSTALL.md#7-optional-docker-execution-runtime).
+
 E2E tests live in `tests/e2e/`. They do **not** launch the production CLI: each test builds a `ProjectFixture`, injects a `ScriptedBackend`, starts `startUiServer({ port: 0, openBrowser: false })`, and opens the authenticated dashboard URL. Failure artifacts land under Git-ignored `test-results/` (Playwright traces under `test-results/playwright/`).
 
-Acceptance tests inject backends through `createCli({ createBackend, … })` — there is no production CLI flag or config key that selects a test backend. CI is defined in [`.github/workflows/agent-harness.yml`](../../.github/workflows/agent-harness.yml).
+Acceptance tests inject backends through `createCli({ createBackend, … })` — there is no production CLI flag or config key that selects a test backend. CI is defined in [`.github/workflows/agent-harness.yml`](../../.github/workflows/agent-harness.yml) (includes a `docker-isolation` job).
 
 ## Extension boundaries
 

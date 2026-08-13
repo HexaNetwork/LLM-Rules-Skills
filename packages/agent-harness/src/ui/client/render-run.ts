@@ -54,7 +54,11 @@ export const renderRunScript = `    function renderSidebar() {
         { id: "activity", label: "Agent activity" },
         { id: "artifacts", label: "Artifacts" },
       ];
+      if (shouldShowExecutionImageTab(s)) {
+        tabs.splice(4, 0, { id: "execution-image", label: "Execution image" });
+      }
       if (state.tab === "sessions") state.tab = "activity";
+      if (state.tab === "execution-image" && !shouldShowExecutionImageTab(s)) state.tab = "overview";
       var fullIdea = String(s.idea || "");
       var subtitle = title !== fullIdea ? '<div class="subtitle">' + esc(fullIdea) + '</div>' : '';
       var html = '<div class="title-row"><div><div class="eyebrow">Run ' + esc(s.runId.slice(0,8)) + '</div><h1>' + esc(title) + '</h1>' + subtitle + '</div><span class="badge ' + attr(phase) + '" data-testid="run-status"><i class="dot ' + attr(phase) + '"></i>' + esc(phaseLabel(phase)) + '</span></div>';
@@ -66,7 +70,50 @@ export const renderRunScript = `    function renderSidebar() {
       else if (state.tab === "decisions") renderDecisions(s);
       else if (state.tab === "tasks") renderTasks(s);
       else if (state.tab === "activity") renderAgentActivity();
+      else if (state.tab === "execution-image") renderExecutionImageTab(s);
       else renderArtifacts();
+    }
+
+    function shouldShowExecutionImageTab(s) {
+      var image = state.detail && state.detail.executionImage;
+      if (image && image.present) return true;
+      var workspace = state.detail && state.detail.workspace;
+      if (workspace && workspace.frozenRuntime === "docker") return true;
+      if (s && s.blockedKind === "execution") return true;
+      var failure = String((s && s.failure) || "");
+      return /requires operator approval before Docker clone|Approve and build|execution-image\\/image\\.digest|built execution image digest|execution image/i.test(failure);
+    }
+
+    function executionImageStatusLabel(image) {
+      if (!image || !image.present) return "not generated";
+      if (image.imageDigest) return "built";
+      if (image.approval) return "approved · not built";
+      return "awaiting approval";
+    }
+
+    function renderExecutionImagePreview(image, options) {
+      options = options || {};
+      if (!image || !image.present || !image.dockerfile) {
+        return options.allowEmpty
+          ? '<div class="muted" style="margin-top:10px">No generated Dockerfile is available for this run yet.</div>'
+          : "";
+      }
+      var profile = image.profile || {};
+      var meta = [];
+      if (profile.stack) meta.push("stack <code>" + esc(String(profile.stack)) + "</code>");
+      if (profile.baseImage) {
+        var base = String(profile.baseImage);
+        meta.push("base <code title=\\"" + attr(base) + "\\">" + esc(base.length > 56 ? base.slice(0, 56) + "…" : base) + "</code>");
+      }
+      meta.push(esc(executionImageStatusLabel(image)));
+      if (image.dockerfileHash) meta.push("hash <code>" + esc(image.dockerfileHash.slice(0, 12)) + "</code>");
+      return '<div class="execution-image-preview" style="margin-top:12px">' +
+        '<div class="muted" style="margin-bottom:6px"><strong>Generated Dockerfile</strong>' + (meta.length ? '<span class="faint"> · ' + meta.join(" · ") + "</span>" : "") + "</div>" +
+        '<pre class="dockerfile-preview" data-scroll-key="execution-dockerfile">' + esc(image.dockerfile) + "</pre>" +
+        (options.showTabLink
+          ? '<div style="margin-top:8px"><button type="button" class="btn small" data-tab="execution-image">Open Execution image tab</button></div>'
+          : "") +
+        "</div>";
     }
 
     function actionButtons(s, phase) {
@@ -151,6 +198,21 @@ export const renderRunScript = `    function renderSidebar() {
           id: "not-a-git-repo",
           title: "This project is not a git repository",
           hint: "Run git init and make an initial commit in the project folder, or set git.enabled: false in agent-harness.config.yaml, then retry.",
+        };
+      }
+      // Prefer string includes over path regexes: this file is a template-literal
+      // script fragment, and slashes in regex literals are easy to break in that chain.
+      var lower = text.toLowerCase();
+      if (
+        lower.indexOf("requires operator approval before docker clone") >= 0 ||
+        lower.indexOf("approve and build") >= 0 ||
+        (lower.indexOf("execution-image") >= 0 && lower.indexOf("image.digest") >= 0) ||
+        lower.indexOf("built execution image digest") >= 0
+      ) {
+        return {
+          id: "execution-image",
+          title: "Execution image approval is required",
+          hint: "Review the generated Dockerfile under this run's execution-image folder, then Approve and build. The harness will create the Docker workspace and continue automatically.",
         };
       }
       if (kind && byKind[kind]) return byKind[kind];
@@ -588,11 +650,21 @@ export const renderRunScript = `    function renderSidebar() {
       if (!state.detail.job && ["completed","cancelled"].includes(s.phase) && workspaceMeta.kind === "git-worktree" && workspaceMeta.worktreePath && !workspaceMeta.removedAt) {
         html += '<div class="card"><div class="alert"><div><strong>Worktree cleanup</strong><div class="muted" style="margin-top:5px">Remove the registered worktree after verifying cleanliness and publication state. State, events, and retained branches stay on disk.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" data-action="cleanup">Clean up worktree</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button></div></div></div>';
       }
+      if (!state.detail.job && workspaceMeta.kind === "docker-clone" && !workspaceMeta.removedAt) {
+        var frozenRt = workspaceMeta.frozenRuntime || "docker";
+        html += '<div class="card"><div class="alert"><div><strong>Docker execution</strong><div class="muted" style="margin-top:5px">Frozen runtime: <code>' + esc(frozenRt) + '</code> (cannot switch mid-run). Container <code>' + esc(workspaceMeta.containerName || "") + '</code> · volume <code>' + esc(workspaceMeta.workspaceVolumeName || "") + '</code>' + (workspaceMeta.executionLifecycle ? ' · lifecycle <code>' + esc(workspaceMeta.executionLifecycle) + '</code>' : '') + (workspaceMeta.importStatus ? ' · import <code>' + esc(workspaceMeta.importStatus) + '</code>' : '') + '</div>' + (workspaceMeta.importRejectionReason ? '<div class="muted" style="margin-top:5px">Import rejected: ' + esc(workspaceMeta.importRejectionReason) + '</div>' : '') + '</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" data-action="recover_container">Recover worker container</button><button class="btn primary" data-action="approve_and_build_execution_image">Approve &amp; build image</button><button class="btn" data-action="approve_execution_image">Approve only</button><button class="btn" data-action="build_execution_image">Build / retry image</button>' + (["completed","cancelled"].includes(s.phase) ? '<button class="btn" data-action="cleanup">Clean up Docker workspace</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button>' : '') + '</div></div></div>';
+      }
       if (s.phase === "blocked" && !state.detail.job) {
         var remediation = blockedRemediation(s);
         var failureText = String(s.failure || "");
         var isTreeDivergence = /Working tree diverged|Workspace diverged|Diverging paths/i.test(failureText);
         var isDirtyTree = !isTreeDivergence && (remediation.id === "dirty-tree" || /dirty working tree|uncommitted changes|working tree is not clean/i.test(failureText));
+        var failureLower = failureText.toLowerCase();
+        var isExecutionImageGate = remediation.id === "execution-image" ||
+          failureLower.indexOf("requires operator approval before docker clone") >= 0 ||
+          failureLower.indexOf("approve and build") >= 0 ||
+          (failureLower.indexOf("execution-image") >= 0 && failureLower.indexOf("image.digest") >= 0) ||
+          failureLower.indexOf("built execution image digest") >= 0;
         var failureDetail = (isDirtyTree || isTreeDivergence)
           ? '<pre style="margin-top:8px">' + esc(s.failure || "") + '</pre>'
           : '<details data-details-key="raw-failure"><summary>Raw failure detail</summary><pre>' + esc(s.failure || "The current transition could not complete.") + '</pre></details>';
@@ -607,25 +679,16 @@ export const renderRunScript = `    function renderSidebar() {
             '<button class="btn primary" data-action="accept_tree">Accept current tree and continue</button>' +
             '</div>';
         }
-        var ignoreArtifactControls = "";
-        var divergingPaths = parseBlockedPaths(failureText);
-        var canEditSettings = !!(state.bootstrap && state.bootstrap.project && state.bootstrap.project.settings && state.bootstrap.project.settings.editable);
-        if (divergingPaths.length > 0 && (isTreeDivergence || /changed unreported paths/i.test(failureText)) && canEditSettings) {
-          ignoreArtifactControls =
-            '<div class="ignore-artifacts" style="margin-top:12px">' +
-            '<div class="muted" style="margin-bottom:6px"><strong>Ignore these paths</strong> — add build/generated folders to project config (not .gitignore), then accept the tree and continue.</div>' +
-            '<div style="display:grid;gap:6px">' +
-            divergingPaths.map(function (filePath) {
-              return '<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">' +
-                '<code style="font-size:12px;word-break:break-all">' + esc(filePath) + '</code>' +
-                '<button class="btn small" data-action="ignore_artifacts" data-ignore-path="' + attr(filePath) + '">Ignore</button>' +
-                '</div>';
-            }).join('') +
-            '<div style="margin-top:4px"><button class="btn" data-action="ignore_artifacts" data-ignore-paths="' + attr(JSON.stringify(divergingPaths)) + '">Ignore all listed paths</button></div>' +
-            '</div></div>';
-        }
-        var retryControls = "";
-        if (s.blockedKind === "budget") {
+        var executionImageControls = "";
+        var executionImagePreview = "";
+        if (isExecutionImageGate) {
+          executionImagePreview = renderExecutionImagePreview(state.detail.executionImage, { showTabLink: true, allowEmpty: true });
+          retryControls =
+            '<div class="alert-actions">' +
+            '<button class="btn primary" data-action="approve_and_build_execution_image">Approve &amp; build image</button>' +
+            '<button class="btn" data-tab="execution-image">Execution image tab</button>' +
+            '</div>';
+        } else if (s.blockedKind === "budget") {
           var ceilings = (state.detail && state.detail.ceilings) || {};
           var currentTokens = ceilings.maxRunTokens || 0;
           var currentCost = ceilings.maxRunCostUsd || 0;
@@ -644,13 +707,15 @@ export const renderRunScript = `    function renderSidebar() {
         } else if (!isTreeDivergence) {
           retryControls = '<button class="btn danger" data-action="retry">Retry transition</button>';
         }
-        if (retryControls) {
+        if (retryControls && !isExecutionImageGate) {
           retryControls = '<div class="alert-actions">' + retryControls + '</div>';
         }
         var fixer = s.fixerRecovery;
         var fixerControls = '';
         var isConfigBlock = s.blockedKind === 'config' || /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test command could not be launched/i.test(String(s.failure || ''));
-        if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
+        if (isExecutionImageGate) {
+          fixerControls = '<strong>Approve the generated image</strong><div class="muted" style="margin-top:5px">This is an operator gate, not an agent repair. Review the Dockerfile above (or in the Execution image tab), then Approve &amp; build. The harness runs the isolation probe when required and continues setup.</div>';
+        } else if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
           var repairDetails = formatConfigRepair(fixer.plan.configPatch || {});
           var persistButton = canEditSettings
             ? '<button class="btn" data-action="apply_fix" data-persist-project-defaults="true" title="Update this run frozen config and write the same patch into agent-harness.config.yaml for future runs">Apply to run + project defaults</button>'
@@ -668,7 +733,7 @@ export const renderRunScript = `    function renderSidebar() {
         } else {
           fixerControls = '<strong>Fix with an agent</strong><div class="muted" style="margin-top:5px">Describe how you want this handled. The fixer will propose a plan first; it cannot edit until you approve it.</div><div class="field" style="margin-top:10px"><label for="fixerGuidance">Recovery guidance</label><textarea id="fixerGuidance" rows="3" placeholder="For example: preserve the existing test and update the configured test path patterns"></textarea></div><button class="btn" data-action="propose_fix">Draft recovery plan</button>';
         }
-        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + acceptTreeControls + ignoreArtifactControls + '</div>' + retryControls + '</div><div class="resolution">' + fixerControls + '</div></div>';
+        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + acceptTreeControls + executionImageControls + ignoreArtifactControls + '</div>' + retryControls + '</div><div class="resolution">' + fixerControls + '</div></div>';
       }
       // Note box is for interview turns only — not plan/verification/install/grill-complete gates.
       var pendingInstallNotes = (s.proposedInstalls || []).some(function (item) { return !item.decision; });

@@ -6,7 +6,7 @@ import {
   type InvocationTrigger,
 } from "../../application/agent-activity.js";
 import { resolveHarnessHome } from "../../application/harness-home.js";
-import { resolveHarnessPaths, type HarnessPaths } from "../../application/paths.js";
+import { resolveHarnessPaths, WORKER_WORKSPACE_PATH, type HarnessPaths } from "../../application/paths.js";
 import {
   assertWorkspaceIsolation,
   capabilitiesForBackend,
@@ -78,6 +78,8 @@ export class AgentCoordinator {
    * Strict mode refuses providers that cannot restrict the workspace root.
    */
   assertIsolationBoundary(homeRoot = resolveHarnessHome().homeRoot): void {
+    const runtime = this.config.execution?.runtime ?? "local";
+    const containerExecution = this.paths.workspaceRoot === WORKER_WORKSPACE_PATH;
     assertWorkspaceIsolation({
       paths: this.paths,
       homeRoot,
@@ -85,10 +87,28 @@ export class AgentCoordinator {
       capabilities: capabilitiesForBackend(
         this.backend,
         this.config.agent.provider,
+        {
+          runtime,
+          sandboxIsolationProbePassed:
+            runtime === "docker" ? this.sandboxIsolationProbePassed : true,
+        },
       ),
       agentCwd: this.workspaceRoot,
+      containerExecution,
+      sandboxIsolationProbePassed:
+        runtime === "docker" ? this.sandboxIsolationProbePassed : true,
     });
   }
+
+  /**
+   * Docker mode only: set after a cached fail-closed sandbox isolation probe succeeds
+   * for the run's image digest. Gates `canRestrictWritableWorkspace` advertising.
+   */
+  setSandboxIsolationProbePassed(passed: boolean): void {
+    this.sandboxIsolationProbePassed = passed;
+  }
+
+  private sandboxIsolationProbePassed = false;
 
   async invoke<T>(input: InvokeInput<T>): Promise<T> {
     return (await this.invokeInternal(input)).value;
@@ -391,7 +411,11 @@ export class AgentCoordinator {
                 retainProviderSession: options.retainProviderSession || retainForRepair,
                 mode: options.mode,
                 allowTools: options.allowTools,
-                sandboxEnabled: this.config.agent.sandbox,
+                sandboxEnabled:
+                  this.config.execution?.runtime === "docker"
+                    ? this.config.execution.docker.sandboxRequired !== false ||
+                      this.config.agent.sandbox
+                    : this.config.agent.sandbox,
                 cwd: this.workspaceRoot,
                 signal,
                 taskId,

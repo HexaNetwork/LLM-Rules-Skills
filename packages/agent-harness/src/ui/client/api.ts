@@ -43,11 +43,17 @@ export const apiScript = `    async function api(path, options) {
       // The inline error belongs to the run that raised it; switching runs drops it.
       if (!sameRun) state.inlineError = "";
       state.selected = runId; state.view = "runs";
-      if (showSpinner !== false) $("content").innerHTML = '<div class="empty">Loading run…</div>';
+      // Never blank the pane when re-selecting the open run: a ?since= poll can
+      // return {unchanged:true} and must not leave "Loading run…" stuck forever.
+      var showLoading = showSpinner !== false && !(sameRun && state.detail);
+      if (showLoading) $("content").innerHTML = '<div class="empty">Loading run…</div>';
       try {
         var since = sameRun && state.signature ? ("?since=" + encodeURIComponent(state.signature)) : "";
         var detail = await api("/api/runs/" + encodeURIComponent(runId) + since, undefined, silent);
-        if (detail.unchanged) return;
+        if (detail.unchanged) {
+          if (showLoading && state.detail) renderRun();
+          return;
+        }
         state.detail = detail;
         if (detail.state && (detail.state.phase === "cancelled" || detail.state.phase === "completed")) {
           state.cancelling = false;

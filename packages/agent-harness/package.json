@@ -16,6 +16,7 @@
   },
   "files": [
     "dist",
+    "docker",
     "templates"
   ],
   "scripts": {
@@ -26,6 +27,7 @@
     "test": "vitest",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:docker": "vitest run --config vitest.docker.config.ts",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "test:acceptance": "vitest run --config vitest.acceptance.config.ts",

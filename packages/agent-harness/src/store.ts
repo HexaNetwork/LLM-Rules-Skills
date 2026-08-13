@@ -37,20 +37,42 @@ export type ConfigTransitionFault =
   | "after_state"
   | "after_event";
 
+export type RunStoreOptions = {
+  /**
+   * Worker mode: `root` is the single run directory (mounted at /run-state).
+   * `runDirectory(runId)` returns `root` when `runId` matches.
+   */
+  singleRunId?: string;
+};
+
 export class RunStore {
   readonly root: string;
+  readonly singleRunId: string | undefined;
   /** @internal Test seam: throw after the named config-transition boundary. */
   configTransitionFault?: ConfigTransitionFault;
 
-  constructor(readonly config: HarnessConfig, stateRoot: string) {
+  constructor(readonly config: HarnessConfig, stateRoot: string, options: RunStoreOptions = {}) {
     this.root = stateRoot;
+    this.singleRunId = options.singleRunId;
   }
 
   runDirectory(runId: string): string {
+    if (this.singleRunId !== undefined) {
+      if (runId !== this.singleRunId) {
+        throw new Error(
+          `Worker RunStore is bound to run ${this.singleRunId}; refusing access to ${runId}`,
+        );
+      }
+      return this.root;
+    }
     return path.join(this.root, "runs", safeSegment(runId));
   }
 
   async initialize(): Promise<void> {
+    if (this.singleRunId) {
+      await mkdir(this.root, { recursive: true });
+      return;
+    }
     await Promise.all([
       mkdir(path.join(this.root, "runs"), { recursive: true }),
       mkdir(path.join(this.root, "knowledge"), { recursive: true }),

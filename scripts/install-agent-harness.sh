@@ -179,7 +179,9 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=6
+TOTAL_STAGES=8
+DOCKER_PROBE_OPT_IN=0
+DOCKER_DAEMON_READY=0
 
 # Prefer paths relative to this script (repo root = parent of scripts/).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -367,6 +369,45 @@ else
   fi
 fi
 
+# ── 1b. Optional Docker execution runtime ─────────────────────────────────
+stage "Docker execution runtime (optional)"
+say "Docker is an opt-in alternative to local worktrees. Default remains local."
+note "This stage never silently installs Docker Desktop / docker.io."
+note "Costs: disk for images/volumes, CPU/memory limits, bridge networking (not egress-proof)."
+note "Generated Dockerfiles still require operator review before first project-image build. Prune unused images/volumes periodically."
+note "Revert: set execution.runtime=local in project settings (affects new runs only)."
+_docker_ready() {
+  command -v docker >/dev/null 2>&1 || return 1
+  local info
+  if ! info="$(docker info 2>&1)"; then
+    return 1
+  fi
+  if printf '%s' "$info" | grep -qi 'OSType:[[:space:]]*windows' \
+    && ! printf '%s' "$info" | grep -qi 'OSType:[[:space:]]*linux'; then
+    warn "Docker appears to be in Windows container mode — switch to Linux containers."
+    return 1
+  fi
+  return 0
+}
+if _docker_ready; then
+  printf '  %s✓ docker info succeeded%s\n' "$GREEN" "$RESET"
+  DOCKER_DAEMON_READY=1
+  if confirm "Build/pull and probe the maintained worker image later in this wizard? (opt-in Docker)"; then
+    DOCKER_PROBE_OPT_IN=1
+    note "Will run after package build + project registration: agent-harness execution prepare-worker"
+  else
+    note "Skipped. Later: agent-harness execution prepare-worker --repository <path>"
+  fi
+else
+  warn "Docker CLI/daemon not ready (missing, permissions, or not Linux containers)."
+  if _is_windows; then
+    note "On Windows use Docker Desktop + WSL2 backend + Linux containers before enabling Docker mode."
+  else
+    note "Ensure your user can access the Docker daemon (docker group / socket permissions)."
+  fi
+  SKIPPED+=("Docker execution runtime (optional)")
+fi
+
 # ── 2. Build this checkout ────────────────────────────────────────────────
 stage "Build this checkout"
 HARNESS_ROOT="${HARNESS_ROOT:-$DEFAULT_HARNESS_ROOT}"
@@ -504,6 +545,38 @@ if [[ "$INITIALIZED_GIT_REPO" -eq 1 ]]; then
     fi
   else
     note "nothing to commit after registration"
+  fi
+fi
+
+# ── 4b. Docker worker image prepare (deferred from stage 1b) ───────────────
+stage "Docker worker image (opt-in)"
+PACKAGE_ROOT="$HARNESS_ROOT/packages/agent-harness"
+if [[ "$DOCKER_PROBE_OPT_IN" -ne 1 ]]; then
+  note "Skipped (not opted in earlier). Later: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\""
+elif ! _docker_ready; then
+  warn "Docker is no longer ready; cannot prepare the worker image."
+  note "Fix docker info / Linux containers, then re-run: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\""
+  exit 1
+else
+  say "Probing Docker and building/pulling the maintained worker image via the harness CLI."
+  note "Package root: $PACKAGE_ROOT"
+  if ! node "$CLI" execution prepare-worker --repository "$PROJECT_PATH" --package-root "$PACKAGE_ROOT" --json; then
+    warn "execution prepare-worker failed. Docker setup did not succeed."
+    note "Fix Docker / rebuild, then re-run: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\" --package-root \"$PACKAGE_ROOT\""
+    exit 1
+  fi
+  printf '  %s✓ worker image prepare succeeded%s\n' "$GREEN" "$RESET"
+  note "Default runtime is still local. Add digest-pinned approvedBaseImages before Docker runs are ready."
+  if confirm "Pin worker digest and set execution.runtime=docker for this project?"; then
+    if ! node "$CLI" execution prepare-worker --repository "$PROJECT_PATH" --package-root "$PACKAGE_ROOT" --write-settings --enable-runtime --json; then
+      warn "Failed to write Docker project settings."
+      exit 1
+    fi
+    printf '  %s✓ project settings: execution.runtime=docker + workerImageDigest pinned%s\n' "$GREEN" "$RESET"
+    note "Confirm readiness: agent-harness execution status --repository \"$PROJECT_PATH\""
+    note "Still required: pin at least one approved base image (Settings → Execution runtime)."
+  else
+    note "Left runtime=local. Later: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\" --write-settings --enable-runtime"
   fi
 fi
 

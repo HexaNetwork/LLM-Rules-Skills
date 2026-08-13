@@ -10,6 +10,8 @@ type MockAgent = {
 const disposeById = new Map<string, ReturnType<typeof vi.fn>>();
 let createSeq = 0;
 let emitToolCall = false;
+let emittedToolArgs: Record<string, unknown> = {};
+let latestCreateOptions: Record<string, unknown> | undefined;
 
 function mockRun(agentId: string, options?: Record<string, unknown>) {
   let cancelled = false;
@@ -21,7 +23,7 @@ function mockRun(agentId: string, options?: Record<string, unknown>) {
     wait: async () => {
       if (emitToolCall) {
         const onStep = options?.onStep as ((event: unknown) => void) | undefined;
-        onStep?.({ step: { type: "toolCall", message: { type: "read", args: {} } } });
+        onStep?.({ step: { type: "toolCall", message: { type: "read", args: emittedToolArgs } } });
       }
       return {
         id: `run-${agentId}`,
@@ -33,7 +35,8 @@ function mockRun(agentId: string, options?: Record<string, unknown>) {
 
 vi.mock("@cursor/sdk", () => ({
   Agent: {
-    create: vi.fn(async () => {
+    create: vi.fn(async (options: Record<string, unknown>) => {
+      latestCreateOptions = options;
       createSeq += 1;
       const agentId = `agent-${createSeq}`;
       const dispose = vi.fn(async () => undefined);
@@ -70,6 +73,8 @@ describe("retained provider agent eviction", () => {
   beforeEach(() => {
     createSeq = 0;
     emitToolCall = false;
+    emittedToolArgs = {};
+    latestCreateOptions = undefined;
     disposeById.clear();
     vi.clearAllMocks();
   });
@@ -115,5 +120,35 @@ describe("retained provider agent eviction", () => {
     await expect(
       backend.run(request({ role: "config-fixer", allowTools: false, retainProviderSession: false })),
     ).rejects.toThrow("config-fixer attempted prohibited tool call: read");
+  });
+
+  it("enables Cursor's cross-platform local sandbox by default", async () => {
+    const backend = createCursorBackend("test-key");
+
+    await backend.run(request({ retainProviderSession: false }));
+
+    expect(latestCreateOptions).toMatchObject({
+      local: { cwd: process.cwd(), sandboxOptions: { enabled: true } },
+    });
+  });
+
+  it("cancels reads of provider transcripts even when tools are otherwise allowed", async () => {
+    emitToolCall = true;
+    emittedToolArgs = { path: "C:\\Users\\person\\.cursor\\projects\\repo\\agent-transcripts\\run.json" };
+    const backend = createCursorBackend("test-key");
+
+    await expect(
+      backend.run(request({ allowTools: true, retainProviderSession: false })),
+    ).rejects.toThrow("attempted prohibited tool call: read (agent-transcripts)");
+  });
+
+  it("can disable the provider sandbox explicitly for an incompatible host", async () => {
+    const backend = createCursorBackend("test-key");
+
+    await backend.run(request({ sandboxEnabled: false, retainProviderSession: false }));
+
+    expect(latestCreateOptions).toMatchObject({
+      local: { sandboxOptions: { enabled: false } },
+    });
   });
 });

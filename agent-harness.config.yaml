@@ -12,6 +12,7 @@ agent:
   timeoutMs: 1200000
   promptBuilder: false
   schemaRepairAttempts: 1
+  sandbox: true
 
 workflow:
   tdd: true

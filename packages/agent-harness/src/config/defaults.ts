@@ -41,6 +41,8 @@ agent:
   timeoutMs: 1200000
   promptBuilder: false
   schemaRepairAttempts: 1
+  # Cursor uses its OS-level sandbox (WSL2-backed on Windows) for local tools.
+  sandbox: true
 
 workflow:
   # Document RAG into work packets (independent of Graphify / guidance).

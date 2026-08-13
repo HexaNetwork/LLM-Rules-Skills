@@ -233,13 +233,14 @@ describe("token-conscious defaults", () => {
     expect(loaded.knowledge.guidance.enabled).toBe(false);
   });
 
-  it("normalizes historical minimal YAML through schema defaults without bumping CONFIG_VERSION", () => {
+  it("normalizes historical minimal YAML through current schema defaults", () => {
     const minimal = yaml.load(`
 version: 2
 repositoryRoot: .
 `) as unknown;
     const parsed = HarnessConfigSchema.parse(minimal);
-    expect(CONFIG_VERSION).toBe(14);
+    expect(CONFIG_VERSION).toBe(15);
+    expect(parsed.agent.sandbox).toBe(true);
     expect(parsed.agent.promptBuilder).toBe(false);
     expect(parsed.knowledge.guidance.enabled).toBe(true);
     expect(parsed.git.ignoredArtifactPatterns.length).toBeGreaterThan(0);

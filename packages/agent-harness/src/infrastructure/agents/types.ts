@@ -27,6 +27,8 @@ export type AgentRequest = {
   mode?: "agent" | "plan";
   /** When false, the backend aborts the run as soon as a tool call is observed. */
   allowTools?: boolean;
+  /** Run provider tools inside its OS-level workspace sandbox when supported. */
+  sandboxEnabled?: boolean;
   cwd: string;
   signal: AbortSignal;
   /** Redacted live step ticker; never includes raw tool args. */

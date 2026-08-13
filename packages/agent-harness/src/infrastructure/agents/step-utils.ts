@@ -1,4 +1,5 @@
 import { detectInstallFromCommand } from "../../commands.js";
+import path from "node:path";
 import type { AgentStepEvent } from "./types.js";
 
 /** Derive a bounded, args-free step summary for persistence and UI. */
@@ -50,6 +51,43 @@ export function detectInstallFromToolStep(step: {
   const command = shellCommandFromToolArgs(step.message?.args);
   if (!command) return undefined;
   return detectInstallFromCommand(command);
+}
+
+/**
+ * Defense-in-depth detection for provider file tools. Cursor's OS sandbox is
+ * the authoritative boundary; this cancels conspicuous attempts and makes the
+ * violation visible in durable run state.
+ */
+export function prohibitedAgentPathAccess(args: unknown, cwd: string): string | undefined {
+  const text = allArgumentStrings(args).join("\n").replaceAll("\\", "/").toLocaleLowerCase();
+  if (!text) return undefined;
+  if (/(^|\/)agent-transcripts(?:\/|$)/m.test(text)) return "agent-transcripts";
+  if (/(^|\/)\.cursor(?:\/|$)/m.test(text)) return ".cursor";
+  if (/(^|\/)graphify-out(?:\/|$)/m.test(text)) return "graphify-out";
+
+  const resolvedCwd = path.resolve(cwd);
+  const worktreeRoot = path.dirname(resolvedCwd);
+  if (!/-worktrees$/i.test(path.basename(worktreeRoot))) return undefined;
+  const normalizedRoot = worktreeRoot.replaceAll("\\", "/").toLocaleLowerCase();
+  const normalizedCwd = resolvedCwd.replaceAll("\\", "/").toLocaleLowerCase();
+  const rootPrefix = `${normalizedRoot}/`;
+  let offset = text.indexOf(rootPrefix);
+  while (offset >= 0) {
+    const referenced = text.slice(offset).split(/[\s"']/u, 1)[0] ?? "";
+    if (referenced && referenced !== normalizedCwd && !referenced.startsWith(`${normalizedCwd}/`)) {
+      return "sibling-worktree";
+    }
+    offset = text.indexOf(rootPrefix, offset + rootPrefix.length);
+  }
+  if (/(^|[\s"'])\.\.\//m.test(text)) return "outside-worktree";
+  return undefined;
+}
+
+function allArgumentStrings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(allArgumentStrings);
+  if (!isRecord(value)) return [];
+  return Object.values(value).flatMap(allArgumentStrings);
 }
 
 function shellCommandFromToolArgs(args: unknown): string | undefined {

@@ -388,6 +388,7 @@ export class AgentCoordinator {
                 retainProviderSession: options.retainProviderSession || retainForRepair,
                 mode: options.mode,
                 allowTools: options.allowTools,
+                sandboxEnabled: this.config.agent.sandbox,
                 cwd: this.workspaceRoot,
                 signal,
                 taskId,

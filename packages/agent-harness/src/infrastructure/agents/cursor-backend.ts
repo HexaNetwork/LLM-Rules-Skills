@@ -4,7 +4,11 @@ import {
   type AgentBackend,
   type AgentBackendResult,
 } from "./types.js";
-import { detectInstallFromToolStep, summarizeAgentStep } from "./step-utils.js";
+import {
+  detectInstallFromToolStep,
+  prohibitedAgentPathAccess,
+  summarizeAgentStep,
+} from "./step-utils.js";
 import { reportedTotal } from "./usage.js";
 
 export function createCursorBackend(
@@ -104,7 +108,10 @@ export function createCursorBackend(
             agent = await sdk.Agent.resume(request.providerSessionId, {
               apiKey,
               model: { id: request.model },
-              local: { cwd: request.cwd },
+              local: {
+                cwd: request.cwd,
+                sandboxOptions: { enabled: request.sandboxEnabled !== false },
+              },
             });
           } catch {
             // The complete prompt remains a durable fallback when a provider
@@ -117,7 +124,10 @@ export function createCursorBackend(
         agent = await sdk.Agent.create({
           apiKey,
           model: { id: request.model },
-          local: { cwd: request.cwd },
+          local: {
+            cwd: request.cwd,
+            sandboxOptions: { enabled: request.sandboxEnabled !== false },
+          },
         });
       }
 
@@ -146,6 +156,12 @@ export function createCursorBackend(
             }
             request.onStep?.(summarizeAgentStep(step));
             if (step.type !== "toolCall") return;
+            const prohibitedPath = prohibitedAgentPathAccess(step.message?.args, request.cwd);
+            if (prohibitedPath) {
+              forbiddenToolCall = `${step.message?.type ?? "unknown"} (${prohibitedPath})`;
+              cancel();
+              return;
+            }
             if (request.allowTools === false) {
               forbiddenToolCall = step.message?.type ?? "unknown";
               cancel();

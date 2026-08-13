@@ -30,6 +30,7 @@ const packet: WorkPacket = {
 describe("prompt rendering", () => {
   it("renders a lean compiled guidance pack without selection metadata", () => {
     const rendered = renderPrompt(packet);
+    expect(rendered).toContain("Never read or search Cursor agent transcripts");
     expect(rendered).toContain("GUIDANCE");
     expect(rendered).toContain("Reject blank credentials.");
     expect(rendered).not.toContain("SELECTED GUIDANCE");

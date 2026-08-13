@@ -18,7 +18,7 @@ const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
  * Bumped when the frozen run-config shape or configuration-hash algorithm changes
  * in a way that needs migration (ensureCompatibleConfiguration re-stamps the hash).
  */
-export const CONFIG_VERSION = 14;
+export const CONFIG_VERSION = 15;
 
 export const VerificationCommandSchema = z.object({
   id: z.string().min(1),
@@ -170,6 +170,8 @@ export const HarnessConfigSchema = z.object({
       timeoutMs: z.number().int().positive().default(20 * 60 * 1000),
       promptBuilder: z.boolean().default(false),
       schemaRepairAttempts: z.number().int().min(0).max(3).default(1),
+      /** Run local Cursor tools inside the provider's OS-level workspace sandbox. */
+      sandbox: z.boolean().default(true),
       /**
        * When true, refuse providers that cannot restrict the writable workspace
        * to the run worktree (see workspaceCapabilities).

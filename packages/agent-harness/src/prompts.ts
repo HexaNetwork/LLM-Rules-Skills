@@ -1,5 +1,8 @@
 import type { AgentRole, WorkPacket } from "./domain.js";
 
+const WORKSPACE_READ_BOUNDARY =
+  "Access only the assigned working tree. Never read or search Cursor agent transcripts, any .cursor directory, raw graphify-out artifacts, sibling worktrees, or files from another agent session; the work packet is the complete cross-agent handoff.";
+
 export const ROLE_RULES: Record<AgentRole, string[]> = {
   reflector: [
     "Restate the idea in your own words without inventing requirements.",
@@ -154,6 +157,7 @@ function roleLabelForPacket(packet: WorkPacket): string {
 export function renderGuidancePromptPreview(role: AgentRole, guidancePack: string): string {
   return [
     `You are the ${role} worker in a deterministic software-delivery harness.`,
+    WORKSPACE_READ_BOUNDARY,
     ...ROLE_RULES[role].map((rule) => `- ${rule}`),
     ...renderGuidancePack(guidancePack),
   ].join("\n");
@@ -164,6 +168,7 @@ export function renderPrompt(packet: WorkPacket): string {
   return [
     `You are the ${roleLabelForPacket(packet)} worker in a deterministic software-delivery harness.`,
     "This is a fresh session. The work packet below is the complete handoff; do not assume hidden chat history.",
+    `- ${WORKSPACE_READ_BOUNDARY}`,
     ...roleRulesForPacket(packet).map((rule) => `- ${rule}`),
     ...packet.constraints.map((constraint) => `- ${constraint}`),
     ...renderGuidance(packet),
@@ -199,6 +204,7 @@ export function renderContinuationPrompt(
   if (options.deltaInput !== undefined) {
     return [
       "Continue the existing conversation; all prior instructions and context remain in force.",
+      `- ${WORKSPACE_READ_BOUNDARY}`,
       ...(includeGuidance
         ? ["Updated guidance for this and later turns:", ...renderGuidance(packet)]
         : []),
@@ -210,6 +216,7 @@ export function renderContinuationPrompt(
   return [
     `Continue the durable episode. For this turn, act as the ${roleLabelForPacket(packet)} worker.`,
     "Use the existing conversation and repository findings; do not repeat exploration already completed unless the new input invalidates it.",
+    `- ${WORKSPACE_READ_BOUNDARY}`,
     ...roleRulesForPacket(packet).map((rule) => `- ${rule}`),
     ...packet.constraints.map((constraint) => `- ${constraint}`),
     ...(includeGuidance ? renderGuidance(packet) : []),

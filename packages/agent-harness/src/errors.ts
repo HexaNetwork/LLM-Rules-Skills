@@ -12,7 +12,7 @@ export type FailureKind =
 
 /** Failures that must be repaired via config-fixer (frozen run snapshot), not a file fixer. */
 export const CONFIG_FAILURE_PATTERN =
-  /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths|Red writer changed non-test paths|Red writer changed paths outside tests and affectedPaths|Test command could not be launched|targeted test run found no tests|test filter\/template is broken/i;
+  /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test command could not be launched|targeted test run found no tests|test filter\/template is broken/i;
 
 export class HarnessFailure extends Error {
   readonly kind: FailureKind;

@@ -1,35 +1,23 @@
-import type { HarnessConfig, PreflightCommitOrder } from "./config.js";
-import type { ReflectOutput, RunState, RunWorkspace, VerificationSettingsPatch, HighLevelPlan } from "./domain.js";
-import { isTestPath, reconcileUnknowns } from "./domain.js";
-import { ApplicationContext } from "./application/application-context.js";
-import type { HarnessDependencies } from "./application/dependencies.js";
-import { runCancellationRegistry } from "./application/cancellation-registry.js";
-import {
-  pendingGrillReady,
-  pendingPlanReady,
-  taskForPacket,
-  type CancelResult,
-  type CleanupResult,
-  type MigrateWorkspaceResult,
-} from "./application/helpers.js";
-import { InterviewService } from "./application/interview-service.js";
-import { PlanningService } from "./application/planning-service.js";
-import { RecoveryService } from "./application/recovery-service.js";
-import { RunAdvancer } from "./application/run-advancer.js";
-import { RunLifecycleService } from "./application/run-lifecycle-service.js";
-import { TaskExecutionService } from "./application/task-execution-service.js";
-import { ScenarioTestingService } from "./application/scenario-testing-service.js";
-import { CrystallizingService } from "./application/crystallizing-service.js";
-import { FinalReviewService } from "./application/final-review-service.js";
-
-export type { HarnessDependencies } from "./application/dependencies.js";
-export type { CancelResult, CleanupResult, MigrateWorkspaceResult } from "./application/helpers.js";
-export { pendingGrillReady, pendingPlanReady, taskForPacket } from "./application/helpers.js";
-export { isTestPath, reconcileUnknowns };
-export { openRunHarness } from "./application/run-engine-factory.js";
+import type { PreflightCommitOrder } from "../config/schema.js";
+import type { HarnessConfig } from "../config/schema.js";
+import type { ReflectOutput, RunState, RunWorkspace, VerificationSettingsPatch, HighLevelPlan } from "../domain.js";
+import { ApplicationContext } from "./application-context.js";
+import type { HarnessDependencies } from "./dependencies.js";
+import { runCancellationRegistry } from "./cancellation-registry.js";
+import type { CancelResult, CleanupResult, MigrateWorkspaceResult } from "./helpers.js";
+import { InterviewService } from "./interview-service.js";
+import { PlanningService } from "./planning-service.js";
+import { RecoveryService } from "./recovery-service.js";
+import { RunAdvancer } from "./run-advancer.js";
+import { RunLifecycleService } from "./run-lifecycle-service.js";
+import { TaskExecutionService } from "./task-execution-service.js";
+import { ScenarioTestingService } from "./scenario-testing-service.js";
+import { CrystallizingService } from "./crystallizing-service.js";
+import { FinalReviewService } from "./final-review-service.js";
 
 /**
- * Compatibility facade: dependency composition and public method forwarding only.
+ * Application composition root: wires services and forwards the public run API.
+ * Prefer openRunHarness() when reopening an existing run.
  */
 export class HarnessEngine {
   private readonly ctx: ApplicationContext;
@@ -235,5 +223,4 @@ export class HarnessEngine {
   setIgnoredArtifactPatterns(runId: string, patterns: string[]): Promise<RunState> {
     return this.execution.setIgnoredArtifactPatterns(runId, patterns);
   }
-
 }

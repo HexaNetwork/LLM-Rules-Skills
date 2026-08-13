@@ -1,12 +1,9 @@
 import path from "node:path";
-import type { InvokeInput } from "../agent.js";
-import {
-  loadRunWorkspace,
-  normalizeFrozenRunConfig,
-  ProjectSettingsPatchSchema,
-  writeRunWorkspace,
-  type PreflightCommitOrder,
-} from "../config.js";
+import type { InvokeInput } from "../infrastructure/agents/types.js";
+import { loadRunWorkspace, writeRunWorkspace } from "../config/io.js";
+import { normalizeFrozenRunConfig } from "../config/migrations.js";
+import { ProjectSettingsPatchSchema } from "../config/schema.js";
+import type { PreflightCommitOrder } from "../config/schema.js";
 import {
   ConfigFixerPlanSchema,
   FixerPlanSchema,

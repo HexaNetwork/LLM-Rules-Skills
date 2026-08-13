@@ -7,7 +7,7 @@ import {
   loadFrozenComponentManifest,
   resolveFrozenGuidanceRoot} from "../../src/application/component-freeze.js";
 import { resolveHarnessHome, resolveProjectPaths } from "../../src/application/harness-home.js";
-import { HarnessConfigSchema } from "../../src/config.js";
+import { HarnessConfigSchema } from "../../src/config/schema.js";
 
 const tempRoots: string[] = [];
 

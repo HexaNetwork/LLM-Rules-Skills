@@ -1,7 +1,7 @@
 import path from "node:path";
 import { readdir, stat } from "node:fs/promises";
 import yaml from "js-yaml";
-import type { HarnessConfig, KnowledgeScope, KnowledgeVisibility } from "../../config.js";
+import type { HarnessConfig, KnowledgeScope, KnowledgeVisibility } from "../../config/schema.js";
 import { tokenize } from "./lexical-search.js";
 import { hash, isRecord, normalizePath } from "./path-utils.js";
 import {

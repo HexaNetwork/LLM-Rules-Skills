@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
-import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 function reviewingTask(overrides: Partial<BuildTask> = {}): BuildTask {

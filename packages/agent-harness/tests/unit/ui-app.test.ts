@@ -86,7 +86,8 @@ describe("dashboard document", () => {
     expect(html).toMatch(/phase === "new"[\s\S]{0,400}Setup did not finish/);
     expect(html).toContain("Confirm feature understanding");
     expect(html).toContain("Our recommendation:");
-    expect(html).toContain("data-question-choice");
+    expect(html).not.toContain("data-question-choice");
+    expect(html).toContain("data-batch-choice");
     expect(html).toContain("Inspect invocation");
     expect(html).toContain("Actual submitted input");
     expect(html).toContain("Work packet");

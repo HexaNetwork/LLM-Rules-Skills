@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentRequest } from "../../src/agent.js";
+import type { AgentRequest } from "../../src/infrastructure/agents/types.js";
 
 type MockAgent = {
   agentId: string;
@@ -53,7 +53,7 @@ vi.mock("@cursor/sdk", () => ({
         [Symbol.asyncDispose]: dispose};
     })}}));
 
-import { createCursorBackend } from "../../src/agent.js";
+import { createCursorBackend } from "../../src/infrastructure/agents/cursor-backend.js";
 
 function request(overrides: Partial<AgentRequest> = {}): AgentRequest {
   return {

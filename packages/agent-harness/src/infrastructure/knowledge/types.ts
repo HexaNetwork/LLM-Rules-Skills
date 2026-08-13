@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { KnowledgeScope, KnowledgeVisibility } from "../../config.js";
+import type { KnowledgeScope, KnowledgeVisibility } from "../../config/schema.js";
 
 export const GuidanceKindSchema = z.enum(["document", "rule", "skill"]);
 export type GuidanceKind = z.infer<typeof GuidanceKindSchema>;

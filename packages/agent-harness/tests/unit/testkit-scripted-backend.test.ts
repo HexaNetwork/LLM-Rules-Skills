@@ -1,6 +1,6 @@
 import { HIGH_LEVEL_PLAN, PRD_OUTPUT } from "../helpers.js";
 import { describe, expect, it } from "vitest";
-import type { AgentRequest } from "../../src/agent.js";
+import type { AgentRequest } from "../../src/infrastructure/agents/types.js";
 import { createScriptedBackend } from "../testkit/scripted-backend.js";
 
 function request(role: AgentRequest["role"], prompt = `${role} objective`): AgentRequest {

@@ -4,7 +4,7 @@ import {
   assertWorkspaceIsolation,
   checkWorkspaceIsolation,
   forbiddenAgentWritableRoots} from "../../src/application/workspace-isolation.js";
-import type { AgentBackend } from "../../src/agent.js";
+import type { AgentBackend } from "../../src/infrastructure/agents/types.js";
 
 describe("workspace isolation", () => {
   const controlRoot = path.resolve("/tmp/repo");

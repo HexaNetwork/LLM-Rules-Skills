@@ -629,10 +629,6 @@ export const GrillOutputSchema = z.discriminatedUnion("status", [
 ]);
 export type GrillOutput = z.infer<typeof GrillOutputSchema>;
 
-/** @deprecated Prefer HighLevelPlanSchema; retained as an alias for the planner deliverable. */
-export const PlannerOutputSchema = HighLevelPlanSchema;
-export type PlannerOutput = HighLevelPlan;
-
 export const PLANNER_EXPECTED_OUTPUT =
   "{summary,problemStatement,solution,approach,constraints?,outOfScope?,openQuestions?}";
 

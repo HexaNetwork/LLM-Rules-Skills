@@ -5,7 +5,7 @@ import {
   createCli,
   productionCliDependencies,
   type CliDependencies} from "../../src/cli/create-cli.js";
-import type { HarnessConfig } from "../../src/config.js";
+import type { HarnessConfig } from "../../src/config/schema.js";
 import type { ProjectFixture } from "../testkit/project-fixture.js";
 
 export type CliRunResult = {

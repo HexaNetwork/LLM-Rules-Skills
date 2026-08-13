@@ -1,6 +1,6 @@
-import type { HarnessConfig } from "../src/config.js";
+import type { HarnessConfig } from "../src/config/schema.js";
 import type { CommandResult } from "../src/commands.js";
-import type { HarnessEngine } from "../src/engine.js";
+import type { HarnessEngine } from "../src/application/harness-engine.js";
 import type { HighLevelPlan, RunState } from "../src/domain.js";
 import type { CommandRunner } from "../src/application/dependencies.js";
 import {

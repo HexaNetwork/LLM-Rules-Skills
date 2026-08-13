@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { HarnessEngine } from "../../src/engine.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import {
   confirmGrillAndAdvance,
   HIGH_LEVEL_PLAN,

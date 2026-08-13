@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
-import {
-  AgentCoordinator,
-  createFakeBackend,
-  emitFakeToolCallSteps,
-  type AgentRequest,
-} from "../../src/agent.js";
+import { AgentCoordinator } from "../../src/infrastructure/agents/agent-coordinator.js";
+import { createFakeBackend, emitFakeToolCallSteps } from "../../src/infrastructure/agents/fake-backend.js";
+import type { AgentRequest } from "../../src/infrastructure/agents/types.js";
 import { WorkerOutputSchema, createRunState } from "../../src/domain.js";
 import { LocalKnowledgeBase } from "../../src/knowledge.js";
 import { RunStore } from "../../src/store.js";

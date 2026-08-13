@@ -3,12 +3,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
-import { writeRunWorkspace } from "../../src/config.js";
-import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import { writeRunWorkspace } from "../../src/config/io.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
 import { createRunState, type RunState } from "../../src/domain.js";
 import { canonicalizeWorkspacePath } from "../../src/domain/workspace.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 import {
   createProjectFixture,

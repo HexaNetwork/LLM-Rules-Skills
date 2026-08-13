@@ -1,9 +1,7 @@
 import path from "node:path";
-import {
-  ProjectSettingsPatchSchema,
-  writeProjectSettings,
-  type ProjectSettingsPatch,
-} from "../config.js";
+import { ProjectSettingsPatchSchema } from "../config/schema.js";
+import type { ProjectSettingsPatch } from "../config/schema.js";
+import { writeProjectSettings } from "../config/io.js";
 import { commandEvidence } from "../commands.js";
 import {
   applyHighLevelPlan,

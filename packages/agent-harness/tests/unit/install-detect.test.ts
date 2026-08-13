@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildInstallCommand, detectInstallFromCommand } from "../../src/commands.js";
-import { detectInstallFromToolStep } from "../../src/agent.js";
+import { detectInstallFromToolStep } from "../../src/infrastructure/agents/step-utils.js";
 
 describe("detectInstallFromCommand", () => {
   it("detects common package managers", () => {

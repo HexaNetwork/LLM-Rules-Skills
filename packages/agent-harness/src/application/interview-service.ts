@@ -17,7 +17,7 @@ import {
   type ReflectOutput,
   type RunState,
 } from "../domain.js";
-import type { InvokeInput } from "../agent.js";
+import type { InvokeInput } from "../infrastructure/agents/types.js";
 import { compactDomainSeed } from "../knowledge.js";
 import type { ApplicationContext } from "./application-context.js";
 import { pendingGrillReady } from "./helpers.js";

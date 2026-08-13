@@ -92,6 +92,7 @@ export { ScenarioTestingService } from "./scenario-testing-service.js";
 export { CrystallizingService } from "./crystallizing-service.js";
 export { FinalReviewService } from "./final-review-service.js";
 export { openRunHarness, type OpenedRunHarness } from "./run-engine-factory.js";
+export { HarnessEngine } from "./harness-engine.js";
 export {
   updateRunConfig,
   type RunConfigUpdate,

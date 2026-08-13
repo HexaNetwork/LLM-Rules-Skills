@@ -3,11 +3,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { resolveFrozenGuidanceRoot } from "./application/component-freeze.js";
 import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
-import type {
-  HarnessConfig,
-  KnowledgeScope,
-  KnowledgeVisibility,
-} from "./config.js";
+import type { HarnessConfig, KnowledgeScope, KnowledgeVisibility } from "./config/schema.js";
 import { LocalEmbeddingIndex } from "./embeddings.js";
 import {
   GraphifyRepositoryLookup,

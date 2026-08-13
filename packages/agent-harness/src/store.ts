@@ -9,7 +9,7 @@ import {
   type RunState,
   type TransitionResult,
 } from "./domain.js";
-import type { HarnessConfig } from "./config.js";
+import type { HarnessConfig } from "./config/schema.js";
 
 export type RunLoadFailure = { runId: string; error: string };
 

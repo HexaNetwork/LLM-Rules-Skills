@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 import {

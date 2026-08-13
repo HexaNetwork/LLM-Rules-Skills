@@ -1,4 +1,4 @@
-import type { HarnessConfig } from "../../config.js";
+import type { HarnessConfig } from "../../config/schema.js";
 import { normalizePath } from "./path-utils.js";
 import type {
   IndexedSearchResult,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseOutput, resolveAgentOutput } from "../../src/agent.js";
+import { parseOutput, resolveAgentOutput } from "../../src/infrastructure/agents/output-parser.js";
 
 describe("resolveAgentOutput", () => {
   it("prefers the latest parseable candidate among CreatePlan bodies and result text", () => {

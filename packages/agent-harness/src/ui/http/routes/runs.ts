@@ -1,16 +1,11 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  HarnessConfigSchema,
-  ProjectSettingsPatchSchema,
-  loadRunConfig,
-  loadRunWorkspace,
-  writeProjectSettings,
-} from "../../../config.js";
+import { HarnessConfigSchema, ProjectSettingsPatchSchema } from "../../../config/schema.js";
+import { loadRunConfig, loadRunWorkspace, writeProjectSettings } from "../../../config/io.js";
 import { openRunHarness, type OpenedRunHarness } from "../../../application/run-engine-factory.js";
 import { runInitialSetupThenAdvance } from "../../../application/run-setup.js";
-import { HarnessEngine } from "../../../engine.js";
+import { HarnessEngine } from "../../../application/harness-engine.js";
 import { HighLevelPlanSchema, VerificationSettingsPatchSchema } from "../../../domain.js";
 import { GitService, pathToIgnoredArtifactGlob } from "../../../git.js";
 import type { UiAppContext } from "../context.js";

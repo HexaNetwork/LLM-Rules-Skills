@@ -1,9 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
-import { configurationHash } from "../../src/config.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import { configurationHash } from "../../src/config/schema.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { VerificationSettingsPatchSchema } from "../../src/domain.js";
 import {
   confirmGrillAndAdvance,

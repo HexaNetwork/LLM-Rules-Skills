@@ -2,10 +2,10 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { openRunHarness } from "../../src/application/run-engine-factory.js";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
-import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
 import {
   createRunState,
   type BuildTask,
@@ -16,7 +16,7 @@ import {
   migrateRunWorkspace,
   sanitizeWorktreeRunId,
   type RunWorkspace} from "../../src/domain/workspace.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import type { GraphifyRunner } from "../../src/graphify.js";
 import { git as runGit } from "../testkit/git.js";

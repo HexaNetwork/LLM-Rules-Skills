@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HarnessEngine } from "../../src/engine.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import {
   confirmGrillAndAdvance,
   confirmPlanAndAdvance,

@@ -1,4 +1,4 @@
-import { reportedTotal } from "../agent.js";
+import { reportedTotal } from "../infrastructure/agents/usage.js";
 import type { RunState } from "../domain.js";
 import type { ApplicationContext } from "./application-context.js";
 

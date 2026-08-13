@@ -2,14 +2,14 @@ import { access, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { loadExternalProjectConfig } from "../../src/application/external-config.js";
 import { resolveHarnessHome } from "../../src/application/harness-home.js";
 import { harnessPathsFromProject } from "../../src/application/paths.js";
 import { ProjectRegistry } from "../../src/application/project-registry.js";
 import { reportProjectStorage } from "../../src/application/storage-report.js";
-import { HarnessConfigSchema } from "../../src/config.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { HarnessConfigSchema } from "../../src/config/schema.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import { git } from "../testkit/git.js";
 import {

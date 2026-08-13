@@ -2,11 +2,11 @@
 name: implement-auto
 description: >-
   Automated implementation entrypoint. Prefer the Agent Harness CLI for
-  contract-deterministic AFK runs (prepare/approve/execute/resume). Falls back
-  to a prose per-issue loop only when the harness is unavailable or the user
-  explicitly requests the legacy chat orchestrator. Use when the user says
-  /implement-auto, implement-auto, or asks to automatically implement issues
-  from a PRD, issue folder, or tracker.
+  contract-deterministic AFK runs (start/continue/answer via harness-run).
+  Falls back to a prose per-issue loop only when the harness is unavailable
+  or the user explicitly requests the legacy chat orchestrator. Use when the
+  user says /implement-auto, implement-auto, or asks to automatically implement
+  issues from a PRD, issue folder, or tracker.
 disable-model-invocation: true
 ---
 
@@ -14,7 +14,7 @@ disable-model-invocation: true
 
 ## Preferred path — Agent Harness
 
-For AFK implementation queues, **do not re-implement the orchestration loop in chat**. Follow `harness-run`: `init` (if needed) → `prepare` → fix validation with the user → `approve` → `execute` / `resume`. Report harness final status, branch, PR URL, and blocked reasons.
+For AFK implementation queues, **do not re-implement the orchestration loop in chat**. Follow `harness-run`: project registration / external home (if needed) → `start` → operator confirms via the dashboard or `answer` / confirm verbs → `continue` to advance. Report harness final status, branch, PR URL, and blocked reasons.
 
 Use the legacy prose loop below only when the user explicitly asks for the chat orchestrator, or Agent Harness is not installed / cannot run here.
 

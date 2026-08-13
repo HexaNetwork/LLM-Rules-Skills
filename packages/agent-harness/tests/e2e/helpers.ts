@@ -3,8 +3,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import type { Page } from "@playwright/test";
 import { expect } from "@playwright/test";
 import yaml from "js-yaml";
-import type { AgentBackend } from "../../src/agent.js";
-import type { HarnessConfig } from "../../src/config.js";
+import type { AgentBackend } from "../../src/infrastructure/agents/types.js";
+import type { HarnessConfig } from "../../src/config/schema.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
 import { withDiagnosticArtifacts, type DiagnosticContext } from "../testkit/diagnostics.js";
 import {

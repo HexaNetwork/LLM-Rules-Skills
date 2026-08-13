@@ -11,8 +11,8 @@ import {
   assertWorkspaceIsolation,
   capabilitiesForBackend,
 } from "../../application/workspace-isolation.js";
-import type { HarnessConfig } from "../../config.js";
-import { modelForRole } from "../../config.js";
+import type { HarnessConfig } from "../../config/schema.js";
+import { modelForRole } from "../../config/defaults.js";
 import {
   PromptBuilderOutputSchema,
   type AgentRole,

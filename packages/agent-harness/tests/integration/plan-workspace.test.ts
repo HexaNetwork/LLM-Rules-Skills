@@ -1,8 +1,9 @@
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFakeBackend, type AgentRequest } from "../../src/agent.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import type { AgentRequest } from "../../src/infrastructure/agents/types.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import {
   createPlannerPrdSequence,
   HIGH_LEVEL_PLAN,

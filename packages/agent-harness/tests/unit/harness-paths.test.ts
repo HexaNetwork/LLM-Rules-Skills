@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { ApplicationContext } from "../../src/application/application-context.js";
 import { createApplicationDependencies } from "../../src/application/dependencies.js";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
-import { createFakeBackend } from "../../src/agent.js";
-import { configurationHash, HarnessConfigSchema } from "../../src/config.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import { configurationHash, HarnessConfigSchema } from "../../src/config/schema.js";
 import { RunStore } from "../../src/store.js";
 import { buildFixtureConfig } from "../testkit/project-fixture.js";
 

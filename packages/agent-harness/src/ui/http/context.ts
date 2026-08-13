@@ -1,5 +1,5 @@
-import type { AgentBackend } from "../../agent.js";
-import type { HarnessConfig } from "../../config.js";
+import type { AgentBackend } from "../../infrastructure/agents/types.js";
+import type { HarnessConfig } from "../../config/schema.js";
 import type { GraphifyRunner } from "../../graphify.js";
 import type { LocalKnowledgeBase } from "../../knowledge.js";
 import type { RunStore } from "../../store.js";

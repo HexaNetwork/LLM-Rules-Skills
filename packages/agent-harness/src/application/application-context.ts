@@ -1,8 +1,9 @@
 import { access, unlink, writeFile } from "node:fs/promises";
 import { hostname as localHostname } from "node:os";
 import path from "node:path";
-import type { AgentCoordinator } from "../agent.js";
-import { loadRunWorkspace, type HarnessConfig } from "../config.js";
+import type { AgentCoordinator } from "../infrastructure/agents/agent-coordinator.js";
+import { loadRunWorkspace } from "../config/io.js";
+import type { HarnessConfig } from "../config/schema.js";
 import type { BuildTask, RunState } from "../domain.js";
 import { HarnessFailure } from "../errors.js";
 import type { GitService } from "../git.js";

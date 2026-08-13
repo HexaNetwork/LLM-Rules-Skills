@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentBackend, AgentRequest, AgentStepEvent } from "../../src/agent.js";
+import type { AgentBackend, AgentRequest, AgentStepEvent } from "../../src/infrastructure/agents/types.js";
 import type { AgentRole } from "../../src/domain.js";
 
 export type ScriptedStep =

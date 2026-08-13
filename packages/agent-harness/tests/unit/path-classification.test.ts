@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { HarnessConfigSchema } from "../../src/config.js";
-import { isTestPath } from "../../src/engine.js";
+import { HarnessConfigSchema } from "../../src/config/schema.js";
+import { isTestPath } from "../../src/domain.js";
 
 describe("test path classification", () => {
   it("rejects legacy test paths when patterns are customized", () => {

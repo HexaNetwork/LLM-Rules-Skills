@@ -20,7 +20,7 @@ Normal CI must not require `CURSOR_API_KEY`, network access, Graphify installati
 - `RunState` and artifacts in `.agent-harness/runs/<runId>` remain authoritative. Add schema defaults instead of breaking existing run files.
 - The harness, not an agent, owns Git, commands, locks, retries, commits, and evidence.
 - Retain `AgentBackend`, `TrackerPort`, `RunStore`, `LocalKnowledgeBase`, and `GitService` as injectable ports.
-- Keep `HarnessEngine` as a compatible facade during the whole migration; this plan does not authorize a package API break.
+- Keep `HarnessEngine` as the application composition root (`src/application/harness-engine.ts`); Phase-3 `agent.ts` / `config.ts` / `engine.ts` compatibility barrels are removed (see legacy sunset S4). This plan still does not authorize dropping the composition-root API without a package major.
 - Do not expose a user-selectable fake provider. Test agents stay in a test kit and are injected only by tests.
 - Do not combine a mechanical move with changed workflow behaviour in one pull request.
 - Test projects are always created in the OS temporary directory and always deleted after the test, except when diagnostic copying is requested after failure.
@@ -264,7 +264,7 @@ Retain constructor and public methods. Final target is under 350 lines: dependen
 - `agent-coordinator.ts` — packet invocation, session persistence, retry orchestration;
 - `output-parser.ts` — JSON extraction/schema repair;
 - `activity-tracker.ts` — rate-limited activity/step artifacts;
-- `src/agent.ts` — temporary compatibility re-export barrel.
+- ~~`src/agent.ts` — temporary compatibility re-export barrel~~ **done / removed (legacy sunset S4)**.
 
 Preserve all session and step artifact shapes. Parser tests become pure unit tests. The Cursor adapter alone implements `AgentBackend`.
 
@@ -282,7 +282,7 @@ Keep `LocalKnowledgeBase` as the facade. Cache invalidation remains keyed by ind
 
 ## 3.3 Config code
 
-**Split `src/config.ts` into:** `schema.ts`, `defaults.ts`, `io.ts`, and `migrations.ts`, retaining `config.ts` as a compatibility barrel.
+**Split `src/config.ts` into:** `schema.ts`, `defaults.ts`, `io.ts`, and `migrations.ts`. Compatibility barrel `config.ts` **removed (legacy sunset S4)** — import from `config/` modules directly.
 
 - Schemas/types stay in `schema.ts`.
 - YAML reads/writes and settings edits stay in `io.ts`.

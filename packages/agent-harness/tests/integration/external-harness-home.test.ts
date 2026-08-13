@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:f
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import {
   loadExternalProjectConfig,
   seedExternalGuidance} from "../../src/application/external-config.js";
@@ -10,8 +10,9 @@ import { resolveHarnessHome } from "../../src/application/harness-home.js";
 import { migrateHome } from "../../src/application/migrate-home.js";
 import { ProjectRegistry } from "../../src/application/project-registry.js";
 import { harnessPathsFromProject } from "../../src/application/paths.js";
-import { HarnessConfigSchema, defaultConfigYaml } from "../../src/config.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { HarnessConfigSchema } from "../../src/config/schema.js";
+import { defaultConfigYaml } from "../../src/config/defaults.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import { git } from "../testkit/git.js";
 import { passingCommandRunner } from "../helpers.js";

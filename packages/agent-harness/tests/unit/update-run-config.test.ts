@@ -5,10 +5,8 @@ import path from "node:path";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { updateRunConfig } from "../../src/application/update-run-config.js";
 import { ApplicationContext } from "../../src/application/application-context.js";
-import {
-  CONFIG_VERSION,
-  configurationHash,
-  normalizeFrozenRunConfig} from "../../src/config.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
+import { normalizeFrozenRunConfig } from "../../src/config/migrations.js";
 import { createRunState, type RunState } from "../../src/domain.js";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { RunStore } from "../../src/store.js";

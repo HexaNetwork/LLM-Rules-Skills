@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { CONFIG_VERSION, configurationHash, writeRunWorkspace } from "../config.js";
+import { CONFIG_VERSION, configurationHash } from "../config/schema.js";
+import { writeRunWorkspace } from "../config/io.js";
 import { createRunState, type RunState } from "../domain.js";
 import { prepareGraphifyForRun } from "../graphify.js";
 import { WorktreeManager } from "../git/worktree-manager.js";

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { access, stat } from "node:fs/promises";
 import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
-import type { HarnessConfig } from "./config.js";
+import type { HarnessConfig } from "./config/schema.js";
 import type { SearchResult } from "./knowledge.js";
 
 export type RepositorySearchResult = Omit<

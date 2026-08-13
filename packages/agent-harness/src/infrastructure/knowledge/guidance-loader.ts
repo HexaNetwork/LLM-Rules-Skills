@@ -1,6 +1,6 @@
 import path from "node:path";
 import { readdir, readFile, stat } from "node:fs/promises";
-import type { KnowledgeScope, KnowledgeVisibility } from "../../config.js";
+import type { KnowledgeScope, KnowledgeVisibility } from "../../config/schema.js";
 import { guidanceMetadata, hash, normalizePath } from "./document-index.js";
 import type { KnowledgeDocument } from "./types.js";
 

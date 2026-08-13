@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";

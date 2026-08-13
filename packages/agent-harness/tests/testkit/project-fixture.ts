@@ -1,7 +1,8 @@
 import path from "node:path";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { HarnessConfigSchema, type HarnessConfig } from "../../src/config.js";
+import { HarnessConfigSchema } from "../../src/config/schema.js";
+import type { HarnessConfig } from "../../src/config/schema.js";
 import { sanitizeWorktreeRunId } from "../../src/domain/workspace.js";
 import { git } from "./git.js";
 

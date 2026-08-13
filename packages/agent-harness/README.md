@@ -87,7 +87,7 @@ Each run lives under `.agent-harness/runs/<runId>/`:
 | `brief.md` | Confirmed (or draft) feature restatement |
 | `grill.md` | Locked grill resolutions |
 | `unknowns.md` | Open-unknowns register grouped by status |
-| `issues/*.md` | Legacy decision artifacts if present |
+| `issues/*.md` | Historical only — older runs may still have these; new runs do not write them |
 | `tasks/*.md` | Tracer-bullet implementation tickets and evidence |
 | `packets/*.json` | Complete handoff supplied to one model invocation |
 | `sessions/*.json` | Invocation records: role, model, provider context IDs, causal metadata (`invocationKind`, `trigger`), exact submitted prompt, outcome, usage, and handoff summary |

@@ -1,8 +1,8 @@
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 

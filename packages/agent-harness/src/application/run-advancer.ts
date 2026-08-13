@@ -1,10 +1,6 @@
-import {
-  CONFIG_VERSION,
-  configurationHash,
-  configurationPolicyDiff,
-  loadRunWorkspace,
-  normalizeFrozenRunConfig,
-} from "../config.js";
+import { CONFIG_VERSION, configurationHash, configurationPolicyDiff } from "../config/schema.js";
+import { loadRunWorkspace } from "../config/io.js";
+import { normalizeFrozenRunConfig } from "../config/migrations.js";
 import { isTerminalPhase, type RunState } from "../domain.js";
 import { classifyFailure, HarnessFailure, RunCancelledError } from "../errors.js";
 import { WorktreeManager } from "../git/worktree-manager.js";

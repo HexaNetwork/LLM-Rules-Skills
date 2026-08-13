@@ -4,9 +4,10 @@ import {
   type CommandEnvironmentOptions,
   type CommandResult,
 } from "../commands.js";
-import type { AgentBackend, AgentCoordinator } from "../agent.js";
-import { AgentCoordinator as AgentCoordinatorImpl } from "../agent.js";
-import type { HarnessConfig } from "../config.js";
+import type { AgentBackend } from "../infrastructure/agents/types.js";
+import type { AgentCoordinator } from "../infrastructure/agents/agent-coordinator.js";
+import { AgentCoordinator as AgentCoordinatorImpl } from "../infrastructure/agents/agent-coordinator.js";
+import type { HarnessConfig } from "../config/schema.js";
 import type { GitService } from "../git.js";
 import { GitService as GitServiceImpl } from "../git.js";
 import {
@@ -54,7 +55,7 @@ export type ApplicationDependencies = {
   projectContext?: ProjectContext;
 };
 
-/** Public construction seam retained by HarnessEngine. */
+/** Public construction seam for HarnessEngine / openRunHarness. */
 export type HarnessDependencies = {
   backend: AgentBackend;
   tracker?: TrackerPort;

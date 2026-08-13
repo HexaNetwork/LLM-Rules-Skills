@@ -7,7 +7,7 @@ import {
   resolve as pathResolve,
 } from "node:path";
 import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
-import type { HarnessConfig } from "./config.js";
+import type { HarnessConfig } from "./config/schema.js";
 import type { MessageOutput } from "./domain.js";
 import { buildWorkspaceEvidence, type WorkspaceEvidence } from "./domain/workspace.js";
 import { HarnessFailure } from "./errors.js";

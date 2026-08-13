@@ -3,19 +3,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 
-import {
-  CONFIG_VERSION,
-  DEFAULT_GUIDANCE_ASSIGNMENTS,
-  HarnessConfigSchema,
-  configurationHash,
-  configurationPolicyDiff,
-  defaultConfigYaml,
-  deploymentConfigYaml,
-  loadConfig,
-  loadRunConfig,
-  normalizeFrozenRunConfig,
-  writeProjectSettings} from "../../src/config.js";
-import { isTestPath } from "../../src/engine.js";
+import { CONFIG_VERSION, DEFAULT_GUIDANCE_ASSIGNMENTS, HarnessConfigSchema, configurationHash, configurationPolicyDiff } from "../../src/config/schema.js";
+import { defaultConfigYaml, deploymentConfigYaml } from "../../src/config/defaults.js";
+import { loadConfig, loadRunConfig, writeProjectSettings } from "../../src/config/io.js";
+import { normalizeFrozenRunConfig } from "../../src/config/migrations.js";
+import { isTestPath } from "../../src/domain.js";
 import { fixtureRoot } from "../helpers.js";
 
 describe("token-conscious defaults", () => {

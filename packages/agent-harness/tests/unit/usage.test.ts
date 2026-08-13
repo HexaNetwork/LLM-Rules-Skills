@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createFakeBackend, reportedTotal, type AgentBackend } from "../../src/agent.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import { reportedTotal } from "../../src/infrastructure/agents/usage.js";
+import type { AgentBackend } from "../../src/infrastructure/agents/types.js";
 import { ApplicationContext } from "../../src/application/application-context.js";
 import { accrueRunUsage } from "../../src/application/usage-ledger.js";
-import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 describe("reportedTotal", () => {
@@ -65,7 +67,7 @@ describe("run usage accrual and cost ceiling", () => {
       blockedFrom: "executing",
       blockedKind: "config",
       blockedRetriable: false,
-      failure: "Test writer changed non-test paths: app/src/main/test/ThingTest.java"};
+      failure: "Test command could not be launched: ./gradlew test"};
     await engine.store.initialize();
     await engine.store.create(state);
     await engine.store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });

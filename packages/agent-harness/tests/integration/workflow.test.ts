@@ -2,16 +2,11 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import {
-  createFakeBackend,
-  type AgentBackend,
-  type AgentRequest} from "../../src/agent.js";
-import {
-  CONFIG_VERSION,
-  configurationHash,
-  loadRunConfig,
-  writeProjectSettings} from "../../src/config.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import type { AgentBackend, AgentRequest } from "../../src/infrastructure/agents/types.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
+import { loadRunConfig, writeProjectSettings } from "../../src/config/io.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { GitService } from "../../src/git.js";
 import {
   evidenceFingerprint,

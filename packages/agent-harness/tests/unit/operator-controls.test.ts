@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
-import { createFakeBackend } from "../../src/agent.js";
-import { CONFIG_VERSION, configurationHash } from "../../src/config.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { createRunState } from "../../src/domain.js";
 import { RunStore } from "../../src/store.js";
 import {
@@ -392,7 +392,7 @@ describe("operator controls", () => {
       blockedFrom: "executing",
       blockedKind: "config",
       blockedRetriable: false,
-      failure: "Test writer changed non-test paths: sample-app/tests/recovery.test.ts"});
+      failure: "Test command could not be launched: ./gradlew test"});
     await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
     let configFixerCalls = 0;
     let fixerCalls = 0;
@@ -435,7 +435,7 @@ describe("operator controls", () => {
     expect(events).toContain("fixer.applied");
   });
 
-  it("routes Test writer non-test-path failures to config-fixer even when blockedKind is internal", async () => {
+  it("routes command-not-launched failures to config-fixer even when blockedKind is internal", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       workflow: { testPathPatterns: ["tests/**"] } as never,
@@ -451,7 +451,7 @@ describe("operator controls", () => {
       blockedKind: "internal",
       blockedRetriable: false,
       failure:
-        "Test writer changed non-test paths: civcraft/src/main/test/com/avrgaming/civcraft/civilization/town/BuildFootprintTest.java"});
+        "Test command could not be launched: ./gradlew test\n'.' is not recognized as an internal or external command"});
     await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
     let configFixerCalls = 0;
     let fixerCalls = 0;
@@ -459,10 +459,10 @@ describe("operator controls", () => {
       "config-fixer": () => {
         configFixerCalls += 1;
         return {
-          summary: "Recognize CivCraft nested test roots.",
+          summary: "Fix the host test command.",
           configPatch: {
-            workflow: {
-              testPathPatterns: ["tests/**", "**/src/main/test/**"]}}};
+            commands: {
+              verification: [{ id: "test", command: "node --test", timeoutMs: 60_000 }]}}};
       },
       fixer: () => {
         fixerCalls += 1;
@@ -475,18 +475,18 @@ describe("operator controls", () => {
       }});
     const engine = new HarnessEngine(config, { backend });
 
-    const proposed = await engine.proposeFix(runId, "Recognize the nested test directory.");
+    const proposed = await engine.proposeFix(runId, "Fix the verification command for this host.");
     expect(proposed.fixerRecovery?.role).toBe("config-fixer");
     expect(configFixerCalls).toBe(1);
     expect(fixerCalls).toBe(0);
 
     const applied = await engine.applyApprovedFix(runId);
     expect(applied.phase).toBe("executing");
-    expect(engine.config.workflow.testPathPatterns).toEqual(["tests/**", "**/src/main/test/**"]);
+    expect(engine.config.commands.verification.map((item) => item.command)).toEqual(["node --test"]);
     const frozen = (await engine.store.readJson(runId, "config.json")) as {
-      workflow: { testPathPatterns: string[] };
+      commands: { verification: Array<{ command: string }> };
     };
-    expect(frozen.workflow.testPathPatterns).toEqual(["tests/**", "**/src/main/test/**"]);
+    expect(frozen.commands.verification.map((item) => item.command)).toEqual(["node --test"]);
   });
 
   it("rejects applying a file-fixer plan against a config-shaped failure", async () => {
@@ -504,11 +504,11 @@ describe("operator controls", () => {
       blockedFrom: "executing",
       blockedKind: "internal",
       blockedRetriable: false,
-      failure: "Test writer changed non-test paths: app/src/main/test/ThingTest.java",
+      failure: "Test command could not be launched: ./gradlew test",
       fixerRecovery: {
         role: "fixer",
         guidance: "fix the yaml",
-        failure: "Test writer changed non-test paths: app/src/main/test/ThingTest.java",
+        failure: "Test command could not be launched: ./gradlew test",
         plan: {
           summary: "Edit project yaml only",
           steps: [{ title: "Edit yaml", description: "Add a pattern" }],

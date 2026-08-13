@@ -12,9 +12,9 @@ The prose `/implement-auto` skill described a multi-agent loop, but the parent c
 
 Ship a TypeScript CLI (`@hexanetwork/agent-harness`, binary `agent-harness`) that owns stages, persisted state, command gates, retry budgets, and stop conditions. Cursor SDK agents receive bounded work packets and return schema-validated reports.
 
-**Chat and the local UI are clients.** The lifecycle coordinator (`agent-harness run`) is the source of truth for intake → risk-based refinement → policy approval → TDD-enforced execute → parallel Spec/Standards review → publish (commits + push + open PR, no auto-merge).
+**Chat and the local UI are clients.** The lifecycle coordinator (`agent-harness start`, with `run` as an alias) is the source of truth for intake → risk-based refinement → policy approval → TDD-enforced execute → parallel Spec/Standards review → publish (commits + push + open PR, no auto-merge).
 
-Opt-in entry is `/harness-run` (skill) or the loopback UI — not an always-applied redirect of ordinary implementation requests. Legacy `prepare` / `approve` / `execute` remain for staged operators.
+Opt-in entry is `/harness-run` (skill) or the loopback UI — not an always-applied redirect of ordinary implementation requests. Operators drive the durable loop with `start` / `continue` / `answer` (and related confirm verbs); the old staged `prepare` / `approve` / `execute` CLI verbs are retired.
 
 ## Consequences
 

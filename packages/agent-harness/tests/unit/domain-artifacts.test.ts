@@ -2,7 +2,8 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
-import { AgentCoordinator, createFakeBackend } from "../../src/agent.js";
+import { AgentCoordinator } from "../../src/infrastructure/agents/agent-coordinator.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import {
   HighLevelPlanSchema,
   WorkerOutputSchema,

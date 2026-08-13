@@ -265,7 +265,7 @@ export const eventsScript = `    async function waitForJob(runId) {
             var failureText = state.detail && state.detail.state ? String(state.detail.state.failure || '') : '';
             var configRepair =
               blockedKind === 'config' ||
-              /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test writer changed non-test paths|Red writer changed non-test paths|Red writer changed paths outside tests and affectedPaths|Test command could not be launched/i.test(failureText);
+              /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test command could not be launched/i.test(failureText);
             if (configRepair) guidance = 'Propose the smallest recommended repair that unblocks this harness configuration failure.';
             else { toast('Describe the recovery you want before asking the fixer to plan it', true); return; }
           }
@@ -436,14 +436,6 @@ export const eventsScript = `    async function waitForJob(runId) {
       if (target.dataset.closeTestFolderPicker != null) {
         var picker = $("testFolderPicker");
         if (picker) picker.hidden = true;
-      }
-      // data-question-choice: legacy single-question click; batch card uses data-batch-choice.
-      if (target.dataset.questionChoice) {
-        var answerForm = target.closest('.question-card').querySelector('#answerForm');
-        var answerInput = answerForm.querySelector('textarea[name="answer"]');
-        answerInput.value = target.dataset.questionChoice;
-        state.answerDrafts[answerForm.dataset.question] = target.dataset.questionChoice;
-        answerInput.focus();
       }
       if (target.dataset.batchChoice) {
         selectBatchOption(target.dataset.batchChoice, target.dataset.optionId);

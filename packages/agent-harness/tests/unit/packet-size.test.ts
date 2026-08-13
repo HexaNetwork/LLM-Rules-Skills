@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { recentEvidenceOutput } from "../../src/commands.js";
 import type { BuildTask, CommandEvidence, WorkPacket } from "../../src/domain.js";
-import { taskForPacket } from "../../src/engine.js";
+import { taskForPacket } from "../../src/application/helpers.js";
 import { buildWorkPacket } from "../../src/packet.js";
 import { renderPrompt } from "../../src/prompts.js";
 

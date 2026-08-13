@@ -1,4 +1,4 @@
-import type { PreflightCommitOrder } from "../config.js";
+import type { PreflightCommitOrder } from "../config/schema.js";
 import type {
   BuildTask,
   ProposedInstall,

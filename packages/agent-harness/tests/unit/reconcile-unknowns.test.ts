@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reconcileUnknowns } from "../../src/engine.js";
+import { reconcileUnknowns } from "../../src/domain.js";
 import type { OpenUnknown, OpenUnknownDraft } from "../../src/domain.js";
 
 const draft = (overrides: Partial<OpenUnknownDraft> = {}): OpenUnknownDraft => ({

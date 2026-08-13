@@ -1,4 +1,4 @@
-import { writeRunWorkspace } from "../config.js";
+import { writeRunWorkspace } from "../config/io.js";
 import {
   MessageOutputSchema,
   REVIEW_EXPECTED_OUTPUT,

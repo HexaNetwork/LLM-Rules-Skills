@@ -3,12 +3,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { writeFile, access } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { dirtyTreeMessage } from "../../src/application/helpers.js";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { migrateRunWorkspace } from "../../src/domain/workspace.js";
 import { GitService } from "../../src/git.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 import { git as runGit } from "../testkit/git.js";
 

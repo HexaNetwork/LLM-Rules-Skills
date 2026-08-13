@@ -1,12 +1,6 @@
-import {
-  HarnessConfigSchema,
-  RunPolicyPatchSchema,
-  configurationHash,
-  configurationPolicyDiff,
-  normalizeFrozenRunConfig,
-  type HarnessConfig,
-  type RunPolicyPatch,
-} from "../config.js";
+import { HarnessConfigSchema, RunPolicyPatchSchema, configurationHash, configurationPolicyDiff } from "../config/schema.js";
+import type { HarnessConfig, RunPolicyPatch } from "../config/schema.js";
+import { normalizeFrozenRunConfig } from "../config/migrations.js";
 import type { RunState } from "../domain.js";
 import type { ApplicationContext } from "./application-context.js";
 

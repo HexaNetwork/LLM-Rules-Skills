@@ -4,14 +4,11 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Command } from "commander";
-import { createCursorBackend, type AgentBackend } from "../agent.js";
-import {
-  defaultConfigYaml,
-  deploymentConfigYaml,
-  loadConfig,
-  loadRunConfig,
-  type HarnessConfig,
-} from "../config.js";
+import { createCursorBackend } from "../infrastructure/agents/cursor-backend.js";
+import type { AgentBackend } from "../infrastructure/agents/types.js";
+import { defaultConfigYaml, deploymentConfigYaml } from "../config/defaults.js";
+import { loadConfig, loadRunConfig } from "../config/io.js";
+import type { HarnessConfig } from "../config/schema.js";
 import {
   loadExternalProjectConfig,
   seedExternalGuidance,
@@ -21,7 +18,7 @@ import { migrateHome } from "../application/migrate-home.js";
 import { ProjectRegistry } from "../application/project-registry.js";
 import { formatBytes, reportProjectStorage } from "../application/storage-report.js";
 import { openRunHarness } from "../application/run-engine-factory.js";
-import { HarnessEngine } from "../engine.js";
+import { HarnessEngine } from "../application/harness-engine.js";
 import { GitService } from "../git.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { startUiServer, type UiServer } from "../ui/server.js";

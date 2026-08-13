@@ -1,7 +1,5 @@
-import {
-  ProjectSettingsPatchSchema,
-  type ProjectSettingsPatch,
-} from "../config.js";
+import { ProjectSettingsPatchSchema } from "../config/schema.js";
+import type { ProjectSettingsPatch } from "../config/schema.js";
 import type { RunState } from "../domain.js";
 import type { ApplicationContext } from "./application-context.js";
 import { indexOfTaskForReportedPaths, unique } from "./helpers.js";

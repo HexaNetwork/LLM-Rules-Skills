@@ -1,4 +1,4 @@
-import type { HarnessConfig } from "../config.js";
+import type { HarnessConfig } from "../config/schema.js";
 import type { RunState } from "../domain.js";
 import { classifyFailure } from "../errors.js";
 import { prepareGraphifyForRun, type GraphifyRunner } from "../graphify.js";

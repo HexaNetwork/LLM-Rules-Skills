@@ -1,7 +1,8 @@
 import path from "node:path";
 import { readdir, realpath } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { writeProjectSettings, type HarnessConfig } from "../../../config.js";
+import { writeProjectSettings } from "../../../config/io.js";
+import type { HarnessConfig } from "../../../config/schema.js";
 import type { UiAppContext } from "../context.js";
 import {
   HttpError,

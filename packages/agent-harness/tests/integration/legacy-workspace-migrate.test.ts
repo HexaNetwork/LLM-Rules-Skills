@@ -1,11 +1,12 @@
 import path from "node:path";
 import { access, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFakeBackend } from "../../src/agent.js";
-import { CONFIG_VERSION, configurationHash, writeRunWorkspace } from "../../src/config.js";
+import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
+import { writeRunWorkspace } from "../../src/config/io.js";
 import { createRunState } from "../../src/domain.js";
 import { canonicalizeWorkspacePath, migrateRunWorkspace } from "../../src/domain/workspace.js";
-import { HarnessEngine } from "../../src/engine.js";
+import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 import { git as runGit } from "../testkit/git.js";

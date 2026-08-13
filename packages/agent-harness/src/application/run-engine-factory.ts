@@ -1,7 +1,7 @@
-import { loadRunConfig, loadRunWorkspace } from "../config.js";
-import type { HarnessConfig } from "../config.js";
+import { loadRunConfig, loadRunWorkspace } from "../config/io.js";
+import type { HarnessConfig } from "../config/schema.js";
 import type { RunWorkspace } from "../domain/workspace.js";
-import { HarnessEngine } from "../engine.js";
+import { HarnessEngine } from "./harness-engine.js";
 import { WorktreeManager } from "../git/worktree-manager.js";
 import { RunStore } from "../store.js";
 import type { HarnessDependencies } from "./dependencies.js";

@@ -97,6 +97,9 @@ describe("dashboard document", () => {
     expect(html).toContain("session-dialog");
     expect(html).toContain("provider contexts · invocations");
     expect(html).toContain("Agent activity");
+    expect(html).toContain("Generate analysis prompt");
+    expect(html).toContain("run-analysis-prompt.md");
+    expect(html).toContain("copyArtifactBtn");
     expect(html).toContain("activity-timeline");
     expect(html).toContain("activity-sequence");
     expect(html).toContain("activity-view-help");

@@ -325,6 +325,7 @@ export async function listArtifacts(store: RunStore, runId: string): Promise<str
     "state.json",
     "config.json",
     "installs.jsonl",
+    "run-analysis-prompt.md",
   ];
   const available: string[] = [];
   for (const file of fixed) {
@@ -349,6 +350,7 @@ export function allowedArtifact(value: string): boolean {
       "state.json",
       "config.json",
       "installs.jsonl",
+      "run-analysis-prompt.md",
     ].includes(value) ||
     /^(issues|tasks|packets|sessions)\/[A-Za-z0-9._-]+$/.test(value) ||
     /^sessions\/[A-Za-z0-9][A-Za-z0-9._-]*\.steps\.jsonl$/.test(value)

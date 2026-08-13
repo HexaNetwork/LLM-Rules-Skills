@@ -13,6 +13,7 @@ const SMALL_ROLES = new Set<AgentRole>([
   "message-writer",
   "config-fixer",
   "project-profiler",
+  "run-analysis-prompt-writer",
 ]);
 
 export function modelForRole(config: HarnessConfig, role: AgentRole): string {
@@ -192,6 +193,9 @@ knowledge:
         rules: []
         skills: []
       project-profiler:
+        rules: []
+        skills: []
+      run-analysis-prompt-writer:
         rules: []
         skills: []
   # Optional semantic document retrieval. Vectors remain in the local index;

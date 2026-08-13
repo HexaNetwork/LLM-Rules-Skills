@@ -104,6 +104,7 @@ export const renderRunScript = `    function renderSidebar() {
           : '<button class="btn small primary" data-action="retry">Retry</button>';
       }
       if (!["completed","cancelled"].includes(s.phase)) out += '<button class="btn small danger" data-action="cancel" data-testid="cancel-run">Cancel</button>';
+      out += '<button class="btn small" data-action="generate_analysis_prompt" title="Ask an agent to package this run for analysis">Generate analysis prompt</button>';
       if (s.pullRequestUrl) out += '<a class="btn small primary" target="_blank" rel="noreferrer" href="' + attr(safeUrl(s.pullRequestUrl)) + '">Open PR ↗</a>';
       return out;
     }

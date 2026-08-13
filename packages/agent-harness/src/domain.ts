@@ -587,6 +587,7 @@ export const AgentRoleSchema = z.enum([
   "fixer",
   "config-fixer",
   "project-profiler",
+  "run-analysis-prompt-writer",
 ]);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 
@@ -764,6 +765,12 @@ export const MessageOutputSchema = z.object({
   body: z.string(),
 });
 export type MessageOutput = z.infer<typeof MessageOutputSchema>;
+
+export const RunAnalysisPromptOutputSchema = z.object({
+  summary: z.string().min(1),
+  prompt: z.string().min(1),
+});
+export type RunAnalysisPromptOutput = z.infer<typeof RunAnalysisPromptOutputSchema>;
 
 export type WorkPacket = {
   contractVersion: typeof CONTRACT_VERSION;

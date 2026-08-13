@@ -459,6 +459,7 @@ export function renderDashboard(): string {
   <dialog id="artifactDialog">
     <div class="dialog-head"><h2 id="artifactTitle">Artifact</h2><button type="button" class="btn ghost icon-btn" data-close="artifactDialog">×</button></div>
     <div class="markdown-view"><pre id="artifactContent"></pre></div>
+    <div class="dialog-foot"><button type="button" class="btn primary" id="copyArtifactBtn">Copy to clipboard</button></div>
   </dialog>
   <dialog id="sessionDialog" class="session-dialog">
     <div class="dialog-head"><div class="session-title-wrap"><h2 id="sessionTitle">Invocation inspector</h2><div class="faint" id="sessionSubtitle"></div></div><button type="button" class="btn ghost icon-btn" data-close="sessionDialog">×</button></div>

@@ -14,6 +14,7 @@ import { TaskExecutionService } from "./task-execution-service.js";
 import { ScenarioTestingService } from "./scenario-testing-service.js";
 import { CrystallizingService } from "./crystallizing-service.js";
 import { FinalReviewService } from "./final-review-service.js";
+import { RunAnalysisService } from "./run-analysis-service.js";
 
 /**
  * Application composition root: wires services and forwards the public run API.
@@ -33,6 +34,7 @@ export class HarnessEngine {
   private readonly execution: TaskExecutionService;
   private readonly recovery: RecoveryService;
   private readonly advancer: RunAdvancer;
+  private readonly runAnalysis: RunAnalysisService;
 
   constructor(
     readonly config: HarnessConfig,
@@ -51,6 +53,7 @@ export class HarnessEngine {
     this.execution = new TaskExecutionService(ctx);
     this.recovery = new RecoveryService(ctx, this.interview);
     this.lifecycle = new RunLifecycleService(ctx, this.recovery);
+    this.runAnalysis = new RunAnalysisService(ctx);
     const scenarioTesting = new ScenarioTestingService(ctx);
     const crystallizing = new CrystallizingService(ctx);
     const finalReview = new FinalReviewService(ctx);
@@ -90,6 +93,10 @@ export class HarnessEngine {
 
   status(runId: string): Promise<RunState> {
     return this.lifecycle.status(runId);
+  }
+
+  generateRunAnalysisPrompt(runId: string) {
+    return this.runAnalysis.generatePrompt(runId);
   }
 
   advance(runId: string): Promise<RunState> {

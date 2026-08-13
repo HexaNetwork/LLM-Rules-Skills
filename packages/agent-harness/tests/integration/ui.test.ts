@@ -55,6 +55,51 @@ describe("central dashboard", () => {
     ui = undefined;
   });
 
+  it("manually generates and serves a portable run-analysis prompt", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, { agent: { promptBuilder: false } as never });
+    const backend = createFakeBackend({
+      "run-analysis-prompt-writer": () => ({
+        summary: "Packaged durable evidence",
+        prompt: "Review this run evidence and identify concrete harness improvements.",
+      }),
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const state = await engine.start("Analyze this dashboard run", "analysis-trigger-run", false, false);
+    ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
+
+    const triggered = await request(ui, `/api/runs/${state.runId}/actions`, {
+      method: "POST",
+      body: { action: "generate_analysis_prompt" },
+    });
+    expect(triggered.status).toBe(202);
+
+    const deadline = Date.now() + 5_000;
+    let detail: { job?: unknown; artifacts?: string[]; sessions?: Array<{ role: string }> } = {};
+    while (Date.now() < deadline) {
+      const response = await request(ui, `/api/runs/${state.runId}`);
+      detail = (await response.json()) as typeof detail;
+      if (!detail.job && detail.artifacts?.includes("run-analysis-prompt.md")) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(detail.artifacts).toContain("run-analysis-prompt.md");
+    expect(detail.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "run-analysis-prompt-writer" }),
+      ]),
+    );
+
+    const artifact = await request(
+      ui,
+      `/api/runs/${state.runId}/artifact?path=run-analysis-prompt.md`,
+    );
+    expect(artifact.status).toBe(200);
+    await expect(artifact.json()).resolves.toMatchObject({
+      path: "run-analysis-prompt.md",
+      content: "Review this run evidence and identify concrete harness improvements.\n",
+    });
+  });
+
   it("validates and persists schema-driven project settings", async () => {
     const root = await fixtureRoot();
     await mkdir(path.join(root, "sample-app", "tests", "integration"), { recursive: true });

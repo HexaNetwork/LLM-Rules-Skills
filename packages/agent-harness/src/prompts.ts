@@ -128,6 +128,14 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "In commands.testTargetTemplate, {filter} is a recorded test file path: the harness converts it to a wildcard *ClassName pattern for --tests templates and passes the path through for other runners. For Gradle, prefer a quoted --tests template such as gradlew test --tests \"{filter}\".",
     "Return exactly one raw JSON object with top-level summary and configPatch fields. Do not use Markdown headings or code fences.",
   ],
+  "run-analysis-prompt-writer": [
+    "Do not edit files, call tools, or attempt to improve the run yourself.",
+    "Turn the supplied durable run evidence into one self-contained prompt for a separate analysis agent.",
+    "The generated prompt must ask for evidence-backed findings about orchestration, prompts, context handoffs, agent outputs, retries, token use, verification, and user experience, while distinguishing facts from inference.",
+    "Preserve concrete run identifiers, sequence information, failures, and useful excerpts. State explicitly when evidence was truncated or unavailable.",
+    "Do not include secrets, credentials, or unrelated repository content. Do not instruct the downstream agent to modify files or the run.",
+    "Return exactly one raw JSON object with top-level summary and prompt fields. Do not use Markdown headings or code fences around the JSON.",
+  ],
 };
 
 export function roleRulesFor(role: AgentRole): readonly string[] {

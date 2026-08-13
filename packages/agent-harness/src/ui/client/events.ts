@@ -50,6 +50,13 @@ export const eventsScript = `    async function waitForJob(runId) {
           toast(result.error, true);
           return;
         }
+        if (action === 'generate_analysis_prompt') {
+          state.tab = 'artifacts';
+          renderRun();
+          await openArtifact('run-analysis-prompt.md');
+          toast('Analysis prompt generated');
+          return;
+        }
         var landedGrillReady = !!(state.detail && state.detail.state && state.detail.state.grillReady);
         var landedPlanReady = !!(state.detail && state.detail.state && state.detail.state.planReady);
         var landedVerification = !!(state.detail && state.detail.state && state.detail.state.verificationReady);
@@ -397,6 +404,16 @@ export const eventsScript = `    async function waitForJob(runId) {
         setSoundsMuted(!soundsMuted());
       }
       if (target.dataset.artifact) openArtifact(target.dataset.artifact);
+      if (target.id === 'copyArtifactBtn') {
+        var artifactText = $("artifactContent").textContent || '';
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(artifactText)
+            .then(function () { toast('Copied to clipboard'); })
+            .catch(function () { toast('Could not copy artifact', true); });
+        } else {
+          toast('Clipboard access is unavailable', true);
+        }
+      }
       if (target.dataset.toggleContext) {
         if (!state.expandedContexts) state.expandedContexts = {};
         var contextKey = target.dataset.toggleContext;

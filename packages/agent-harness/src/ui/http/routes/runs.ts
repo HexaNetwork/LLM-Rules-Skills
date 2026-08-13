@@ -276,12 +276,29 @@ export async function handleRunsRoutes(
       { backend: ctx.backend, store: ctx.store, graphifyRunner: ctx.graphifyRunner },
       {
         validateWorktree:
-          action !== "cancel" && action !== "note" && action !== "stop",
+          action !== "cancel" &&
+          action !== "note" &&
+          action !== "stop" &&
+          action !== "generate_analysis_prompt",
       },
     );
-    const engine = opened.engine;
+    // Analysis generation is tool-free and must remain available after a completed
+    // run's disposable worktree has been cleaned up. Use the durable control root.
+    const engine =
+      action === "generate_analysis_prompt"
+        ? new HarnessEngine(opened.config, {
+            backend: ctx.backend,
+            store: ctx.store,
+            graphifyRunner: ctx.graphifyRunner,
+          })
+        : opened.engine;
     if (action === "continue") {
       ctx.jobs.enqueue(runId, action, () => engine.advance(runId));
+    } else if (action === "generate_analysis_prompt") {
+      ctx.jobs.enqueue(runId, "generate analysis prompt", async () => {
+        ctx.jobs.setDetail(runId, "Generating a portable run-analysis prompt");
+        await engine.generateRunAnalysisPrompt(runId);
+      });
     } else if (action === "resume") {
       // Jobs are intentionally process-local. A dashboard restart keeps the
       // durable run state but cannot safely assume that an interrupted

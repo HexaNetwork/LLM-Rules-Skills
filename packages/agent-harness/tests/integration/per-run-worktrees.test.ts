@@ -72,7 +72,7 @@ describe("per-run worktrees (Slice 2)", () => {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const baseSha = (await fixture.git("rev-parse", "HEAD")).trim();
@@ -208,7 +208,7 @@ describe("per-run worktrees (Slice 2)", () => {
         git: { enabled: true, baseBranch: "main" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const backend = createFakeBackend({});
@@ -244,7 +244,7 @@ describe("per-run worktrees (Slice 2)", () => {
         git: { enabled: true, baseBranch: "main" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const backend = createFakeBackend({});
@@ -290,7 +290,7 @@ describe("per-run worktrees (Slice 3 — run-local evidence)", () => {
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const backend = createFakeBackend({
@@ -407,7 +407,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const baseSha = (await fixture.git("rev-parse", "HEAD")).trim();
@@ -484,7 +484,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     await fixture.git("remote", "add", "origin", bareRoot);
@@ -556,7 +556,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const runId = "legacy-branch-1";
@@ -597,7 +597,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     // Conflicting branch at base, not at the run tip after the task commit.

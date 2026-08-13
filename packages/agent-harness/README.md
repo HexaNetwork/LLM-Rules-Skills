@@ -23,7 +23,7 @@ npm install -g @colbymchenry/codegraph
 
 The harness prepares `.gitnexus/` (primary) and falls back to `.codegraph/` before new runs
 and after verified task commits that touch source files. `init` / `deploy` write a repo-local
-config when needed and do not install either CLI. Use `--no-codegraph` on deploy for
+config when needed and do not install either CLI. Use `--no-repository-intelligence` on deploy for
 document-only projects (disables `knowledge.repositoryIntelligence`).
 
 The dashboard opens on an authenticated loopback URL and centralizes run creation, human questions, progress, test evidence, session handoffs, artifacts, retries, cancellation, and local knowledge search. Set `CURSOR_API_KEY` for real agent runs. The generated config pins models, commands, retry budgets, coverage policy, git publication, and local knowledge sources.
@@ -65,7 +65,7 @@ agent-harness knowledge search "refund ledger"
 agent-harness knowledge search "proration" --include-project billing-service
 ```
 
-`start --tdd on|off` freezes the override into that run's config snapshot. Later commands load the snapshot, so changing the project config cannot silently change an active run.
+`start` freezes the project config into that run's snapshot. Later commands load the snapshot, so changing the project config cannot silently change an active run.
 
 `retry --force` overrides a non-retriable block (`blockedRetriable: false`). `--max-run-tokens` / `--max-run-cost-usd` rewrite those ceilings on the run's frozen `config.json` (budget blocks still need `--force`). For configuration blocks, use the dashboard's focused config-fixer flow to review and apply a validated repair. `--commit-dirty` commits a dirty tree before retrying; `--accept-tree` re-stamps the working-tree fingerprint after a divergence block.
 
@@ -289,7 +289,7 @@ knowledge:
 ```
 
 Set `knowledge.repositoryIntelligence.enabled: false` (or deploy with
-`--no-codegraph`) for a document-only project. Disable a single provider with
+`--no-repository-intelligence`) for a document-only project. Disable a single provider with
 `providers.<id>.enabled: false`, or reorder/shorten `routes.search` when you
 want CodeGraph-only or GitNexus-only.
 

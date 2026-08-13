@@ -1,4 +1,4 @@
-import { HIGH_LEVEL_PLAN, PRD_OUTPUT } from "../helpers.js";
+import { HIGH_LEVEL_PLAN, PRD_OUTPUT, SCENARIO_PLANNER_OUTPUT } from "../helpers.js";
 import path from "node:path";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
@@ -73,6 +73,7 @@ describe("CLI acceptance lifecycle", () => {
               summary: "Use a casual greeting"}]}},
       { role: "planner", output: HIGH_LEVEL_PLAN },
       { role: "planner", output: PRD_OUTPUT },
+      { role: "scenario-planner", output: SCENARIO_PLANNER_OUTPUT },
       {
         role: "issue-slicer",
         output: {
@@ -84,10 +85,20 @@ describe("CLI acceptance lifecycle", () => {
               title: "Ship greeting",
               description: "Render greeting",
               acceptanceCriteria: ["Works"],
-              blockedBy: []}],
+              blockedBy: [],
+              scenarioIds: ["greet-happy"]}],
           proposedInstalls: []}},
       { role: "implementer", output: { summary: "Built", changedFiles: ["src/greet.ts"] } },
       { role: "task-reviewer", output: { approved: true, summary: "ok", findings: [] } },
+      {
+        role: "scenario-writer",
+        output: {
+          status: "implemented",
+          summary: "Scenario tests written",
+          testPaths: ["tests/greet.test.ts"],
+          changedFiles: ["tests/greet.test.ts"],
+        },
+      },
       { role: "reviewer", output: { approved: true, summary: "ok", findings: [] } }]);
 
     await withDiagnosticArtifacts({ testName: "acceptance-lifecycle", fixture }, async () => {
@@ -95,7 +106,7 @@ describe("CLI acceptance lifecycle", () => {
       const runId = "acceptance-lifecycle-run";
 
       const started = await runCli(
-        ["start", "--idea", "Add a greeting feature", "--config", configPath, "--run-id", runId, "--tdd", "off"],
+        ["start", "--idea", "Add a greeting feature", "--config", configPath, "--run-id", runId],
         deps,
       );
       expect(started.code).toBe(0);
@@ -247,8 +258,6 @@ describe("CLI acceptance lifecycle", () => {
           configPath,
           "--run-id",
           noticeId,
-          "--tdd",
-          "off",
           "--no-advance"],
         deps,
       );
@@ -266,7 +275,7 @@ describe("CLI acceptance lifecycle", () => {
       // Cancel while a later advance is in flight.
       const runId = "acceptance-cancel-run";
       const startPromise = runCli(
-        ["start", "--idea", "Cancel me", "--config", configPath, "--run-id", runId, "--tdd", "off"],
+        ["start", "--idea", "Cancel me", "--config", configPath, "--run-id", runId],
         deps,
       );
       await startedReflect;

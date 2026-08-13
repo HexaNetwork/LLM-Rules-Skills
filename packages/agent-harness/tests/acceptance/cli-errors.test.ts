@@ -21,7 +21,7 @@ describe("CLI acceptance errors and package entry", () => {
   });
 
   it("rejects invalid arguments with non-zero, actionable output", async () => {
-    const missingIdea = await runCli(["start", "--tdd", "off"]);
+    const missingIdea = await runCli(["start"]);
     expect(missingIdea.code).not.toBe(0);
     const message = `${missingIdea.stderr.join("\n")}\n${String((missingIdea.error as Error)?.message ?? "")}`;
     expect(message).toMatch(/idea|required/i);
@@ -29,18 +29,17 @@ describe("CLI acceptance errors and package entry", () => {
     fixture = await createProjectFixture();
     const { writeAcceptanceConfig } = await import("./helpers.js");
     const configPath = await writeAcceptanceConfig(fixture);
-    const badTdd = await runCli([
+    const unknownFlag = await runCli([
       "start",
       "--idea",
       "x",
-      "--tdd",
-      "maybe",
+      "--not-a-real-flag",
       "--config",
       configPath]);
-    expect(badTdd.code).not.toBe(0);
+    expect(unknownFlag.code).not.toBe(0);
     expect(
-      `${badTdd.stderr.join("\n")}\n${badTdd.stdout.join("\n")}\n${String((badTdd.error as Error)?.message ?? "")}`,
-    ).toMatch(/tdd must be 'on' or 'off'/i);
+      `${unknownFlag.stderr.join("\n")}\n${unknownFlag.stdout.join("\n")}\n${String((unknownFlag.error as Error)?.message ?? "")}`,
+    ).toMatch(/unknown|unexpected|not-a-real-flag/i);
   });
 
   it("compiled dist/cli.js --help validates the bin entry and ESM imports", async () => {

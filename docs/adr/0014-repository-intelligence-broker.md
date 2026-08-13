@@ -23,7 +23,7 @@ Operators also need concurrent per-run worktrees ([ADR 0010](0010-per-run-worktr
 ## Consequences
 
 - Adding a provider is an adapter plus route/config/tests; harness knowledge, packet, and lifecycle code stay on the broker contract.
-- Default new configs route `search` / `symbol-context` as `[gitnexus, codegraph]`. Operators who only install CodeGraph still fall through; document-only projects set `knowledge.repositoryIntelligence.enabled: false` (deploy `--no-codegraph` remains the migration alias for that disable).
+- Default new configs route `search` / `symbol-context` as `[gitnexus, codegraph]`. Operators who only install CodeGraph still fall through; document-only projects set `knowledge.repositoryIntelligence.enabled: false` (deploy `--no-repository-intelligence`).
 - Operators must install CLIs separately (`gitnexus`, `codegraph`); the harness verifies executables and builds indexes during run setup and after verified source commits, but does not vendor either tool.
 - ADR 0005 scope filtering and ADR 0006 guidance packs stay unchanged: repository intelligence is current-workspace structural context only and never bypasses document visibility gates.
 - UI/CLI surfaces should prefer repository-intelligence enablement and per-provider health over CodeGraph-only labels; temporary compatibility aliases at request edges are acceptable until neutralized.

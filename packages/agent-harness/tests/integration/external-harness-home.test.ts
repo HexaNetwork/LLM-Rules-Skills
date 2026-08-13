@@ -140,7 +140,7 @@ describe("external harness home", () => {
         createPullRequest: false},
       knowledge: {
         ...loaded.config.knowledge,
-        codegraph: { ...loaded.config.knowledge.codegraph, enabled: false },
+        repositoryIntelligence: { enabled: false },
         sources: [{ path: "README.md", scope: "project", visibility: "private" }],
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }},
       workflow: { ...loaded.config.workflow }});

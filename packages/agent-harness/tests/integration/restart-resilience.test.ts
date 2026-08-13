@@ -37,7 +37,7 @@ describe("Phase 5 restart resilience", () => {
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         git: { enabled: false },
         knowledge: {
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false }}}});
 
     await withDiagnosticArtifacts(

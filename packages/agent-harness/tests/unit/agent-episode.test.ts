@@ -15,7 +15,7 @@ describe("invokeInEpisode continuations", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false },
+        repositoryIntelligence: { enabled: false },
       },
     });
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
@@ -104,7 +104,7 @@ describe("invokeInEpisode continuations", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false },
+        repositoryIntelligence: { enabled: false },
       },
     });
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
@@ -140,7 +140,7 @@ describe("invokeInEpisode continuations", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false },
+        repositoryIntelligence: { enabled: false },
       },
     });
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);

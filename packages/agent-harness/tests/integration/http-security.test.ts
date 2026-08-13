@@ -21,7 +21,7 @@ describe("Phase 5 HTTP security", () => {
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 2_000, provider: "cursor" },
         workflow: { },
-        knowledge: { codegraph: { enabled: false }, guidance: { enabled: false } }}});
+        knowledge: { repositoryIntelligence: { enabled: false }, guidance: { enabled: false } }}});
 
     await withDiagnosticArtifacts(
       { testName: "http-security-surface", fixture },

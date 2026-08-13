@@ -14,7 +14,8 @@ import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
 import { git } from "../testkit/git.js";
 import {
   passingCommandRunner,
-  createPlannerPrdSequence
+  createPlannerPrdSequence,
+  SCENARIO_PLANNER_OUTPUT,
 } from "../helpers.js";
 import { runCli } from "./helpers.js";
 
@@ -143,6 +144,7 @@ describe("external harness home E2E matrix", () => {
         summary: "No open questions",
         resolutions: []}),
       planner: createPlannerPrdSequence().planner,
+      "scenario-planner": () => SCENARIO_PLANNER_OUTPUT,
 
       "issue-slicer": () => ({
         summary: "One task",
@@ -152,12 +154,19 @@ describe("external harness home E2E matrix", () => {
             title: "Ship feature",
             description: "Add feature.ts",
             acceptanceCriteria: ["file exists"],
-            blockedBy: []}],
+            blockedBy: [],
+            scenarioIds: ["greet-happy"]}],
         proposedInstalls: []}),
       implementer: async (request) => {
         observedCwds.push(request.cwd);
         return writingImplementer(request);
       },
+      "scenario-writer": () => ({
+        status: "implemented",
+        summary: "Scenario tests written",
+        testPaths: ["tests/feature.test.ts"],
+        changedFiles: ["tests/feature.test.ts"],
+      }),
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
       "message-writer": () => ({ subject: "feat: ship feature", body: "Ready." })});
 

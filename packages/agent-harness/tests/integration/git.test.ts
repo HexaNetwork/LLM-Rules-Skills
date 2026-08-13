@@ -98,7 +98,7 @@ describe("reviewTask packet", () => {
       knowledge: {
         ...fixtureConfig(root).knowledge,
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
+        repositoryIntelligence: { enabled: false }}});
     const backend = createFakeBackend({
       "task-reviewer": (request) => {
         const match = request.prompt.match(/\{[\s\S]*"changedFiles"[\s\S]*\}/);
@@ -190,7 +190,7 @@ describe("reviewTask packet", () => {
       knowledge: {
         ...fixtureConfig(root).knowledge,
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
+        repositoryIntelligence: { enabled: false }}});
     const backend = createFakeBackend({
       "task-reviewer": (request) => {
         reviewerPrompt = request.prompt;
@@ -241,7 +241,7 @@ describe("reviewTask packet", () => {
       knowledge: {
         ...fixtureConfig(root).knowledge,
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
+        repositoryIntelligence: { enabled: false }}});
     const backend = createFakeBackend({
       "task-reviewer": () => ({
         approved: false,

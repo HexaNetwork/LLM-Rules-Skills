@@ -749,21 +749,6 @@ export const renderRunScript = `    function renderSidebar() {
       return String(n);
     }
 
-    function invocationUsageWarning(invocation, contextUsage) {
-      var total = Number((invocation.usage && invocation.usage.totalTokens) || 0);
-      var contextTotal = Number((contextUsage && contextUsage.totalTokens) || 0);
-      if (contextTotal > 0 && total > contextTotal * 0.6 && total >= 100000) {
-        var pct = Math.round((total / contextTotal) * 100);
-        return 'Dominant share of context usage (' + formatTokenCount(total) + ' is ' + pct + '% of ' + formatTokenCount(contextTotal) + ')';
-      }
-      return '';
-    }
-
-    function renderUsageWarningIcon(warnReason) {
-      if (!warnReason) return '';
-      return ' <details class="activity-warn"><summary class="activity-warn-icon" title="Usage warning — click for details">⚠</summary><div class="activity-warn-popup">' + esc(warnReason) + '</div></details>';
-    }
-
     function activityViewMode() {
       return state.activityView === 'contexts' ? 'contexts' : 'sequence';
     }
@@ -800,15 +785,6 @@ export const renderRunScript = `    function renderSidebar() {
       if (!taskId || !state.detail || !state.detail.state || !state.detail.state.tasks) return '';
       var task = state.detail.state.tasks.find(function (item) { return item.id === taskId; });
       return task ? task.title : '';
-    }
-
-    function contextUsageByProviderId() {
-      var map = {};
-      var contexts = (state.detail && state.detail.agentActivity && state.detail.agentActivity.providerContexts) || [];
-      contexts.forEach(function (context) {
-        if (context.id) map[context.id] = context.usage || {};
-      });
-      return map;
     }
 
     function schemaRepairFollowed(invocations, index) {
@@ -873,18 +849,17 @@ export const renderRunScript = `    function renderSidebar() {
             var kind = invocation.invocationKind || 'invocation';
             var repaired = schemaRepairFollowed(context.invocations || [], invocationIndex);
             var trigger = invocation.triggerSummary || (invocation.trigger && invocation.trigger.summary) || 'Reason unavailable for historical invocation';
-            var warnReason = invocationUsageWarning(invocation, usage);
             var invUsage = invocation.usage || {};
             var tokens = formatTokenCount(invUsage.totalTokens || 0);
             var invCached = invUsage.cacheReadTokens ? (' · ' + formatTokenCount(invUsage.cacheReadTokens) + ' cached') : '';
             var time = invocation.startedAt ? date(invocation.startedAt).slice(11, 16) : '—';
-            html += '<div class="activity-invocation' + (warnReason ? ' warn' : '') + '">';
+            html += '<div class="activity-invocation">';
             html += '<div class="activity-invocation-main"><span class="faint">' + esc(time) + '</span>';
             html += '<strong>Turn ' + esc(String(turn)) + '</strong>';
             html += '<span class="context-badge ' + (badge === 'NEW CONTEXT' ? 'new' : 'reused') + '">' + badge + '</span>';
             html += '<span>' + esc(kind) + '</span>';
             if (repaired) html += '<span class="badge completed">repaired</span>';
-            html += '<span class="faint">' + esc(tokens) + esc(invCached) + renderUsageWarningIcon(warnReason) + '</span></div>';
+            html += '<span class="faint">' + esc(tokens) + esc(invCached) + '</span></div>';
             html += '<div class="muted" style="margin-top:4px">' + esc(trigger) + '</div>';
             if (invocation.error) html += '<div class="' + (repaired ? 'muted' : 'fail') + '" style="margin-top:4px">' + (repaired ? '<strong>Repaired contract error:</strong> ' : '') + esc(invocation.error) + '</div>';
             html += renderInvocationInspectButton(invocation, turn, context.invocationCount || 0, badge, repaired);
@@ -912,7 +887,6 @@ export const renderRunScript = `    function renderSidebar() {
 
     function renderExecutionSequence(timeline, contexts) {
       if (!state.expandedTimelineRows) state.expandedTimelineRows = {};
-      var usageByContext = contextUsageByProviderId();
       var contextTotals = {};
       (contexts || []).forEach(function (context) {
         contextTotals[context.id] = context.invocationCount || (context.invocations || []).length;
@@ -935,7 +909,6 @@ export const renderRunScript = `    function renderSidebar() {
           var taskTitle = taskTitleForId(invocation.taskId);
           var trigger = invocation.triggerSummary || (invocation.trigger && invocation.trigger.summary) || 'Reason unavailable for historical invocation';
           var providerKey = invocation.providerSessionId || ('synthetic:' + invocation.sessionId);
-          var warnReason = invocationUsageWarning(invocation, usageByContext[providerKey] || usageByContext['synthetic:' + invocation.sessionId]);
           var invUsage = invocation.usage || {};
           var tokens = formatTokenCount(invUsage.totalTokens || 0);
           var invCached = invUsage.cacheReadTokens ? (' · ' + formatTokenCount(invUsage.cacheReadTokens) + ' cached') : '';
@@ -953,7 +926,7 @@ export const renderRunScript = `    function renderSidebar() {
             : invocationStatus;
           var invocationRowKey = 'invocation-' + (entry.sequence != null ? entry.sequence : invocation.path || invocation.sessionId || 'unknown');
           var invocationExpanded = !!state.expandedTimelineRows[invocationRowKey];
-          html += '<article class="activity-row invocation ' + timelineRoleClass(invocation.role) + (warnReason ? ' warn' : '') + (invocationExpanded ? ' open' : '') + '" data-testid="activity-row">';
+          html += '<article class="activity-row invocation ' + timelineRoleClass(invocation.role) + (invocationExpanded ? ' open' : '') + '" data-testid="activity-row">';
           html += '<button type="button" class="activity-row-toggle" data-toggle-timeline-row="' + attr(invocationRowKey) + '" aria-expanded="' + (invocationExpanded ? 'true' : 'false') + '">';
           html += '<div class="activity-row-main">';
           html += '<span class="activity-seq">' + esc(seq) + '</span>';
@@ -961,14 +934,14 @@ export const renderRunScript = `    function renderSidebar() {
           html += '<strong class="activity-role">' + esc(role) + '</strong>';
           html += '<span class="activity-task">' + esc(rowSummary) + '</span>';
           html += '<span class="activity-result">' + esc(rowResult) + '</span>';
-          html += '<span class="activity-tokens faint">' + esc(tokens) + esc(invCached) + (warnReason ? ' ⚠' : '') + '</span>';
+          html += '<span class="activity-tokens faint">' + esc(tokens) + esc(invCached) + '</span>';
           html += '<span class="activity-chevron" aria-hidden="true">›</span>';
           html += '</div></button>';
           if (invocationExpanded) {
             html += '<div class="activity-row-detail">';
             html += '<div class="activity-detail-meta"><span class="tag">' + esc(kind) + '</span>';
             html += '<span class="context-badge ' + badgeClass + '">' + esc(badge) + '</span>';
-            html += '<span>' + esc(tokens) + esc(invCached) + renderUsageWarningIcon(warnReason) + '</span>';
+            html += '<span>' + esc(tokens) + esc(invCached) + '</span>';
             if (repaired) html += '<span class="badge completed">repaired</span>';
             html += '</div>';
             html += '<div><strong>Trigger:</strong> ' + esc(trigger) + '</div>';

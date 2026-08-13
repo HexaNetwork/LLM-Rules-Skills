@@ -646,12 +646,6 @@ export const eventsScript = `    async function waitForJob(runId) {
     });
     document.addEventListener('click', async function (event) { if (event.target.id === 'refreshKnowledge') { try { var result = await api('/api/knowledge/refresh',{method:'POST'}); toast('Indexed ' + result.changed + ' changed document(s)'); } catch(error) { toast(error.message,true); } } });
     document.addEventListener('click', function (event) {
-      var warn = event.target.closest && event.target.closest('details.activity-warn');
-      document.querySelectorAll('details.activity-warn[open]').forEach(function (el) {
-        if (el !== warn) el.removeAttribute('open');
-      });
-    });
-    document.addEventListener('click', function (event) {
       var roleBtn = event.target.closest && event.target.closest('[data-guidance-role]');
       if (!roleBtn) return;
       state.guidanceRole = roleBtn.getAttribute('data-guidance-role');

@@ -5,8 +5,7 @@ import {
   buildWorkspaceEvidence,
   describeWorkspaceDivergence,
   diffWorkspaceEvidence,
-  formatWorkspaceDivergenceMessage,
-  isLegacyTreeFingerprint} from "../../src/domain/workspace.js";
+  formatWorkspaceDivergenceMessage} from "../../src/domain/workspace.js";
 
 function evidence(overrides: Partial<{
   headSha: string;
@@ -89,13 +88,5 @@ describe("formatWorkspaceDivergenceMessage", () => {
     expect(message).not.toMatch(/\bindex\b/i);
     expect(message).toContain("external-edit.txt");
     expect(describeWorkspaceDivergence(diff)).toContain("HEAD");
-  });
-});
-
-describe("isLegacyTreeFingerprint", () => {
-  it("recognizes opaque pre-evidence fingerprints and versioned ones", () => {
-    expect(isLegacyTreeFingerprint("a".repeat(64))).toBe(true);
-    expect(isLegacyTreeFingerprint("v1:abcdef")).toBe(false);
-    expect(isLegacyTreeFingerprint(undefined)).toBe(false);
   });
 });

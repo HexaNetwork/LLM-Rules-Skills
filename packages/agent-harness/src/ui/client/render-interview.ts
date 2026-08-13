@@ -72,12 +72,8 @@ export const renderInterviewScript = `    function renderBatchQuestion(q, index,
       var reflectContext = q.context ? '<div class="question-context">' + esc(q.context) + '</div>' : '';
       var head = '<div class="card-label">Confirm feature understanding</div><div class="question">' + esc(q.prompt) + '</div>' + reflectContext;
       if (!structured) {
-        // Runs created before the structured reflector output existed fall back to the raw editor.
-        var draft = state.answerDrafts[q.id];
-        if (draft == null && q.draftAnswer) draft = q.draftAnswer;
-        if (draft == null) draft = "";
         return '<div class="card question-card reflect-card">' +
-          head + '<form id="answerForm" data-testid="reflect-form" data-question="' + attr(q.id) + '"><div class="reflect-editor"><textarea name="answer" required placeholder="Edit the restatement until it matches what you mean…">' + esc(draft) + '</textarea><button class="btn primary" type="submit">Confirm & continue to grill</button></div></form></div>';
+          head + '<div class="question-context">This run has no structured reflect brief. Archive it and start a new run.</div></div>';
       }
       if (!state.reflectDrafts[q.id]) {
         state.reflectDrafts[q.id] = {

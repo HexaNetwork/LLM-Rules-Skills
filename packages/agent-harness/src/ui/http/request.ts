@@ -167,8 +167,8 @@ export function optionalStringArray(
 const MAX_ANSWER_BATCH = 6;
 
 /**
- * Accepts both the legacy CLI shape {questionId, answer} and the batched
- * dashboard shape {answers: [{questionId, answer, optionId?, structured?}], parked?, clarifications?}.
+ * Accepts the batched dashboard shape
+ * {answers: [{questionId, answer, optionId?, structured?}], parked?, clarifications?}.
  * `structured` is validated here since it is untrusted client input.
  */
 export function parseAnswerBody(body: Record<string, unknown>): {
@@ -176,67 +176,72 @@ export function parseAnswerBody(body: Record<string, unknown>): {
   parked: string[];
   clarifications: Array<{ questionId: string; text: string }>;
 } {
-  if (Array.isArray(body.answers) || Array.isArray(body.parked) || Array.isArray(body.clarifications)) {
-    const answerItems = Array.isArray(body.answers) ? body.answers : [];
-    if (answerItems.length > MAX_ANSWER_BATCH) {
-      throw new HttpError(400, `answers must include at most ${MAX_ANSWER_BATCH} entries`);
+  if (
+    !Array.isArray(body.answers) &&
+    !Array.isArray(body.parked) &&
+    !Array.isArray(body.clarifications)
+  ) {
+    throw new HttpError(
+      400,
+      "answer body must include answers, parked, and/or clarifications arrays",
+    );
+  }
+  const answerItems = Array.isArray(body.answers) ? body.answers : [];
+  if (answerItems.length > MAX_ANSWER_BATCH) {
+    throw new HttpError(400, `answers must include at most ${MAX_ANSWER_BATCH} entries`);
+  }
+  const parked = Array.isArray(body.parked)
+    ? body.parked.map((value, index) => requiredString(value, `parked[${index}]`, 200))
+    : [];
+  if (parked.length > MAX_ANSWER_BATCH) {
+    throw new HttpError(400, `parked must include at most ${MAX_ANSWER_BATCH} entries`);
+  }
+  const clarificationItems = Array.isArray(body.clarifications) ? body.clarifications : [];
+  if (clarificationItems.length > MAX_ANSWER_BATCH) {
+    throw new HttpError(400, `clarifications must include at most ${MAX_ANSWER_BATCH} entries`);
+  }
+  const clarifications = clarificationItems.map((item, index) => {
+    const record = requiredRecord(item, `clarifications[${index}]`);
+    return {
+      questionId: requiredString(record.questionId, `clarifications[${index}].questionId`, 200),
+      text: requiredString(record.text, `clarifications[${index}].text`, 20_000),
+    };
+  });
+  const answers = answerItems.map((item, index) => {
+    const record = requiredRecord(item, `answers[${index}]`);
+    let structured: ReflectOutput | undefined;
+    if (record.structured != null) {
+      const parsed = ReflectOutputSchema.safeParse(record.structured);
+      if (!parsed.success) throw new HttpError(400, `answers[${index}].structured is invalid`);
+      structured = parsed.data;
     }
-    const parked = Array.isArray(body.parked)
-      ? body.parked.map((value, index) => requiredString(value, `parked[${index}]`, 200))
-      : [];
-    if (parked.length > MAX_ANSWER_BATCH) {
-      throw new HttpError(400, `parked must include at most ${MAX_ANSWER_BATCH} entries`);
+    return {
+      questionId: requiredString(record.questionId, `answers[${index}].questionId`, 200),
+      answer: requiredString(record.answer, `answers[${index}].answer`, 100_000),
+      optionId: optionalString(record.optionId, `answers[${index}].optionId`, 200),
+      structured,
+    };
+  });
+  if (answers.length === 0 && parked.length === 0 && clarifications.length === 0) {
+    throw new HttpError(
+      400,
+      "answers must include at least one entry, or parked/clarifications must be non-empty",
+    );
+  }
+  const answerIds = new Set(answers.map((entry) => entry.questionId));
+  const parkedIds = new Set(parked);
+  for (const id of parkedIds) {
+    if (answerIds.has(id)) {
+      throw new HttpError(400, `question ${id} cannot be both answered and parked`);
     }
-    const clarificationItems = Array.isArray(body.clarifications) ? body.clarifications : [];
-    if (clarificationItems.length > MAX_ANSWER_BATCH) {
-      throw new HttpError(400, `clarifications must include at most ${MAX_ANSWER_BATCH} entries`);
-    }
-    const clarifications = clarificationItems.map((item, index) => {
-      const record = requiredRecord(item, `clarifications[${index}]`);
-      return {
-        questionId: requiredString(record.questionId, `clarifications[${index}].questionId`, 200),
-        text: requiredString(record.text, `clarifications[${index}].text`, 20_000),
-      };
-    });
-    const answers = answerItems.map((item, index) => {
-      const record = requiredRecord(item, `answers[${index}]`);
-      let structured: ReflectOutput | undefined;
-      if (record.structured != null) {
-        const parsed = ReflectOutputSchema.safeParse(record.structured);
-        if (!parsed.success) throw new HttpError(400, `answers[${index}].structured is invalid`);
-        structured = parsed.data;
-      }
-      return {
-        questionId: requiredString(record.questionId, `answers[${index}].questionId`, 200),
-        answer: requiredString(record.answer, `answers[${index}].answer`, 100_000),
-        optionId: optionalString(record.optionId, `answers[${index}].optionId`, 200),
-        structured,
-      };
-    });
-    if (answers.length === 0 && parked.length === 0 && clarifications.length === 0) {
+  }
+  for (const entry of clarifications) {
+    if (answerIds.has(entry.questionId) || parkedIds.has(entry.questionId)) {
       throw new HttpError(
         400,
-        "answers must include at least one entry, or parked/clarifications must be non-empty",
+        `question ${entry.questionId} cannot be clarified when it is also answered or parked`,
       );
     }
-    const answerIds = new Set(answers.map((entry) => entry.questionId));
-    const parkedIds = new Set(parked);
-    for (const id of parkedIds) {
-      if (answerIds.has(id)) {
-        throw new HttpError(400, `question ${id} cannot be both answered and parked`);
-      }
-    }
-    for (const entry of clarifications) {
-      if (answerIds.has(entry.questionId) || parkedIds.has(entry.questionId)) {
-        throw new HttpError(
-          400,
-          `question ${entry.questionId} cannot be clarified when it is also answered or parked`,
-        );
-      }
-    }
-    return { answers, parked, clarifications };
   }
-  const questionId = requiredString(body.questionId, "questionId", 200);
-  const answer = requiredString(body.answer, "answer", 100_000);
-  return { answers: [{ questionId, answer }], parked: [], clarifications: [] };
+  return { answers, parked, clarifications };
 }

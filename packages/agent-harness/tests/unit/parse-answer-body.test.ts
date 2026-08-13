@@ -38,10 +38,9 @@ describe("parseAnswerBody", () => {
     ).toThrow(/cannot be clarified/);
   });
 
-  it("still accepts the legacy single-question shape", () => {
-    expect(parseAnswerBody({ questionId: "q1", answer: "Confirmed" })).toEqual({
-      answers: [{ questionId: "q1", answer: "Confirmed" }],
-      parked: [],
-      clarifications: []});
+  it("rejects the legacy single-question shape", () => {
+    expect(() => parseAnswerBody({ questionId: "q1", answer: "Confirmed" })).toThrow(
+      /answers, parked, and\/or clarifications/,
+    );
   });
 });

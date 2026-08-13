@@ -230,7 +230,6 @@ export const eventsScript = `    async function waitForJob(runId) {
       if (target.dataset.action) {
         if (target.dataset.action === 'cancel' && !confirm('Cancel this run?')) return;
         if (target.dataset.action === 'stop' && !confirm('Finish the current task, then stop before starting the next one?')) return;
-        if (target.dataset.action === 'migrate_workspace' && !confirm('Migrate this legacy run onto a registered worktree at the current HEAD? The shared checkout must be clean.')) return;
         if (target.dataset.action === 'cleanup') {
           var discardCleanup = target.dataset.discard === 'true';
           var cleanupPrompt = discardCleanup

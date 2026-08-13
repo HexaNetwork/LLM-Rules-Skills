@@ -144,15 +144,15 @@ describe("token-conscious defaults", () => {
       "project-profiler": { rules: [], skills: [] }};
     expect(HarnessConfigSchema.parse({
       knowledge: { guidance: { assignments: complete } }}).knowledge.guidance.assignments).toEqual(complete);
-    expect(
+    expect(() =>
       HarnessConfigSchema.parse({
         knowledge: {
           guidance: {
             assignments: {
               ...complete,
               "test-writer": { rules: [], skills: [] },
-              "red-writer": { rules: [], skills: [] }}}}}).knowledge.guidance.assignments,
-    ).toEqual(complete);
+              "red-writer": { rules: [], skills: [] }}}}}),
+    ).toThrow();
     const { "task-reviewer": _taskReviewer, ...legacyWithoutTaskReviewer } = complete;
     expect(
       HarnessConfigSchema.parse({
@@ -268,21 +268,6 @@ repositoryRoot: .
       enabled: true,
       maxResults: 2,
       maxCharacters: 1_000});
-  });
-
-  it("strips legacy guidance sources from frozen configs and records sharedRoot", () => {
-    const frozen = normalizeFrozenRunConfig({
-      repositoryRoot: "C:/tmp/project",
-      knowledge: {
-        sources: [
-          { path: "C:/Users/me/AppData/Local/agent-harness/guidance/General", scope: "global" },
-          { path: "README.md", scope: "project" },
-          "agent-harness/guidance/General",
-          "docs"]}});
-    expect(frozen.knowledge.sources.map((source) => source.path)).toEqual(["README.md", "docs"]);
-    expect(frozen.knowledge.guidance.sharedRoot?.replaceAll("\\", "/")).toBe(
-      "C:/Users/me/AppData/Local/agent-harness/guidance",
-    );
   });
 
   it("summarizes all policy changes that require an explicit run repair", () => {

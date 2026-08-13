@@ -5,6 +5,7 @@ import yaml from "js-yaml";
 import { resolveHarnessPaths } from "../application/paths.js";
 import {
   migrateRunWorkspace,
+  WORKSPACE_SCHEMA_VERSION,
   type RunWorkspace,
 } from "../domain/workspace.js";
 import {
@@ -134,7 +135,9 @@ export function runWorkspacePath(projectConfig: HarnessConfig, runId: string): s
 }
 
 /**
- * Load workspace metadata. Missing files migrate to `legacy-shared`.
+ * Load workspace metadata.
+ * Missing files are rejected for git-enabled projects; git-disabled projects
+ * synthesize an explicit git-disabled workspace (never legacy-shared).
  */
 export async function loadRunWorkspace(
   projectConfig: HarnessConfig,
@@ -147,6 +150,17 @@ export async function loadRunWorkspace(
     return migrateRunWorkspace(raw, { controlRoot });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      if (!projectConfig.git.enabled) {
+        return migrateRunWorkspace(
+          {
+            version: WORKSPACE_SCHEMA_VERSION,
+            kind: "git-disabled",
+            controlRoot,
+            createdAt: new Date().toISOString(),
+          },
+          { controlRoot },
+        );
+      }
       return migrateRunWorkspace(null, { controlRoot });
     }
     throw error;

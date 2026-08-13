@@ -80,7 +80,6 @@ describe("decideWorktreeCleanup", () => {
   });
 
   it("refuses non-worktree kinds", () => {
-    expect(decideWorktreeCleanup(facts({ workspaceKind: "legacy-shared" })).allow).toBe(false);
     expect(decideWorktreeCleanup(facts({ workspaceKind: "git-disabled" })).allow).toBe(false);
   });
 

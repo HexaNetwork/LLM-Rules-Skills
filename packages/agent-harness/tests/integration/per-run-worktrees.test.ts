@@ -12,7 +12,6 @@ import {
   type RunState} from "../../src/domain.js";
 import {
   canonicalizeWorkspacePath,
-  isLegacyTreeFingerprint,
   migrateRunWorkspace,
   sanitizeWorktreeRunId,
   type RunWorkspace} from "../../src/domain/workspace.js";
@@ -382,44 +381,6 @@ describe("per-run worktrees (Slice 3 — run-local evidence)", () => {
     const advanced = await opened.engine.advance(runId);
     expect(advanced.phase).not.toBe("blocked");
     expect(String(advanced.failure || "")).not.toMatch(/Workspace diverged|Working tree diverged/i);
-  });
-
-  it("still asserts legacy opaque treeFingerprint until the next structured stamp", async () => {
-    await assertGitWorktreeCapability();
-    fixture = await createProjectFixture({
-      config: {
-        git: { enabled: true, baseBranch: "main" },
-        workflow: { },
-        commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
-        knowledge: {
-          sources: [{ path: "README.md" }],
-          graphify: { enabled: false },
-          guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
-    await fixture.initGit({ branch: "main" });
-    const backend = createFakeBackend({
-      implementer: () => ({ summary: "built", changedFiles: ["src/a.ts"] }),
-      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
-      "message-writer": () => ({ subject: "feat: a", body: "" })});
-    const engine = new HarnessEngine(fixture.config, { backend });
-    const runId = "evidence-legacy-1";
-    await engine.start("Legacy fingerprint", runId, false, false);
-    let state = await seedExecutingOverExisting(engine, fixture.config, runId, [
-      pendingTask("t1", "Ship one")]);
-    const legacy = await engine.git.legacyTreeFingerprint();
-    expect(isLegacyTreeFingerprint(legacy)).toBe(true);
-    state = { ...state, treeFingerprint: legacy, workspaceEvidence: undefined };
-    await engine.store.writeJson(runId, "state.json", state);
-
-    const workspace = migrateRunWorkspace(await engine.store.readJson(runId, "workspace.json"), {
-      controlRoot: fixture.root});
-    await writeFile(path.join(workspace.worktreePath!, "legacy-edit.txt"), "x\n", "utf8");
-    const blocked = await engine.advance(runId);
-    expect(blocked.phase).toBe("blocked");
-    expect(blocked.failure).toMatch(/legacy fingerprint|diverg/i);
-
-    const accepted = await engine.acceptTree(runId);
-    expect(accepted.workspaceEvidence).toBeTruthy();
-    expect(isLegacyTreeFingerprint(accepted.treeFingerprint)).toBe(false);
   });
 });
 

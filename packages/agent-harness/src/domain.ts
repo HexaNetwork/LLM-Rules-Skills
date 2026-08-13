@@ -346,8 +346,6 @@ export type InstallLogEntry = z.infer<typeof InstallLogEntrySchema>;
 
 /**
  * Active task steps for the intent-first workflow.
- * Legacy `writing_tests` / `red` remain readable so historical state.json files
- * still parse in the UI read model; pre-redesign runs cannot be resumed.
  */
 export const ActiveTaskStepSchema = z.enum([
   "pending",
@@ -358,9 +356,7 @@ export const ActiveTaskStepSchema = z.enum([
   "done",
   "failed",
 ]);
-/** @deprecated Legacy TDD steps retained for read-only historical run artifacts. */
-export const LegacyTaskStepSchema = z.enum(["writing_tests", "red"]);
-export const TaskStepSchema = z.union([ActiveTaskStepSchema, LegacyTaskStepSchema]);
+export const TaskStepSchema = ActiveTaskStepSchema;
 export type TaskStep = z.infer<typeof TaskStepSchema>;
 
 export const BuildTaskSchema = z.object({
@@ -542,8 +538,6 @@ export const RunStateSchema = z.object({
   verificationBaselineReady: VerificationBaselineReadyGateSchema.optional(),
   // Set once the baseline test run is acceptable; skips re-run on resume.
   verificationBaselinePassedAt: z.string().optional(),
-  // Distinguishes a yielded run from one paused on human input.
-  yieldedAt: z.string().optional(),
   // Finish the active task, then halt before starting the next frontier task.
   stopAfterTask: z.boolean().optional(),
   stoppedAfterTaskAt: z.string().optional(),

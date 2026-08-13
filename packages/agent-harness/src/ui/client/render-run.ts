@@ -581,9 +581,6 @@ export const renderRunScript = `    function renderSidebar() {
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">' + pauseHint + '</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }
       var workspaceMeta = state.detail.workspace || {};
-      if (!state.detail.job && workspaceMeta.kind === "legacy-shared") {
-        html += '<div class="card"><div class="alert"><div><strong>Legacy shared checkout</strong><div class="muted" style="margin-top:5px">This run still uses the shared repository lock and old branch/preflight semantics. Migrate only when the tree is clean.</div></div><button class="btn" data-action="migrate_workspace">Migrate to worktree</button></div></div>';
-      }
       if (!state.detail.job && ["completed","cancelled"].includes(s.phase) && workspaceMeta.kind === "git-worktree" && workspaceMeta.worktreePath && !workspaceMeta.removedAt) {
         html += '<div class="card"><div class="alert"><div><strong>Worktree cleanup</strong><div class="muted" style="margin-top:5px">Remove the registered worktree after verifying cleanliness and publication state. State, events, and retained branches stay on disk.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" data-action="cleanup">Clean up worktree</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button></div></div></div>';
       }
@@ -597,35 +594,8 @@ export const renderRunScript = `    function renderSidebar() {
           : '<details data-details-key="raw-failure"><summary>Raw failure detail</summary><pre>' + esc(s.failure || "The current transition could not complete.") + '</pre></details>';
         var commitControls = "";
         if (isDirtyTree) {
-          var workspaceKind = (state.detail.workspace && state.detail.workspace.kind) || "git-worktree";
-          if (workspaceKind === "legacy-shared") {
-            var settingsValues = (state.bootstrap && state.bootstrap.project && state.bootstrap.project.settings && state.bootstrap.project.settings.values) || {};
-            var defaultOrder = settingsValues["git.preflightCommitOrder"] === "commit-then-branch" ? "commit-then-branch" : "branch-then-commit";
-            var otherOrder = defaultOrder === "commit-then-branch" ? "branch-then-commit" : "commit-then-branch";
-            var gitInfo = state.detail.git;
-            var currentBranch = gitInfo ? gitInfo.currentBranch : null;
-            var baseBranch = gitInfo ? gitInfo.baseBranch : null;
-            var onBaseBranch = !!(currentBranch && baseBranch && currentBranch === baseBranch);
-            var orderLabel = function (order) {
-              return order === "commit-then-branch" ? "Commit then branch" : "Branch then commit";
-            };
-            var defaultBtnClass = defaultOrder === "commit-then-branch" && onBaseBranch ? "btn danger" : "btn primary";
-            var otherBtnClass = otherOrder === "commit-then-branch" && onBaseBranch ? "btn danger" : "btn";
-            var cautionNote = onBaseBranch
-              ? '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Heads up</strong><div class="muted" style="margin-top:3px">' + esc(currentBranch) + ' is your base branch. Committing onto the current branch lands these changes directly on it.</div></div></div>'
-              : "";
-            var baseBranchLine = baseBranch
-              ? '<div class="muted" style="margin-top:10px">Base branch: <code>' + esc(baseBranch) + '</code></div>'
-              : "";
-            commitControls = baseBranchLine +
-              '<div class="preflight-commit-actions" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
-              '<button class="' + defaultBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(defaultOrder) + '">' + esc(orderLabel(defaultOrder)) + ' and retry</button>' +
-              '<button class="' + otherBtnClass + '" data-action="commit_preflight" data-preflight-order="' + attr(otherOrder) + '">' + esc(orderLabel(otherOrder)) + ' and retry</button>' +
-              '</div>' + cautionNote;
-          } else {
-            commitControls =
-              '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Committed-base worktree</strong><div class="muted" style="margin-top:3px">Commit or stash changes inside this run\\'s worktree, then retry. Control-checkout dirt is never imported, and preflight commit-order controls are not offered for worktree runs.</div></div></div>';
-          }
+          commitControls =
+            '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Committed-base worktree</strong><div class="muted" style="margin-top:3px">Commit or stash changes inside this run\\'s worktree, then retry. Control-checkout dirt is never imported, and preflight commit-order controls are not offered for worktree runs.</div></div></div>';
         }
         var acceptTreeControls = "";
         if (isTreeDivergence) {

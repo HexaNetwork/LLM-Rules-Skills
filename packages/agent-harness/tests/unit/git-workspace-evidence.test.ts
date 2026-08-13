@@ -2,10 +2,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { GitService } from "../../src/git.js";
-import { isLegacyTreeFingerprint } from "../../src/domain/workspace.js";
 import {
   createProjectFixture,
-  type ProjectFixture} from "../testkit/project-fixture.js";
+  type ProjectFixture,
+} from "../testkit/project-fixture.js";
 
 describe("GitService.workspaceEvidence", () => {
   let fixture: ProjectFixture | undefined;
@@ -19,7 +19,8 @@ describe("GitService.workspaceEvidence", () => {
 
   it("computes structured evidence with a versioned fingerprint", async () => {
     fixture = await createProjectFixture({
-      config: { git: { enabled: true, baseBranch: "main" } }});
+      config: { git: { enabled: true, baseBranch: "main" } },
+    });
     await fixture.initGit({ branch: "main" });
     const git = new GitService(fixture.config, resolveHarnessPaths(fixture.config));
     const head = (await fixture.git("rev-parse", "HEAD")).trim();
@@ -30,12 +31,13 @@ describe("GitService.workspaceEvidence", () => {
     expect(evidence.statusDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(evidence.changedPaths).toEqual([]);
     expect(evidence.fingerprint.startsWith("v1:")).toBe(true);
-    expect(isLegacyTreeFingerprint(evidence.fingerprint)).toBe(false);
+    expect(await git.treeFingerprint()).toBe(evidence.fingerprint);
   });
 
   it("detects working-file, index, and HEAD mutations as distinct evidence changes", async () => {
     fixture = await createProjectFixture({
-      config: { git: { enabled: true, baseBranch: "main" } }});
+      config: { git: { enabled: true, baseBranch: "main" } },
+    });
     await fixture.initGit({ branch: "main" });
     const git = new GitService(fixture.config, resolveHarnessPaths(fixture.config));
     const baseline = await git.workspaceEvidence();
@@ -59,21 +61,10 @@ describe("GitService.workspaceEvidence", () => {
     expect(afterCommit.changedPaths).toEqual([]);
   });
 
-  it("keeps legacyTreeFingerprint as the opaque pre-evidence algorithm", async () => {
-    fixture = await createProjectFixture({
-      config: { git: { enabled: true, baseBranch: "main" } }});
-    await fixture.initGit({ branch: "main" });
-    const git = new GitService(fixture.config, resolveHarnessPaths(fixture.config));
-    const legacy = await git.legacyTreeFingerprint();
-    const modern = await git.treeFingerprint();
-    expect(isLegacyTreeFingerprint(legacy)).toBe(true);
-    expect(isLegacyTreeFingerprint(modern)).toBe(false);
-    expect(modern).toBe((await git.workspaceEvidence()).fingerprint);
-  });
-
   it("does not include control-checkout-only paths when cwd is a worktree", async () => {
     fixture = await createProjectFixture({
-      config: { git: { enabled: true, baseBranch: "main" } }});
+      config: { git: { enabled: true, baseBranch: "main" } },
+    });
     await fixture.initGit({ branch: "main" });
     const worktree = await fixture.addDetachedWorktree("evidence-wt");
     await fixture.write("control-only.txt", "from operator\n");

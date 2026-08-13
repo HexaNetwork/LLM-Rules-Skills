@@ -34,7 +34,7 @@ const WINDOWS_RESERVED_NAMES = new Set([
   "lpt9",
 ]);
 
-export const RunWorkspaceKindSchema = z.enum(["git-worktree", "legacy-shared", "git-disabled"]);
+export const RunWorkspaceKindSchema = z.enum(["git-worktree", "git-disabled"]);
 export type RunWorkspaceKind = z.infer<typeof RunWorkspaceKindSchema>;
 
 export const RunWorkspaceSchema = z.object({
@@ -165,34 +165,38 @@ export function proposeDeliveryBranchName(args: ProposeDeliveryBranchNameArgs): 
   return `${prefix}/${slug}-${shortId}`;
 }
 
-/**
- * Legacy shared-checkout runs still need the repository lock for mutating work.
- * Git worktree and git-disabled runs do not.
- */
-export function requiresRepositoryLock(workspace: RunWorkspace): boolean {
-  return workspace.kind === "legacy-shared";
-}
-
 export type MigrateRunWorkspaceOptions = {
   controlRoot: string;
   createdAt?: string;
 };
 
 /**
- * Parse workspace metadata with compatibility defaults.
- * Missing / null records become `legacy-shared` so pre-worktree runs resume.
+ * Parse workspace metadata. Missing records are rejected — every resumable run
+ * must have an explicit git-worktree or git-disabled workspace.json.
  */
 export function migrateRunWorkspace(
   value: unknown,
   options: MigrateRunWorkspaceOptions,
 ): RunWorkspace {
   if (value == null) {
-    return RunWorkspaceSchema.parse({
-      version: WORKSPACE_SCHEMA_VERSION,
-      kind: "legacy-shared",
-      controlRoot: canonicalizeWorkspacePath(options.controlRoot),
-      createdAt: options.createdAt ?? new Date().toISOString(),
-    });
+    throw new HarnessFailure(
+      "Run workspace metadata is missing. Archive the run or recreate it under a registered external harness home.",
+      "workspace",
+      false,
+    );
+  }
+
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as { kind?: unknown }).kind === "legacy-shared"
+  ) {
+    throw new HarnessFailure(
+      "legacy-shared workspaces are no longer supported. Archive the run or recreate it as a git-worktree run.",
+      "workspace",
+      false,
+    );
   }
 
   const parsed = RunWorkspaceSchema.parse(value);
@@ -252,12 +256,6 @@ export function boundWorkspaceChangedPaths(paths: string[]): {
     changedPaths: sorted.slice(0, WORKSPACE_EVIDENCE_CHANGED_PATHS_LIMIT),
     omittedCount: sorted.length - WORKSPACE_EVIDENCE_CHANGED_PATHS_LIMIT,
   };
-}
-
-/** True for pre-evidence opaque sha256 fingerprints (not `vN:…`). */
-export function isLegacyTreeFingerprint(value: string | undefined): boolean {
-  if (!value) return false;
-  return !/^v\d+:/i.test(value);
 }
 
 export type WorkspaceEvidenceDiff = {

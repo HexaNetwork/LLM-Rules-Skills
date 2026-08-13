@@ -64,15 +64,13 @@ export {
   writeRunWorkspace,
 } from "./config/io.js";
 export {
-  isLegacyGuidanceSourcePath,
   normalizeFrozenRunConfig,
-  stripLegacyGuidanceSources,
 } from "./config/migrations.js";
 export * from "./domain.js";
 export * from "./embeddings.js";
 export { HarnessEngine } from "./application/harness-engine.js";
 export type { HarnessDependencies } from "./application/dependencies.js";
-export type { CancelResult, CleanupResult, MigrateWorkspaceResult } from "./application/helpers.js";
+export type { CancelResult, CleanupResult } from "./application/helpers.js";
 export { pendingGrillReady, pendingPlanReady, taskForPacket } from "./application/helpers.js";
 export { openRunHarness } from "./application/run-engine-factory.js";
 export * from "./errors.js";

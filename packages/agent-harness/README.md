@@ -99,7 +99,7 @@ The map is an index, not a duplicate source of truth. Full decisions live in the
 
 ## Reflect, grill, and human questions
 
-New runs start with a **reflector** that restates the idea and proposes a short feature title. The dashboard renders that draft as a section-wise editor (feature title, goal, users, in/out of scope, assumptions, unknowns); confirming stores the edited brief and starts grilling. The confirmed title is the run label in the sidebar and page header; git branches stay `harness/<runId>` (or `git.branchPrefix/<runId>`). Runs created before structured reflect output fall back to the raw markdown editor.
+New runs start with a **reflector** that restates the idea and proposes a short feature title. The dashboard renders that draft as a section-wise editor (feature title, goal, users, in/out of scope, assumptions, unknowns); confirming stores the edited brief and starts grilling. The confirmed title is the run label in the sidebar and page header; git branches stay `harness/<runId>` (or `git.branchPrefix/<runId>`).
 
 After confirm, **griller** and **planner** (including project-profiler) treat `reflectBrief.confirmed` as authoritative. The raw idea is reflect-only input and remains on disk as `idea.md` for audit; it is not re-injected into grill/plan work packets or `brief.md`.
 
@@ -266,16 +266,13 @@ At start the harness resolves `git.baseBranch` to an immutable `baseSha`, runs `
 
 A dirty operator checkout is **not** a blocker for ordinary new worktree runs. The run starts from the **committed** base only; uncommitted control-checkout changes are never imported and are **not** warned about at start. Commit changes yourself only if you need those edits in a *future* base (an import-uncommitted operation is deliberately not implemented yet).
 
-`git.autoCommitPreflight` and `git.preflightCommitOrder` apply only to **legacy-shared** runs (no `workspace.json` / pre-worktree resumes). New worktree runs do not offer branch-then-commit / commit-then-branch controls.
-
 ### Locking and concurrency
 
 - **Per-run lock** — state/config/workspace mutation for one run.
 - **Workspace-admin lock** — short lock around shared Git worktree metadata (add/remove/rename branch refs).
 - **Shared-index lock** — knowledge/Graphify refresh coordination.
-- **Repository lock** — retained only for **legacy-shared** runs that still mutate the shared checkout.
 
-Independent worktree runs can advance concurrently. Inspect locks with `agent-harness unlock --run-id <id> --inspect-only` (distinguishes run, legacy repository, workspace-admin, and shared-index). `unlock --repo` remains available while legacy runs exist.
+Independent worktree runs can advance concurrently. Inspect locks with `agent-harness unlock --run-id <id> --inspect-only` (distinguishes run, workspace-admin, and shared-index).
 
 ### Cleanup, recovery, and disk use
 
@@ -288,11 +285,11 @@ agent-harness cleanup --run-id <id> --discard   # unpublished commits not on a r
 
 Cleanup verifies the recorded path, registration, run id, Git common directory, cleanliness, and publication/discard state before `git worktree remove`. It refuses dirty trees, active/non-settled runs, path mismatches, and unpublished detached history without `--discard`. It never runs `git worktree prune`. Completed published runs keep `workspace.json`, state, events, and the delivery branch; only the worktree directory is removed (`run.worktree_removed`).
 
-If a worktree is missing or moved, resume blocks with a recoverable workspace failure. Manual repair: restore the directory at the recorded path, or recreate a linked worktree at the recorded `baseSha`/`HEAD` with the same path, then resume. Prefer `agent-harness migrate-workspace --run-id <id>` only for clean **legacy-shared** runs.
+If a worktree is missing or moved, resume blocks with a recoverable workspace failure. Manual repair: restore the directory at the recorded path, or recreate a linked worktree at the recorded `baseSha`/`HEAD` with the same path, then resume.
 
-### Legacy runs
+### Unsupported legacy installs
 
-Runs without `workspace.json` reopen as `legacy-shared` with the old repository lock and branch/preflight semantics. Do not silently create a worktree for a dirty legacy run. Explicit migration (`migrate-workspace` / dashboard **Migrate to worktree**) creates a worktree from the current branch/`HEAD` only when the shared tree is clean and emits `run.workspace_migrated`.
+`legacy-shared` workspaces, repo-local `allowLegacy` discovery, `migrate-home`, and `migrate-workspace` have been removed. Archive old shared-checkout runs or recreate them under a registered external harness home (`agent-harness projects add`). Explicit `--config <path>` remains available as a path override for already-registered workflows.
 
 ## Git ownership
 

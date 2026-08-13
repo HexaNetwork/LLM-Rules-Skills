@@ -789,42 +789,17 @@ describe("central dashboard", () => {
     expect(steppedBody.activity?.stepCount).toBe(4);
   });
 
-  it("accepts the legacy single {questionId, answer} shape for the answer action", async () => {
+  it("rejects the legacy single {questionId, answer} shape for the answer action", async () => {
     const root = await fixtureRoot();
-    const config = fixtureConfig(root, { workflow: { } as never });
-    const backend = createFakeBackend({
-      reflector: () => REFLECT_OUTPUT,
-      griller: () => ({
-        status: "ready_to_plan",
-        summary: "Ready",
-        resolutions: [
-          { id: "tone", question: GRILL_QUESTION.prompt, answer: "Quiet", summary: "Quiet" }]}),
-      planner: createPlannerPrdSequence().planner,
-
-      "scenario-planner": () => SCENARIO_PLANNER_OUTPUT,
-
-      "issue-slicer": () => ({
-        summary: "One task",
-        tasks: [
-          {
-            id: "dashboard",
-            title: "Deliver dashboard",
-            description: "Expose the feature.",
-            acceptanceCriteria: ["Works"],
-            scenarioIds: ["greet-happy"],
-            blockedBy: []}],
-        proposedInstalls: []}),
-      implementer: () => ({ summary: "Built", changedFiles: ["src/dashboard.ts"] }),
-      reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
-      "scenario-writer": () => ({ status: "implemented", summary: "Scenario tests", testPaths: ["tests/greet.test.ts"], changedFiles: ["tests/greet.test.ts"] }),
-      "message-writer": () => ({ subject: "feat: dashboard", body: "ok" })});
+    const config = fixtureConfig(root);
+    const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
     ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
 
     const created = await request(ui, "/api/runs", {
       method: "POST",
       body: { idea: "Legacy answer shape" }});
     const runId = ((await created.json()) as { run: { runId: string } }).run.runId;
-    let detail = await waitForPhase(ui, runId, "awaiting_input");
+    const detail = await waitForPhase(ui, runId, "awaiting_input");
     const question = detail.state.questions.find(
       (item: { id: string }) => item.id === detail.state.activeQuestionId,
     )!;
@@ -832,27 +807,9 @@ describe("central dashboard", () => {
     const answered = await request(ui, `/api/runs/${runId}/actions`, {
       method: "POST",
       body: { action: "answer", questionId: question.id, answer: "Confirmed legacy shape." }});
-    expect(answered.status).toBe(202);
-    detail = await waitForPhase(ui, runId, "awaiting_input");
-    expect(detail.state.grillReady?.summary).toBeTruthy();
-    const confirmed = await request(ui, `/api/runs/${runId}/actions`, {
-      method: "POST",
-      body: { action: "confirm_grill" }});
-    expect(confirmed.status).toBe(202);
-    detail = await waitForPhase(ui, runId, "awaiting_input");
-    expect(detail.state.verificationReady?.summary).toBeTruthy();
-    const confirmedVerification = await request(ui, `/api/runs/${runId}/actions`, {
-      method: "POST",
-      body: { action: "confirm_verification", keepCurrent: true }});
-    expect(confirmedVerification.status).toBe(202);
-    detail = await waitForPhase(ui, runId, "awaiting_input");
-    expect(detail.state.planReady?.summary).toBeTruthy();
-    const confirmedPlan = await request(ui, `/api/runs/${runId}/actions`, {
-      method: "POST",
-      body: { action: "confirm_plan" }});
-    expect(confirmedPlan.status).toBe(202);
-    detail = await waitForPhase(ui, runId, "completed");
-    expect(detail.state.tasks[0]?.status).toBe("done");
+    expect(answered.status).toBe(400);
+    const errorBody = (await answered.json()) as { error?: string };
+    expect(errorBody.error ?? "").toMatch(/answers, parked, and\/or clarifications/i);
   });
 
   it("accepts a structured reflect payload through the batched answers[] shape and stores it as confirmedStructured", async () => {
@@ -1197,7 +1154,7 @@ describe("central dashboard", () => {
       body: { action: "commit_preflight", order: "branch-then-commit" }});
     expect(rejected.status).toBe(400);
     const body = (await rejected.json()) as { error?: string };
-    expect(body.error ?? "").toMatch(/legacy-shared|committed base|worktree/i);
+    expect(body.error ?? "").toMatch(/committed base|worktree|removed/i);
 
     const detail = await request(ui, `/api/runs/${started.runId}`);
     const detailBody = (await detail.json()) as {

@@ -370,15 +370,6 @@ describe("dashboard document", () => {
     expect(html).toContain("Action completed");
   });
 
-  it("labels both dirty-tree preflight buttons with and retry for legacy-shared only", () => {
-    const html = renderDashboard();
-
-    expect(html).toContain('workspaceKind === "legacy-shared"');
-    expect(html).toContain("' and retry</button>'");
-    expect(html).toContain("Committed-base worktree");
-    expect(html).not.toContain("' instead</button>'");
-  });
-
   it("uses multi-line textareas and auto-grow for the structured reflect editor", () => {
     const html = renderDashboard();
 
@@ -429,7 +420,7 @@ describe("dashboard document", () => {
     expect(html).not.toContain("grillTotal + (unknowns.length ? '<span class=\"faint\"> / ' + unknowns.length");
   });
 
-  it("renders a structured section-wise reflect editor when reflectBrief.structured is present, and falls back to raw markdown otherwise", () => {
+  it("renders a structured section-wise reflect editor when reflectBrief.structured is present", () => {
     const html = renderDashboard();
 
     expect(html).toContain("function renderReflectEditor(q, s)");
@@ -444,8 +435,8 @@ describe("dashboard document", () => {
     expect(html).toContain("reflectListSection(\"outOfScope\"");
     expect(html).toContain("reflectListSection(\"assumptions\"");
     expect(html).toContain("reflectListSection(\"unknowns\"");
-    expect(html).toContain("Runs created before the structured reflector output existed");
-    expect(html).toContain('id="answerForm"');
+    expect(html).toContain("no structured reflect brief");
+    expect(html).not.toContain("Runs created before the structured reflector output existed");
   });
 
   it("submits the edited structured reflect payload via the batched answers[] shape", () => {
@@ -566,12 +557,13 @@ describe("dashboard document", () => {
     );
   });
 
-  it("labels preflight commit orders as Branch then commit / Commit then branch", () => {
+  it("keeps cleanup affordances without legacy-shared migrate/preflight UI", () => {
     const html = renderDashboard();
 
-    expect(html).toContain('order === "commit-then-branch" ? "Commit then branch" : "Branch then commit"');
     expect(html).toContain('data-action="cleanup"');
-    expect(html).toContain('data-action="migrate_workspace"');
+    expect(html).not.toContain('data-action="migrate_workspace"');
+    expect(html).not.toContain('class="preflight-commit-actions"');
+    expect(html).toContain("Committed-base worktree");
   });
 
   it("offers Accept current tree and continue for working-tree divergence blocks", () => {
@@ -604,27 +596,6 @@ describe("dashboard document", () => {
     expect(html).toContain("data-remove-artifact-index=");
     expect(html).toContain("function removeIgnoredArtifact(index)");
     expect(html).toContain('git.ignoredArtifactPatterns');
-  });
-
-  it("shows a base-branch caution, using the existing warning visual vocabulary, only when current === base", () => {
-    const html = renderDashboard();
-
-    expect(html).toContain("var onBaseBranch = !!(currentBranch && baseBranch && currentBranch === baseBranch);");
-    expect(html).toContain('"btn danger" : "btn primary"');
-    expect(html).toContain('"btn danger" : "btn"');
-    expect(html).toContain('class="alert warning"');
-    expect(html).toContain("is your base branch. Committing onto the current branch lands these changes directly on it.");
-    // No caution note at all when onBaseBranch is false.
-    expect(html).toMatch(/var cautionNote = onBaseBranch\s*\n\s*\?[\s\S]*?:\s*"";/);
-  });
-
-  it("shows the base branch on a line above the preflight commit buttons", () => {
-    const html = renderDashboard();
-
-    expect(html).toContain('Base branch: <code>\' + esc(baseBranch) + \'</code>');
-    expect(html).toContain("var baseBranchLine = baseBranch");
-    expect(html).toContain("baseBranchLine +");
-    expect(html).toContain('class="preflight-commit-actions"');
   });
 
   it("drives the thinking strip's elapsed timer from job.startedAt/queuedAt without a full re-render", () => {

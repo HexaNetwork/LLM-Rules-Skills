@@ -139,12 +139,11 @@ export class RunAdvancer {
         if (await this.ctx.isCancelRequested(runId)) {
           state = await this.recovery.completeCancellation(state);
         } else {
-          // Clear legacy yieldedAt (old state.json) and operator stop markers on resume.
-          if (state.yieldedAt || state.stoppedAfterTaskAt) {
+          // Clear operator stop-after-task markers on resume.
+          if (state.stoppedAfterTaskAt) {
             state = await this.ctx.store.record(
               {
                 ...state,
-                yieldedAt: undefined,
                 stoppedAfterTaskAt: undefined,
               },
               "run.resumed",

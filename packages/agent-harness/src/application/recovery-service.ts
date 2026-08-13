@@ -37,7 +37,6 @@ import {
   unique,
   type CancelResult,
   type CleanupResult,
-  type MigrateWorkspaceResult,
   type PreflightCommitResult,
 } from "./helpers.js";
 import { updateRunConfig } from "./update-run-config.js";
@@ -693,70 +692,6 @@ export class RecoveryService {
       return { state: locked.value, pending: false };
     }
     return { state: await this.ctx.store.load(runId), pending: true };
-  }
-
-  /**
-   * Explicit migration: move a clean legacy-shared run onto a registered worktree at HEAD.
-   * Refuses when the shared tree is dirty; never migrates silently.
-   */
-  async migrateWorkspace(runId: string): Promise<MigrateWorkspaceResult> {
-    return this.ctx.withMutatingRunLock(runId, "migrateWorkspace", async () => {
-      const state = await this.ctx.store.load(runId);
-      const workspace = await loadRunWorkspace(this.ctx.config, runId);
-      this.ctx.bindWorkspace(workspace);
-
-      if (workspace.kind !== "legacy-shared") {
-        throw new HarnessFailure(
-          `Workspace migration only applies to legacy-shared runs (this run is ${workspace.kind})`,
-          "workspace",
-          false,
-        );
-      }
-      if (!this.ctx.config.git.enabled) {
-        throw new HarnessFailure("Cannot migrate workspace while git.enabled is false", "config", false);
-      }
-
-      const dirty = await this.ctx.git.changedFiles();
-      if (dirty.length > 0) {
-        throw new HarnessFailure(
-          `Refusing to migrate a dirty legacy checkout. Commit or stash first: ${dirty.slice(0, 10).join(", ")}`,
-          "workspace",
-          false,
-        );
-      }
-
-      const evidence = await this.ctx.git.workspaceEvidence();
-      const headSha = evidence.headSha;
-      const currentBranch = await this.ctx.git.currentBranch();
-      const sourceBranch =
-        workspace.branchName ?? state.branchName ?? currentBranch ?? this.ctx.config.git.baseBranch;
-      const baseBranch = workspace.baseBranch ?? this.ctx.config.git.baseBranch;
-
-      const manager = new WorktreeManager({
-        controlRoot: this.ctx.paths.controlRoot,
-        stateRoot: this.ctx.paths.stateRoot,
-        worktreeRoot: this.ctx.paths.worktreeRoot,
-        store: this.ctx.store,
-      });
-      const migrated = await manager.create({
-        runId,
-        baseBranch,
-        baseSha: headSha,
-        branchName: sourceBranch,
-      });
-      await writeRunWorkspace(this.ctx.config, runId, migrated);
-      this.ctx.bindWorkspace(migrated);
-
-      const nextState = await this.ctx.store.record(state, "run.workspace_migrated", {
-        sourceKind: "legacy-shared",
-        sourceBranch,
-        sourceSha: headSha,
-        baseBranch: migrated.baseBranch,
-        baseSha: migrated.baseSha,
-        kind: migrated.kind,
-      });
-      return { state: nextState, workspace: migrated };
-    });
   }
 
   /**

@@ -14,7 +14,6 @@ import {
   seedExternalGuidance,
 } from "../application/external-config.js";
 import { resolveHarnessHome, HARNESS_HOME_ENV } from "../application/harness-home.js";
-import { migrateHome } from "../application/migrate-home.js";
 import { ProjectRegistry } from "../application/project-registry.js";
 import { formatBytes, reportProjectStorage } from "../application/storage-report.js";
 import { openRunHarness } from "../application/run-engine-factory.js";
@@ -158,7 +157,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       await loadExternalProjectConfig({
         projectKey: lookup.registration.projectKey,
         home,
-        allowLegacy: false,
       });
       console.log(`Registered project ${lookup.registration.projectKey}`);
       console.log(`  displayName: ${lookup.registration.displayName}`);
@@ -248,42 +246,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     });
 
   program
-    .command("migrate-home")
-    .description(
-      "Copy-validate a repository-local harness install into the external harness home",
-    )
-    .requiredOption("--repository <path>", "repository with legacy agent-harness files")
-    .option("--name <name>", "display name for a new registration")
-    .option("--cleanup", "after successful validation, remove legacy repo-local harness files", false)
-    .option("--home <path>", "harness home override")
-    .action(async (options: {
-      repository: string;
-      name?: string;
-      cleanup: boolean;
-      home?: string;
-    }) => {
-      const home = resolveHarnessHome({ homeRoot: options.home });
-      const result = await migrateHome({
-        repository: options.repository,
-        name: options.name,
-        cleanup: options.cleanup,
-        home,
-      });
-      console.log(`Migrated to project ${result.lookup.registration.projectKey}`);
-      console.log(`  stateRoot: ${result.lookup.paths.projectStateRoot}`);
-      console.log(`  worktreeRoot: ${result.lookup.paths.worktreeRoot}`);
-      console.log(`  copiedFiles: ${result.copiedFiles}`);
-      for (const note of result.notes) console.log(`  note: ${note}`);
-      console.log("Repository-local paths that can be removed after validation:");
-      for (const removable of result.removablePaths) console.log(`  ${removable}`);
-      if (!result.cleaned) {
-        console.log(
-          "Rollback before cleanup: leave these paths in place and keep using --config / legacy discovery.",
-        );
-      }
-    });
-
-  program
     .command("storage")
     .description("Report external storage usage for a registered project")
     .option("--project <project-key>", "project key")
@@ -314,7 +276,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .description("Start a durable run from one idea")
     .requiredOption("--idea <textOrAtFile>", "idea text, or @path")
     .option("--run-id <id>", "stable run id")
-    .option("--config <path>", "legacy/explicit config path")
+    .option("--config <path>", "explicit config path override")
     .option("--project <project-key>", "external project key")
     .option("--repository <path>", "registered repository path")
     .option("--home <path>", "harness home override")
@@ -341,7 +303,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         );
         const engine = new HarnessEngine(config, {
           backend: dependencies.createBackend(),
-          ...(resolved.lookup && !resolved.legacy
+          ...(resolved.lookup
             ? {
                 projectContext: {
                   home: resolved.lookup.home,
@@ -615,17 +577,10 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       if (options.acceptTree) {
         await engine.acceptTree(options.runId);
       } else if (options.commitDirty) {
-        if (engine.workspace.kind !== "legacy-shared") {
-          throw new Error(
-            "Preflight commit-order controls are only available for legacy-shared runs. " +
-              "Worktree runs start from the committed base and never import control-checkout dirt.",
-          );
-        }
-        const order = typeof options.commitDirty === "string" ? options.commitDirty : undefined;
-        if (order != null && order !== "branch-then-commit" && order !== "commit-then-branch") {
-          throw new Error("--commit-dirty must be branch-then-commit or commit-then-branch");
-        }
-        await engine.commitPreflight(options.runId, { order });
+        throw new Error(
+          "Preflight commit-order controls have been removed. " +
+            "Worktree runs start from the committed base and never import control-checkout dirt.",
+        );
       } else {
         await engine.retry(options.runId, {
           force: options.force,
@@ -708,40 +663,13 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     });
 
   program
-    .command("migrate-workspace")
-    .description(
-      "Explicitly migrate a clean legacy-shared run onto a registered worktree at HEAD",
-    )
-    .requiredOption("--run-id <id>", "run id")
-    .option("--config <path>", "config path")
-    .action(async (options: { runId: string; config?: string }) => {
-      const engine = await openRunEngine(
-        options.config,
-        options.runId,
-        () => dependencies.createBackend("unused"),
-        { validateWorktree: false },
-      );
-      const result = await engine.migrateWorkspace(options.runId);
-      console.log(
-        `Migrated ${options.runId} to git-worktree` +
-          (result.workspace.worktreePath ? ` at ${result.workspace.worktreePath}` : "") +
-          ".",
-      );
-      printState(result.state);
-    });
-
-  program
     .command("unlock")
-    .description(
-      "Inspect locks and force-remove a stale run lock (optionally the legacy repository lock)",
-    )
+    .description("Inspect locks and force-remove a stale run lock")
     .requiredOption("--run-id <id>", "run id")
-    .option("--repo", "also remove the legacy repository lock when present", false)
     .option("--inspect-only", "print lock status without removing anything", false)
     .option("--config <path>", "config path")
     .action(async (options: {
       runId: string;
-      repo: boolean;
       inspectOnly: boolean;
       config?: string;
     }) => {
@@ -753,26 +681,17 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       );
       const store = engine.store;
       const runLock = await store.inspectRunLock(options.runId);
-      const repoLock = await store.inspectRepositoryLock();
       const workspaceAdminLock = await store.inspectWorkspaceAdminLock();
       const sharedIndexLock = await store.inspectSharedIndexLock();
       printLockStatus("run", runLock);
-      printLockStatus("repository (legacy-shared)", repoLock);
       printLockStatus("workspace-admin", workspaceAdminLock);
       printLockStatus("shared-index", sharedIndexLock);
       if (options.inspectOnly) return;
 
       if (runLock) printLockRemoval("run", runLock);
       else console.log(`No run lock found for ${options.runId}.`);
-      if (options.repo) {
-        if (repoLock) printLockRemoval("repository", repoLock);
-        else console.log("Repository lock not present.");
-      }
-      const result = await store.unlock(options.runId, { repo: options.repo });
+      const result = await store.unlock(options.runId, { repo: false });
       if (result.run && runLock) console.log(`Removed run lock: ${runLock.path}`);
-      if (options.repo && result.repo === true && repoLock) {
-        console.log(`Removed repository lock: ${repoLock.path}`);
-      }
     });
 
   program
@@ -910,24 +829,21 @@ async function resolvedProjectConfig(options: {
   config: HarnessConfig;
   path: string;
   lookup?: Awaited<ReturnType<typeof loadExternalProjectConfig>>["lookup"];
-  legacy: boolean;
 }> {
   if (options.config) {
     const loaded = await loadConfig(options.config);
-    return { config: loaded.config, path: loaded.path, legacy: true };
+    return { config: loaded.config, path: loaded.path };
   }
   const home = resolveHarnessHome({ homeRoot: options.home });
   const loaded = await loadExternalProjectConfig({
     projectKey: options.project,
     repository: options.repository,
     home,
-    allowLegacy: true,
   });
   return {
     config: loaded.config,
     path: loaded.path,
     lookup: loaded.lookup,
-    legacy: loaded.legacy,
   };
 }
 

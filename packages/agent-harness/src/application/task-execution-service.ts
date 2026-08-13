@@ -88,13 +88,6 @@ export class TaskExecutionService {
         };
         return this.updateTask(state, next, "task.started");
       }
-      case "writing_tests":
-      case "red":
-        throw new HarnessFailure(
-          `Task ${task.id} uses legacy TDD step "${task.step}"; pre-redesign runs cannot be resumed`,
-          "contract",
-          false,
-        );
       case "implementing":
         return this.implementTask(state, task);
       case "verifying":

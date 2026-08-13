@@ -96,13 +96,15 @@ describe("retrieval result cache", () => {
 
     const retrievalFirst = await knowledge.searchWithAudit("SettlementWindow refunds", 4);
     const guidanceFirst = await knowledge.selectGuidanceWithAudit("SettlementWindow refunds", {
-      role: "planner"});
+      role: "planner",
+      assignment: { rules: ["settlement"], skills: [] }});
     expect(retrievalFirst.results.length).toBeGreaterThan(0);
     expect(guidanceFirst.selected.length).toBeGreaterThan(0);
 
     const retrievalSecond = await knowledge.searchWithAudit("SettlementWindow refunds", 4);
     const guidanceSecond = await knowledge.selectGuidanceWithAudit("SettlementWindow refunds", {
-      role: "planner"});
+      role: "planner",
+      assignment: { rules: ["settlement"], skills: [] }});
     expect(retrievalSecond).toEqual(retrievalFirst);
     expect(guidanceSecond).toEqual(guidanceFirst);
     expect(retrievalSecond.results[0]).not.toBe(retrievalFirst.results[0]);
@@ -117,7 +119,8 @@ describe("retrieval result cache", () => {
 
     const retrievalAfter = await knowledge.searchWithAudit("SettlementWindow refunds", 4);
     const guidanceAfterRefresh = await knowledge.selectGuidanceWithAudit("SettlementWindow refunds", {
-      role: "planner"});
+      role: "planner",
+      assignment: { rules: ["settlement"], skills: [] }});
     expect(JSON.stringify(retrievalAfter)).toContain("UPDATED_TOKEN_XYZ");
     expect(retrievalAfter).not.toEqual(retrievalFirst);
     // Document refresh must not clear injected guidance.
@@ -140,7 +143,8 @@ describe("retrieval result cache", () => {
     );
 
     const guidanceAfter = await knowledge.selectGuidanceWithAudit("SettlementWindow refunds", {
-      role: "planner"});
+      role: "planner",
+      assignment: { rules: ["settlement"], skills: [] }});
     expect(JSON.stringify(guidanceAfter)).toContain("UPDATED_TOKEN_XYZ");
     expect(guidanceAfter).not.toEqual(guidanceFirst);
   });

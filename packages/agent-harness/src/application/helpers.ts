@@ -104,9 +104,9 @@ export function isConfigFixerCandidate(blockedKind?: string, failure?: string): 
   return repairRoute({ blockedKind, failure }) === "config-fixer";
 }
 
-/** Legacy shared-checkout runs keep commit-order recovery; worktree runs do not. */
-export function offersPreflightCommitOrders(kind: RunWorkspaceKind): boolean {
-  return kind === "legacy-shared";
+/** Legacy shared-checkout commit-order recovery has been removed. */
+export function offersPreflightCommitOrders(_kind: RunWorkspaceKind): boolean {
+  return false;
 }
 
 export function preflightCommitUnavailableMessage(kind: RunWorkspaceKind): string {

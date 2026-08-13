@@ -52,7 +52,6 @@ export {
   resolveFrozenGuidanceRoot,
   type FrozenComponentManifest,
 } from "./component-freeze.js";
-export { migrateHome, type MigrateHomeOptions, type MigrateHomeResult } from "./migrate-home.js";
 export {
   formatBytes,
   reportProjectStorage,
@@ -79,7 +78,6 @@ export {
   taskForPacket,
   type CancelResult,
   type CleanupResult,
-  type MigrateWorkspaceResult,
 } from "./helpers.js";
 export { InterviewService } from "./interview-service.js";
 export { PlanningService } from "./planning-service.js";

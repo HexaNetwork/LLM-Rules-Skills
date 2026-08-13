@@ -31,12 +31,7 @@ import {
   compileRoleGuidancePack,
   guidancePackCacheKey,
 } from "./infrastructure/knowledge/guidance-pack.js";
-import {
-  cloneGuidanceAudit,
-  guidanceResultCacheKey,
-  matchesGlob,
-  selectGuidanceFromDocuments,
-} from "./infrastructure/knowledge/guidance-selector.js";
+import { matchesGlob } from "./infrastructure/knowledge/guidance-selector.js";
 import {
   capResultCharacters,
   capResultCharactersWithOmissions,
@@ -110,7 +105,6 @@ export class LocalKnowledgeBase {
   private indexGeneration = "";
   private guidanceGeneration = "";
   private readonly searchResultCache = new Map<string, KnowledgeSearchAudit>();
-  private readonly guidanceResultCache = new Map<string, GuidanceSelectionAudit>();
   private readonly guidancePackCache = new Map<string, CompiledGuidancePack>();
   private static readonly RESULT_CACHE_LIMIT = 64;
 
@@ -566,46 +560,24 @@ export class LocalKnowledgeBase {
     query: string,
     options: GuidanceSelectionOptions,
   ): Promise<GuidanceSelectionAudit> {
-    if (options.assignment) {
-      const pack = await this.compileRoleGuidancePack(options.role, options);
-      return {
-        selected: pack.selected.map((item, index) => ({
-          ...item,
-          excerpt: "",
-          reason: "agent assignment",
-          score: 1_000 - index,
-        })),
-        missingAssignments: pack.missingAssignments,
-        omittedAlwaysApply: [],
-        omittedOverrides: pack.omittedOverrides,
-        sources: pack.sources,
-        guidancePack: pack.text,
-        ...(pack.truncated ? { truncated: pack.truncated } : {}),
-      };
-    }
-
-    const { documents, generation } = await this.loadGuidanceDocumentsForSelection(options.runId);
-    const cacheKey = guidanceResultCacheKey(query, options, generation);
-    const cached = this.guidanceResultCache.get(cacheKey);
-    if (cached) return cloneGuidanceAudit(cached);
-
-    const result = selectGuidanceFromDocuments(
-      documents,
-      query,
-      { ...options, chunkCharacters: this.config.knowledge.chunkCharacters },
-      {
-        maxResults: this.config.knowledge.guidance.maxResults,
-        maxCharacters: this.config.knowledge.guidance.maxCharacters,
-        projectId: this.config.knowledge.projectId,
-      },
-    );
-    rememberFifo(
-      this.guidanceResultCache,
-      cacheKey,
-      cloneGuidanceAudit(result),
-      LocalKnowledgeBase.RESULT_CACHE_LIMIT,
-    );
-    return cloneGuidanceAudit(result);
+    const pack = await this.compileRoleGuidancePack(options.role, {
+      ...options,
+      assignment: options.assignment ?? { rules: [], skills: [] },
+    });
+    return {
+      selected: pack.selected.map((item, index) => ({
+        ...item,
+        excerpt: "",
+        reason: "agent assignment",
+        score: 1_000 - index,
+      })),
+      missingAssignments: pack.missingAssignments,
+      omittedAlwaysApply: [],
+      omittedOverrides: pack.omittedOverrides,
+      sources: pack.sources,
+      guidancePack: pack.text,
+      ...(pack.truncated ? { truncated: pack.truncated } : {}),
+    };
   }
 
   private async loadGuidanceDocumentsForSelection(
@@ -625,7 +597,6 @@ export class LocalKnowledgeBase {
     });
     this.cachedGuidanceDocuments = documents;
     this.guidanceGeneration = generation;
-    this.guidanceResultCache.clear();
     this.guidancePackCache.clear();
     return { documents, generation };
   }

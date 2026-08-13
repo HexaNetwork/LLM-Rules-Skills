@@ -111,8 +111,7 @@ describe("external harness home E2E matrix", () => {
     const home = resolveHarnessHome({ homeRoot });
     const loaded = await loadExternalProjectConfig({
       repository: repo,
-      home,
-      allowLegacy: false,
+      home
       overrides: {
         git: {
           enabled: true,

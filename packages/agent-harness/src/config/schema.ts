@@ -93,16 +93,7 @@ const GuidanceAssignmentsObjectSchema = z.object({
   "project-profiler": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
 }).strict();
 
-/** Strip deleted roles from legacy assignment maps before strict parse. */
-const GuidanceAssignmentsSchema = z.preprocess((value) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const {
-    ["test-writer"]: _testWriter,
-    ["red-writer"]: _redWriter,
-    ...rest
-  } = value as Record<string, unknown>;
-  return rest;
-}, GuidanceAssignmentsObjectSchema);
+const GuidanceAssignmentsSchema = GuidanceAssignmentsObjectSchema;
 
 /** Authoritative guidance map applied when `knowledge.guidance.assignments` is omitted. */
 export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsObjectSchema> = {

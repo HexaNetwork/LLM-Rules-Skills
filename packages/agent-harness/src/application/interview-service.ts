@@ -396,17 +396,7 @@ export class InterviewService {
             })),
           }
         : {};
-    // pendingBatchId is persisted for current runs. The fallback derives the
-    // newest touched batch so an in-flight run written by an older harness can
-    // still resume without dropping the human response.
-    const legacyPendingBatchId = [...state.questions]
-      .filter(
-        (question) =>
-          question.purpose === "grill" &&
-          (question.status === "answered" || question.status === "parked"),
-      )
-      .sort((left, right) => right.askedAt.localeCompare(left.askedAt))[0]?.batchId;
-    const pendingBatchId = state.grillEpisode?.pendingBatchId ?? legacyPendingBatchId;
+    const pendingBatchId = state.grillEpisode?.pendingBatchId;
     const respondedQuestions = state.questions.filter(
       (question) =>
         question.purpose === "grill" &&

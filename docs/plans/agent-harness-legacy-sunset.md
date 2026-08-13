@@ -1,6 +1,6 @@
 # Agent-harness legacy sunset checklist
 
-**Status:** S1–S5 trim-now slices landed (2026-08-13); S6–S12 remain gated  
+**Status:** S1–S12 complete (2026-08-13) — local inventory had 0 legacy-shared runs and 0 repo-local `.agent-harness` state  
 **Scope:** `packages/agent-harness`  
 **Origin:** legacy code inventory (Cursor plan `legacy_code_inventory_a248eaed`)  
 **Canonical background:** [ADR 0010](../adr/0010-per-run-worktrees.md), [ADR 0011](../adr/0011-external-harness-home.md), [per-run-worktrees plan](./per-run-worktrees.md), [external-harness-home plan](./external-harness-home.md), [README legacy section](../../packages/agent-harness/README.md), [efficiency plan Item 12](./agent-harness-efficiency.md)
@@ -271,10 +271,10 @@ Use these before opening S11/S12 PRs:
 | S3 data-question-choice | **done** (2026-08-13) — single-question click handler removed; batch UI only |
 | S4 Architecture barrels | **done** (2026-08-13) — deleted `agent.ts`/`config.ts`/`engine.ts`; `HarnessEngine` lives at `application/harness-engine.ts`; package exports rewired to direct modules |
 | S5 CONFIG_FAILURE_PATTERN | **done** (2026-08-13) — retired Test/Red writer path strings; kept modern config/command/template patterns |
-| S6 Interview/resume shims | open (gated) |
-| S7 Guidance pre-assignments | open (gated) |
-| S8 Scalar fingerprints | open (gated) |
-| S9 Config migrations | open (gated; prefer Item 12 first) |
-| S10 TDD legacy steps | open (gated) |
-| S11 Repo-local install | open (gated) |
-| S12 legacy-shared stack | open (gated; **last**) |
+| S6 Interview/resume shims | **done** (2026-08-13) — batch-only `parseAnswerBody`; removed `legacyPendingBatchId`, `yieldedAt`, raw-markdown reflect fallback |
+| S7 Guidance pre-assignments | **done** (2026-08-13) — `selectGuidanceWithAudit` always uses role assignments / `compileRoleGuidancePack` |
+| S8 Scalar fingerprints | **done** (2026-08-13) — removed `isLegacyTreeFingerprint` / `legacyTreeFingerprint`; structured evidence only |
+| S9 Config migrations | **done** (2026-08-13) — removed deleted-role preprocess + `stripLegacyGuidanceSources`; kept ADR 0006 missing-guidance→disabled via `normalizeFrozenRunConfig`; **leftover:** string knowledge-source YAML shorthand still transforms to objects |
+| S10 TDD legacy steps | **done** (2026-08-13) — removed `LegacyTaskStepSchema` / `writing_tests`/`red` resume branches |
+| S11 Repo-local install | **done** (2026-08-13) — removed `allowLegacy` / `tryLoadLegacyConfig` / `migrate-home`; `--config` is explicit path override only |
+| S12 legacy-shared stack | **done** (2026-08-13) — removed `legacy-shared` kind, repository lock gating, migrate-workspace, preflight commit-order UI/CLI |

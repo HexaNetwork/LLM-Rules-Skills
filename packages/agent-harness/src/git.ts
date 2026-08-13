@@ -286,17 +286,6 @@ export class GitService {
     return (await this.workspaceEvidence()).fingerprint;
   }
 
-  /**
-   * Opaque pre-evidence fingerprint (HEAD + filtered porcelain).
-   * Kept so runs stamped before structured evidence can still resume.
-   */
-  async legacyTreeFingerprint(): Promise<string> {
-    if (!this.config.git.enabled) return "git-disabled";
-    const head = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
-    const { filteredPorcelain } = await this.porcelainStatus();
-    return createHash("sha256").update(`${head}\0${filteredPorcelain}`).digest("hex");
-  }
-
   /** Non-mutating index identity: hash of staged blob/mode/path entries. */
   private async indexIdentity(): Promise<string> {
     const result = await this.git(["ls-files", "-s", "-z"], true);

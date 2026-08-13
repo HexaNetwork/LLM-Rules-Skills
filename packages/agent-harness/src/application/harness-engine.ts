@@ -4,7 +4,7 @@ import type { ReflectOutput, RunState, RunWorkspace, VerificationSettingsPatch, 
 import { ApplicationContext } from "./application-context.js";
 import type { HarnessDependencies } from "./dependencies.js";
 import { runCancellationRegistry } from "./cancellation-registry.js";
-import type { CancelResult, CleanupResult, MigrateWorkspaceResult } from "./helpers.js";
+import type { CancelResult, CleanupResult } from "./helpers.js";
 import { InterviewService } from "./interview-service.js";
 import { PlanningService } from "./planning-service.js";
 import { RecoveryService } from "./recovery-service.js";
@@ -181,10 +181,6 @@ export class HarnessEngine {
 
   cleanup(runId: string, options?: { discard?: boolean }): Promise<CleanupResult> {
     return this.recovery.cleanup(runId, options);
-  }
-
-  migrateWorkspace(runId: string): Promise<MigrateWorkspaceResult> {
-    return this.recovery.migrateWorkspace(runId);
   }
 
   requestStop(runId: string): Promise<RunState> {

@@ -299,13 +299,15 @@ describe("LocalKnowledgeBase", () => {
 
     const implementation = await knowledge.selectGuidance("implement TypeScript behavior", {
       role: "implementer",
+      assignment: { rules: ["typescript"], skills: [] },
       knownPaths: ["src/feature.ts"]});
     const redWriting = await knowledge.selectGuidance("establish runnable red", {
-      role: "red-writer"});
+      role: "unit-test-writer",
+      assignment: { rules: [], skills: ["tdd"] }});
 
     expect(implementation.map((item) => item.source)).toEqual(["General/rules/typescript.mdc"]);
     expect(implementation[0]).toMatchObject({ kind: "rule" });
-    expect(implementation[0]?.reason).toContain("path matches");
+    expect(implementation[0]?.reason).toContain("agent assignment");
     expect(redWriting.map((item) => item.source)).toEqual(["General/skills/tdd/SKILL.md"]);
     expect(redWriting[0]).toMatchObject({ kind: "skill" });
   });
@@ -328,6 +330,7 @@ describe("LocalKnowledgeBase", () => {
 
     const selected = await knowledge.selectGuidance("login validation", {
       role: "implementer",
+      assignment: { rules: ["priority", "normal"], skills: [] },
       maxResults: 2,
       maxCharacters: 35});
     const generic = await knowledge.search("login validation", 10, {
@@ -370,18 +373,22 @@ describe("LocalKnowledgeBase", () => {
       sharedRoot});
 
     const failureQuery = "Review failed. Test writer misclassified test paths.";
-    const fixerSelected = await knowledge.selectGuidance(failureQuery, { role: "fixer" });
+    const fixerSelected = await knowledge.selectGuidance(failureQuery, {
+      role: "fixer",
+      assignment: { rules: [], skills: [] },
+    });
     expect(fixerSelected.map((item) => item.source)).toEqual([]);
 
-    const reviewerSelected = await knowledge.selectGuidance(failureQuery, { role: "reviewer" });
+    const reviewerSelected = await knowledge.selectGuidance(failureQuery, {
+      role: "reviewer",
+      assignment: { rules: [], skills: ["code-review"] },
+    });
     expect(reviewerSelected.map((item) => item.source)).toEqual([
       "General/skills/code-review/SKILL.md"]);
-    expect(reviewerSelected.map((item) => item.source)).not.toContain(
-      "General/skills/implement-auto/SKILL.md",
-    );
 
     const taskReviewerSelected = await knowledge.selectGuidance(failureQuery, {
       role: "task-reviewer",
+      assignment: { rules: [], skills: ["task-review"] },
     });
     expect(taskReviewerSelected.map((item) => item.source)).toEqual([
       "General/skills/task-review/SKILL.md"]);
@@ -417,15 +424,11 @@ describe("LocalKnowledgeBase", () => {
 
     const audit = await knowledge.selectGuidanceWithAudit("authorization", {
       role: "implementer",
-      maxResults: 1});
+      assignment: { rules: ["a", "b"], skills: [] },
+      maxCharacters: 40});
 
-    expect(audit.selected).toHaveLength(1);
-    expect(audit.omittedAlwaysApply).toEqual([
-      expect.objectContaining({
-        source: audit.selected[0]?.source === "General/rules/a.mdc"
-          ? "General/rules/b.mdc"
-          : "General/rules/a.mdc",
-        reason: "lower-ranked or omitted by the guidance budget"})]);
+    expect(audit.selected.length).toBeGreaterThanOrEqual(1);
+    expect(audit.selected.every((item) => item.reason === "agent assignment")).toBe(true);
     expect(audit.omittedOverrides).toEqual([]);
   });
 
@@ -448,17 +451,19 @@ describe("LocalKnowledgeBase", () => {
       sharedRoot});
 
     const implementer = await knowledge.selectGuidanceWithAudit("authorization fallback", {
-      role: "implementer"});
+      role: "implementer",
+      assignment: { rules: ["no-legacy-fallback-code"], skills: [] }});
     expect(implementer.selected.map((item) => item.source)).toEqual([
       "rules/no-legacy-fallback-code.mdc"]);
-    expect(implementer.selected[0]?.reason).toContain("project scope");
+    expect(implementer.selected[0]?.reason).toContain("agent assignment");
     expect(implementer.omittedOverrides).toEqual([
       expect.objectContaining({
         source: "General/rules/no-legacy-fallback-code.mdc",
         reason: "overridden by project guidance"})]);
 
     const redWriter = await knowledge.selectGuidanceWithAudit("authorization tests", {
-      role: "red-writer"});
+      role: "unit-test-writer",
+      assignment: { rules: [], skills: ["tdd"] }});
     expect(redWriter.selected.map((item) => item.source)).toContain("skills/tdd/SKILL.md");
     expect(redWriter.selected.map((item) => item.source)).not.toContain(
       "General/skills/tdd/SKILL.md",
@@ -549,6 +554,7 @@ describe("LocalKnowledgeBase", () => {
       runsRoot});
     const selected = await knowledge.selectGuidance("frozen guidance", {
       role: "implementer",
+      assignment: { rules: ["frozen"], skills: [] },
       runId: "run-1"});
     expect(selected.map((item) => item.source)).toEqual(["General/rules/frozen.mdc"]);
     expect(selected.map((item) => item.source)).not.toContain("General/rules/live.mdc");

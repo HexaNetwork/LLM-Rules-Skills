@@ -14,9 +14,6 @@ import type { TrackerPort } from "../tracker.js";
 import {
   diffWorkspaceEvidence,
   formatWorkspaceDivergenceMessage,
-  isLegacyTreeFingerprint,
-  migrateRunWorkspace,
-  requiresRepositoryLock,
   WORKSPACE_SCHEMA_VERSION,
   type RunWorkspace,
   type WorkspaceEvidence,
@@ -68,7 +65,12 @@ export class ApplicationContext {
     this.projectContext = this.deps.projectContext;
     this.cancellation = cancellation;
     this.workspace = config.git.enabled
-      ? migrateRunWorkspace(null, { controlRoot: this.paths.controlRoot })
+      ? {
+          version: WORKSPACE_SCHEMA_VERSION,
+          kind: "git-worktree",
+          controlRoot: this.paths.controlRoot,
+          createdAt: new Date().toISOString(),
+        }
       : {
           version: WORKSPACE_SCHEMA_VERSION,
           kind: "git-disabled",
@@ -89,8 +91,7 @@ export class ApplicationContext {
   }
 
   /**
-   * Bind durable workspace identity, then take locks for a mutating run operation.
-   * Legacy-shared keeps repository → run ordering; worktree/git-disabled use only the run lock.
+   * Bind durable workspace identity, then take the run lock for a mutating operation.
    */
   async withMutatingRunLock<T>(
     runId: string,
@@ -99,11 +100,7 @@ export class ApplicationContext {
   ): Promise<T> {
     const workspace = await loadRunWorkspace(this.config, runId);
     this.bindWorkspace(workspace);
-    const withRunLock = () => this.store.withLock(runId, work);
-    if (requiresRepositoryLock(workspace)) {
-      return this.store.withRepositoryLock({ runId, action }, withRunLock);
-    }
-    return withRunLock();
+    return this.store.withLock(runId, work);
   }
 
   /** Serialize shared knowledge-index refreshes across runs. */
@@ -220,8 +217,7 @@ export class ApplicationContext {
 
   /**
    * Throws HarnessFailure when this run's worktree no longer matches the last stamp.
-   * Structured evidence yields component-level diagnostics; legacy scalar fingerprints
-   * still compare via the opaque pre-evidence algorithm until the next stamp migrates them.
+   * Structured evidence yields component-level diagnostics.
    */
   async assertTreeFingerprint(state: RunState): Promise<void> {
     if (!this.config.git.enabled) return;
@@ -248,21 +244,7 @@ export class ApplicationContext {
       throw new HarnessFailure(message, "workspace", true);
     }
 
-    // Legacy scalar treeFingerprint (opaque sha256 of HEAD + porcelain).
-    if (isLegacyTreeFingerprint(state.treeFingerprint)) {
-      const observed = await this.git.legacyTreeFingerprint();
-      if (observed === state.treeFingerprint) return;
-      const current = await this.git.changedFiles();
-      throw new HarnessFailure(
-        `Workspace diverged in this run's worktree (legacy fingerprint). Diverging paths: ${
-          current.length > 0 ? current.join(", ") : "(HEAD or index changed with no dirty paths)"
-        }`,
-        "workspace",
-        true,
-      );
-    }
-
-    // Versioned fingerprint without structured fields (partial migration).
+    // Versioned fingerprint without structured fields (partial stamp).
     const observed = await this.git.workspaceEvidence();
     if (observed.fingerprint === state.treeFingerprint) return;
     const current = await this.git.changedFiles();

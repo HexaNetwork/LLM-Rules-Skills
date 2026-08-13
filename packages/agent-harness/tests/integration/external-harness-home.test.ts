@@ -7,7 +7,6 @@ import {
   loadExternalProjectConfig,
   seedExternalGuidance} from "../../src/application/external-config.js";
 import { resolveHarnessHome } from "../../src/application/harness-home.js";
-import { migrateHome } from "../../src/application/migrate-home.js";
 import { ProjectRegistry } from "../../src/application/project-registry.js";
 import { harnessPathsFromProject } from "../../src/application/paths.js";
 import { HarnessConfigSchema } from "../../src/config/schema.js";
@@ -113,8 +112,7 @@ describe("external harness home", () => {
 
     const loaded = await loadExternalProjectConfig({
       projectKey: lookup.registration.projectKey,
-      home,
-      allowLegacy: false});
+      home});
 
     expect(loaded.config.workflow.maxGrillQuestionsPerEpisode).toBe(9);
     expect(loaded.config.workflow.staleAnswerMinutes).toBe(77);
@@ -132,8 +130,7 @@ describe("external harness home", () => {
     const lookup = await registry.add({ repository: repo, home });
     const loaded = await loadExternalProjectConfig({
       projectKey: lookup.registration.projectKey,
-      home,
-      allowLegacy: false});
+      home});
     const config = HarnessConfigSchema.parse({
       ...loaded.config,
       git: {
@@ -174,39 +171,5 @@ describe("external harness home", () => {
     expect(workspace.kind).toBe("git-worktree");
     expect(workspace.worktreePath).toBeTruthy();
     expect(path.resolve(workspace.worktreePath!)).toContain(`${path.basename(repo)}-worktrees`);
-  });
-
-  it("migrates a legacy repository-local install without deleting originals", async () => {
-    const homeRoot = await tempDir("ah-mig-home-");
-    const repo = await tempDir("ah-mig-repo-");
-    await initRepo(repo);
-    await writeFile(path.join(repo, "agent-harness.config.yaml"), defaultConfigYaml(), "utf8");
-    const legacyRun = path.join(repo, ".agent-harness", "runs", "legacy-1");
-    await mkdir(legacyRun, { recursive: true });
-    await writeFile(
-      path.join(legacyRun, "state.json"),
-      JSON.stringify({
-        runId: "legacy-1",
-        phase: "completed",
-        idea: "old",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        configurationHash: "x",
-        configVersion: 1,
-        configRevision: 0,
-        tasks: [],
-        decisions: [],
-        proposedInstalls: []}),
-      "utf8",
-    );
-
-    const home = resolveHarnessHome({ homeRoot });
-    const result = await migrateHome({ repository: repo, home });
-    expect(result.lookup.registration.projectKey).toBeTruthy();
-    expect(result.cleaned).toBe(false);
-    await expect(access(path.join(repo, "agent-harness.config.yaml"))).resolves.toBeUndefined();
-    await expect(
-      access(path.join(result.lookup.paths.runsRoot, "legacy-1", "state.json")),
-    ).resolves.toBeUndefined();
   });
 });

@@ -6,7 +6,6 @@ import {
   type HarnessConfig,
 } from "../config/schema.js";
 import { defaultConfigYaml } from "../config/defaults.js";
-import { stripLegacyGuidanceSources } from "../config/migrations.js";
 import { resolveGuidanceTemplateDirectory } from "../guidance-seed.js";
 import { HarnessFailure } from "../errors.js";
 import {
@@ -23,15 +22,12 @@ export type LoadExternalConfigOptions = {
   home?: HarnessHomePaths;
   /** Explicit CLI / env overrides applied after project config. */
   overrides?: Partial<HarnessConfig>;
-  /** When true, allow falling back to repository-local agent-harness.config.*. */
-  allowLegacy?: boolean;
 };
 
 export type LoadedProjectConfig = {
   config: HarnessConfig;
   path: string;
   lookup: ProjectLookupResult;
-  legacy: boolean;
 };
 
 /**
@@ -45,20 +41,11 @@ export async function loadExternalProjectConfig(
   const home = options.home ?? resolveHarnessHome();
   const registry = new ProjectRegistry(home);
 
-  let lookup: ProjectLookupResult;
-  try {
-    lookup = await registry.discover({
-      projectKey: options.projectKey,
-      repository: options.repository,
-      cwd: options.cwd,
-    });
-  } catch (error) {
-    if (options.allowLegacy !== false) {
-      const legacy = await tryLoadLegacyConfig(options.cwd ?? process.cwd());
-      if (legacy) return legacy;
-    }
-    throw error;
-  }
+  const lookup = await registry.discover({
+    projectKey: options.projectKey,
+    repository: options.repository,
+    cwd: options.cwd,
+  });
 
   await ensureHarnessHomeDefaults(home);
   const homeDefaults = await readOptionalYamlConfig(path.join(home.homeRoot, "config.yaml"));
@@ -83,7 +70,6 @@ export async function loadExternalProjectConfig(
     isRecord(projectConfig.knowledge) && Array.isArray(projectConfig.knowledge.sources)
       ? (projectConfig.knowledge.sources as unknown[])
       : undefined;
-  const stripped = stripLegacyGuidanceSources(existingSources);
   const mergedKnowledge = isRecord(withOverrides.knowledge) ? withOverrides.knowledge : {};
   const homeKnowledge = isRecord(homeDefaults?.knowledge) ? homeDefaults.knowledge : {};
   const homeGuidance = isRecord(homeKnowledge.guidance) ? homeKnowledge.guidance : {};
@@ -96,8 +82,8 @@ export async function loadExternalProjectConfig(
     knowledge: {
       ...mergedKnowledge,
       sources:
-        stripped.sources && stripped.sources.length > 0
-          ? stripped.sources
+        existingSources && existingSources.length > 0
+          ? existingSources
           : [
               { path: "README.md", scope: "project", visibility: "private" },
               { path: "docs", scope: "project", visibility: "private" },
@@ -111,7 +97,6 @@ export async function loadExternalProjectConfig(
         sharedRoot:
           (typeof projectGuidance.sharedRoot === "string" && projectGuidance.sharedRoot.trim()) ||
           (typeof homeGuidance.sharedRoot === "string" && homeGuidance.sharedRoot.trim()) ||
-          stripped.sharedRoot ||
           home.sharedGuidanceRoot,
       },
     },
@@ -124,7 +109,6 @@ export async function loadExternalProjectConfig(
     config: merged,
     path: lookup.paths.projectConfigPath,
     lookup,
-    legacy: false,
   };
 }
 
@@ -171,7 +155,6 @@ function deepMerge(
   }
   return merged;
 }
-
 
 /** Seed shared guidance under harness home (never into the target repository). */
 export async function seedExternalGuidance(
@@ -232,53 +215,6 @@ async function readOptionalYamlConfig(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
-  }
-}
-
-async function tryLoadLegacyConfig(cwd: string): Promise<LoadedProjectConfig | undefined> {
-  const { loadConfig } = await import("../config/io.js");
-  try {
-    const loaded = await loadConfig(undefined, cwd);
-    // Synthesize a lookup-shaped result for callers that only need config+path.
-    const home = resolveHarnessHome();
-    const registry = new ProjectRegistry(home);
-    // Legacy path: no registration; fabricate a non-persisted lookup for path helpers.
-    const controlRoot = loaded.config.repositoryRoot;
-    const fakeKey = "legacy";
-    const { resolveProjectPaths } = await import("./harness-home.js");
-    const paths = resolveProjectPaths({
-      projectKey: fakeKey,
-      controlRoot,
-      home,
-      worktreeRoot: loaded.config.worktreeRoot,
-    });
-    return {
-      config: loaded.config,
-      path: loaded.path,
-      lookup: {
-        registration: {
-          version: 1,
-          projectKey: fakeKey,
-          displayName: path.basename(controlRoot),
-          controlRoot,
-          canonicalControlRoot: controlRoot,
-          createdAt: new Date(0).toISOString(),
-          updatedAt: new Date(0).toISOString(),
-        },
-        paths: {
-          ...paths,
-          // Preserve legacy state under the repository when present.
-          projectStateRoot: path.isAbsolute(loaded.config.stateDirectory)
-            ? path.resolve(loaded.config.stateDirectory)
-            : path.resolve(controlRoot, loaded.config.stateDirectory),
-          projectConfigPath: loaded.path,
-        },
-        home: registry.homePaths,
-      },
-      legacy: true,
-    };
-  } catch {
-    return undefined;
   }
 }
 

@@ -145,7 +145,7 @@ describe("human question contracts", () => {
 });
 
 describe("run state backward compatibility", () => {
-  it("parses a state.json written before openUnknowns/operatorNotes/yieldedAt existed", () => {
+  it("parses a state.json written before openUnknowns/operatorNotes existed", () => {
     const legacy = {
       contractVersion: CONTRACT_VERSION,
       runId: "legacy-run",
@@ -158,11 +158,10 @@ describe("run state backward compatibility", () => {
       lastEventSequence: 3,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      // No openUnknowns, operatorNotes, or yieldedAt fields at all.
+      // No openUnknowns or operatorNotes fields at all.
     };
     const parsed = RunStateSchema.parse(legacy);
     expect(parsed.openUnknowns).toEqual([]);
     expect(parsed.operatorNotes).toEqual([]);
-    expect(parsed.yieldedAt).toBeUndefined();
   });
 });

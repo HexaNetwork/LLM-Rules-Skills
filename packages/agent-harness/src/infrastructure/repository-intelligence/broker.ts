@@ -176,25 +176,39 @@ export class RepositoryIntelligenceBroker {
     };
   }
 
-  /** Prepare the first provider in every route; fallback indexes remain lazy. */
+  /**
+   * Prepare the first usable provider in every route; fallback indexes remain lazy.
+   * Missing executables (`command-unavailable` / disabled) skip without failing the
+   * run so later route entries can still refresh on first retrieve.
+   */
   async prepare(): Promise<RepositoryIntelligenceLifecycleAudit> {
-    const primary = new Set(
-      Object.values(this.routes).flatMap((route) => route?.slice(0, 1) ?? []),
-    );
     const providers = [];
-    for (const providerId of primary) {
-      const adapter = this.adapters.get(providerId);
-      if (!adapter) continue;
-      const result = await adapter.prepare();
-      providers.push({ providerId, ...result });
-      this.stale.delete(providerId);
-      if (!result.available || !result.indexReady) {
-        const detail = result.detail?.trim();
-        throw new Error(
-          detail
-            ? `Repository intelligence provider ${providerId} is not ready: ${detail}`
-            : `Repository intelligence provider ${providerId} is not ready`,
-        );
+    const prepared = new Set<string>();
+    const unavailable = new Set<string>();
+    for (const route of Object.values(this.routes)) {
+      if (!route?.length) continue;
+      for (const providerId of route) {
+        if (prepared.has(providerId)) break;
+        if (unavailable.has(providerId)) continue;
+        const adapter = this.adapters.get(providerId);
+        if (!adapter) continue;
+        const result = await adapter.prepare();
+        providers.push({ providerId, ...result });
+        this.stale.delete(providerId);
+        if (!result.available) {
+          unavailable.add(providerId);
+          continue;
+        }
+        if (!result.indexReady) {
+          const detail = result.detail?.trim();
+          throw new Error(
+            detail
+              ? `Repository intelligence provider ${providerId} is not ready: ${detail}`
+              : `Repository intelligence provider ${providerId} is not ready`,
+          );
+        }
+        prepared.add(providerId);
+        break;
       }
     }
     return { providers };

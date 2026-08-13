@@ -10,7 +10,11 @@ export * from "./types.js";
 export { RepositoryIntelligenceBroker } from "./broker.js";
 export { CodeGraphAdapter } from "./adapters/codegraph-adapter.js";
 export { GitNexusAdapter } from "./adapters/gitnexus-adapter.js";
-export { runExecutable } from "./executable-runner.js";
+export {
+  quoteCmdArgument,
+  resolveExecutableInvocation,
+  runExecutable,
+} from "./executable-runner.js";
 
 export function createRepositoryIntelligenceBroker(options: {
   config: HarnessConfig;

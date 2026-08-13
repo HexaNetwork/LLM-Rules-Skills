@@ -184,6 +184,55 @@ describe("RepositoryIntelligenceBroker", () => {
     expect(only.retrieve).not.toHaveBeenCalled();
   });
 
+  it("soft-skips unavailable primaries during prepare and leaves fallbacks lazy", async () => {
+    const first = adapter("gitnexus", vi.fn(), {
+      available: false,
+      indexReady: false,
+      detail: "command-unavailable",
+    });
+    const second = adapter("codegraph", vi.fn(), {
+      available: true,
+      indexReady: true,
+    });
+    const broker = new RepositoryIntelligenceBroker({
+      adapters: [first, second],
+      routes: { search: ["gitnexus", "codegraph"] },
+    });
+
+    await expect(broker.prepare()).resolves.toMatchObject({
+      providers: [
+        {
+          providerId: "gitnexus",
+          available: false,
+          detail: "command-unavailable",
+        },
+        {
+          providerId: "codegraph",
+          available: true,
+          indexReady: true,
+        },
+      ],
+    });
+    expect(first.prepare).toHaveBeenCalledOnce();
+    expect(second.prepare).toHaveBeenCalledOnce();
+  });
+
+  it("still fails prepare when an available primary cannot build its index", async () => {
+    const first = adapter("gitnexus", vi.fn(), {
+      available: true,
+      indexReady: false,
+      detail: "analyze failed",
+    });
+    const broker = new RepositoryIntelligenceBroker({
+      adapters: [first],
+      routes: { search: ["gitnexus"] },
+    });
+
+    await expect(broker.prepare()).rejects.toThrow(
+      "Repository intelligence provider gitnexus is not ready: analyze failed",
+    );
+  });
+
   it("marks unavailable adapters and continues the route", async () => {
     const first = adapter("gitnexus", vi.fn(), {
       available: false,

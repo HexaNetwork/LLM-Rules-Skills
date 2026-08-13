@@ -136,6 +136,21 @@ describe("rankGraphifyExcerpt", () => {
     expect(nodeLabels[0]).toBe("CultureZone");
     expect(nodeLabels.slice(1)).toEqual([".format()", ".toString()"]);
   });
+
+  it("drops unrelated tail nodes from oversized hub traversals", () => {
+    const dump = [
+      "Traversal: BFS depth=2 | Start: ['BuildableAreaValidation'] | 7424 nodes found",
+      "NODE Resident [src=src/resident/Resident.java loc=L40]",
+      "NODE BuildableAreaValidation [src=src/construction/BuildableAreaValidation.java loc=L8]",
+      "NODE Window [src=src/ui/Window.java loc=L1]",
+    ].join("\n");
+
+    const ranked = rankGraphifyExcerpt(dump, "BuildableAreaValidation", 3_000);
+
+    expect(ranked).toContain("NODE BuildableAreaValidation");
+    expect(ranked).not.toContain("NODE Resident");
+    expect(ranked).not.toContain("NODE Window");
+  });
 });
 
 describe("GraphifyRepositoryLookup", () => {
@@ -257,6 +272,97 @@ describe("GraphifyRepositoryLookup", () => {
     expect(outcome.result).toBeUndefined();
     expect(outcome.skippedReason).toBe("no-matches");
     expect(outcome.shapedQuery).toBe("unknown topic");
+  });
+
+  it("explains concrete source symbols instead of running broad prose BFS", async () => {
+    const root = await fixtureRoot();
+    const graphPath = path.join(root, "graphify-out", "graph.json");
+    await mkdir(path.dirname(graphPath), { recursive: true });
+    await writeFile(graphPath, "{}\n", "utf8");
+    const runner = vi.fn<GraphifyRunner>().mockResolvedValue(
+      result([
+        "Node: BuildableAreaValidation",
+        "  Source: src/construction/BuildableAreaValidation.java L14",
+        "  Degree: 2",
+        "",
+        "Connections (2):",
+        "  --> Buildable [references]",
+        "  --> ConstructionStep [implements]",
+      ].join("\n")),
+    );
+    const config = fixtureConfig(root, {
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true },
+      },
+    });
+
+    const outcome = await new GraphifyRepositoryLookup(config, runner).search(
+      "Resident builds a Structure in town culture",
+      {
+        pathHints: [
+          "src/construction/BuildableAreaValidation.java",
+          "src/resources/default_lang.yml",
+        ],
+      },
+    );
+
+    expect(outcome.shapedQuery).toBe("BuildableAreaValidation");
+    expect(runner).toHaveBeenCalledWith(
+      expect.any(String),
+      ["explain", "BuildableAreaValidation", "--graph", graphPath],
+      expect.any(Object),
+    );
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(outcome.result?.title).toBe("Exact repository relationships (Graphify)");
+    expect(outcome.result?.excerpt).toContain("ConstructionStep");
+  });
+
+  it("keeps focused explains and compacts high-degree path hubs", async () => {
+    const root = await fixtureRoot();
+    const graphPath = path.join(root, "graphify-out", "graph.json");
+    await mkdir(path.dirname(graphPath), { recursive: true });
+    await writeFile(graphPath, "{}\n", "utf8");
+    const runner = vi.fn<GraphifyRunner>(async (_executable, args) => {
+      const symbol = args[1];
+      if (symbol === "FocusedValidation") {
+        return result([
+          "Node: FocusedValidation",
+          "  Source: src/FocusedValidation.java L10",
+          "  Degree: 2",
+          "",
+          "Connections (2):",
+          "  --> Area [references]",
+          "  --> Step [implements]",
+        ].join("\n"));
+      }
+      return result([
+        "Node: GiantHub",
+        "  Source: src/GiantHub.java L10",
+        "  Degree: 643",
+        "",
+        "Connections (643):",
+        ...Array.from({ length: 12 }, (_, index) => `  --> Edge${index} [references]`),
+      ].join("\n"));
+    });
+    const config = fixtureConfig(root, {
+      knowledge: {
+        ...fixtureConfig(root).knowledge,
+        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true },
+      },
+    });
+
+    const outcome = await new GraphifyRepositoryLookup(config, runner).search("broad prose", {
+      pathHints: ["src/FocusedValidation.java", "src/GiantHub.java"],
+    });
+    const excerpt = outcome.result?.excerpt ?? "";
+
+    expect(excerpt).toContain("Node: FocusedValidation");
+    expect(excerpt).toContain("--> Step");
+    expect(excerpt).toContain("Node: GiantHub");
+    expect(excerpt).toContain("high-degree hub (643)");
+    expect(excerpt).toContain("--> Edge4");
+    expect(excerpt).not.toContain("--> Edge5");
   });
 
   it("skips the Graphify CLI when shaped seeds stay generic", async () => {

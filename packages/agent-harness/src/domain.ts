@@ -734,13 +734,29 @@ export const REVIEW_EXPECTED_OUTPUT =
 export const ScenarioWriterOutputSchema = z.object({
   status: z.literal("implemented"),
   summary: z.string().min(1),
-  testPaths: z.array(z.string().min(1)).min(1),
+  scenarios: z
+    .array(
+      z.object({
+        scenarioId: z.string().min(1),
+        testPaths: z.array(z.string().min(1)).min(1),
+      }),
+    )
+    .default([]),
+  /** Legacy single-scenario shape retained for old scripted backends and run fixtures. */
+  testPaths: z.array(z.string().min(1)).default([]),
   changedFiles: z.array(z.string()).default([]),
+}).superRefine((output, ctx) => {
+  if (output.scenarios.length === 0 && output.testPaths.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "scenario-writer must return scenarios or testPaths",
+    });
+  }
 });
 export type ScenarioWriterOutput = z.infer<typeof ScenarioWriterOutputSchema>;
 
 export const SCENARIO_WRITER_EXPECTED_OUTPUT =
-  "{status:'implemented',summary,testPaths:[string] (min 1),changedFiles?:[string]}";
+  "{status:'implemented',summary,scenarios:[{scenarioId,testPaths:[string] (min 1)}] (one per requested scenario),changedFiles?:[string]}";
 
 export const UnitTestWriterOutputSchema = z.object({
   status: z.literal("implemented"),

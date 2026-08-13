@@ -2760,7 +2760,6 @@ describe("durable idea-to-feature workflow", () => {
     const config = fixtureConfig(fixture.root, {
       git: { enabled: true, baseBranch: "main" } as never,
       workflow: {
-        maxContextTurns: 2,
         maxImplementationAttempts: 3,
         generateCommitMessages: false} as never,
       commands: {

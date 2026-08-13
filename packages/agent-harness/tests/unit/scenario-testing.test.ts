@@ -55,11 +55,11 @@ function stateFor(scenarios: TestScenario[], tasks: BuildTask[] = []): RunState 
 type FakeCtxOptions = {
   testTargetTemplate?: string;
   run: (command: string) => Partial<CommandResult>;
-  invoke?: (request: { role: string; knowledgeQuery?: string }) => unknown;
+  invoke?: (request: { role: string; knowledgeQuery?: string; input?: unknown }) => unknown;
 };
 
 function fakeCtx(options: FakeCtxOptions) {
-  const invocations: Array<{ role: string; knowledgeQuery?: string }> = [];
+  const invocations: Array<{ role: string; knowledgeQuery?: string; input?: unknown }> = [];
   const commandsRun: string[] = [];
   const ctx = {
     config: {
@@ -77,7 +77,7 @@ function fakeCtx(options: FakeCtxOptions) {
       record: async (state: RunState) => state,
     },
     agents: {
-      invoke: async (request: { role: string; knowledgeQuery?: string }) => {
+      invoke: async (request: { role: string; knowledgeQuery?: string; input?: unknown }) => {
         invocations.push(request);
         if (options.invoke) return options.invoke(request);
         throw new Error(`unexpected agent invocation: ${request.role}`);
@@ -216,6 +216,70 @@ describe("scenario-writer knowledge seeding", () => {
     expect(invocations.map((call) => call.role)).toEqual(["scenario-writer"]);
     expect(invocations[0]?.knowledgeQuery).toContain("Buildable");
     expect(next.scenarios[0]?.status).toBe("passing");
+  });
+
+  it("authors all pending scenarios for the same primary task in one invocation", async () => {
+    const linked = task();
+    const first = scenario({
+      id: "SC-001",
+      status: "pending",
+      writerAttempts: 0,
+      testPaths: [],
+      taskIds: [linked.id],
+    });
+    const second = scenario({
+      id: "SC-002",
+      status: "pending",
+      writerAttempts: 0,
+      testPaths: [],
+      taskIds: [linked.id],
+    });
+    const { ctx, invocations } = fakeCtx({
+      run: () => ({ exitCode: 0 }),
+      invoke: () => ({
+        status: "implemented",
+        summary: "batch written",
+        scenarios: [
+          { scenarioId: "SC-001", testPaths: ["tests/buildable-happy.test.ts"] },
+          { scenarioId: "SC-002", testPaths: ["tests/buildable-error.test.ts"] },
+        ],
+        changedFiles: ["tests/buildable-happy.test.ts", "tests/buildable-error.test.ts"],
+      }),
+    });
+    const service = new ScenarioTestingService(ctx);
+
+    const afterFirstRun = await service.advance(stateFor([first, second], [linked]));
+    const completed = await service.advance(afterFirstRun);
+
+    expect(invocations).toHaveLength(1);
+    expect((invocations[0]?.input as { scenarios: TestScenario[] }).scenarios.map((item) => item.id))
+      .toEqual(["SC-001", "SC-002"]);
+    expect(completed.scenarios.map((item) => [item.id, item.status, item.testPaths])).toEqual([
+      ["SC-001", "passing", ["tests/buildable-happy.test.ts"]],
+      ["SC-002", "passing", ["tests/buildable-error.test.ts"]],
+    ]);
+  });
+
+  it("rejects a batched writer response that omits a scenario mapping", async () => {
+    const linked = task();
+    const scenarios = ["SC-001", "SC-002"].map((id) => scenario({
+      id,
+      status: "pending",
+      writerAttempts: 0,
+      testPaths: [],
+      taskIds: [linked.id],
+    }));
+    const { ctx } = fakeCtx({
+      run: () => ({ exitCode: 0 }),
+      invoke: () => ({
+        status: "implemented",
+        summary: "partial batch",
+        scenarios: [{ scenarioId: "SC-001", testPaths: ["tests/one.test.ts"] }],
+      }),
+    });
+
+    await expect(new ScenarioTestingService(ctx).advance(stateFor(scenarios, [linked])))
+      .rejects.toThrow("omitted scenario mappings: SC-002");
   });
 });
 

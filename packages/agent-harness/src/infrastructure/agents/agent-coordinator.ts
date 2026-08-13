@@ -619,8 +619,20 @@ function knownPaths(input: unknown): string[] {
     }
     if (typeof value !== "object" || value === null) return;
     for (const [key, nested] of Object.entries(value)) {
-      if ((key === "affectedPaths" || key === "changedFiles") && Array.isArray(nested)) {
+      if (
+        [
+          "affectedPaths",
+          "changedFiles",
+          "testPaths",
+          "protectedTestPaths",
+          "existingTestPaths",
+          "omittedFiles",
+          "diffOmittedFiles",
+        ].includes(key) && Array.isArray(nested)
+      ) {
         values.push(...nested.filter((item): item is string => typeof item === "string"));
+      } else if (key === "path" && typeof nested === "string") {
+        values.push(nested);
       } else {
         visit(nested);
       }

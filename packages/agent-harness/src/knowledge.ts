@@ -328,7 +328,10 @@ export class LocalKnowledgeBase {
             usedFallback: false,
             skippedReason: "repository-disabled",
           } satisfies Awaited<ReturnType<RepositoryLookup["search"]>>)
-        : this.repositoryLookup.search(query, { fallbackQuery: options.fallbackQuery }),
+        : this.repositoryLookup.search(query, {
+            fallbackQuery: options.fallbackQuery,
+            pathHints: options.pathHints,
+          }),
     ]);
     const graphifyAudit = {
       shapedQuery: repositoryLookup.shapedQuery,

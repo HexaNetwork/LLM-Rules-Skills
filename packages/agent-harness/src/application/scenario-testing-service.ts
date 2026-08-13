@@ -5,6 +5,7 @@ import {
   isTestPath,
   type BuildTask,
   type RunState,
+  type ScenarioWriterOutput,
   type TestScenario,
 } from "../domain.js";
 import { HarnessFailure, RunCancelledError } from "../errors.js";
@@ -67,21 +68,26 @@ export class ScenarioTestingService {
     }
 
     if (active.status === "pending" || active.testPaths.length === 0) {
-      return this.writeScenarioTests(state, active);
+      const batch = active.status === "pending"
+        ? pendingScenarioBatch(state.scenarios, active)
+        : [active];
+      return this.writeScenarioTests(state, batch);
     }
     return this.runScenario(state, active);
   }
 
-  private async writeScenarioTests(state: RunState, scenario: TestScenario): Promise<RunState> {
-    const linkedTasks = state.tasks.filter((task) => scenario.taskIds.includes(task.id));
+  private async writeScenarioTests(state: RunState, scenarios: TestScenario[]): Promise<RunState> {
+    const scenarioIds = new Set(scenarios.map((scenario) => scenario.id));
+    const linkedTaskIds = new Set(scenarios.flatMap((scenario) => scenario.taskIds));
+    const linkedTasks = state.tasks.filter((task) => linkedTaskIds.has(task.id));
+    const scenarioLabel = scenarios.map((scenario) => scenario.id).join(", ");
     const output = await this.ctx.agents.invoke({
       runId: state.runId,
       role: "scenario-writer",
-      objective: `Implement scenario ${scenario.id} as automated tests matching the intent`,
+      objective: `Implement scenarios ${scenarioLabel} as automated tests matching their intent`,
       input: {
-        scenario,
+        scenarios,
         linkedTasks: linkedTasks.map(taskForScenario),
-        reviewFindings: scenario.reviewFindings,
         testPathPatterns: this.ctx.config.workflow.testPathPatterns,
       },
       expectedOutput: SCENARIO_WRITER_EXPECTED_OUTPUT,
@@ -89,12 +95,14 @@ export class ScenarioTestingService {
       // Anchor retrieval to the neighborhoods implementers actually touched,
       // not just scenario prose, so Graphify starts from concrete symbols.
       knowledgeQuery: compactDomainSeed(
-        scenario.title,
-        scenario.intent,
-        scenario.given,
-        scenario.when,
-        scenario.then,
         ...knowledgeSeedsFromTasks(linkedTasks),
+        ...scenarios.flatMap((scenario) => [
+          scenario.title,
+          scenario.intent,
+          scenario.given,
+          scenario.when,
+          scenario.then,
+        ]),
       ),
       signal: this.ctx.signalFor(state.runId),
       causal: {
@@ -103,13 +111,14 @@ export class ScenarioTestingService {
         trigger: {
           event: "scenario.started",
           classification: "scenario",
-          summary: `Write tests for scenario ${scenario.id}`,
+          summary: `Write tests for scenarios ${scenarioLabel}`,
         },
       },
     });
 
+    const testPathsByScenario = scenarioTestPaths(output, scenarios);
     const changedFiles = unique([
-      ...output.testPaths,
+      ...[...testPathsByScenario.values()].flat(),
       ...(output.changedFiles ?? []),
     ]);
     const patterns = this.ctx.config.workflow.testPathPatterns;
@@ -122,24 +131,35 @@ export class ScenarioTestingService {
       );
     }
 
-    const nextScenario: TestScenario = {
-      ...scenario,
-      status: "active",
-      writerAttempts: scenario.writerAttempts + 1,
-      testPaths: unique([...scenario.testPaths, ...output.testPaths]),
-      reviewFindings: [],
-    };
+    const nextScenarios = state.scenarios.map((scenario) => {
+      if (!scenarioIds.has(scenario.id)) return scenario;
+      return {
+        ...scenario,
+        status: "active" as const,
+        writerAttempts: scenario.writerAttempts + 1,
+        testPaths: unique([
+          ...scenario.testPaths,
+          ...(testPathsByScenario.get(scenario.id) ?? []),
+        ]),
+        reviewFindings: [],
+      };
+    });
+    const firstScenario = nextScenarios.find((scenario) => scenario.id === scenarios[0]?.id);
+    if (!firstScenario) throw new Error("Scenario batch became empty");
     const next = await this.ctx.store.record(
       {
         ...state,
-        scenarios: state.scenarios.map((item) =>
-          item.id === scenario.id ? nextScenario : item,
-        ),
+        scenarios: nextScenarios,
       },
       "scenario.tests_written",
-      { scenarioId: scenario.id, testPaths: nextScenario.testPaths, summary: output.summary },
+      {
+        scenarioId: scenarios[0]?.id,
+        scenarioIds: scenarios.map((scenario) => scenario.id),
+        testPaths: changedFiles,
+        summary: output.summary,
+      },
     );
-    return this.runScenario(next, nextScenario);
+    return this.runScenario(next, firstScenario);
   }
 
   private async runScenario(state: RunState, scenario: TestScenario): Promise<RunState> {
@@ -246,7 +266,7 @@ export class ScenarioTestingService {
         exitCode: evidence.exitCode,
       },
     );
-    return this.writeScenarioTests(next, nextScenario);
+    return this.writeScenarioTests(next, [nextScenario]);
   }
 
   private async routeToImplementer(
@@ -493,7 +513,9 @@ export class ScenarioTestingService {
 
 /** File paths plus basename-derived symbol names from tasks linked to a scenario. */
 function knowledgeSeedsFromTasks(tasks: BuildTask[]): string[] {
-  const paths = unique(tasks.flatMap((task) => [...task.changedFiles, ...task.affectedPaths]));
+  const paths = unique(
+    tasks.flatMap((task) => [...(task.changedFiles ?? []), ...(task.affectedPaths ?? [])]),
+  );
   const symbols = paths
     .map((filePath) =>
       filePath
@@ -504,6 +526,63 @@ function knowledgeSeedsFromTasks(tasks: BuildTask[]): string[] {
     )
     .filter((symbol): symbol is string => Boolean(symbol));
   return [...symbols, ...paths];
+}
+
+/** Batch initial scenario authoring by the primary task selected by the slicer. */
+function pendingScenarioBatch(
+  scenarios: TestScenario[],
+  first: TestScenario,
+): TestScenario[] {
+  const primaryTaskId = first.taskIds[0];
+  if (!primaryTaskId) return [first];
+  return scenarios.filter(
+    (scenario) => scenario.status === "pending" && scenario.taskIds[0] === primaryTaskId,
+  );
+}
+
+/** Resolve the batched mapping while retaining old single-scenario scripted outputs. */
+function scenarioTestPaths(
+  output: ScenarioWriterOutput,
+  requested: TestScenario[],
+): Map<string, string[]> {
+  if ((output.scenarios ?? []).length === 0) {
+    if (requested.length > 1) {
+      throw new HarnessFailure(
+        "Scenario-writer must return one scenarios mapping per requested scenario",
+        "contract",
+        true,
+      );
+    }
+    return new Map(
+      requested.map((scenario) => [scenario.id, unique(output.testPaths ?? [])]),
+    );
+  }
+
+  const requestedIds = new Set(requested.map((scenario) => scenario.id));
+  const paths = new Map<string, string[]>();
+  for (const result of output.scenarios ?? []) {
+    if (!requestedIds.has(result.scenarioId)) {
+      throw new HarnessFailure(
+        `Scenario-writer returned unrequested scenario ${result.scenarioId}`,
+        "contract",
+        true,
+      );
+    }
+    paths.set(
+      result.scenarioId,
+      unique([...(paths.get(result.scenarioId) ?? []), ...result.testPaths]),
+    );
+  }
+
+  const missing = requested.filter((scenario) => !paths.has(scenario.id));
+  if (missing.length > 0) {
+    throw new HarnessFailure(
+      `Scenario-writer omitted scenario mappings: ${missing.map((scenario) => scenario.id).join(", ")}`,
+      "contract",
+      true,
+    );
+  }
+  return paths;
 }
 
 function taskForScenario(task: BuildTask) {

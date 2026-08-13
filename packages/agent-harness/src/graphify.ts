@@ -13,6 +13,10 @@ export type RepositorySearchResult = Omit<
 export const GRAPH_PATH = "graphify-out/graph.json";
 const OUTPUT_LIMIT = 1_000_000;
 const GRAPHIFY_QUERY_TOKEN_CAP = 12;
+const HUB_TRAVERSAL_NODE_LIMIT = 1_000;
+const MAX_EXPLAIN_SYMBOLS = 4;
+const HUB_DEGREE_LIMIT = 100;
+const HUB_CONNECTION_LIMIT = 5;
 
 /** Articles, pronouns, auxiliaries, prepositions, and conjunctions only. */
 export const ENGLISH_STOPWORDS = [
@@ -145,7 +149,7 @@ const QUERY_SCORE = 1_000;
 const METHOD_NOISE_PENALTY = 100;
 
 const HEADER_START_RE =
-  /^Traversal:.*?\|\s*Start:\s*\[([^\]]*)\]\s*\|\s*\d+\s+nodes?\s+found\b/im;
+  /^Traversal:.*?\|\s*Start:\s*\[([^\]]*)\]\s*\|\s*(\d+)\s+nodes?\s+found\b/im;
 const NODE_LINE_RE = /^NODE\s+(.+?)\s+\[([^\]]*)\]\s*$/;
 const START_TOKEN_RE = /['"]([^'"]+)['"]/g;
 
@@ -196,6 +200,7 @@ export function rankGraphifyExcerpt(
   if (!startMatch) return trimmed;
 
   const seeds = parseStartTokens(startMatch[1] ?? "");
+  const traversalNodeCount = Number(startMatch[2] ?? 0);
   const queryTokens = shapedQuery
     .split(/\s+/)
     .map((token) => token.trim())
@@ -207,6 +212,9 @@ export function rankGraphifyExcerpt(
     if (scoreDiff !== 0) return scoreDiff;
     return a.index - b.index;
   });
+  const candidates = traversalNodeCount > HUB_TRAVERSAL_NODE_LIMIT
+    ? ranked.filter((node) => scoreGraphifyNode(node, seeds, queryTokens) > 0)
+    : ranked;
 
   const parts: string[] = [];
   let used = 0;
@@ -220,7 +228,7 @@ export function rankGraphifyExcerpt(
 
   if (!pushIfFits(headerLine)) return trimmed.slice(0, maxChars);
 
-  for (const node of ranked) {
+  for (const node of candidates) {
     pushIfFits(node.line);
   }
 
@@ -384,6 +392,8 @@ export type GraphifyPreparation = {
 
 export type RepositoryLookupSearchOptions = {
   fallbackQuery?: string;
+  /** Concrete packet paths whose file symbols should take precedence over prose. */
+  pathHints?: string[];
 };
 
 export type RepositoryLookupSearch = {
@@ -469,12 +479,18 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
         skippedReason: "disabled",
       };
     }
-    const shaped = shapeGraphifyQuery(
-      query,
-      options.fallbackQuery,
-      GRAPHIFY_QUERY_TOKEN_CAP,
-      settings.stopwords,
-    );
+    const exactSymbols = graphifySymbolsFromPaths(
+      options.pathHints,
+      settings.sourceExtensions,
+    ).slice(0, MAX_EXPLAIN_SYMBOLS);
+    const shaped = exactSymbols.length > 0
+      ? { query: exactSymbols.join(" "), usedFallback: false }
+      : shapeGraphifyQuery(
+          query,
+          options.fallbackQuery,
+          GRAPHIFY_QUERY_TOKEN_CAP,
+          settings.stopwords,
+        );
     if (!shaped.query) {
       return {
         shapedQuery: "",
@@ -494,9 +510,15 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
       };
     }
 
-    const cacheKey = `${shaped.query}\0${graphMtime}`;
+    const cacheKey = `${exactSymbols.length > 0 ? "explain" : "query"}:${shaped.query}\0${graphMtime}`;
     const cached = this.searchCache.get(cacheKey);
     if (cached) return cloneRepositoryLookupSearch(cached);
+
+    if (exactSymbols.length > 0) {
+      const explained = await this.explainSymbols(exactSymbols);
+      this.searchCache.set(cacheKey, explained);
+      return cloneRepositoryLookupSearch(explained);
+    }
 
     try {
       const result = await this.runner(
@@ -558,11 +580,95 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
     }
   }
 
+  private async explainSymbols(symbols: string[]): Promise<RepositoryLookupSearch> {
+    const settings = this.config.knowledge.graphify;
+    const results = await Promise.all(
+      symbols.map(async (symbol) => {
+        try {
+          const result = await this.runner(
+            settings.command,
+            ["explain", symbol, "--graph", this.graphPath],
+            { cwd: this.workspaceRoot, timeoutMs: settings.queryTimeoutMs },
+          );
+          const text = result.stdout.trim();
+          return result.exitCode === 0 && !result.timedOut && /^Node:\s+/m.test(text)
+            ? text
+            : undefined;
+        } catch (error) {
+          this.warn(`explain ${symbol} failed: ${messageOf(error)}`);
+          return undefined;
+        }
+      }),
+    );
+    const excerpts = results.filter((result): result is string => Boolean(result));
+    const shapedQuery = symbols.join(" ");
+    if (excerpts.length === 0) {
+      return {
+        shapedQuery,
+        usedFallback: false,
+        skippedReason: "no-matches",
+      };
+    }
+    return {
+      result: {
+        source: `graphify:${GRAPH_PATH}`,
+        title: "Exact repository relationships (Graphify)",
+        excerpt: packGraphifyExplains(excerpts, this.config.workflow.graphifyCharacters),
+        score: 0,
+      },
+      shapedQuery,
+      usedFallback: false,
+    };
+  }
+
   private warn(detail: string): void {
     if (this.warned.has(detail)) return;
     this.warned.add(detail);
     console.warn(`Graphify ${detail}; continuing with lexical retrieval`);
   }
+}
+
+/** Exact code symbols from packet paths; non-source assets are not useful graph seeds. */
+function graphifySymbolsFromPaths(
+  pathHints: string[] | undefined,
+  sourceExtensions: string[],
+): string[] {
+  const allowed = new Set(sourceExtensions.map((extension) => extension.toLocaleLowerCase()));
+  return [...new Set((pathHints ?? []).flatMap((filePath) => {
+    const extension = path.extname(filePath).toLocaleLowerCase();
+    if (!allowed.has(extension)) return [];
+    const basename = filePath.replaceAll("\\", "/").split("/").pop() ?? "";
+    const symbol = basename.replace(/\.[^.]+$/, "");
+    return symbol ? [symbol] : [];
+  }))];
+}
+
+/** Keep focused explains intact and bound high-degree hubs to a few representative edges. */
+function packGraphifyExplains(excerpts: string[], maxChars: number): string {
+  const compacted = excerpts.map((excerpt) => compactGraphifyExplain(excerpt));
+  const parts: string[] = [];
+  let used = 0;
+  for (const excerpt of compacted) {
+    const remaining = maxChars - used - (parts.length > 0 ? 2 : 0);
+    if (remaining <= 0) break;
+    const next = excerpt.length <= remaining ? excerpt : excerpt.slice(0, remaining);
+    parts.push(next);
+    used += next.length + (parts.length > 1 ? 2 : 0);
+  }
+  return parts.join("\n\n");
+}
+
+function compactGraphifyExplain(excerpt: string): string {
+  const degree = Number(/^\s*Degree:\s*(\d+)\s*$/im.exec(excerpt)?.[1] ?? 0);
+  if (degree <= HUB_DEGREE_LIMIT) return excerpt.trim();
+  const lines = excerpt.trim().split(/\r?\n/);
+  const connectionsIndex = lines.findIndex((line) => /^Connections\s*\(/.test(line));
+  if (connectionsIndex < 0) return excerpt.trim();
+  return [
+    ...lines.slice(0, connectionsIndex + 1),
+    ...lines.slice(connectionsIndex + 1, connectionsIndex + 1 + HUB_CONNECTION_LIMIT),
+    `  ... high-degree hub (${degree}); remaining connections omitted`,
+  ].join("\n");
 }
 
 function cloneRepositoryLookupSearch(value: RepositoryLookupSearch): RepositoryLookupSearch {

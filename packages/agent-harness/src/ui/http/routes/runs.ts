@@ -219,9 +219,6 @@ export async function handleRunsRoutes(
       ? {
           maxRunTokens: runConfig.workflow.maxRunTokens,
           maxRunCostUsd: runConfig.workflow.maxRunCostUsd,
-          maxInvocationTokens: runConfig.workflow.maxInvocationTokens,
-          maxTaskTokens: runConfig.workflow.maxTaskTokens,
-          maxContextTurns: runConfig.workflow.maxContextTurns,
         }
       : undefined;
     const retrievalPolicy = runConfig

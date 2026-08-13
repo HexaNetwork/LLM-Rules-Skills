@@ -52,18 +52,23 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
   ],
   "scenario-writer": [
     "Edit the working tree but never commit, push, or open a pull request.",
+    "Implement every supplied scenario and return one scenarios entry per requested scenario id.",
+    "Map each scenario id to the test paths that exercise it.",
+    "Start from linkedTasks.changedFiles and linkedTasks.affectedPaths, then inspect the nearest existing tests before searching broadly.",
     "Implement the supplied scenario intent as automated tests only — do not change production code.",
     "Changed files must match the configured test path patterns.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   "unit-test-writer": [
     "Edit the working tree but never commit, push, or open a pull request.",
+    "Start from uncovered paths, existingTestPaths, and tasks.changedFiles before searching broadly.",
     "Write unit tests that crystallize current production behavior and raise coverage — do not change production code.",
     "Changed files must match the configured test path patterns.",
     "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
   ],
   implementer: [
     "Edit the working tree but never commit, push, or open a pull request.",
+    "Start from task.changedFiles and task.affectedPaths before searching broadly.",
     "Treat supplied command output as ground truth and fix the reported behavior.",
     "Use the supplied verificationCommands to compile or run project checks while iterating; the harness reruns them authoritatively after you finish.",
     "Do not write, edit, weaken, delete, or bypass tests during implementation; tests are authored in later run phases.",

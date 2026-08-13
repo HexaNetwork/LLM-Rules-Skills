@@ -781,10 +781,6 @@ export const renderRunScript = `    function renderSidebar() {
 
     function invocationUsageWarning(invocation, contextUsage) {
       var total = Number((invocation.usage && invocation.usage.totalTokens) || 0);
-      var ceiling = state.detail && state.detail.ceilings && state.detail.ceilings.maxInvocationTokens;
-      if (ceiling && total > ceiling) {
-        return 'Exceeded max invocation tokens (' + formatTokenCount(total) + ' > ' + formatTokenCount(ceiling) + ' ceiling)';
-      }
       var contextTotal = Number((contextUsage && contextUsage.totalTokens) || 0);
       if (contextTotal > 0 && total > contextTotal * 0.6 && total >= 100000) {
         var pct = Math.round((total / contextTotal) * 100);

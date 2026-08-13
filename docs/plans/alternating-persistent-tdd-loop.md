@@ -78,8 +78,6 @@ These are authoritative for the implementation.
   benefit from provider prompt caching.
 - A provider restart may cold-start either role. The durable round ledger and worktree must be a
   complete recovery handoff; correctness must never depend on hidden provider history.
-- `workflow.maxContextTurns`, when non-zero, applies independently to each retained role. Reaching
-  the limit rotates only that provider session and preserves the logical agent and ledger.
 - Both provider sessions are released when the task completes, fails, is cancelled, or is otherwise
   abandoned.
 
@@ -357,12 +355,8 @@ The existing counters are task-global and cannot directly limit a multi-round lo
   counter.
 - `maxTestAttempts` applies to schema/path/test-repair revisions within one RED round, not to the
   number of normal TDD rounds.
-- Do not add a hard test-count or round-count limit. Cancellation, no-progress fingerprints,
-  optional context-turn rotation, and the run-level spend ceilings remain the circuit breakers.
-  Note that today only `maxRunTokens` and `maxRunCostUsd` are actually enforced (in
-  `run-advancer.ts`); `maxInvocationTokens` and `maxTaskTokens` are config values surfaced to the
-  UI but not enforced, so until that enforcement lands a runaway loop is only stopped by the
-  run-level ceilings.
+- Do not add a hard test-count or round-count limit. Cancellation, no-progress fingerprints, and
+  the run-level spend ceilings remain the circuit breakers.
 
 ## Agent output contracts
 
@@ -593,8 +587,7 @@ evidence-driven repair machinery it served is deleted with it (see `implementTas
 
 1. Remove the pre-invocation `tdd:resume-check`; a resumed GREEN round goes straight back to the
    retained implementer with the latest bounded evidence.
-2. Use the existing implementer episode mechanism (now `tddLoop.greenImplementerSession`) and apply
-   `maxContextTurns` independently.
+2. Use the existing implementer episode mechanism (now `tddLoop.greenImplementerSession`).
 3. Use `GreenImplementerOutputSchema` for TDD tasks and `WorkerOutputSchema` for non-TDD tasks.
 4. Delete the evidence-driven repair path: the `failureCategoryFromEvidence` classification routing
    in `implementTask`, plus `routeToTestRepair`, `acceptTestRepairCheckpoint`, and
@@ -702,8 +695,7 @@ Reuse:
 
 - `workflow.maxImplementationAttempts` as the per-round GREEN attempt limit;
 - `workflow.maxTestAttempts` as the per-round RED schema/path/test-repair revision limit;
-- `workflow.maxContextTurns` independently for each role episode;
-- `workflow.maxInvocationTokens`, `maxTaskTokens`, `maxRunTokens`, and cost ceilings;
+- `workflow.maxRunTokens` and cost ceilings;
 - `commands.testTargetTemplate`, `commands.verification`, and `workflow.testPathPatterns`.
 
 Do not add:

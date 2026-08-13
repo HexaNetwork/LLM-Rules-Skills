@@ -120,6 +120,7 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "Ground the command only in manifests, sample test paths, and currentSettings — never invent a stack.",
     "When tools are allowed and the repository has no build manifests (empty/greenfield), infer a single stack from the confirmed brief and propose matching verification commands, targeted-test template, and testPathPatterns. Explain that inference in summary.",
     "Never invent shell pipelines beyond a single test runner command.",
+    "In commands.testTargetTemplate, {filter} is a recorded test file path: the harness converts it to a wildcard *ClassName pattern for --tests templates and passes the path through for other runners. For Gradle, prefer a quoted --tests template such as gradlew test --tests \"{filter}\".",
     "Return exactly one raw JSON object with top-level summary and configPatch fields. Do not use Markdown headings or code fences.",
   ],
 };

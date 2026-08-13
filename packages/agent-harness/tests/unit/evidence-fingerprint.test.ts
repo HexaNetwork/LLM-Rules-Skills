@@ -95,6 +95,26 @@ describe("failureCategoryFromEvidence", () => {
     ).toBe("config");
   });
 
+  it("classifies an empty targeted run as config, not verification", () => {
+    expect(
+      failureCategoryFromEvidence(
+        evidence({
+          command:
+            "gradlew.bat test --tests civcraft/src/main/test/com/avrgaming/civcraft/BuildableAreaValidationTest.java",
+          stdout: "",
+          stderr:
+            "No tests found for given includes: [civcraft/src/main/test/com/avrgaming/civcraft/BuildableAreaValidationTest.java](--tests filter)",
+          exitCode: 1,
+        }),
+      ),
+    ).toBe("config");
+    expect(
+      failureCategoryFromEvidence(
+        evidence({ stdout: "No test files found", stderr: "", exitCode: 1 }),
+      ),
+    ).toBe("config");
+  });
+
   it("classifies test SyntaxError diagnostics as test-repair", () => {
     expect(
       failureCategoryFromEvidence(

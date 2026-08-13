@@ -797,7 +797,7 @@ export class PlanningService {
             "Return exactly one raw JSON object with top-level summary and configPatch fields; no Markdown or code fences.",
             "configPatch may only include workflow.testPathPatterns and/or commands.verification and commands.testTargetTemplate.",
             "commands.verification is the complete ordered list used at baseline and after implementation; replace stale commands from other ecosystems.",
-            "Use {filter} in commands.testTargetTemplate when the runner supports targeted tests; never invent shell pipelines.",
+            "Use {filter} in commands.testTargetTemplate when the runner supports targeted tests; {filter} is a recorded test file path that the harness converts to a wildcard *ClassName pattern for --tests templates, so for Gradle prefer a quoted template such as gradlew test --tests \"{filter}\"; never invent shell pipelines.",
           ]
         : [
             "The work packet contains every fact needed. Do not call tools, inspect files, or search the repository.",
@@ -809,7 +809,7 @@ export class PlanningService {
             "configPatch may only include workflow.testPathPatterns and/or commands.verification and commands.testTargetTemplate.",
             "commands.verification is the complete ordered list used at baseline and after implementation; replace stale commands from other ecosystems.",
             "Prefer the existing currentSettings when they already match the evidence.",
-            "Use {filter} in commands.testTargetTemplate when the runner supports targeted tests; never invent shell pipelines.",
+            "Use {filter} in commands.testTargetTemplate when the runner supports targeted tests; {filter} is a recorded test file path that the harness converts to a wildcard *ClassName pattern for --tests templates, so for Gradle prefer a quoted template such as gradlew test --tests \"{filter}\"; never invent shell pipelines.",
           ],
       expectedOutput: PROJECT_PROFILER_EXPECTED_OUTPUT,
       schema: ProjectProfilerOutputSchema,

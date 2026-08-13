@@ -12,13 +12,27 @@ import { commandEvidence } from "../commands.js";
 import { compactDomainSeed } from "../knowledge.js";
 import type { ApplicationContext } from "./application-context.js";
 import {
+  classifyRunnableRed,
   evaluateRepairProgress,
   evidenceFingerprint,
   failingTestIdsFromEvidence,
   failureCategoryFromEvidence,
+  frozenCommandsHash,
   repairEdgeKey,
 } from "./evidence-fingerprint.js";
 import { unique } from "./helpers.js";
+
+/**
+ * Convert a recorded test file path into the filter a targeted-test template
+ * expects: Gradle-style `--tests` templates get a wildcard class-name pattern;
+ * path-based runners (vitest, pytest, …) keep the path.
+ */
+export function filterForTemplate(testPath: string, template: string): string {
+  if (!template.includes("--tests")) return testPath;
+  const basename = testPath.replaceAll("\\", "/").split("/").pop() ?? testPath;
+  const className = basename.replace(/\.[^.]+$/, "");
+  return className ? `*${className}` : testPath;
+}
 
 export class ScenarioTestingService {
   constructor(private readonly ctx: ApplicationContext) {}
@@ -72,12 +86,15 @@ export class ScenarioTestingService {
       },
       expectedOutput: SCENARIO_WRITER_EXPECTED_OUTPUT,
       schema: ScenarioWriterOutputSchema,
+      // Anchor retrieval to the neighborhoods implementers actually touched,
+      // not just scenario prose, so Graphify starts from concrete symbols.
       knowledgeQuery: compactDomainSeed(
         scenario.title,
         scenario.intent,
         scenario.given,
         scenario.when,
         scenario.then,
+        ...knowledgeSeedsFromTasks(linkedTasks),
       ),
       signal: this.ctx.signalFor(state.runId),
       causal: {
@@ -143,6 +160,13 @@ export class ScenarioTestingService {
       started.scenarios.find((item) => item.id === scenario.id) ?? scenario;
 
     const evidence = await this.runScenarioCommand(started.runId, current);
+    const runnable = classifyRunnableRed(evidence);
+    if (
+      !runnable.runnable &&
+      (runnable.reason === "no_tests" || runnable.reason === "command_missing")
+    ) {
+      return this.blockConfigError(started, current, evidence, runnable.reason);
+    }
     if (evidence.passed) {
       const nextScenarios = started.scenarios.map((item) =>
         item.id === current.id
@@ -346,7 +370,7 @@ export class ScenarioTestingService {
     const filter = scenario.testPaths[0];
     const template = this.ctx.config.commands.testTargetTemplate;
     if (filter && template?.includes("{filter}")) {
-      command = template.replaceAll("{filter}", filter);
+      command = template.replaceAll("{filter}", filterForTemplate(filter, template));
     }
     const result = await this.ctx.deps.commands.run(command, {
       cwd: this.ctx.paths.workspaceRoot,
@@ -374,8 +398,43 @@ export class ScenarioTestingService {
       sourceTreeState,
       failingTestIds: failingTestIdsFromEvidence(evidence),
       failureCategory: failureCategoryFromEvidence(evidence, category),
-      frozenConfigHash: String(this.ctx.config.workflow.maxImplementationAttempts),
+      frozenConfigHash: frozenCommandsHash(this.ctx.config.commands),
     });
+  }
+
+  /**
+   * A targeted run that found no tests (or could not launch) is a broken
+   * filter/template, not a production failure: block as config so recovery
+   * routes to the config-fixer instead of burning an implementer invocation.
+   * The scenario stays active so a fixed template re-runs it on resume.
+   */
+  private async blockConfigError(
+    state: RunState,
+    scenario: TestScenario,
+    evidence: ReturnType<typeof commandEvidence>,
+    reason: "no_tests" | "command_missing",
+  ): Promise<RunState> {
+    const summary =
+      reason === "no_tests"
+        ? `Scenario ${scenario.id} targeted test run found no tests; the test filter/template is broken. Rendered command: ${evidence.command}. Fix commands.testTargetTemplate (for Gradle use a wildcard class-name pattern like --tests "*ClassName") or the recorded test path, then retry.`
+        : `Scenario ${scenario.id} test command could not be launched. Rendered command: ${evidence.command}. Fix commands.verification / commands.testTargetTemplate for this host, then retry.`;
+    return this.ctx.store.record(
+      {
+        ...state,
+        phase: "blocked",
+        blockedFrom: "scenario_testing",
+        blockedKind: "config",
+        failure: summary,
+      },
+      "scenario.config_error",
+      {
+        scenarioId: scenario.id,
+        reason,
+        command: evidence.command,
+        exitCode: evidence.exitCode,
+        summary,
+      },
+    );
   }
 
   private async blockNoProgress(
@@ -430,6 +489,21 @@ export class ScenarioTestingService {
     );
     throw new HarnessFailure(summary, "contract", false);
   }
+}
+
+/** File paths plus basename-derived symbol names from tasks linked to a scenario. */
+function knowledgeSeedsFromTasks(tasks: BuildTask[]): string[] {
+  const paths = unique(tasks.flatMap((task) => [...task.changedFiles, ...task.affectedPaths]));
+  const symbols = paths
+    .map((filePath) =>
+      filePath
+        .replaceAll("\\", "/")
+        .split("/")
+        .pop()
+        ?.replace(/\.[^.]+$/, ""),
+    )
+    .filter((symbol): symbol is string => Boolean(symbol));
+  return [...symbols, ...paths];
 }
 
 function taskForScenario(task: BuildTask) {

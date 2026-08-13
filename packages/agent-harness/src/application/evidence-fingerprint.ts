@@ -33,6 +33,10 @@ export function failureCategoryFromEvidence(
   if (!evidence) return fallback;
   const output = `${evidence.stdout}\n${evidence.stderr}`;
   if (/command not found|not recognized|ENOENT/i.test(output)) return "config";
+  // An empty targeted run means the filter/template is broken, not production code.
+  if (/no tests found|no test files found|0 tests? (found|executed|run)/i.test(output)) {
+    return "config";
+  }
   // Missing production symbols (even when cited under test sources) belong to the implementer.
   if (looksLikeMissingProductionSymbol(output)) return "verification";
   if (/SyntaxError|TS\d+|Compilation failed/i.test(output)) {
@@ -104,6 +108,24 @@ function isCompileOnlyFailure(output: string): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * Hash the frozen command settings that shape scenario/verification evidence,
+ * so a config fix (e.g. testTargetTemplate) invalidates prior fingerprints.
+ */
+export function frozenCommandsHash(commands: {
+  verification: readonly unknown[];
+  testTargetTemplate?: string;
+}): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        verification: commands.verification,
+        testTargetTemplate: commands.testTargetTemplate ?? null,
+      }),
+    )
+    .digest("hex");
 }
 
 export function failingTestIdsFromEvidence(evidence: CommandEvidence | undefined): string[] {

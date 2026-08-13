@@ -10,7 +10,6 @@ import {
   buildCodegraphQuery,
   packCodegraphExcerpt,
   shapeCodegraphQuery,
-  prepareCodegraphForRun,
   type CodegraphCommandResult,
   type CodegraphRunner,
 } from "../../src/codegraph.js";
@@ -99,51 +98,6 @@ describe("packCodegraphExcerpt", () => {
 });
 
 describe("CodegraphRepositoryLookup", () => {
-  it("builds the index with codegraph init when the command exists but the index is missing", async () => {
-    const root = await fixtureRoot();
-    const indexPath = path.join(root, ...INDEX_DB.split("/"));
-    const runner = vi.fn<CodegraphRunner>(async (_executable, args) => {
-      if (args[0] === "--version") return result("1.5.0\n");
-      if (args[0] === "init") {
-        await mkdir(path.dirname(indexPath), { recursive: true });
-        await writeFile(indexPath, "index\n", "utf8");
-        return result("Indexed\n");
-      }
-      return { exitCode: 1, stdout: "", stderr: "unexpected", timedOut: false };
-    });
-    const config = enabledConfig(root);
-
-    await expect(prepareCodegraphForRun(config, runner)).resolves.toMatchObject({
-      enabled: true,
-      graphReady: true,
-      setupRan: true,
-    });
-    expect(runner).toHaveBeenCalledWith(
-      "codegraph",
-      ["init", root],
-      expect.objectContaining({ cwd: root }),
-    );
-
-    await expect(prepareCodegraphForRun(config, runner)).resolves.toMatchObject({
-      setupRan: false,
-    });
-  });
-
-  it("fails clearly when CodeGraph is enabled but not installed", async () => {
-    const root = await fixtureRoot();
-    const runner = vi.fn<CodegraphRunner>().mockResolvedValue({
-      exitCode: 1,
-      stdout: "",
-      stderr: "not found",
-      timedOut: false,
-    });
-    const config = enabledConfig(root);
-
-    await expect(prepareCodegraphForRun(config, runner)).rejects.toThrow(
-      /npm install -g @colbymchenry\/codegraph/i,
-    );
-  });
-
   it("syncs and explores the repository graph with argument-safe process calls", async () => {
     const root = await fixtureRoot();
     await writeIndex(root);
@@ -158,17 +112,22 @@ describe("CodegraphRepositoryLookup", () => {
     };
     const config = fixtureConfig(root, {
       knowledge: {
-        sources: ["README.md", "docs"],
-        chunkCharacters: 400,
-        codegraph: {
+        ...fixtureConfig(root).knowledge,
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
           enabled: true,
-          command: "codegraph-custom",
-          updateOnRefresh: true,
-          updateTimeoutMs: 90_000,
-          queryTimeoutMs: 7_000,
-          maxFiles: 8,
           roles: ["implementer"],
-          stopwords: [],
+          providers: {
+            ...fixtureConfig(root).knowledge.repositoryIntelligence.providers,
+            codegraph: {
+              enabled: true,
+              command: "codegraph-custom",
+              updateTimeoutMs: 90_000,
+              queryTimeoutMs: 7_000,
+              maxResults: 8,
+              stopwords: [],
+            },
+          },
         },
       },
     });
@@ -281,11 +240,11 @@ describe("CodegraphRepositoryLookup", () => {
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: true },
+        repositoryIntelligence: enabledCodegraphSettings(root),
       },
       workflow: {
         ...fixtureConfig(root).workflow,
-        codegraphCharacters: 80,
+        repositoryContextCharacters: 80,
       },
     });
 
@@ -303,9 +262,21 @@ function enabledConfig(root: string) {
   return fixtureConfig(root, {
     knowledge: {
       ...fixtureConfig(root).knowledge,
-      codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: true },
+      repositoryIntelligence: enabledCodegraphSettings(root),
     },
   });
+}
+
+function enabledCodegraphSettings(root: string) {
+  const settings = fixtureConfig(root).knowledge.repositoryIntelligence;
+  return {
+    ...settings,
+    enabled: true,
+    providers: {
+      ...settings.providers,
+      codegraph: { ...settings.providers.codegraph, enabled: true },
+    },
+  };
 }
 
 async function writeIndex(root: string): Promise<string> {

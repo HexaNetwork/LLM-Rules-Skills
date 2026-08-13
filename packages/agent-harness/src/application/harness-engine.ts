@@ -86,9 +86,9 @@ export class HarnessEngine {
     idea: string,
     runId?: string,
     refreshKnowledge?: boolean,
-    prepareCodegraph?: boolean,
+    prepareRepositoryIntelligence?: boolean,
   ): Promise<RunState> {
-    return this.lifecycle.start(idea, runId, refreshKnowledge, prepareCodegraph);
+    return this.lifecycle.start(idea, runId, refreshKnowledge, prepareRepositoryIntelligence);
   }
 
   status(runId: string): Promise<RunState> {
@@ -219,8 +219,8 @@ export class HarnessEngine {
     return this.execution.setRag(runId, rag);
   }
 
-  setCodegraph(runId: string, enabled: boolean): Promise<RunState> {
-    return this.execution.setCodegraph(runId, enabled);
+  setRepositoryIntelligence(runId: string, enabled: boolean): Promise<RunState> {
+    return this.execution.setRepositoryIntelligence(runId, enabled);
   }
 
   setIgnoredArtifactPatterns(runId: string, patterns: string[]): Promise<RunState> {

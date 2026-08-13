@@ -162,9 +162,9 @@ export const renderRunScript = `    function renderSidebar() {
         { test: /CURSOR_API_KEY|agent backend (is )?unavailable|missing.*api.?key/i,
           title: "The agent backend is unavailable",
           hint: "Set the required credential (e.g. CURSOR_API_KEY) in the terminal running the harness, then restart the dashboard and retry." },
-        { test: /\\.codegraph[/\\\\]|codegraph index|missing graph|codegraph init/i,
-          title: "The CodeGraph repository index is missing",
-          hint: "Install CodeGraph (npm install -g @colbymchenry/codegraph) and retry so .codegraph/ exists." },
+        { test: /\\.gitnexus[/\\\\]|\\.codegraph[/\\\\]|repository intelligence|codegraph index|missing graph|codegraph init|gitnexus/i,
+          title: "Repository intelligence index is unavailable",
+          hint: "Install and configure the configured providers (GitNexus and/or CodeGraph), ensure their indexes exist, then retry." },
         { test: /run configuration changed|configurationHash|resume with the persisted run config/i,
           title: "The run configuration changed since this run started",
           hint: "A hashed run setting drifted from this run's frozen snapshot. Restore that frozen policy, draft a configuration repair, or start a new run." }
@@ -483,15 +483,18 @@ export const renderRunScript = `    function renderSidebar() {
       var locked = !s || ["completed","cancelled"].includes(s.phase);
       var policy = (state.detail && state.detail.retrievalPolicy) || {};
       var ragOn = policy.rag !== false;
-      var codegraphOn = !!policy.codegraph;
+      var repositoryOn = !!policy.repositoryIntelligence;
+      var searchRoute = policy.routes && Array.isArray(policy.routes.search) ? policy.routes.search : [];
+      var routeLabel = searchRoute.length ? searchRoute.join(" → ") : "none";
       if (locked) {
         return '<div style="margin-top:8px"><div><strong>Document RAG:</strong> ' + (ragOn ? "Enabled" : "Disabled") + '</div>' +
-          '<div style="margin-top:6px"><strong>CodeGraph:</strong> ' + (codegraphOn ? "Enabled" : "Disabled") + '</div></div>';
+          '<div style="margin-top:6px"><strong>Repository intelligence:</strong> ' + (repositoryOn ? "Enabled" : "Disabled") + '</div>' +
+          '<div class="faint" style="margin-top:4px">Search route: ' + esc(routeLabel) + '</div></div>';
       }
       return '<div style="margin-top:8px">' +
         '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runRagToggle"' + (ragOn ? " checked" : "") + '> <strong>Document RAG</strong> · ' + (ragOn ? "Enabled" : "Disabled") + '</label>' +
-        '<div style="margin-top:8px"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runCodegraphToggle"' + (codegraphOn ? " checked" : "") + '> <strong>CodeGraph</strong> · ' + (codegraphOn ? "Enabled" : "Disabled") + '</label></div>' +
-        '<div class="faint" style="margin-top:4px">Applies to the next agent step</div></div>';
+        '<div style="margin-top:8px"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runRepositoryIntelligenceToggle"' + (repositoryOn ? " checked" : "") + '> <strong>Repository intelligence</strong> · ' + (repositoryOn ? "Enabled" : "Disabled") + '</label></div>' +
+        '<div class="faint" style="margin-top:4px">Search route: ' + esc(routeLabel) + ' · applies to the next agent step</div></div>';
     }
 
     function renderInstallLogPanel() {
@@ -577,7 +580,7 @@ export const renderRunScript = `    function renderSidebar() {
         html += '<div class="card"><div class="alert warning"><div><strong>Stopped after task</strong><div class="muted" style="margin-top:5px">The current task finished and the next frontier task was not started. Resume continues from here. Cancel remains available to abort immediately.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       } else if (!state.detail.job && !["completed","cancelled","awaiting_input","blocked"].includes(s.phase) && !s.stopAfterTask) {
         var pauseHint = s.phase === "new"
-          ? "Setup did not finish. Resume retries CodeGraph and indexing first."
+          ? "Setup did not finish. Resume retries repository intelligence and indexing first."
           : "Dashboard work does not continue automatically after a restart. Resume queues the next transition and refreshes the document index first.";
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">' + pauseHint + '</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }

@@ -85,11 +85,11 @@ async function applyUpdateRunConfig(
           knowledge: {
             ...frozen.knowledge,
             ...parsedPatch.knowledge,
-            ...(parsedPatch.knowledge.codegraph
+            ...(parsedPatch.knowledge.repositoryIntelligence
               ? {
-                  codegraph: {
-                    ...frozen.knowledge.codegraph,
-                    ...parsedPatch.knowledge.codegraph,
+                  repositoryIntelligence: {
+                    ...frozen.knowledge.repositoryIntelligence,
+                    ...parsedPatch.knowledge.repositoryIntelligence,
                   },
                 }
               : {}),

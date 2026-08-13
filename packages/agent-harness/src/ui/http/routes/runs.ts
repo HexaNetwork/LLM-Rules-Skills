@@ -60,7 +60,7 @@ function initialSetupFromOpened(
     config: opened.config,
     store: ctx.store,
     paths: opened.paths,
-    codegraphRunner: ctx.codegraphRunner,
+    repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
     git: opened.engine.git,
     knowledge: opened.engine.knowledge,
     advance: () => opened.engine.advance(runId),
@@ -85,7 +85,20 @@ export async function handleRunsRoutes(
         configPath: ctx.configPath,
         models: projectConfig.models,
         agent: { provider: projectConfig.agent.provider, ...ctx.agentReadiness },
-        codegraph: { enabled: projectConfig.knowledge.codegraph.enabled },
+        repositoryIntelligence: {
+          enabled: projectConfig.knowledge.repositoryIntelligence.enabled,
+          routes: projectConfig.knowledge.repositoryIntelligence.routes,
+          providers: {
+            gitnexus: {
+              enabled: projectConfig.knowledge.repositoryIntelligence.providers.gitnexus.enabled,
+              command: projectConfig.knowledge.repositoryIntelligence.providers.gitnexus.command,
+            },
+            codegraph: {
+              enabled: projectConfig.knowledge.repositoryIntelligence.providers.codegraph.enabled,
+              command: projectConfig.knowledge.repositoryIntelligence.providers.codegraph.command,
+            },
+          },
+        },
         git: {
           enabled: projectConfig.git.enabled,
           baseBranch: projectConfig.git.baseBranch,
@@ -129,7 +142,10 @@ export async function handleRunsRoutes(
       projectConfig.git.openPullRequest;
     const smallModel = optionalString(body.smallModel, "smallModel", 200);
     const capableModel = optionalString(body.capableModel, "capableModel", 200);
-    const codegraph = optionalBoolean(body.codegraph, "codegraph");
+    const repositoryIntelligence = optionalBoolean(
+      body.repositoryIntelligence,
+      "repositoryIntelligence",
+    );
     const baseBranchOverride = optionalString(body.baseBranch, "baseBranch", 200);
     const baseBranch = await resolveBaseBranchOverride(projectConfig, baseBranchOverride);
     const runConfig = HarnessConfigSchema.parse({
@@ -148,28 +164,30 @@ export async function handleRunsRoutes(
       },
       knowledge: {
         ...projectConfig.knowledge,
-        codegraph: {
-          ...projectConfig.knowledge.codegraph,
-          enabled: codegraph ?? projectConfig.knowledge.codegraph.enabled,
+        repositoryIntelligence: {
+          ...projectConfig.knowledge.repositoryIntelligence,
+          enabled:
+            repositoryIntelligence ??
+            projectConfig.knowledge.repositoryIntelligence.enabled,
         },
       },
     });
     const engine = new HarnessEngine(runConfig, {
       backend: ctx.backend,
-      codegraphRunner: ctx.codegraphRunner,
+      repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
     });
     // Creating the durable run must be quick. A first semantic index may
     // take minutes for a large repository, so run it in the visible job
     // queue rather than holding the browser request open.
-    // UI already prepares CodeGraph and refreshes knowledge inside the job
-    // queue so the browser request can return immediately.
+    // UI already prepares repository intelligence and refreshes knowledge
+    // inside the job queue so the browser request can return immediately.
     const state = await engine.start(idea, runId, false, false);
     if (state.phase !== "blocked" && state.phase !== "cancelled" && state.phase !== "completed") {
       ctx.jobs.enqueue(runId, "index knowledge and reflect", async () => {
         const opened = await openRunHarness(projectConfig, runId, {
           backend: ctx.backend,
           store: ctx.store,
-          codegraphRunner: ctx.codegraphRunner,
+          repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
         });
         await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
       });
@@ -219,7 +237,8 @@ export async function handleRunsRoutes(
     const retrievalPolicy = runConfig
       ? {
           rag: runConfig.workflow.rag,
-          codegraph: runConfig.knowledge.codegraph.enabled,
+          repositoryIntelligence: runConfig.knowledge.repositoryIntelligence.enabled,
+          routes: runConfig.knowledge.repositoryIntelligence.routes,
         }
       : undefined;
     const deliveryWorkspace = workspace
@@ -273,7 +292,11 @@ export async function handleRunsRoutes(
     const opened = await openRunHarness(
       projectConfig,
       runId,
-      { backend: ctx.backend, store: ctx.store, codegraphRunner: ctx.codegraphRunner },
+      {
+        backend: ctx.backend,
+        store: ctx.store,
+        repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
+      },
       {
         validateWorktree:
           action !== "cancel" &&
@@ -289,7 +312,7 @@ export async function handleRunsRoutes(
         ? new HarnessEngine(opened.config, {
             backend: ctx.backend,
             store: ctx.store,
-            codegraphRunner: ctx.codegraphRunner,
+            repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
           })
         : opened.engine;
     if (action === "continue") {
@@ -303,7 +326,7 @@ export async function handleRunsRoutes(
       // Jobs are intentionally process-local. A dashboard restart keeps the
       // durable run state but cannot safely assume that an interrupted
       // provider call should be retried. Make recovery an explicit action.
-      // Runs still in `new` retry CodeGraph then the document index; later
+      // Runs still in `new` retry repository intelligence then the document index; later
       // phases refresh the index in case it was cleared while stopped.
       ctx.jobs.enqueue(runId, "resume run", async () => {
         const latest = await ctx.store.load(runId);
@@ -486,10 +509,10 @@ export async function handleRunsRoutes(
       const rag = optionalBoolean(body.rag, "rag");
       if (rag == null) throw new HttpError(400, "rag must be a boolean");
       ctx.jobs.enqueue(runId, action, () => engine.setRag(runId, rag));
-    } else if (action === "set_codegraph") {
-      const enabled = optionalBoolean(body.codegraph, "codegraph");
-      if (enabled == null) throw new HttpError(400, "codegraph must be a boolean");
-      ctx.jobs.enqueue(runId, action, () => engine.setCodegraph(runId, enabled));
+    } else if (action === "set_repository_intelligence") {
+      const enabled = optionalBoolean(body.repositoryIntelligence, "repositoryIntelligence");
+      if (enabled == null) throw new HttpError(400, "repositoryIntelligence must be a boolean");
+      ctx.jobs.enqueue(runId, action, () => engine.setRepositoryIntelligence(runId, enabled));
     } else if (action === "stop") {
       // Stop must not wait behind the work it is pausing after (same as cancel).
       const state = await engine.requestStop(runId);

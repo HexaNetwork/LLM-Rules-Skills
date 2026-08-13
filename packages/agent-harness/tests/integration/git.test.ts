@@ -4,10 +4,15 @@ import { promisify } from "node:util";
 import { mkdir, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
+import { writeRunWorkspace } from "../../src/config/io.js";
 import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
+import {
+  WORKSPACE_SCHEMA_VERSION,
+  canonicalizeWorkspacePath,
+} from "../../src/domain/workspace.js";
 import { HarnessEngine } from "../../src/application/harness-engine.js";
-import { GitService } from "../../src/git.js";
+import { GitService, WorktreeManager } from "../../src/git.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 const exec = promisify(execFile);
@@ -79,12 +84,10 @@ describe("reviewTask packet", () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
     await mkdir(path.join(root, "tests"), { recursive: true });
-    await mkdir(path.join(root, "src"), { recursive: true });
     const baseSha = (await git(root, "rev-parse", "HEAD")).trim();
     await writeFile(path.join(root, "tests", "round-1.test.ts"), "export const t1 = 1;\n", "utf8");
     await git(root, "add", "tests/round-1.test.ts");
     await git(root, "commit", "-m", "red checkpoint 1");
-    await writeFile(path.join(root, "src", "feature.ts"), "export const feature = true;\n", "utf8");
 
     let reviewerInput: Record<string, unknown> | undefined;
     const config = fixtureConfig(root, {
@@ -139,6 +142,12 @@ describe("reviewTask packet", () => {
               rationale: "covered"}],
           edgeCaseRationale: "ok"}}};
     let state = await seedExecutingRun(engine, config, "review-red-base", [task]);
+    await mkdir(path.join(engine.paths.workspaceRoot, "src"), { recursive: true });
+    await writeFile(
+      path.join(engine.paths.workspaceRoot, "src", "feature.ts"),
+      "export const feature = true;\n",
+      "utf8",
+    );
 
     state = await engine.advance(state.runId);
     const packetFiles = await engine.store.listFiles(state.runId, "packets");
@@ -171,8 +180,6 @@ describe("reviewTask packet", () => {
   it("passes diff and diffOmittedFiles to the reviewer", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
-    await mkdir(path.join(root, "src"), { recursive: true });
-    await writeFile(path.join(root, "src", "feature.ts"), "export const feature = true;\n", "utf8");
 
     let reviewerPrompt = "";
     const config = fixtureConfig(root, {
@@ -195,6 +202,12 @@ describe("reviewTask packet", () => {
     task.step = "reviewing";
     task.changedFiles = ["src/feature.ts"];
     let state = await seedExecutingRun(engine, config, "review-diff", [task]);
+    await mkdir(path.join(engine.paths.workspaceRoot, "src"), { recursive: true });
+    await writeFile(
+      path.join(engine.paths.workspaceRoot, "src", "feature.ts"),
+      "export const feature = true;\n",
+      "utf8",
+    );
 
     state = await engine.advance(state.runId);
     // Review may complete into later steps that lack backends; the packet is what matters.
@@ -219,8 +232,6 @@ describe("reviewTask packet", () => {
   it("re-stamps treeFingerprint after intent-to-add so the next advance does not false-block", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
-    await mkdir(path.join(root, "src"), { recursive: true });
-    await writeFile(path.join(root, "src", "new-file.ts"), "export const added = 1;\n", "utf8");
 
     const config = fixtureConfig(root, {
       agent: { promptBuilder: false } as never,
@@ -242,23 +253,28 @@ describe("reviewTask packet", () => {
             message: "tighten the edge case"}]}),
       implementer: () => ({ summary: "repaired", changedFiles: ["src/new-file.ts"] })});
     const engine = new HarnessEngine(config, { backend });
-    const gitService = new GitService(config);
 
     const task = pendingTask("t1", "Ship new file");
     task.status = "active";
     task.step = "reviewing";
     task.changedFiles = ["src/new-file.ts"];
     let state = await seedExecutingRun(engine, config, "review-intent-fingerprint", [task]);
+    await mkdir(path.join(engine.paths.workspaceRoot, "src"), { recursive: true });
+    await writeFile(
+      path.join(engine.paths.workspaceRoot, "src", "new-file.ts"),
+      "export const added = 1;\n",
+      "utf8",
+    );
 
     // Stamp a fingerprint that matches the tree *before* review's intent-to-add.
-    const beforeReview = await gitService.treeFingerprint();
+    const beforeReview = await engine.git.treeFingerprint();
     state = { ...state, treeFingerprint: beforeReview };
     await engine.store.writeJson(state.runId, "state.json", state);
 
     state = await engine.advance(state.runId);
     expect(state.blockedKind).not.toBe("workspace");
     // Porcelain changed (?? → A ); fingerprint must reflect the post-intent-to-add tree.
-    const afterReview = await gitService.treeFingerprint();
+    const afterReview = await engine.git.treeFingerprint();
     expect(afterReview).not.toBe(beforeReview);
   });
 });
@@ -496,13 +512,17 @@ describe("working-tree divergence guard", () => {
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
       "message-writer": () => ({ subject: "feat: a", body: "" })});
     const engine = new HarnessEngine(config, { backend });
-    const fingerprint = await new GitService(config).treeFingerprint();
     let state = await seedExecutingRun(engine, config, "diverge-block", [
       pendingTask("t1", "Ship one")]);
+    const fingerprint = await engine.git.treeFingerprint();
     state = { ...state, treeFingerprint: fingerprint };
     await engine.store.writeJson(state.runId, "state.json", state);
 
-    await writeFile(path.join(root, "external-edit.txt"), "mutated outside the harness\n", "utf8");
+    await writeFile(
+      path.join(engine.paths.workspaceRoot, "external-edit.txt"),
+      "mutated outside the harness\n",
+      "utf8",
+    );
 
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("blocked");
@@ -515,24 +535,30 @@ describe("working-tree divergence guard", () => {
   it("acceptTree re-stamps the fingerprint and lets the run continue", async () => {
     const root = await fixtureRoot();
     await initGitRepo(root);
-    await mkdir(path.join(root, "src"), { recursive: true });
-    await writeFile(path.join(root, "src", "a.ts"), "export const a = 1;\n", "utf8");
     const config = fixtureConfig(root, {
       workflow: { ...fixtureConfig(root).workflow },
       commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
       git: { enabled: true } as never});
     const backend = createFakeBackend({
-      implementer: () => ({ summary: "built", changedFiles: ["src/a.ts"] }),
+      implementer: async (request) => {
+        await mkdir(path.join(request.cwd, "src"), { recursive: true });
+        await writeFile(path.join(request.cwd, "src", "a.ts"), "export const a = 1;\n", "utf8");
+        return { summary: "built", changedFiles: ["src/a.ts"] };
+      },
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
       "message-writer": () => ({ subject: "feat: a", body: "" })});
     const engine = new HarnessEngine(config, { backend });
-    const previousFingerprint = await new GitService(config).treeFingerprint();
     let state = await seedExecutingRun(engine, config, "accept-tree", [
       pendingTask("t1", "Ship one")]);
+    const previousFingerprint = await engine.git.treeFingerprint();
     state = { ...state, treeFingerprint: previousFingerprint };
     await engine.store.writeJson(state.runId, "state.json", state);
 
-    await writeFile(path.join(root, "external-edit.txt"), "mutated outside the harness\n", "utf8");
+    await writeFile(
+      path.join(engine.paths.workspaceRoot, "external-edit.txt"),
+      "mutated outside the harness\n",
+      "utf8",
+    );
     state = await engine.advance(state.runId);
     expect(state.phase).toBe("blocked");
     expect(state.blockedKind).toBe("workspace");
@@ -578,15 +604,16 @@ describe("working-tree divergence guard", () => {
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
       "message-writer": () => ({ subject: "feat: a", body: "" })});
     const engine = new HarnessEngine(config, { backend });
-    const fingerprint = await new GitService(config).treeFingerprint();
     let state = await seedExecutingRun(engine, config, "accept-report-paths", [
       pendingTask("t1", "Ship one")]);
+    const fingerprint = await engine.git.treeFingerprint();
     state = { ...state, treeFingerprint: fingerprint };
     await engine.store.writeJson(state.runId, "state.json", state);
 
-    await writeFile(path.join(root, "external-edit.txt"), "mutated outside the harness\n", "utf8");
+    const worktree = engine.paths.workspaceRoot;
+    await writeFile(path.join(worktree, "external-edit.txt"), "mutated outside the harness\n", "utf8");
     await writeFile(
-      configPath,
+      path.join(worktree, "agent-harness.config.yaml"),
       "version: 2\nrepositoryRoot: .\ngit:\n  enabled: true\n  ignoredArtifactPatterns:\n    - '**/obj/'\n",
       "utf8",
     );
@@ -677,6 +704,27 @@ async function seedExecutingRun(
   await engine.store.writeJson(state.runId, "config.json", {
     ...config,
     configVersion: CONFIG_VERSION});
+
+  if (config.git.enabled) {
+    const manager = new WorktreeManager({
+      controlRoot: engine.paths.controlRoot,
+      stateRoot: engine.paths.stateRoot,
+      worktreeRoot: engine.paths.worktreeRoot,
+      store: engine.store});
+    const workspace = await manager.create({
+      runId,
+      baseBranch: config.git.baseBranch});
+    await writeRunWorkspace(config, runId, workspace);
+    engine.bindWorkspace(workspace);
+  } else {
+    const workspace = {
+      version: WORKSPACE_SCHEMA_VERSION,
+      kind: "git-disabled" as const,
+      controlRoot: canonicalizeWorkspacePath(engine.paths.controlRoot),
+      createdAt: new Date().toISOString()};
+    await writeRunWorkspace(config, runId, workspace);
+    engine.bindWorkspace(workspace);
+  }
   return state;
 }
 

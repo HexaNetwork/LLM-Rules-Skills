@@ -111,7 +111,7 @@ describe("external harness home E2E matrix", () => {
     const home = resolveHarnessHome({ homeRoot });
     const loaded = await loadExternalProjectConfig({
       repository: repo,
-      home
+      home,
       overrides: {
         git: {
           enabled: true,
@@ -124,7 +124,7 @@ describe("external harness home E2E matrix", () => {
         workflow: { generateCommitMessages: true },
         knowledge: {
           sources: [{ path: "README.md", scope: "project", visibility: "private" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }},
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         agent: { provider: "cursor", promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 }}});

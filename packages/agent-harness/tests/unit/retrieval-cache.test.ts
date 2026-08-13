@@ -1,12 +1,16 @@
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
-import { CodegraphRepositoryLookup, type CodegraphRunner } from "../../src/codegraph.js";
+import {
+  CodeGraphAdapter,
+  RepositoryIntelligenceBroker,
+  type ExecutableRunner,
+} from "../../src/infrastructure/repository-intelligence/index.js";
 import { LocalKnowledgeBase } from "../../src/knowledge.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 describe("retrieval result cache", () => {
-  it("reuses CodeGraph subprocess results for identical queries and invalidates on refresh", async () => {
+  it("caches by provider generation and invalidates after relevant path changes", async () => {
     const root = await fixtureRoot();
     await writeFile(
       path.join(root, "docs", "settlement.md"),
@@ -17,7 +21,7 @@ describe("retrieval result cache", () => {
     await mkdir(path.dirname(indexPath), { recursive: true });
     await writeFile(indexPath, "index\n", "utf8");
 
-    const runner = vi.fn<CodegraphRunner>().mockImplementation(async (_executable, args) => {
+    const runner = vi.fn<ExecutableRunner>().mockImplementation(async (_executable, args) => {
       if (args[0] === "sync") {
         return { exitCode: 0, stdout: "updated\n", stderr: "", timedOut: false };
       }
@@ -30,11 +34,24 @@ describe("retrieval result cache", () => {
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: {
-          ...fixtureConfig(root).knowledge.codegraph,
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
           enabled: true,
-          updateOnRefresh: true}}});
-    const knowledge = new LocalKnowledgeBase(config, new CodegraphRepositoryLookup(config, runner));
+        },
+      },
+    });
+    const provider = config.knowledge.repositoryIntelligence.providers.codegraph;
+    const adapter = new CodeGraphAdapter({ workspaceRoot: root }, {
+      ...provider,
+      maxFiles: provider.maxResults,
+      sourceExtensions: config.knowledge.repositoryIntelligence.sourceExtensions,
+      maxCharacters: config.workflow.repositoryContextCharacters,
+    }, runner);
+    const broker = new RepositoryIntelligenceBroker({
+      adapters: [adapter],
+      routes: { search: ["codegraph"] },
+    });
+    const knowledge = new LocalKnowledgeBase(config, broker);
     await knowledge.refresh();
     const queryCallsBefore = runner.mock.calls.filter((call) => call[1][0] === "explore").length;
     expect(queryCallsBefore).toBe(0);
@@ -48,6 +65,10 @@ describe("retrieval result cache", () => {
     expect(first.results[0]?.excerpt).not.toBe("mutated");
 
     await knowledge.refresh();
+    await knowledge.searchWithAudit("SettlementWindow refunds", 4);
+    expect(runner.mock.calls.filter((call) => call[1][0] === "explore")).toHaveLength(1);
+
+    await knowledge.repositoryPathsChanged(["src/settlement.ts"]);
     await knowledge.searchWithAudit("SettlementWindow refunds", 4);
     expect(runner.mock.calls.filter((call) => call[1][0] === "explore").length).toBeGreaterThanOrEqual(2);
 

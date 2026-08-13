@@ -17,7 +17,7 @@ import {
   type RunWorkspace} from "../../src/domain/workspace.js";
 import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
-import type { CodegraphRunner } from "../../src/codegraph.js";
+import type { ExecutableRunner } from "../../src/infrastructure/repository-intelligence/index.js";
 import { git as runGit } from "../testkit/git.js";
 import {
   createProjectFixture,
@@ -145,11 +145,18 @@ describe("per-run worktrees (Slice 2)", () => {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: true },
+          repositoryIntelligence: {
+            enabled: true,
+            providers: {
+              gitnexus: { enabled: false, command: "gitnexus" },
+              codegraph: { enabled: true, command: "codegraph" },
+            },
+            routes: { search: ["codegraph"], "symbol-context": ["codegraph"] },
+          },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
 
-    const codegraphRunner = vi.fn<CodegraphRunner>(async (_executable, args, options) => {
+    const repositoryIntelligenceRunner = vi.fn<ExecutableRunner>(async (_executable, args, options) => {
       if (args[0] === "--version") {
         return { exitCode: 0, stdout: "1.5.0\n", stderr: "", timedOut: false };
       }
@@ -164,14 +171,14 @@ describe("per-run worktrees (Slice 2)", () => {
 
     const engine = new HarnessEngine(fixture.config, {
       backend: createFakeBackend({ reflector: () => REFLECT_OUTPUT }),
-      codegraphRunner});
+      repositoryIntelligenceRunner});
     const runId = "worktree-codegraph-ignore";
     const state = await engine.start("Ship a feature", runId, false, true);
     const workspace = migrateRunWorkspace(await engine.store.readJson(runId, "workspace.json"), {
       controlRoot: fixture.root});
 
     expect(state.phase).toBe("new");
-    const initCall = codegraphRunner.mock.calls.find(([, args]) => args[0] === "init");
+    const initCall = repositoryIntelligenceRunner.mock.calls.find(([, args]) => args[0] === "init");
     expect(initCall).toBeDefined();
     expect(canonicalizeWorkspacePath(initCall![1][1]!)).toBe(workspace.worktreePath);
     expect(canonicalizeWorkspacePath(initCall![2].cwd)).toBe(workspace.worktreePath);

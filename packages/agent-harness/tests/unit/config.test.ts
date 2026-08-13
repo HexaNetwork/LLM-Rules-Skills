@@ -17,23 +17,24 @@ describe("token-conscious defaults", () => {
     expect(config.agent.promptBuilder).toBe(false);
     expect(config.workflow.maxGrillQuestionsPerEpisode).toBe(5);
     expect(config.workflow.staleAnswerMinutes).toBe(30);
-    expect(config.knowledge.codegraph.enabled).toBe(true);
-    expect(config.knowledge.codegraph.updateTimeoutMs).toBe(600_000);
-    expect(config.knowledge.codegraph.queryTimeoutMs).toBe(15_000);
+    expect(config.knowledge.repositoryIntelligence.enabled).toBe(true);
+    expect(config.knowledge.repositoryIntelligence.providers.gitnexus.enabled).toBe(true);
+    expect(config.knowledge.repositoryIntelligence.providers.codegraph.updateTimeoutMs).toBe(600_000);
+    expect(config.knowledge.repositoryIntelligence.providers.codegraph.queryTimeoutMs).toBe(15_000);
     expect(config.workflow.rag).toBe(true);
     expect(config.workflow).not.toHaveProperty("tdd");
-    expect(config.knowledge.codegraph.roles).toContain("implementer");
-    expect(config.knowledge.codegraph.roles).toContain("reviewer");
-    expect(config.knowledge.codegraph.roles).toContain("task-reviewer");
-    expect(config.knowledge.codegraph.roles).not.toContain("message-writer");
-    expect(config.knowledge.codegraph.roles).not.toContain("reflector");
-    expect(config.knowledge.codegraph.roles).not.toContain("griller");
+    expect(config.knowledge.repositoryIntelligence.roles).toContain("implementer");
+    expect(config.knowledge.repositoryIntelligence.roles).toContain("reviewer");
+    expect(config.knowledge.repositoryIntelligence.roles).toContain("task-reviewer");
+    expect(config.knowledge.repositoryIntelligence.roles).not.toContain("message-writer");
+    expect(config.knowledge.repositoryIntelligence.roles).not.toContain("reflector");
+    expect(config.knowledge.repositoryIntelligence.roles).not.toContain("griller");
     expect(config.workflow.contextCharacters).toBe(12_000);
     expect(config.workflow.inputCharacters).toBe(24_000);
     // Prefer Math.min(20_000, inputCharacters/2) so a full-size diff fits inputCharacters.
     expect(config.workflow.reviewDiffCharacters).toBe(12_000);
-    expect(config.workflow.codegraphCharacters).toBe(3_000);
-    expect(config.knowledge.codegraph.maxFiles).toBe(12);
+    expect(config.workflow.repositoryContextCharacters).toBe(3_000);
+    expect(config.knowledge.repositoryIntelligence.providers.codegraph.maxResults).toBe(12);
     expect(config.workflow.generateCommitMessages).toBe(false);
     expect(config.workflow.maxRunTokens).toBe(0);
     expect(config.workflow.maxRunCostUsd).toBe(0);
@@ -44,12 +45,12 @@ describe("token-conscious defaults", () => {
     expect(config.knowledge.guidance.assignments?.planner.skills).toEqual([
       "domain-modeling",
       "to-prd"]);
-  expect(config.knowledge.guidance.assignments?.["docs-writer"].skills).toEqual([
-    "domain-modeling"]);
-  expect(modelForRole({
-    ...config,
-    models: { ...config.models, small: "small-model", capable: "capable-model" },
-  }, "docs-writer")).toBe("small-model");
+    expect(config.knowledge.guidance.assignments?.["docs-writer"].skills).toEqual([
+      "domain-modeling"]);
+    expect(modelForRole({
+      ...config,
+      models: { ...config.models, small: "small-model", capable: "capable-model" },
+    }, "docs-writer")).toBe("small-model");
     expect(config.knowledge.guidance.assignments).not.toHaveProperty("red-writer");
     expect(config.knowledge.guidance.assignments).not.toHaveProperty("test-writer");
     expect(HarnessConfigSchema.parse({
@@ -62,7 +63,7 @@ describe("token-conscious defaults", () => {
     expect(config.knowledge.minLexicalScore).toBe(0.05);
     expect(config.knowledge.maxChunksPerSource).toBe(1);
     expect(config.knowledge.maxForTopSource).toBe(2);
-    expect(config.knowledge.codegraph.stopwords).toEqual([]);
+    expect(config.knowledge.repositoryIntelligence.providers.codegraph.stopwords).toEqual([]);
     expect(config.workflow.testPathPatterns).toEqual([
       "tests/**",
       "test/**",
@@ -71,7 +72,7 @@ describe("token-conscious defaults", () => {
       "**/*.spec.*",
       "**/*_test.*",
       "src/test/**"]);
-    expect(config.knowledge.codegraph.sourceExtensions).toEqual([
+    expect(config.knowledge.repositoryIntelligence.sourceExtensions).toEqual([
       ".ts",
       ".tsx",
       ".js",
@@ -104,7 +105,7 @@ describe("token-conscious defaults", () => {
     expect(defaultConfigYaml()).toContain("sourceExtensions:");
     expect(defaultConfigYaml()).toContain("assignments:");
     expect(defaultConfigYaml()).toContain("task-reviewer:");
-  expect(defaultConfigYaml()).toContain("docs-writer:");
+    expect(defaultConfigYaml()).toContain("docs-writer:");
     expect(defaultConfigYaml()).toContain("scope: project");
     expect(defaultConfigYaml()).toContain("Implementation attempt limit per task during executing");
     expect(defaultConfigYaml()).toContain("Paths treated as tests for test-writer path validation");
@@ -121,22 +122,22 @@ describe("token-conscious defaults", () => {
       enabled: true,
       provider: "ollama",
       model: "qwen3-embedding"});
-    expect(deployed.knowledge.codegraph).toMatchObject({
+    expect(deployed.knowledge.repositoryIntelligence).toMatchObject({
       enabled: true,
-      updateOnRefresh: false,
-      updateTimeoutMs: 600_000});
+      routes: { search: ["gitnexus", "codegraph"] },
+    });
     expect(defaultConfigYaml()).toContain("updateTimeoutMs: 600000");
-    const documentOnly = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({ codegraph: false })));
-    expect(documentOnly.knowledge.codegraph).toMatchObject({
+    const documentOnly = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({ repositoryIntelligence: false })));
+    expect(documentOnly.knowledge.repositoryIntelligence).toMatchObject({
       enabled: false,
-      updateOnRefresh: false});
+    });
   });
 
   it("requires assignments for every agent role when explicit guidance mapping is enabled", () => {
     const complete = {
       reflector: { rules: [], skills: [] },
       griller: { rules: [], skills: [] },
-    "docs-writer": { rules: [], skills: ["domain-modeling"] },
+      "docs-writer": { rules: [], skills: ["domain-modeling"] },
       planner: { rules: [], skills: [] },
       "scenario-planner": { rules: [], skills: [] },
       "issue-slicer": { rules: [], skills: [] },
@@ -262,7 +263,7 @@ repositoryRoot: .
     expect(parsed.workflow).not.toHaveProperty("tdd");
   });
 
-  it("rewrites frozen Graphify keys onto CodeGraph instead of enabling by default", () => {
+  it("rewrites frozen Graphify keys into neutral repository intelligence", () => {
     const frozen = normalizeFrozenRunConfig({
       repositoryRoot: "C:/tmp/project",
       workflow: { graphifyCharacters: 2_500 },
@@ -275,11 +276,11 @@ repositoryRoot: .
         },
       },
     });
-    expect(frozen.knowledge.codegraph.enabled).toBe(false);
-    expect(frozen.knowledge.codegraph.command).toBe("graphify-custom");
-    expect(frozen.knowledge.codegraph.maxFiles).toBe(8);
-    expect(frozen.knowledge.codegraph.updateTimeoutMs).toBe(120_000);
-    expect(frozen.workflow.codegraphCharacters).toBe(2_500);
+    expect(frozen.knowledge.repositoryIntelligence.enabled).toBe(false);
+    expect(frozen.knowledge.repositoryIntelligence.providers.codegraph.command).toBe("graphify-custom");
+    expect(frozen.knowledge.repositoryIntelligence.providers.codegraph.maxResults).toBe(8);
+    expect(frozen.knowledge.repositoryIntelligence.providers.codegraph.updateTimeoutMs).toBe(120_000);
+    expect(frozen.workflow.repositoryContextCharacters).toBe(2_500);
     expect(frozen.knowledge).not.toHaveProperty("graphify");
     expect(frozen.workflow).not.toHaveProperty("graphifyCharacters");
   });

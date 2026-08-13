@@ -7,7 +7,10 @@ import type { HarnessConfig } from "../config/schema.js";
 import type { BuildTask, RunState } from "../domain.js";
 import { HarnessFailure } from "../errors.js";
 import type { GitService } from "../git.js";
-import type { CodegraphRunner } from "../codegraph.js";
+import type {
+  ExecutableRunner,
+  RepositoryIntelligenceBroker,
+} from "../infrastructure/repository-intelligence/index.js";
 import type { LocalKnowledgeBase } from "../knowledge.js";
 import type { RunStore } from "../store.js";
 import type { TrackerPort } from "../tracker.js";
@@ -41,7 +44,8 @@ export class ApplicationContext {
   readonly git: GitService;
   readonly agents: AgentCoordinator;
   readonly deps: ApplicationDependencies;
-  readonly codegraphRunner: CodegraphRunner;
+  readonly repositoryIntelligence: RepositoryIntelligenceBroker;
+  readonly repositoryIntelligenceRunner: ExecutableRunner;
   readonly sleep: (ms: number) => Promise<void>;
   readonly cancellation: RunCancellationRegistry;
   readonly projectContext?: ProjectContext;
@@ -60,7 +64,8 @@ export class ApplicationContext {
     this.tracker = this.deps.tracker;
     this.git = this.deps.git;
     this.agents = this.deps.agents;
-    this.codegraphRunner = this.deps.codegraphRunner;
+    this.repositoryIntelligence = this.deps.repositoryIntelligence;
+    this.repositoryIntelligenceRunner = this.deps.repositoryIntelligenceRunner;
     this.sleep = this.deps.sleep;
     this.projectContext = this.deps.projectContext;
     this.cancellation = cancellation;

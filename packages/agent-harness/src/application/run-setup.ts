@@ -1,7 +1,6 @@
 import type { HarnessConfig } from "../config/schema.js";
 import type { RunState } from "../domain.js";
 import { classifyFailure } from "../errors.js";
-import { prepareCodegraphForRun, type CodegraphRunner } from "../codegraph.js";
 import type { RunStore } from "../store.js";
 import type { HarnessPaths } from "./paths.js";
 
@@ -38,41 +37,31 @@ export type InitialRunSetupOptions = {
   config: HarnessConfig;
   store: RunStore;
   paths: HarnessPaths;
-  codegraphRunner?: CodegraphRunner;
-  git: { ensureCodegraphOutputIgnored(): Promise<void> };
+  git: { ensureRepositoryIntelligenceArtifactsIgnored(): Promise<void> };
   knowledge: {
     refresh(onProgress?: (progress: { message: string }) => void): Promise<unknown>;
+    prepareRepositoryIntelligence(): Promise<unknown>;
   };
   advance: () => Promise<unknown>;
   onProgress?: (message: string) => void;
 };
 
 /**
- * CodeGraph → knowledge refresh → advance for a run that has not left `new`.
+ * Repository intelligence → document refresh → advance for a run that has not left `new`.
  * Records `run.blocked` from `new` when setup fails, then rethrows.
  */
 export async function runInitialSetupThenAdvance(options: InitialRunSetupOptions): Promise<void> {
   try {
     const latest = await options.store.load(options.runId);
     if (TERMINAL_PHASES.has(latest.phase)) return;
-    if (options.config.knowledge.codegraph.enabled) {
-      options.onProgress?.("Checking CodeGraph for this project");
+    if (options.config.knowledge.repositoryIntelligence.enabled) {
+      options.onProgress?.("Checking repository intelligence for this project");
       await options.store.withWorkspaceAdminLock(
-        { runId: options.runId, action: "ensure-codegraph-ignore" },
-        () => options.git.ensureCodegraphOutputIgnored(),
+        { runId: options.runId, action: "ensure-repository-intelligence-ignore" },
+        () => options.git.ensureRepositoryIntelligenceArtifactsIgnored(),
       );
-      const codegraphReady = await prepareCodegraphForRun(
-        options.config,
-        options.codegraphRunner,
-        options.paths,
-      );
-      if (codegraphReady.enabled) {
-        options.onProgress?.(
-          codegraphReady.setupRan
-            ? "Repository graph built and ready"
-            : "CodeGraph repository index is ready",
-        );
-      }
+      await options.knowledge.prepareRepositoryIntelligence();
+      options.onProgress?.("Repository intelligence routes are ready");
     }
     const beforeIndex = await options.store.load(options.runId);
     if (TERMINAL_PHASES.has(beforeIndex.phase)) return;

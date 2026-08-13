@@ -4,11 +4,23 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { AgentCoordinator } from "../../src/infrastructure/agents/agent-coordinator.js";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
-import type { RepositoryLookup } from "../../src/codegraph.js";
+import type {
+  RepositoryIntelligenceBroker,
+  RepositoryIntelligenceResponse,
+} from "../../src/infrastructure/repository-intelligence/index.js";
 import { compactDomainSeed, LocalKnowledgeBase } from "../../src/knowledge.js";
 import { WorkerOutputSchema, createRunState } from "../../src/domain.js";
 import { RunStore } from "../../src/store.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
+
+function repositoryBroker(response: RepositoryIntelligenceResponse): RepositoryIntelligenceBroker {
+  return {
+    async retrieve() { return structuredClone(response); },
+    async prepare() { return { providers: [] }; },
+    async refresh() { return { providers: [] }; },
+    async changed() { return { providers: [] }; },
+  } as unknown as RepositoryIntelligenceBroker;
+}
 
 describe("compactDomainSeed", () => {
   it("keeps distinctive domain tokens and drops harness meta-language", () => {
@@ -51,7 +63,10 @@ describe("retrieval audit artifact", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: false,
+        }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -87,13 +102,13 @@ describe("retrieval audit artifact", () => {
       context: unknown[];
     };
     const retrieval = (await store.readJson(runId, retrievalPath!)) as {
-      retrieval: { skipped?: string; codegraph: { skippedReason?: string } };
+      retrieval: { skipped?: string; repository: { skippedReason?: string } };
     };
 
     expect(packet.guidance).toEqual([]);
     expect(packet.context).toEqual([]);
     expect(retrieval.retrieval.skipped).toBe("retrieval-disabled");
-    expect(retrieval.retrieval.codegraph.skippedReason).toBe("retrieval-disabled");
+    expect(retrieval.retrieval.repository.skippedReason).toBe("retrieval-disabled");
   });
 
   it("persists packets/*.retrieval.json and avoids padding with below-floor junk", async () => {
@@ -112,7 +127,10 @@ describe("retrieval audit artifact", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: false,
+        }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -156,7 +174,7 @@ describe("retrieval audit artifact", () => {
         query: string;
         kept: Array<{ source: string; score: number }>;
         omitted: Array<{ source: string; reason: string }>;
-        codegraph: { included: boolean };
+        repository: { included: boolean };
       };
       budget: { truncations: unknown[] };
     };
@@ -168,7 +186,7 @@ describe("retrieval audit artifact", () => {
     expect(artifact.retrieval.kept.map((item) => item.source)).toEqual(["docs/settlement.md"]);
     expect(packet.context.map((item) => item.source)).toEqual(["docs/settlement.md"]);
     expect(packet.context).toHaveLength(1);
-    expect(artifact.retrieval.codegraph.included).toBe(false);
+    expect(artifact.retrieval.repository.included).toBe(false);
     expect(artifact.retrieval.omitted.some((item) => item.source === "docs/colors.md")).toBe(true);
     expect(artifact.budget).toBeDefined();
   });
@@ -190,21 +208,19 @@ describe("retrieval audit artifact", () => {
     );
     const base = fixtureConfig(root);
     const codegraphHit = {
-      source: "codegraph:.codegraph",
+      providerId: "codegraph",
+      source: "repository:codegraph",
       title: "Repository relationships (CodeGraph)",
       excerpt: "SettlementWindow -> Ledger",
-      score: 1};
-    const lookup: RepositoryLookup = {
-      async refresh() {},
-      async rebuild() {
-        return true;
-      },
-      async search() {
-        return {
+      score: 1,
+      generation: "test",
+    };
+    const lookup = repositoryBroker({
           shapedQuery: "SettlementWindow",
           usedFallback: false,
-          result: codegraphHit};
-      }};
+          result: codegraphHit,
+          attempts: [],
+    });
 
     async function invokeWith(options: { rag: boolean; codegraph: boolean }) {
       const config = fixtureConfig(root, {
@@ -212,7 +228,10 @@ describe("retrieval audit artifact", () => {
         workflow: { ...base.workflow, rag: options.rag } as never,
         knowledge: {
           ...base.knowledge,
-          codegraph: { ...base.knowledge.codegraph, enabled: options.codegraph },
+          repositoryIntelligence: {
+            ...base.knowledge.repositoryIntelligence,
+            enabled: options.codegraph,
+          },
           guidance: {
             ...base.knowledge.guidance,
             enabled: true,
@@ -259,7 +278,7 @@ describe("retrieval audit artifact", () => {
         context: Array<{ source: string }>;
       };
       const retrieval = (await store.readJson(runId, retrievalPath!)) as {
-        retrieval: { skipped?: string; codegraph: { included: boolean } };
+        retrieval: { skipped?: string; repository: { included: boolean } };
       };
       return { packet, retrieval };
     }
@@ -267,17 +286,17 @@ describe("retrieval audit artifact", () => {
     const bothOn = await invokeWith({ rag: true, codegraph: true });
     expect(bothOn.packet.guidance.length).toBeGreaterThan(0);
     expect(bothOn.packet.context.some((item) => item.source === "docs/settlement.md")).toBe(true);
-    expect(bothOn.packet.context.some((item) => item.source.startsWith("codegraph:"))).toBe(true);
+    expect(bothOn.packet.context.some((item) => item.source.startsWith("repository:"))).toBe(true);
 
     const docsOnly = await invokeWith({ rag: true, codegraph: false });
     expect(docsOnly.packet.guidance.length).toBeGreaterThan(0);
-    expect(docsOnly.packet.context.every((item) => !item.source.startsWith("codegraph:"))).toBe(true);
+    expect(docsOnly.packet.context.every((item) => !item.source.startsWith("repository:"))).toBe(true);
     expect(docsOnly.packet.context.some((item) => item.source === "docs/settlement.md")).toBe(true);
 
     const codegraphOnly = await invokeWith({ rag: false, codegraph: true });
     expect(codegraphOnly.packet.guidance.length).toBeGreaterThan(0);
     expect(codegraphOnly.packet.context.map((item) => item.source)).toEqual([
-      "codegraph:.codegraph"]);
+      "repository:codegraph"]);
     expect(codegraphOnly.retrieval.retrieval.skipped).toBe("rag-disabled");
 
     const bothOff = await invokeWith({ rag: false, codegraph: false });

@@ -155,6 +155,60 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     maximumItemLength: 1_000,
     appliesTo: "new_runs",
   },
+  {
+    key: "knowledge.repositoryIntelligence.enabled",
+    category: "Repository intelligence",
+    label: "Repository intelligence",
+    description:
+      "Enable structural repository context in agent work packets via ordered provider routes.",
+    type: "boolean",
+    appliesTo: "new_runs",
+  },
+  {
+    key: "knowledge.repositoryIntelligence.providers.gitnexus.enabled",
+    category: "Repository intelligence",
+    label: "GitNexus provider",
+    description: "Allow the GitNexus adapter when it appears in a capability route.",
+    type: "boolean",
+    appliesTo: "new_runs",
+  },
+  {
+    key: "knowledge.repositoryIntelligence.providers.gitnexus.command",
+    category: "Repository intelligence",
+    label: "GitNexus command",
+    description: "Executable used for GitNexus readiness, refresh, and queries.",
+    type: "string",
+    maximum: 200,
+    appliesTo: "new_runs",
+  },
+  {
+    key: "knowledge.repositoryIntelligence.providers.codegraph.enabled",
+    category: "Repository intelligence",
+    label: "CodeGraph provider",
+    description: "Allow the CodeGraph adapter when it appears in a capability route.",
+    type: "boolean",
+    appliesTo: "new_runs",
+  },
+  {
+    key: "knowledge.repositoryIntelligence.providers.codegraph.command",
+    category: "Repository intelligence",
+    label: "CodeGraph command",
+    description: "Executable used for CodeGraph readiness, refresh, and queries.",
+    type: "string",
+    maximum: 200,
+    appliesTo: "new_runs",
+  },
+  {
+    key: "knowledge.repositoryIntelligence.routes.search",
+    category: "Repository intelligence",
+    label: "Search route order",
+    description:
+      "Ordered provider ids for structural search (first success wins). One provider id per line.",
+    type: "string-list",
+    maximumItems: 10,
+    maximumItemLength: 64,
+    appliesTo: "new_runs",
+  },
 ];
 
 export function projectSettings(config: HarnessConfig, configPath?: string): Record<string, unknown> {
@@ -187,6 +241,18 @@ export function projectSettings(config: HarnessConfig, configPath?: string): Rec
       "git.autoCommitPreflight": config.git.autoCommitPreflight,
       "git.preflightCommitOrder": config.git.preflightCommitOrder,
       "git.ignoredArtifactPatterns": config.git.ignoredArtifactPatterns,
+      "knowledge.repositoryIntelligence.enabled":
+        config.knowledge.repositoryIntelligence.enabled,
+      "knowledge.repositoryIntelligence.providers.gitnexus.enabled":
+        config.knowledge.repositoryIntelligence.providers.gitnexus.enabled,
+      "knowledge.repositoryIntelligence.providers.gitnexus.command":
+        config.knowledge.repositoryIntelligence.providers.gitnexus.command,
+      "knowledge.repositoryIntelligence.providers.codegraph.enabled":
+        config.knowledge.repositoryIntelligence.providers.codegraph.enabled,
+      "knowledge.repositoryIntelligence.providers.codegraph.command":
+        config.knowledge.repositoryIntelligence.providers.codegraph.command,
+      "knowledge.repositoryIntelligence.routes.search":
+        config.knowledge.repositoryIntelligence.routes.search,
     },
   };
 }
@@ -321,11 +387,59 @@ export async function handleSettingsRoutes(
       "commands.testTargetTemplate",
       10_000,
     );
+    const repositoryIntelligenceEnabled = optionalBoolean(
+      values["knowledge.repositoryIntelligence.enabled"],
+      "knowledge.repositoryIntelligence.enabled",
+    );
+    const gitnexusEnabled = optionalBoolean(
+      values["knowledge.repositoryIntelligence.providers.gitnexus.enabled"],
+      "knowledge.repositoryIntelligence.providers.gitnexus.enabled",
+    );
+    const gitnexusCommand = optionalString(
+      values["knowledge.repositoryIntelligence.providers.gitnexus.command"],
+      "knowledge.repositoryIntelligence.providers.gitnexus.command",
+      200,
+    );
+    const codegraphEnabled = optionalBoolean(
+      values["knowledge.repositoryIntelligence.providers.codegraph.enabled"],
+      "knowledge.repositoryIntelligence.providers.codegraph.enabled",
+    );
+    const codegraphCommand = optionalString(
+      values["knowledge.repositoryIntelligence.providers.codegraph.command"],
+      "knowledge.repositoryIntelligence.providers.codegraph.command",
+      200,
+    );
+    const searchRoute = optionalStringArray(
+      values["knowledge.repositoryIntelligence.routes.search"],
+      "knowledge.repositoryIntelligence.routes.search",
+      64,
+    );
+    if (searchRoute && searchRoute.length > 10) {
+      throw new HttpError(400, "knowledge.repositoryIntelligence.routes.search may contain at most 10 providers");
+    }
     if (maxGrillQuestionsPerEpisode == null) {
       throw new HttpError(400, "workflow.maxGrillQuestionsPerEpisode is required");
     }
     if (staleAnswerMinutes == null) {
       throw new HttpError(400, "workflow.staleAnswerMinutes is required");
+    }
+    if (repositoryIntelligenceEnabled == null) {
+      throw new HttpError(400, "knowledge.repositoryIntelligence.enabled is required");
+    }
+    if (gitnexusEnabled == null) {
+      throw new HttpError(400, "knowledge.repositoryIntelligence.providers.gitnexus.enabled is required");
+    }
+    if (!gitnexusCommand) {
+      throw new HttpError(400, "knowledge.repositoryIntelligence.providers.gitnexus.command is required");
+    }
+    if (codegraphEnabled == null) {
+      throw new HttpError(400, "knowledge.repositoryIntelligence.providers.codegraph.enabled is required");
+    }
+    if (!codegraphCommand) {
+      throw new HttpError(400, "knowledge.repositoryIntelligence.providers.codegraph.command is required");
+    }
+    if (searchRoute == null) {
+      throw new HttpError(400, "knowledge.repositoryIntelligence.routes.search is required");
     }
     const updated = await writeProjectSettings(ctx.configPath, {
       workflow: {
@@ -357,6 +471,24 @@ export async function handleSettingsRoutes(
             },
           }
         : {}),
+      knowledge: {
+        repositoryIntelligence: {
+          enabled: repositoryIntelligenceEnabled,
+          providers: {
+            gitnexus: {
+              enabled: gitnexusEnabled,
+              command: gitnexusCommand,
+            },
+            codegraph: {
+              enabled: codegraphEnabled,
+              command: codegraphCommand,
+            },
+          },
+          routes: {
+            search: searchRoute,
+          },
+        },
+      },
     });
     ctx.setProjectConfig(updated.config);
     json(response, 200, {

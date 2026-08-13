@@ -5,7 +5,10 @@ import path from "node:path";
 import type { AgentBackend } from "../infrastructure/agents/types.js";
 import { resolveHarnessPaths } from "../application/paths.js";
 import type { HarnessConfig } from "../config/schema.js";
-import type { CodegraphRunner } from "../codegraph.js";
+import {
+  createRepositoryIntelligenceBroker,
+  type ExecutableRunner,
+} from "../infrastructure/repository-intelligence/index.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { RunStore } from "../store.js";
 import { renderDashboard } from "./app.js";
@@ -35,7 +38,7 @@ export type UiServerOptions = {
   port?: number;
   token?: string;
   openBrowser?: boolean;
-  codegraphRunner?: CodegraphRunner;
+  repositoryIntelligenceRunner?: ExecutableRunner;
 };
 
 export type UiServer = {
@@ -52,11 +55,21 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
   let projectConfig = options.config;
   const paths = resolveHarnessPaths(projectConfig);
   const store = new RunStore(projectConfig, paths.stateRoot);
-  const knowledge = new LocalKnowledgeBase(projectConfig, undefined, paths, {
-    projectRoot: projectConfig.knowledge.guidance.projectRoot,
-    sharedRoot: projectConfig.knowledge.guidance.sharedRoot,
-    runsRoot: path.join(paths.stateRoot, "runs"),
-  });
+  const repositoryIntelligenceRunner = options.repositoryIntelligenceRunner;
+  const knowledge = new LocalKnowledgeBase(
+    projectConfig,
+    createRepositoryIntelligenceBroker({
+      config: projectConfig,
+      paths,
+      runner: repositoryIntelligenceRunner,
+    }),
+    paths,
+    {
+      projectRoot: projectConfig.knowledge.guidance.projectRoot,
+      sharedRoot: projectConfig.knowledge.guidance.sharedRoot,
+      runsRoot: path.join(paths.stateRoot, "runs"),
+    },
+  );
   const agentReadiness = options.backend.readiness?.() ?? { ready: true };
   const jobs = new RunJobService();
   await store.initialize();
@@ -72,7 +85,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
     configPath: options.configPath,
     agentReadiness,
     jobs,
-    codegraphRunner: options.codegraphRunner,
+    repositoryIntelligenceRunner,
   };
 
   const server = http.createServer(async (request, response) => {

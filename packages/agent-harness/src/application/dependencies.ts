@@ -11,10 +11,11 @@ import type { HarnessConfig } from "../config/schema.js";
 import type { GitService } from "../git.js";
 import { GitService as GitServiceImpl } from "../git.js";
 import {
-  CodegraphRepositoryLookup,
-  runCodegraph,
-  type CodegraphRunner,
-} from "../codegraph.js";
+  createRepositoryIntelligenceBroker,
+  runExecutable,
+  type ExecutableRunner,
+  type RepositoryIntelligenceBroker,
+} from "../infrastructure/repository-intelligence/index.js";
 import type { LocalKnowledgeBase } from "../knowledge.js";
 import { LocalKnowledgeBase as LocalKnowledgeBaseImpl } from "../knowledge.js";
 import { RunStore } from "../store.js";
@@ -51,7 +52,8 @@ export type ApplicationDependencies = {
   commands: CommandRunner;
   clock: Clock;
   sleep(ms: number): Promise<void>;
-  codegraphRunner: CodegraphRunner;
+  repositoryIntelligence: RepositoryIntelligenceBroker;
+  repositoryIntelligenceRunner: ExecutableRunner;
   projectContext?: ProjectContext;
 };
 
@@ -62,7 +64,8 @@ export type HarnessDependencies = {
   store?: RunStore;
   knowledge?: LocalKnowledgeBase;
   git?: GitService;
-  codegraphRunner?: CodegraphRunner;
+  repositoryIntelligence?: RepositoryIntelligenceBroker;
+  repositoryIntelligenceRunner?: ExecutableRunner;
   /** Test seam for provider-retry backoff; defaults to real wall-clock sleep. */
   sleep?: (ms: number) => Promise<void>;
   clock?: Clock;
@@ -85,13 +88,27 @@ export function createApplicationDependencies(
 ): ApplicationDependencies {
   const paths = dependencies.paths ?? resolveHarnessPaths(config);
   const store = dependencies.store ?? new RunStore(config, paths.stateRoot);
-  const codegraphRunner = dependencies.codegraphRunner ?? runCodegraph;
+  const repositoryIntelligenceRunner: ExecutableRunner =
+    dependencies.repositoryIntelligenceRunner ??
+    runExecutable;
+  const repositoryIntelligence =
+    dependencies.repositoryIntelligence ??
+    createRepositoryIntelligenceBroker({
+      config,
+      paths,
+      runner: repositoryIntelligenceRunner,
+      withRefreshLock: (providerId, work) =>
+        store.withSharedIndexLock(
+          { runId: "repository-intelligence", action: `refresh-${providerId}` },
+          work,
+        ),
+    });
   const project = dependencies.projectContext;
   const knowledge =
     dependencies.knowledge ??
     new LocalKnowledgeBaseImpl(
       config,
-      new CodegraphRepositoryLookup(config, codegraphRunner, paths),
+      repositoryIntelligence,
       paths,
       {
         projectRoot:
@@ -111,7 +128,8 @@ export function createApplicationDependencies(
     commands: dependencies.commands ?? processCommandRunner,
     clock: dependencies.clock ?? systemClock,
     sleep: dependencies.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
-    codegraphRunner,
+    repositoryIntelligence,
+    repositoryIntelligenceRunner,
     projectContext: dependencies.projectContext,
   };
 }

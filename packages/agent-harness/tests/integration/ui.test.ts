@@ -5,13 +5,14 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { stepPersistenceLimits } from "../../src/infrastructure/agents/activity-tracker.js";
+import { writeRunWorkspace } from "../../src/config/io.js";
 import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
 import { loadRunConfig } from "../../src/config/io.js";
 import { createRunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/application/harness-engine.js";
-import { GitService } from "../../src/git.js";
+import { WorktreeManager } from "../../src/git.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
-import type { CodegraphRunner } from "../../src/codegraph.js";
+import type { ExecutableRunner } from "../../src/infrastructure/repository-intelligence/index.js";
 import {
   fixtureConfig,
   fixtureRoot,
@@ -31,6 +32,15 @@ const REFLECT_OUTPUT = {
   outOfScope: ["wayfinding"],
   assumptions: [],
   unknowns: ["tone"]};
+
+const DEFAULT_REPOSITORY_INTELLIGENCE_SETTINGS = {
+  "knowledge.repositoryIntelligence.enabled": false,
+  "knowledge.repositoryIntelligence.providers.gitnexus.enabled": true,
+  "knowledge.repositoryIntelligence.providers.gitnexus.command": "gitnexus",
+  "knowledge.repositoryIntelligence.providers.codegraph.enabled": true,
+  "knowledge.repositoryIntelligence.providers.codegraph.command": "codegraph",
+  "knowledge.repositoryIntelligence.routes.search": ["gitnexus", "codegraph"],
+};
 
 const GRILL_QUESTION = {
   prompt: "Should the interface feel quiet or energetic?",
@@ -121,7 +131,7 @@ describe("central dashboard", () => {
       settings: { editable: boolean; definitions: unknown[]; values: Record<string, number> };
     };
     expect(initialBody.settings.editable).toBe(true);
-    expect(initialBody.settings.definitions).toHaveLength(9);
+    expect(initialBody.settings.definitions).toHaveLength(15);
     const byKey = Object.fromEntries(
       (initialBody.settings.definitions as Array<{ key: string; appliesTo: string }>).map((d) => [
         d.key,
@@ -132,11 +142,18 @@ describe("central dashboard", () => {
     expect(byKey["commands.verification"]).toBe("new_runs");
     expect(byKey["commands.testTargetTemplate"]).toBe("new_runs");
     expect(byKey["workflow.maxGrillQuestionsPerEpisode"]).toBe("new_runs");
+    expect(byKey["knowledge.repositoryIntelligence.enabled"]).toBe("new_runs");
+    expect(byKey["knowledge.repositoryIntelligence.routes.search"]).toBe("new_runs");
     expect(initialBody.settings.values["workflow.maxGrillQuestionsPerEpisode"]).toBe(5);
     expect(initialBody.settings.values["workflow.staleAnswerMinutes"]).toBe(30);
     expect(initialBody.settings.values["workflow.grillQuestionsPerBatch"]).toBe(3);
     expect(initialBody.settings.values["git.autoCommitPreflight"]).toBe(false);
     expect(initialBody.settings.values["git.preflightCommitOrder"]).toBe("branch-then-commit");
+    expect(initialBody.settings.values["knowledge.repositoryIntelligence.enabled"]).toBe(false);
+    expect(initialBody.settings.values["knowledge.repositoryIntelligence.routes.search"]).toEqual([
+      "gitnexus",
+      "codegraph",
+    ]);
     expect(initialBody.settings.values["workflow.testPathPatterns"]).toEqual(
       expect.arrayContaining(["tests/**", "src/test/**"]),
     );
@@ -163,6 +180,7 @@ describe("central dashboard", () => {
       method: "PUT",
       body: {
         values: {
+          ...DEFAULT_REPOSITORY_INTELLIGENCE_SETTINGS,
           "workflow.maxGrillQuestionsPerEpisode": 0,
           "workflow.staleAnswerMinutes": 30}}});
     expect(invalid.status).toBe(400);
@@ -171,6 +189,7 @@ describe("central dashboard", () => {
       method: "PUT",
       body: {
         values: {
+          ...DEFAULT_REPOSITORY_INTELLIGENCE_SETTINGS,
           "workflow.maxGrillQuestionsPerEpisode": 10,
           "workflow.staleAnswerMinutes": 45,
           "workflow.testPathPatterns": ["modules/**/src/test/**", "**/*Test.java"],
@@ -209,6 +228,7 @@ describe("central dashboard", () => {
       method: "PUT",
       body: {
         values: {
+          ...DEFAULT_REPOSITORY_INTELLIGENCE_SETTINGS,
           "workflow.maxGrillQuestionsPerEpisode": 10,
           "workflow.staleAnswerMinutes": 45,
           "git.autoCommitPreflight": true,
@@ -224,6 +244,7 @@ describe("central dashboard", () => {
       method: "PUT",
       body: {
         values: {
+          ...DEFAULT_REPOSITORY_INTELLIGENCE_SETTINGS,
           "workflow.maxGrillQuestionsPerEpisode": 10,
           "workflow.staleAnswerMinutes": 45,
           "git.preflightCommitOrder": "sideways"}}});
@@ -269,6 +290,7 @@ describe("central dashboard", () => {
       method: "PUT",
       body: {
         values: {
+          ...DEFAULT_REPOSITORY_INTELLIGENCE_SETTINGS,
           "workflow.maxGrillQuestionsPerEpisode": 5,
           "workflow.staleAnswerMinutes": 30,
           "workflow.testPathPatterns": ["modules/**/src/test/**"],
@@ -1084,8 +1106,18 @@ describe("central dashboard", () => {
       method: "POST",
       body: {
         action: "answer",
-        questionId: question.id,
-        answer: "Confirmed: quiet dashboard feature."}});
+        answers: [
+          {
+            questionId: question.id,
+            answer: "Confirmed: quiet dashboard feature.",
+            structured: {
+              ...REFLECT_OUTPUT,
+              restatement: "Confirmed: quiet dashboard feature.",
+            },
+          },
+        ],
+      },
+    });
 
     detail = await waitForPhase(ui, runId, "awaiting_input");
     question = detail.state.questions.find(
@@ -1099,8 +1131,15 @@ describe("central dashboard", () => {
       method: "POST",
       body: {
         action: "answer",
-        questionId: question.id,
-        answer: "Quiet and focused, with restrained color."}});
+        answers: [
+          {
+            questionId: question.id,
+            answer: "Quiet and focused, with restrained color.",
+            optionId: "quiet",
+          },
+        ],
+      },
+    });
     expect(answered.status).toBe(202);
     detail = await waitForPhase(ui, runId, "awaiting_input");
     expect(detail.state.grillReady?.summary).toBeTruthy();
@@ -1280,11 +1319,16 @@ describe("central dashboard", () => {
       knowledge: {
         ...fixtureConfig(root).knowledge,
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: false,
+        },
+      },
+    });
     const backend = createFakeBackend({
-      implementer: async () => {
-        await mkdir(path.join(root, "src"), { recursive: true });
-        await writeFile(path.join(root, "src", "a.ts"), "export const a = 1;\n", "utf8");
+      implementer: async (request) => {
+        await mkdir(path.join(request.cwd, "src"), { recursive: true });
+        await writeFile(path.join(request.cwd, "src", "a.ts"), "export const a = 1;\n", "utf8");
         return { summary: "built", changedFiles: ["src/a.ts"] };
       },
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
@@ -1317,13 +1361,24 @@ describe("central dashboard", () => {
     await engine.store.writeJson(state.runId, "config.json", {
       ...config,
       configVersion: CONFIG_VERSION});
-    const fingerprint = await new GitService(config).treeFingerprint();
+    const manager = new WorktreeManager({
+      controlRoot: engine.paths.controlRoot,
+      stateRoot: engine.paths.stateRoot,
+      worktreeRoot: engine.paths.worktreeRoot,
+      store: engine.store});
+    const workspace = await manager.create({
+      runId: state.runId,
+      baseBranch: config.git.baseBranch});
+    await writeRunWorkspace(config, state.runId, workspace);
+    engine.bindWorkspace(workspace);
+    const fingerprint = await engine.git.treeFingerprint();
     state = { ...state, treeFingerprint: fingerprint };
     await engine.store.writeJson(state.runId, "state.json", state);
 
-    await mkdir(path.join(root, "Source", "App", "obj", "Debug"), { recursive: true });
+    await mkdir(path.join(engine.paths.workspaceRoot, "Source", "App", "obj", "Debug"), {
+      recursive: true});
     await writeFile(
-      path.join(root, "Source", "App", "obj", "Debug", "App.assets.cache"),
+      path.join(engine.paths.workspaceRoot, "Source", "App", "obj", "Debug", "App.assets.cache"),
       "cache\n",
       "utf8",
     );
@@ -1389,7 +1444,12 @@ describe("central dashboard", () => {
       git: { enabled: true, baseBranch: "main" } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: false,
+        },
+      },
+    });
     const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
     ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
 
@@ -1419,13 +1479,28 @@ describe("central dashboard", () => {
     expect(frozen.git.baseBranch).toBe("develop");
   });
 
-  it("records a CodeGraph setup failure from POST /api/runs as a blocked run", async () => {
+  it("records a repository-intelligence setup failure from POST /api/runs as a blocked run", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: true }}});
-    const codegraphRunner: CodegraphRunner = async (_executable, args) => {
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: true,
+          providers: {
+            ...fixtureConfig(root).knowledge.repositoryIntelligence.providers,
+            gitnexus: {
+              ...fixtureConfig(root).knowledge.repositoryIntelligence.providers.gitnexus,
+              enabled: false,
+            },
+            codegraph: {
+              ...fixtureConfig(root).knowledge.repositoryIntelligence.providers.codegraph,
+              enabled: true,
+            },
+          },
+          routes: { search: ["codegraph"], "symbol-context": ["codegraph"] },
+        }}});
+    const repositoryIntelligenceRunner: ExecutableRunner = async (_executable, args) => {
       if (args[0] === "--version") {
         return { exitCode: 0, stdout: "1.5.0\n", stderr: "", timedOut: false };
       }
@@ -1434,7 +1509,7 @@ describe("central dashboard", () => {
     ui = await startUiServer({
       config,
       backend: createFakeBackend({ reflector: () => REFLECT_OUTPUT }),
-      codegraphRunner,
+      repositoryIntelligenceRunner,
       port: 0,
       token: "ui-test"});
 
@@ -1447,17 +1522,32 @@ describe("central dashboard", () => {
 
     expect(detail.state.phase).toBe("blocked");
     expect(detail.state.blockedFrom).toBe("new");
-    expect(detail.state.failure).toMatch(/CodeGraph index/i);
+    expect(detail.state.failure).toMatch(/CodeGraph index|repository intelligence|timed out/i);
   });
 
-  it("retries CodeGraph setup from a new-phase block and leaves new", async () => {
+  it("retries repository-intelligence setup from a new-phase block and leaves new", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: true }}});
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: true,
+          providers: {
+            ...fixtureConfig(root).knowledge.repositoryIntelligence.providers,
+            gitnexus: {
+              ...fixtureConfig(root).knowledge.repositoryIntelligence.providers.gitnexus,
+              enabled: false,
+            },
+            codegraph: {
+              ...fixtureConfig(root).knowledge.repositoryIntelligence.providers.codegraph,
+              enabled: true,
+            },
+          },
+          routes: { search: ["codegraph"], "symbol-context": ["codegraph"] },
+        }}});
     let failUpdate = true;
-    const codegraphRunner: CodegraphRunner = async (_executable, args, options) => {
+    const repositoryIntelligenceRunner: ExecutableRunner = async (_executable, args, options) => {
       if (args[0] === "--version") {
         return { exitCode: 0, stdout: "1.5.0\n", stderr: "", timedOut: false };
       }
@@ -1471,13 +1561,13 @@ describe("central dashboard", () => {
     ui = await startUiServer({
       config,
       backend: createFakeBackend({ reflector: () => REFLECT_OUTPUT }),
-      codegraphRunner,
+      repositoryIntelligenceRunner,
       port: 0,
       token: "ui-test"});
 
     const created = await request(ui, "/api/runs", {
       method: "POST",
-      body: { idea: "Retry CodeGraph after a timeout" }});
+      body: { idea: "Retry repository intelligence after a timeout" }});
     expect(created.status).toBe(202);
     const runId = ((await created.json()) as { run: { runId: string } }).run.runId;
     const blocked = await waitForBlocked(ui, runId);

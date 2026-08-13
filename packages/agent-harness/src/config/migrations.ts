@@ -4,30 +4,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Rewrite retired Graphify config keys onto CodeGraph before schema parse.
- * Live YAML and frozen run snapshots that still say `knowledge.graphify` keep
- * their enabled/timeout/budget choices instead of falling through to the
- * CodeGraph schema default (enabled).
- */
+/** Read compatibility for Graphify and CodeGraph-era live/frozen configs. */
 export function rewriteGraphifyConfigKeys(raw: unknown): unknown {
   if (!isRecord(raw)) return raw;
   const candidate: Record<string, unknown> = { ...raw };
 
-  if (isRecord(candidate.workflow) && Object.hasOwn(candidate.workflow, "graphifyCharacters")) {
-    const { graphifyCharacters, ...workflow } = candidate.workflow;
-    candidate.workflow = Object.hasOwn(workflow, "codegraphCharacters")
+  if (isRecord(candidate.workflow)) {
+    const {
+      graphifyCharacters,
+      codegraphCharacters,
+      ...workflow
+    } = candidate.workflow;
+    candidate.workflow = Object.hasOwn(workflow, "repositoryContextCharacters")
       ? workflow
-      : { ...workflow, codegraphCharacters: graphifyCharacters };
+      : {
+          ...workflow,
+          repositoryContextCharacters: codegraphCharacters ?? graphifyCharacters,
+        };
   }
 
-  if (!isRecord(candidate.knowledge) || !Object.hasOwn(candidate.knowledge, "graphify")) {
+  if (!isRecord(candidate.knowledge)) {
     return candidate;
   }
 
-  const { graphify, ...knowledge } = candidate.knowledge;
-  if (!Object.hasOwn(knowledge, "codegraph") && isRecord(graphify)) {
-    knowledge.codegraph = mapGraphifySettings(graphify);
+  const { graphify, codegraph, ...knowledge } = candidate.knowledge;
+  if (!Object.hasOwn(knowledge, "repositoryIntelligence")) {
+    const legacyCodegraph = isRecord(codegraph)
+      ? codegraph
+      : isRecord(graphify)
+        ? mapGraphifySettings(graphify)
+        : undefined;
+    if (legacyCodegraph) {
+      knowledge.repositoryIntelligence = mapCodegraphSettings(legacyCodegraph);
+    }
   }
   candidate.knowledge = knowledge;
   return candidate;
@@ -56,6 +65,34 @@ function mapGraphifySettings(graphify: Record<string, unknown>): Record<string, 
     codegraph.sourceExtensions = graphify.sourceExtensions;
   }
   return codegraph;
+}
+
+function mapCodegraphSettings(codegraph: Record<string, unknown>): Record<string, unknown> {
+  const provider: Record<string, unknown> = {
+    command: typeof codegraph.command === "string" ? codegraph.command : "codegraph",
+  };
+  for (const key of ["enabled", "updateTimeoutMs", "queryTimeoutMs", "stopwords"] as const) {
+    if (codegraph[key] !== undefined) provider[key] = codegraph[key];
+  }
+  if (typeof codegraph.maxFiles === "number") provider.maxResults = codegraph.maxFiles;
+  return {
+    enabled: typeof codegraph.enabled === "boolean" ? codegraph.enabled : true,
+    ...(Array.isArray(codegraph.roles) ? { roles: codegraph.roles } : {}),
+    ...(Array.isArray(codegraph.sourceExtensions)
+      ? { sourceExtensions: codegraph.sourceExtensions }
+      : {}),
+    providers: {
+      gitnexus: { enabled: false, command: "gitnexus" },
+      codegraph: provider,
+    },
+    routes: {
+      search: ["codegraph"],
+      "symbol-context": ["codegraph"],
+      impact: [],
+      trace: [],
+      "change-impact": [],
+    },
+  };
 }
 
 /**

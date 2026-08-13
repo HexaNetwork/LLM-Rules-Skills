@@ -15,7 +15,7 @@ export type BudgetAudit = {
   limits: {
     contextCharacters: number;
     inputCharacters: number;
-    codegraphCharacters: number;
+    repositoryContextCharacters: number;
   };
 };
 
@@ -35,7 +35,7 @@ export type BuildWorkPacketInput = {
   budgets: {
     contextCharacters: number;
     inputCharacters: number;
-    codegraphCharacters: number;
+    repositoryContextCharacters: number;
   };
   domainArtifacts?: WorkPacket["domainArtifacts"];
 };
@@ -62,15 +62,15 @@ export function buildWorkPacket(input: BuildWorkPacketInput): {
   const context: WorkPacket["context"] = [];
   for (const result of input.retrievalResults) {
     if (remaining <= 0) break;
-    const isCodegraph = result.source.startsWith("codegraph:");
-    const sectionCap = isCodegraph
-      ? Math.min(remaining, input.budgets.codegraphCharacters)
+    const isRepositoryContext = result.source.startsWith("repository:");
+    const sectionCap = isRepositoryContext
+      ? Math.min(remaining, input.budgets.repositoryContextCharacters)
       : remaining;
     const excerpt = result.excerpt.slice(0, sectionCap);
-    if (isCodegraph && result.excerpt.length > excerpt.length) {
+    if (isRepositoryContext && result.excerpt.length > excerpt.length) {
       truncations.push({
-        path: "context.codegraph.excerpt",
-        reason: "codegraph-budget",
+        path: `context.repository.${providerFromSource(result.source)}.excerpt`,
+        reason: "repository-context-budget",
         before: result.excerpt.length,
         after: excerpt.length,
       });
@@ -119,6 +119,10 @@ export function buildWorkPacket(input: BuildWorkPacketInput): {
       limits: { ...input.budgets },
     },
   };
+}
+
+function providerFromSource(source: string): string {
+  return source.slice("repository:".length).split(/[/:]/, 1)[0] || "unknown";
 }
 
 /** Iteratively truncate the longest string leaf until serialized input fits. */

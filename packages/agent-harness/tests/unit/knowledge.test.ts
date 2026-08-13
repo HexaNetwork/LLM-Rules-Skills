@@ -1,9 +1,31 @@
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
-import type { RepositoryLookup } from "../../src/codegraph.js";
+import type {
+  RepositoryIntelligenceBroker,
+  RepositoryIntelligenceResponse,
+} from "../../src/infrastructure/repository-intelligence/index.js";
 import { LocalKnowledgeBase } from "../../src/knowledge.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
+
+function repositoryBroker(
+  response: RepositoryIntelligenceResponse,
+): RepositoryIntelligenceBroker {
+  return {
+    async retrieve() {
+      return structuredClone(response);
+    },
+    async prepare() {
+      return { providers: [] };
+    },
+    async refresh() {
+      return { providers: [] };
+    },
+    async changed() {
+      return { providers: [] };
+    },
+  } as unknown as RepositoryIntelligenceBroker;
+}
 
 async function writeGuidanceFiles(
   guidanceRoot: string,
@@ -80,26 +102,26 @@ describe("LocalKnowledgeBase", () => {
       "# Architecture\n\nThe AgentCoordinator loads bounded context before each fresh invocation.\n",
       "utf8",
     );
-    const lookup: RepositoryLookup = {
-      async refresh() {},
-      async rebuild() { return true; },
-      async search() {
-        return {
+    const lookup = repositoryBroker({
           result: {
-            source: "codegraph:.codegraph",
+            providerId: "codegraph",
+            source: "repository:codegraph",
             title: "Repository relationships (CodeGraph)",
             excerpt: "AgentCoordinator --calls--> LocalKnowledgeBase",
-            score: 0},
+            score: 0,
+            generation: "test",
+          },
           shapedQuery: "AgentCoordinator",
-          usedFallback: false};
-      }};
+          usedFallback: false,
+          attempts: [],
+    });
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), lookup);
     await knowledge.refresh();
 
     const results = await knowledge.search("AgentCoordinator context", 2);
 
     expect(results).toHaveLength(2);
-    expect(results[0]?.source).toBe("codegraph:.codegraph");
+    expect(results[0]?.source).toBe("repository:codegraph");
     expect(results[0]?.score).toBe(0);
     expect(results[1]?.source).toBe("docs/architecture.md");
   });
@@ -689,28 +711,26 @@ describe("LocalKnowledgeBase", () => {
       "docs/features/dungeon-sign-cache.md"]);
   });
 
-  it("supports documents-off CodeGraph-only search", async () => {
+  it("supports documents-off repository-only search", async () => {
     const root = await fixtureRoot();
     await writeFile(
       path.join(root, "docs", "settlement.md"),
       "# SettlementWindow\n\nSettlementWindow closes the ledger.\n",
       "utf8",
     );
-    const lookup: RepositoryLookup = {
-      async refresh() {},
-      async rebuild() {
-        return true;
-      },
-      async search() {
-        return {
+    const lookup = repositoryBroker({
           shapedQuery: "SettlementWindow",
           usedFallback: false,
           result: {
-            source: "codegraph:.codegraph",
+            providerId: "codegraph",
+            source: "repository:codegraph",
             title: "Repository relationships (CodeGraph)",
             excerpt: "SettlementWindow -> Ledger",
-            score: 1}};
-      }};
+            score: 1,
+            generation: "test",
+          },
+          attempts: [],
+    });
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), lookup);
     await knowledge.refresh();
 
@@ -719,9 +739,9 @@ describe("LocalKnowledgeBase", () => {
       repository: true});
 
     expect(results).toHaveLength(1);
-    expect(results[0]?.source).toBe("codegraph:.codegraph");
+    expect(results[0]?.source).toBe("repository:codegraph");
     expect(audit.skipped).toBe("rag-disabled");
-    expect(audit.codegraph.included).toBe(true);
+    expect(audit.repository.included).toBe(true);
   });
 
   it("diversifies results so one noisy source cannot fill every slot", async () => {
@@ -906,17 +926,20 @@ describe("LocalKnowledgeBase", () => {
     }
   });
 
-  it("records CodeGraph skips in the retrieval audit", async () => {
+  it("records provider skips in the retrieval audit", async () => {
     const root = await fixtureRoot();
-    const lookup: RepositoryLookup = {
-      async refresh() {},
-      async rebuild() { return true; },
-      async search() {
-        return {
+    const lookup = repositoryBroker({
           shapedQuery: "",
           usedFallback: true,
-          skippedReason: "generic-query"};
-      }};
+          skippedReason: "generic-query",
+          attempts: [{
+            providerId: "codegraph",
+            capability: "search",
+            outcome: "miss",
+            reason: "generic-query",
+            durationMs: 1,
+          }],
+    });
     await writeFile(
       path.join(root, "docs", "settlement.md"),
       "# SettlementWindow\n\nSettlementWindow closes the ledger.\n",
@@ -927,11 +950,11 @@ describe("LocalKnowledgeBase", () => {
 
     const { results, audit } = await knowledge.searchWithAudit("SettlementWindow ledger", 3);
 
-    expect(results.every((result) => !result.source.startsWith("codegraph:"))).toBe(true);
-    expect(audit.codegraph).toMatchObject({
+    expect(results.every((result) => !result.source.startsWith("repository:"))).toBe(true);
+    expect(audit.repository).toMatchObject({
       included: false,
       skippedReason: "generic-query",
       usedFallback: true});
-    expect(audit.omitted.some((item) => item.reason === "codegraph-skipped")).toBe(true);
+    expect(audit.omitted.some((item) => item.reason === "repository-skipped")).toBe(true);
   });
 });

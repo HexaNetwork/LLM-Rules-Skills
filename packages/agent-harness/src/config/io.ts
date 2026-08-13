@@ -86,13 +86,25 @@ export async function writeProjectSettings(
   const resolved = path.resolve(configPath);
   return withProjectConfigWriteLock(resolved, async () => {
     const raw = await readFile(resolved, "utf8");
-    const value: unknown = resolved.endsWith(".json") ? JSON.parse(raw) : yaml.load(raw);
+    const parsedValue: unknown = resolved.endsWith(".json") ? JSON.parse(raw) : yaml.load(raw);
+    const value = rewriteGraphifyConfigKeys(parsedValue);
     if (!isRecord(value)) throw new Error("Harness config must contain an object");
 
     const parsedPatch = ProjectSettingsPatchSchema.parse(patch);
     const workflow = isRecord(value.workflow) ? value.workflow : {};
     const commands = isRecord(value.commands) ? value.commands : {};
     const git = isRecord(value.git) ? value.git : {};
+    const knowledge = isRecord(value.knowledge) ? value.knowledge : {};
+    const existingRepositoryIntelligence = isRecord(knowledge.repositoryIntelligence)
+      ? knowledge.repositoryIntelligence
+      : {};
+    const existingProviders = isRecord(existingRepositoryIntelligence.providers)
+      ? existingRepositoryIntelligence.providers
+      : {};
+    const existingRoutes = isRecord(existingRepositoryIntelligence.routes)
+      ? existingRepositoryIntelligence.routes
+      : {};
+    const patchRi = parsedPatch.knowledge?.repositoryIntelligence;
     const candidate = {
       ...value,
       ...(parsedPatch.workflow
@@ -102,6 +114,52 @@ export async function writeProjectSettings(
         ? { commands: { ...commands, ...parsedPatch.commands } }
         : {}),
       ...(parsedPatch.git ? { git: { ...git, ...parsedPatch.git } } : {}),
+      ...(patchRi
+        ? {
+            knowledge: {
+              ...knowledge,
+              repositoryIntelligence: {
+                ...existingRepositoryIntelligence,
+                ...patchRi,
+                ...(patchRi.providers
+                  ? {
+                      providers: {
+                        ...existingProviders,
+                        ...(patchRi.providers.gitnexus
+                          ? {
+                              gitnexus: {
+                                ...(isRecord(existingProviders.gitnexus)
+                                  ? existingProviders.gitnexus
+                                  : {}),
+                                ...patchRi.providers.gitnexus,
+                              },
+                            }
+                          : {}),
+                        ...(patchRi.providers.codegraph
+                          ? {
+                              codegraph: {
+                                ...(isRecord(existingProviders.codegraph)
+                                  ? existingProviders.codegraph
+                                  : {}),
+                                ...patchRi.providers.codegraph,
+                              },
+                            }
+                          : {}),
+                      },
+                    }
+                  : {}),
+                ...(patchRi.routes
+                  ? {
+                      routes: {
+                        ...existingRoutes,
+                        ...patchRi.routes,
+                      },
+                    }
+                  : {}),
+              },
+            },
+          }
+        : {}),
     };
     HarnessConfigSchema.parse(candidate);
 

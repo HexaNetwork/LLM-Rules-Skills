@@ -83,7 +83,7 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: config.workflow.contextCharacters,
         inputCharacters: config.workflow.inputCharacters,
-        codegraphCharacters: config.workflow.codegraphCharacters}});
+        repositoryContextCharacters: config.workflow.repositoryContextCharacters}});
 
     expect((packet.input as { diff: string }).diff).toBe(diff);
     expect(
@@ -110,7 +110,7 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: 12_000,
         inputCharacters: 24_000,
-        codegraphCharacters: 3_000}});
+        repositoryContextCharacters: 3_000}});
     expect(packet.input).toEqual(input);
     expect(budgetAudit.truncations).toEqual([]);
   });
@@ -134,7 +134,7 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: 12_000,
         inputCharacters: 1_200,
-        codegraphCharacters: 3_000}});
+        repositoryContextCharacters: 3_000}});
     expect(JSON.stringify(packet.input).length).toBeLessThanOrEqual(1_200);
     expect(budgetAudit.truncations.length).toBeGreaterThan(0);
     expect(budgetAudit.truncations[0]?.path).toContain("long");
@@ -152,7 +152,7 @@ describe("buildWorkPacket budgets", () => {
       guidance: [],
       retrievalResults: [
         {
-          source: "codegraph:.codegraph",
+          source: "repository:codegraph",
           title: "Repository relationships (CodeGraph)",
           excerpt: "G".repeat(5_000)},
         {
@@ -165,10 +165,13 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: 12_000,
         inputCharacters: 24_000,
-        codegraphCharacters: 3_000}});
+        repositoryContextCharacters: 3_000}});
     expect(packet.context[0]?.excerpt.length).toBe(3_000);
     expect(packet.context.some((item) => item.source === "docs/settlement.md")).toBe(true);
-    expect(budgetAudit.truncations.some((item) => item.reason === "codegraph-budget")).toBe(true);
+    expect(budgetAudit.truncations.some((item) =>
+      item.reason === "repository-context-budget" &&
+      item.path === "context.repository.codegraph.excerpt"
+    )).toBe(true);
   });
 
   it("keeps guidance + context + input under the configured sum", () => {
@@ -194,7 +197,7 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: 5_000,
         inputCharacters: 2_000,
-        codegraphCharacters: 1_000}});
+        repositoryContextCharacters: 1_000}});
     expect(budgetAudit.guidanceCharacters + budgetAudit.contextCharacters).toBeLessThanOrEqual(5_000);
     expect(budgetAudit.inputCharacters).toBeLessThanOrEqual(2_000);
     expect(JSON.stringify(packet.input).length).toBeLessThanOrEqual(2_000);
@@ -212,11 +215,14 @@ describe("implementer packet evidence projection", () => {
         ...fixtureConfig(root).workflow,
         contextCharacters: 12_000,
         inputCharacters: 24_000,
-        codegraphCharacters: 3_000},
+        repositoryContextCharacters: 3_000},
       knowledge: {
         ...fixtureConfig(root).knowledge,
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: false,
+        }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -288,7 +294,7 @@ describe("implementer packet evidence projection", () => {
       budgets: {
         contextCharacters: config.workflow.contextCharacters,
         inputCharacters: config.workflow.inputCharacters,
-        codegraphCharacters: config.workflow.codegraphCharacters}}).packet;
+        repositoryContextCharacters: config.workflow.repositoryContextCharacters}}).packet;
     expect(renderPrompt(packet).length).toBeLessThan(60_000);
   });
 });

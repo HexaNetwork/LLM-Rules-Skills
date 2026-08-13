@@ -49,7 +49,6 @@ const PLAN_WITH_INSTALLS = {
       reason: "Tiny helper used by the greeting"}]};
 
 describe("operator controls", () => {
-
   it("uses the small docs-writer to capture glossary terms when grilling completes", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
@@ -101,6 +100,7 @@ describe("operator controls", () => {
     expect(state.grillReady).toBeUndefined();
     expect(docsWriterCalls).toBe(1);
   });
+
   it("gates on proposed installs then enters executing after deny-all", async () => {
     const root = await fixtureRoot();
     const planner = createPlannerPrdSequence(HIGH_LEVEL_PLAN);
@@ -265,17 +265,20 @@ describe("operator controls", () => {
     expect(state.phase).toBe("executing");
   });
 
-  it("setRag and setCodegraph rewrite frozen run policy independently", async () => {
+  it("setRag and setRepositoryIntelligence rewrite frozen run policy independently", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       workflow: { rag: true } as never,
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: true }}});
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: true,
+        }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
-    const runId = "rag-codegraph-run";
+    const runId = "rag-repository-intelligence-run";
     const hash = configurationHash(config);
     await store.create({
       ...createRunState(runId, "idea", new Date().toISOString(), hash, CONFIG_VERSION),
@@ -287,20 +290,20 @@ describe("operator controls", () => {
     await engine.setRag(runId, false);
     const afterRag = (await store.readJson(runId, "config.json")) as {
       workflow: { rag: boolean };
-      knowledge: { codegraph: { enabled: boolean } };
+      knowledge: { repositoryIntelligence: { enabled: boolean } };
     };
     expect(afterRag.workflow.rag).toBe(false);
-    expect(afterRag.knowledge.codegraph.enabled).toBe(true);
+    expect(afterRag.knowledge.repositoryIntelligence.enabled).toBe(true);
     expect(engine.config.workflow.rag).toBe(false);
 
-    await engine.setCodegraph(runId, false);
+    await engine.setRepositoryIntelligence(runId, false);
     const afterBoth = (await store.readJson(runId, "config.json")) as {
       workflow: { rag: boolean };
-      knowledge: { codegraph: { enabled: boolean } };
+      knowledge: { repositoryIntelligence: { enabled: boolean } };
     };
     expect(afterBoth.workflow.rag).toBe(false);
-    expect(afterBoth.knowledge.codegraph.enabled).toBe(false);
-    expect(engine.config.knowledge.codegraph.enabled).toBe(false);
+    expect(afterBoth.knowledge.repositoryIntelligence.enabled).toBe(false);
+    expect(engine.config.knowledge.repositoryIntelligence.enabled).toBe(false);
 
     await expect(engine.setRag(runId, false)).resolves.toMatchObject({ runId });
   });

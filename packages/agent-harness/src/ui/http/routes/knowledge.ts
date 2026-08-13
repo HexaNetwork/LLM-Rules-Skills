@@ -35,6 +35,11 @@ export async function handleKnowledgeRoutes(
 
   if (request.method === "GET" && url.pathname === "/api/knowledge/status") {
     const embeddings = projectConfig.knowledge.embeddings;
+    const ri = projectConfig.knowledge.repositoryIntelligence;
+    const health = await ctx.knowledge.repositoryIntelligenceStatus();
+    const healthById = new Map(
+      health.providers.map((provider) => [provider.providerId, provider] as const),
+    );
     json(response, 200, {
       lexical: true,
       semantic: {
@@ -43,7 +48,22 @@ export async function handleKnowledgeRoutes(
         model: embeddings.model,
         endpoint: embeddings.endpoint,
       },
-      codegraph: { enabled: projectConfig.knowledge.codegraph.enabled },
+      repositoryIntelligence: {
+        enabled: ri.enabled,
+        routes: ri.routes,
+        providers: Object.entries(ri.providers).map(([providerId, settings]) => {
+          const live = healthById.get(providerId);
+          return {
+            id: providerId,
+            enabled: settings.enabled,
+            command: settings.command,
+            available: live?.available ?? false,
+            indexReady: live?.indexReady ?? false,
+            generation: live?.generation ?? "unknown",
+            ...(live?.detail ? { detail: live.detail } : {}),
+          };
+        }),
+      },
       sources: projectConfig.knowledge.sources.map((source) => source.path),
     });
     return true;

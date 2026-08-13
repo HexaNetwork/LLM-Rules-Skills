@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { CONFIG_VERSION, configurationHash } from "../config/schema.js";
 import { writeRunWorkspace } from "../config/io.js";
 import { createRunState, type RunState } from "../domain.js";
-import { prepareCodegraphForRun } from "../codegraph.js";
 import { WorktreeManager } from "../git/worktree-manager.js";
 import type { ApplicationContext } from "./application-context.js";
 import { freezeRunComponents } from "./component-freeze.js";
@@ -19,7 +18,7 @@ export class RunLifecycleService {
     idea: string,
     runId: string = randomUUID(),
     refreshKnowledge = true,
-    prepareCodegraph = true,
+    prepareRepositoryIntelligence = true,
   ): Promise<RunState> {
     if (!idea.trim()) throw new Error("Idea cannot be empty");
     await this.ctx.store.initialize();
@@ -53,12 +52,15 @@ export class RunLifecycleService {
         await writeRunWorkspace(this.ctx.config, runId, workspace);
         this.ctx.bindWorkspace(workspace);
       }
-      if (prepareCodegraph && this.ctx.config.knowledge.codegraph.enabled) {
+      if (
+        prepareRepositoryIntelligence &&
+        this.ctx.config.knowledge.repositoryIntelligence.enabled
+      ) {
         await this.ctx.store.withWorkspaceAdminLock(
-          { runId, action: "ensure-codegraph-ignore" },
-          () => this.ctx.git.ensureCodegraphOutputIgnored(),
+          { runId, action: "ensure-repository-intelligence-ignore" },
+          () => this.ctx.git.ensureRepositoryIntelligenceArtifactsIgnored(),
         );
-        await prepareCodegraphForRun(this.ctx.config, this.ctx.codegraphRunner, this.ctx.paths);
+        await this.ctx.knowledge.prepareRepositoryIntelligence();
       }
       if (refreshKnowledge) {
         await this.ctx.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>

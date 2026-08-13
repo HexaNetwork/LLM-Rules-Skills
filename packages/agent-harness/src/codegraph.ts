@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
-import { access, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
 import type { HarnessConfig } from "./config/schema.js";
 import type { SearchResult } from "./knowledge.js";
@@ -253,14 +253,6 @@ export type CodegraphRunner = (
   options: { cwd: string; timeoutMs: number },
 ) => Promise<CodegraphCommandResult>;
 
-export type CodegraphPreparation = {
-  enabled: boolean;
-  installed: boolean;
-  graphReady: boolean;
-  /** True when this call created or refreshed `.codegraph/`. */
-  setupRan: boolean;
-};
-
 export type RepositoryLookupSearchOptions = {
   fallbackQuery?: string;
   /** Concrete packet paths whose file symbols should take precedence over prose. */
@@ -307,19 +299,22 @@ export class CodegraphRepositoryLookup implements RepositoryLookup {
   }
 
   async refresh(): Promise<void> {
-    const settings = this.config.knowledge.codegraph;
-    if (!settings.enabled || !settings.updateOnRefresh) return;
+    const settings = this.config.knowledge.repositoryIntelligence.providers.codegraph;
+    if (!this.config.knowledge.repositoryIntelligence.enabled || !settings.enabled) return;
     await this.update();
   }
 
   /** Rebuild after a verified source commit, regardless of updateOnRefresh. */
   async rebuild(): Promise<boolean> {
-    if (!this.config.knowledge.codegraph.enabled) return false;
+    if (
+      !this.config.knowledge.repositoryIntelligence.enabled ||
+      !this.config.knowledge.repositoryIntelligence.providers.codegraph.enabled
+    ) return false;
     return this.update();
   }
 
   private async update(): Promise<boolean> {
-    const settings = this.config.knowledge.codegraph;
+    const settings = this.config.knowledge.repositoryIntelligence.providers.codegraph;
     try {
       const result = await this.runner(
         settings.command,
@@ -342,8 +337,8 @@ export class CodegraphRepositoryLookup implements RepositoryLookup {
     query: string,
     options: RepositoryLookupSearchOptions = {},
   ): Promise<RepositoryLookupSearch> {
-    const settings = this.config.knowledge.codegraph;
-    if (!settings.enabled) {
+    const settings = this.config.knowledge.repositoryIntelligence.providers.codegraph;
+    if (!this.config.knowledge.repositoryIntelligence.enabled || !settings.enabled) {
       return {
         shapedQuery: "",
         usedFallback: false,
@@ -352,7 +347,7 @@ export class CodegraphRepositoryLookup implements RepositoryLookup {
     }
     const exactSymbols = symbolsFromPaths(
       options.pathHints,
-      settings.sourceExtensions,
+      this.config.knowledge.repositoryIntelligence.sourceExtensions,
     ).slice(0, MAX_PATH_HINT_SYMBOLS);
     const shaped = exactSymbols.length > 0
       ? { query: exactSymbols.join(" "), usedFallback: false }
@@ -400,7 +395,7 @@ export class CodegraphRepositoryLookup implements RepositoryLookup {
           "-p",
           this.workspaceRoot,
           "--max-files",
-          String(settings.maxFiles),
+          String(settings.maxResults),
         ],
         { cwd: this.workspaceRoot, timeoutMs: settings.queryTimeoutMs },
       );
@@ -420,7 +415,7 @@ export class CodegraphRepositoryLookup implements RepositoryLookup {
       }
       const excerpt = packCodegraphExcerpt(
         rawExcerpt,
-        this.config.workflow.codegraphCharacters,
+        this.config.workflow.repositoryContextCharacters,
       );
       const hit: RepositoryLookupSearch = {
         result: {
@@ -446,7 +441,7 @@ export class CodegraphRepositoryLookup implements RepositoryLookup {
   }
 
   private async lookupSymbols(symbols: string[]): Promise<RepositoryLookupSearch> {
-    const settings = this.config.knowledge.codegraph;
+    const settings = this.config.knowledge.repositoryIntelligence.providers.codegraph;
     const results = await Promise.all(
       symbols.map(async (symbol) => {
         try {
@@ -478,7 +473,7 @@ export class CodegraphRepositoryLookup implements RepositoryLookup {
         title: "Exact repository relationships (CodeGraph)",
         excerpt: packCodegraphExcerpt(
           excerpts.join("\n\n"),
-          this.config.workflow.codegraphCharacters,
+          this.config.workflow.repositoryContextCharacters,
         ),
         score: 0,
       },
@@ -547,54 +542,6 @@ export const runCodegraph: CodegraphRunner = (executable, args, options) =>
     );
   });
 
-/**
- * A new agent run needs a usable `codegraph` command and `.codegraph/` index.
- * Install CodeGraph yourself (`npm install -g @colbymchenry/codegraph`); the harness
- * only builds the index when the command is already available.
- */
-export async function prepareCodegraphForRun(
-  config: HarnessConfig,
-  runner: CodegraphRunner = runCodegraph,
-  paths: HarnessPaths = resolveHarnessPaths(config),
-): Promise<CodegraphPreparation> {
-  const settings = config.knowledge.codegraph;
-  if (!settings.enabled) {
-    return { enabled: false, installed: false, graphReady: false, setupRan: false };
-  }
-  const workspaceRoot = paths.workspaceRoot;
-  const indexPath = path.resolve(workspaceRoot, INDEX_DB);
-  assertInside(workspaceRoot, indexPath);
-  const [version, indexReady] = await Promise.all([
-    runner(settings.command, ["--version"], {
-      cwd: workspaceRoot,
-      timeoutMs: settings.queryTimeoutMs,
-    }),
-    exists(indexPath),
-  ]);
-  if (version.exitCode === 0 && !version.timedOut && indexReady) {
-    return { enabled: true, installed: true, graphReady: true, setupRan: false };
-  }
-  if (version.exitCode !== 0 || version.timedOut) {
-    throw new Error(
-      `CodeGraph is enabled but \`${settings.command}\` is unavailable. Install it with \`npm install -g @colbymchenry/codegraph\`, then retry.`,
-    );
-  }
-
-  const init = await runner(settings.command, ["init", workspaceRoot], {
-    cwd: workspaceRoot,
-    timeoutMs: settings.updateTimeoutMs,
-  });
-  if (init.exitCode !== 0 || init.timedOut) {
-    throw new Error(`CodeGraph index init failed: ${failureDetail(init)}`);
-  }
-  if (!(await exists(indexPath))) {
-    throw new Error(
-      `CodeGraph init completed but ${INDEX_DB} is still missing under ${workspaceRoot}.`,
-    );
-  }
-  return { enabled: true, installed: true, graphReady: true, setupRan: true };
-}
-
 function failureDetail(result: CodegraphCommandResult): string {
   if (result.timedOut) return "timed out";
   return (result.stderr || result.stdout || `exit ${result.exitCode}`).trim().slice(0, 1_000);
@@ -608,14 +555,5 @@ function assertInside(root: string, target: string): void {
   const relative = path.relative(path.resolve(root), target);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error(`CodeGraph index escapes repository: ${target}`);
-  }
-}
-
-async function exists(target: string): Promise<boolean> {
-  try {
-    await access(target);
-    return true;
-  } catch {
-    return false;
   }
 }

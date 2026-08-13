@@ -43,7 +43,7 @@ describe("concurrent worktree runs (Slice 6)", () => {
         workflow: { } as never,
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
 
@@ -104,7 +104,7 @@ describe("concurrent worktree runs (Slice 6)", () => {
         workflow: { } as never,
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
 
@@ -188,7 +188,7 @@ describe("concurrent worktree runs (Slice 6)", () => {
         workflow: { } as never,
         knowledge: {
           sources: [{ path: "README.md" }],
-          codegraph: { enabled: false },
+          repositoryIntelligence: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
 

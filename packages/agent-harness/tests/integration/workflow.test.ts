@@ -752,12 +752,27 @@ describe("durable idea-to-feature workflow", () => {
     }
   });
 
-  it("prepares CodeGraph on start and blocks with a readable failure", async () => {
+  it("prepares repository intelligence on start and blocks with a readable failure", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: true }}});
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: true,
+          providers: {
+            ...fixtureConfig(root).knowledge.repositoryIntelligence.providers,
+            gitnexus: {
+              ...fixtureConfig(root).knowledge.repositoryIntelligence.providers.gitnexus,
+              enabled: false,
+            },
+            codegraph: {
+              ...fixtureConfig(root).knowledge.repositoryIntelligence.providers.codegraph,
+              enabled: true,
+            },
+          },
+          routes: { search: ["codegraph"], "symbol-context": ["codegraph"] },
+        }}});
     const runner = async () => ({
       exitCode: 1,
       stdout: "",
@@ -765,10 +780,10 @@ describe("durable idea-to-feature workflow", () => {
       timedOut: false});
     const engine = new HarnessEngine(config, {
       backend: createFakeBackend({}),
-      codegraphRunner: runner});
+      repositoryIntelligenceRunner: runner});
     const state = await engine.start("Needs graph");
     expect(state.phase).toBe("blocked");
-    expect(state.failure).toMatch(/CodeGraph|@colbymchenry\/codegraph/i);
+    expect(state.failure).toMatch(/CodeGraph|@colbymchenry\/codegraph|repository intelligence/i);
   });
 
   it.skip("routes implementers that touch recorded test files back to repair", async () => {

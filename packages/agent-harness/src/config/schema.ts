@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { AgentRoleSchema, type AgentRole } from "../domain.js";
 
-/** Structural CodeGraph lookup is valuable for workers that edit or review code. */
+/** Structural repository lookup is valuable for workers that edit or review code. */
 const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
   "planner",
   "scenario-planner",
@@ -64,6 +64,53 @@ export type KnowledgeScope = z.infer<typeof KnowledgeScopeSchema>;
 
 export const KnowledgeVisibilitySchema = z.enum(["private", "shared", "restricted"]);
 export type KnowledgeVisibility = z.infer<typeof KnowledgeVisibilitySchema>;
+
+export const RepositoryCapabilitySchema = z.enum([
+  "search",
+  "symbol-context",
+  "impact",
+  "trace",
+  "change-impact",
+]);
+export type RepositoryCapability = z.infer<typeof RepositoryCapabilitySchema>;
+
+const SOURCE_EXTENSIONS = [
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs",
+  ".java", ".kt", ".kts", ".cs", ".cpp", ".c", ".h", ".hpp", ".rb",
+  ".php", ".swift",
+];
+
+const RepositoryProviderSchema = z.object({
+  enabled: z.boolean().default(true),
+  command: z.string().min(1),
+  updateTimeoutMs: z.number().int().positive().default(600_000),
+  queryTimeoutMs: z.number().int().positive().default(15_000),
+  maxResults: z.number().int().positive().max(100).default(12),
+  stopwords: z.array(z.string().min(1)).default([]),
+}).strict();
+
+const RepositoryIntelligenceSchema = z.object({
+  enabled: z.boolean().default(true),
+  roles: z.array(AgentRoleSchema).default(REPOSITORY_LOOKUP_ROLES),
+  sourceExtensions: z.array(z.string().min(1)).default(SOURCE_EXTENSIONS),
+  providers: z.object({
+    gitnexus: RepositoryProviderSchema.default({
+      command: "gitnexus",
+      enabled: true,
+    }),
+    codegraph: RepositoryProviderSchema.default({
+      command: "codegraph",
+      enabled: true,
+    }),
+  }).strict().default({}),
+  routes: z.object({
+    search: z.array(z.string().min(1)).default(["gitnexus", "codegraph"]),
+    "symbol-context": z.array(z.string().min(1)).default(["gitnexus", "codegraph"]),
+    impact: z.array(z.string().min(1)).default([]),
+    trace: z.array(z.string().min(1)).default([]),
+    "change-impact": z.array(z.string().min(1)).default([]),
+  }).strict().default({}),
+}).strict().default({});
 
 const GuidanceAssignmentSchema = z.object({
   rules: z.array(z.string().min(1)).default([]),
@@ -184,7 +231,7 @@ export const HarnessConfigSchema = z.object({
     .default({}),
   workflow: z
     .object({
-      /** Document RAG into work packets; independent of CodeGraph and guidance. */
+      /** Document RAG into work packets; independent of repository intelligence and guidance. */
       rag: z.boolean().default(true),
       // Hard spend ceilings enforced between steps; 0 = unlimited.
       maxRunTokens: z.number().int().nonnegative().default(0),
@@ -219,8 +266,8 @@ export const HarnessConfigSchema = z.object({
       // Reviewer diff budget; defaults to Math.min(20_000, inputCharacters/2) so
       // a full-size diff survives buildWorkPacket without input-budget truncation.
       reviewDiffCharacters: z.number().int().positive().optional(),
-      // CodeGraph excerpt sub-budget within the context ceiling.
-      codegraphCharacters: z.number().int().positive().default(3_000),
+      // Structural repository excerpt sub-budget within the context ceiling.
+      repositoryContextCharacters: z.number().int().positive().default(3_000),
       // Per-task commit subjects use the deterministic fallback unless enabled.
       generateCommitMessages: z.boolean().default(false),
       // Globs that mark paths as test files for test-writer path validation.
@@ -336,43 +383,7 @@ export const HarnessConfigSchema = z.object({
           semanticWeight: z.number().positive().default(1),
         })
         .default({}),
-      codegraph: z
-        .object({
-          enabled: z.boolean().default(true),
-          command: z.string().min(1).default("codegraph"),
-          updateOnRefresh: z.boolean().default(false),
-          // First `codegraph init` on a large repo often needs longer than 2 minutes.
-          updateTimeoutMs: z.number().int().positive().default(600_000),
-          queryTimeoutMs: z.number().int().positive().default(15_000),
-          maxFiles: z.number().int().positive().max(50).default(12),
-          roles: z.array(AgentRoleSchema).default(REPOSITORY_LOOKUP_ROLES),
-          // Project-specific noise merged over the built-in English + harness lists.
-          stopwords: z.array(z.string().min(1)).default([]),
-          // Extensions that count as source for post-commit CodeGraph rebuild.
-          sourceExtensions: z.array(z.string().min(1)).default([
-            ".ts",
-            ".tsx",
-            ".js",
-            ".jsx",
-            ".mjs",
-            ".cjs",
-            ".py",
-            ".go",
-            ".rs",
-            ".java",
-            ".kt",
-            ".kts",
-            ".cs",
-            ".cpp",
-            ".c",
-            ".h",
-            ".hpp",
-            ".rb",
-            ".php",
-            ".swift",
-          ]),
-        })
-        .default({}),
+      repositoryIntelligence: RepositoryIntelligenceSchema,
     })
     .default({}),
   tracker: z.object({ kind: z.literal("local").default("local") }).default({}),
@@ -411,6 +422,42 @@ export const ProjectSettingsPatchSchema = z
         autoCommitPreflight: z.boolean().optional(),
         preflightCommitOrder: PreflightCommitOrderSchema.optional(),
         ignoredArtifactPatterns: z.array(z.string().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
+    knowledge: z
+      .object({
+        repositoryIntelligence: z
+          .object({
+            enabled: z.boolean().optional(),
+            providers: z
+              .object({
+                gitnexus: z
+                  .object({
+                    enabled: z.boolean().optional(),
+                    command: z.string().min(1).optional(),
+                  })
+                  .strict()
+                  .optional(),
+                codegraph: z
+                  .object({
+                    enabled: z.boolean().optional(),
+                    command: z.string().min(1).optional(),
+                  })
+                  .strict()
+                  .optional(),
+              })
+              .strict()
+              .optional(),
+            routes: z
+              .object({
+                search: z.array(z.string().min(1)).optional(),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),
@@ -473,12 +520,9 @@ export const RunPolicyPatchSchema = z
       .optional(),
     knowledge: z
       .object({
-        codegraph: z
-          .object({
-            enabled: z.boolean().optional(),
-          })
-          .strict()
-          .optional(),
+        repositoryIntelligence: z.object({
+          enabled: z.boolean().optional(),
+        }).strict().optional(),
       })
       .strict()
       .optional(),

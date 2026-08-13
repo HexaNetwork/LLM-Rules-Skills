@@ -42,7 +42,7 @@ function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
   const guidancePack = "G".repeat(5_600);
   const context = [
     {
-      source: "codegraph:.codegraph",
+      source: "repository:codegraph",
       title: "Repository relationships (CodeGraph)",
       excerpt: "GRAPH".repeat(1_200)},
     ...Array.from({ length: 5 }, (_, index) => ({
@@ -78,7 +78,7 @@ function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
     budgets: {
       contextCharacters: 12_000,
       inputCharacters: 24_000,
-      codegraphCharacters: 3_000}}).packet;
+      repositoryContextCharacters: 3_000}}).packet;
 }
 
 describe("packet size baseline", () => {

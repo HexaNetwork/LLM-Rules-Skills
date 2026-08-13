@@ -56,6 +56,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       await writeFile(target, defaultConfigYaml(), "utf8");
       await mkdir(path.join(project, ".agent-harness"), { recursive: true });
       await ensureIgnored(path.join(project, ".gitignore"), ".agent-harness/");
+      await ensureIgnored(path.join(project, ".gitignore"), ".gitnexus/");
       await ensureIgnored(path.join(project, ".gitignore"), ".codegraph/");
       console.log(`Wrote ${target}`);
     });
@@ -68,7 +69,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .option("--sources <paths>", "comma-separated repository-relative source paths")
     .option("--ollama", "configure local Ollama semantic retrieval", false)
     .option("--model <name>", "Ollama embedding model", "qwen3-embedding")
-    .option("--no-codegraph", "advanced: disable structural code retrieval")
+    .option("--no-repository-intelligence", "advanced: disable structural repository retrieval")
     .option("--refresh", "build the first knowledge index", false)
     .action(async (options: {
       project: string;
@@ -76,7 +77,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       sources?: string;
       ollama: boolean;
       model: string;
-      codegraph: boolean;
+      repositoryIntelligence: boolean;
       refresh: boolean;
     }) => {
       const project = path.resolve(options.project);
@@ -98,10 +99,11 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         sources,
         ollama: options.ollama,
         model: options.model,
-        codegraph: options.codegraph,
+        repositoryIntelligence: options.repositoryIntelligence,
       }), "utf8");
       await mkdir(path.join(project, ".agent-harness"), { recursive: true });
       await ensureIgnored(path.join(project, ".gitignore"), ".agent-harness/");
+      await ensureIgnored(path.join(project, ".gitignore"), ".gitnexus/");
       await ensureIgnored(path.join(project, ".gitignore"), ".codegraph/");
       console.log(`Deployed harness config to ${target}`);
       console.log(
@@ -109,9 +111,9 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       );
       if (options.ollama) console.log(`Semantic retrieval: Ollama / ${options.model}`);
       console.log(
-        options.codegraph
-          ? "Repository structure: CodeGraph (requires `codegraph` on PATH; index built before new runs and after task commits)"
-          : "Repository structure: CodeGraph disabled (--no-codegraph)",
+        options.repositoryIntelligence
+          ? "Repository intelligence: enabled (ordered provider routes; indexes prepared before new runs and after task commits)"
+          : "Repository intelligence: disabled (--no-repository-intelligence)",
       );
       if (options.refresh) {
         const { config } = await loadConfig(target);
@@ -733,7 +735,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       });
     });
 
-  const knowledge = program.command("knowledge").description("Manage local lexical and CodeGraph retrieval");
+  const knowledge = program.command("knowledge").description("Manage local lexical and repository-intelligence retrieval");
 
   knowledge
     .command("refresh")

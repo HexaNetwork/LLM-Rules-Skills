@@ -84,7 +84,12 @@ describe("AgentCoordinator domainArtifacts injection", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: false,
+        },
+      },
+    });
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -132,7 +137,12 @@ describe("AgentCoordinator domainArtifacts injection", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
+        repositoryIntelligence: {
+          ...fixtureConfig(root).knowledge.repositoryIntelligence,
+          enabled: false,
+        },
+      },
+    });
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);

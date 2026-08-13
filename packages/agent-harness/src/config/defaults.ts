@@ -46,7 +46,7 @@ agent:
   sandbox: true
 
 workflow:
-  # Document RAG into work packets (independent of CodeGraph / guidance).
+  # Document RAG into work packets (independent of repository intelligence / guidance).
   rag: true
   # Hard spend ceilings (0 = unlimited); enforced between steps, never mid-step.
   maxRunTokens: 0
@@ -74,8 +74,8 @@ workflow:
   inputCharacters: 24000
   # Reviewer diff budget (defaults to min(20000, inputCharacters/2) when omitted).
   reviewDiffCharacters: 12000
-  # CodeGraph excerpt sub-budget inside contextCharacters.
-  codegraphCharacters: 3000
+  # Structural repository excerpt sub-budget inside contextCharacters.
+  repositoryContextCharacters: 3000
   # Deterministic commit subjects by default; PR bodies still use the model.
   generateCommitMessages: false
   # Paths treated as tests for test-writer path validation; tune for Go (_test.go), Maven (src/test), etc.
@@ -219,22 +219,9 @@ knowledge:
     minSemanticOnlySimilarity: 0.45
     lexicalWeight: 1
     semanticWeight: 1
-  codegraph:
-    # Structural code retrieval is on for new harnesses. Use --no-codegraph
-    # during deploy, or set enabled: false, for document-only projects.
+  repositoryIntelligence:
     enabled: true
-    command: codegraph
-    # Initial setup happens before the first new run; later rebuilds happen
-    # after each verified source-file commit. Keep this false so a document
-    # index refresh does not needlessly rebuild the repository graph.
-    updateOnRefresh: false
-    updateTimeoutMs: 600000
-    queryTimeoutMs: 15000
-    # Explore file cap; prompt size remains workflow.codegraphCharacters.
-    maxFiles: 12
-    # Extra stopwords merged over the built-in English + harness lists.
-    stopwords: []
-    # File extensions that trigger a CodeGraph rebuild after a verified commit.
+    roles: [planner, scenario-planner, issue-slicer, scenario-writer, unit-test-writer, implementer, reviewer, task-reviewer]
     sourceExtensions:
       - .ts
       - .tsx
@@ -256,6 +243,27 @@ knowledge:
       - .rb
       - .php
       - .swift
+    providers:
+      gitnexus:
+        enabled: true
+        command: gitnexus
+        updateTimeoutMs: 600000
+        queryTimeoutMs: 15000
+        maxResults: 12
+        stopwords: []
+      codegraph:
+        enabled: true
+        command: codegraph
+        updateTimeoutMs: 600000
+        queryTimeoutMs: 15000
+        maxResults: 12
+        stopwords: []
+    routes:
+      search: [gitnexus, codegraph]
+      symbol-context: [gitnexus, codegraph]
+      impact: []
+      trace: []
+      change-impact: []
 `;
 }
 
@@ -263,6 +271,12 @@ export function deploymentConfigYaml(options: {
   sources?: Array<string | { path: string; scope?: KnowledgeScope; visibility?: KnowledgeVisibility }>;
   ollama?: boolean;
   model?: string;
+  /** When false, disable structural repository-intelligence retrieval. */
+  repositoryIntelligence?: boolean;
+  /**
+   * @deprecated Migration seam for callers that still pass the old CodeGraph flag.
+   * Prefer `repositoryIntelligence`.
+   */
   codegraph?: boolean;
 } = {}): string {
   const value: unknown = yaml.load(defaultConfigYaml());
@@ -297,11 +311,11 @@ export function deploymentConfigYaml(options: {
           },
         }
       : {}),
-    ...(options.codegraph === false
+    ...((options.repositoryIntelligence ?? options.codegraph) === false
       ? {
-          codegraph: {
+          repositoryIntelligence: {
+            ...((value.knowledge as Record<string, unknown>).repositoryIntelligence as Record<string, unknown>),
             enabled: false,
-            updateOnRefresh: false,
           },
         }
       : {}),

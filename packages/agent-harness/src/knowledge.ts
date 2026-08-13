@@ -6,10 +6,10 @@ import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
 import type { HarnessConfig, KnowledgeScope, KnowledgeVisibility } from "./config/schema.js";
 import { LocalEmbeddingIndex } from "./embeddings.js";
 import {
-  CodegraphRepositoryLookup,
-  INDEX_SOURCE,
-  type RepositoryLookup,
-} from "./codegraph.js";
+  createRepositoryIntelligenceBroker,
+  type RepositoryIntelligenceBroker,
+} from "./infrastructure/repository-intelligence/index.js";
+import { RetrievalOrchestrator } from "./application/retrieval-orchestrator.js";
 import {
   TEXT_EXTENSIONS,
   assertInside,
@@ -32,18 +32,8 @@ import {
 } from "./infrastructure/knowledge/guidance-pack.js";
 import { matchesGlob } from "./infrastructure/knowledge/guidance-selector.js";
 import {
-  capResultCharacters,
-  capResultCharactersWithOmissions,
-  cloneSearchAudit,
-  diversifyBySource,
   isVisibleForRun,
-  isVisibleToProject,
-  pathAffinityBoost,
-  rankHybridResults,
   rememberFifo,
-  searchResultCacheKey,
-  toKeptEntry,
-  tokenize,
 } from "./infrastructure/knowledge/lexical-search.js";
 import {
   ChunkSchema,
@@ -52,14 +42,12 @@ import {
   type GuidanceSelection,
   type GuidanceSelectionAudit,
   type GuidanceSelectionOptions,
-  type IndexedSearchResult,
   type KnowledgeChunk,
   type KnowledgeClassification,
   type KnowledgeDocument,
   type KnowledgeRefreshProgress,
   type KnowledgeSearchAudit,
   type KnowledgeSearchOptions,
-  type RetrievalOmission,
   type SearchResult,
 } from "./infrastructure/knowledge/types.js";
 
@@ -95,7 +83,8 @@ export class LocalKnowledgeBase {
   private readonly documentsPath: string;
   private readonly chunksPath: string;
   private readonly embeddings: LocalEmbeddingIndex;
-  private readonly repositoryLookup: RepositoryLookup;
+  private readonly repositoryIntelligence: RepositoryIntelligenceBroker;
+  private readonly retrieval: RetrievalOrchestrator;
   private readonly paths: HarnessPaths;
   private readonly guidanceRoots: KnowledgeGuidanceRoots;
   private cachedDocuments?: KnowledgeDocument[];
@@ -103,13 +92,12 @@ export class LocalKnowledgeBase {
   private cachedGuidanceDocuments?: KnowledgeDocument[];
   private indexGeneration = "";
   private guidanceGeneration = "";
-  private readonly searchResultCache = new Map<string, KnowledgeSearchAudit>();
   private readonly guidancePackCache = new Map<string, CompiledGuidancePack>();
   private static readonly RESULT_CACHE_LIMIT = 64;
 
   constructor(
     private readonly config: HarnessConfig,
-    repositoryLookup?: RepositoryLookup,
+    repositoryIntelligence?: RepositoryIntelligenceBroker,
     paths: HarnessPaths = resolveHarnessPaths(config),
     guidanceRoots: KnowledgeGuidanceRoots = {},
   ) {
@@ -119,13 +107,20 @@ export class LocalKnowledgeBase {
       sharedRoot: guidanceRoots.sharedRoot ?? config.knowledge.guidance.sharedRoot,
       runsRoot: guidanceRoots.runsRoot ?? path.join(paths.stateRoot, "runs"),
     };
-    this.repositoryLookup = repositoryLookup ?? new CodegraphRepositoryLookup(config, undefined, paths);
+    this.repositoryIntelligence =
+      repositoryIntelligence ??
+      createRepositoryIntelligenceBroker({ config, paths });
     this.directory = config.knowledge.sharedIndexDirectory
       ? path.resolve(paths.controlRoot, config.knowledge.sharedIndexDirectory)
       : path.join(paths.stateRoot, "knowledge");
     this.documentsPath = path.join(this.directory, "documents.json");
     this.chunksPath = path.join(this.directory, "chunks.json");
     this.embeddings = new LocalEmbeddingIndex(this.directory, config.knowledge.embeddings);
+    this.retrieval = new RetrievalOrchestrator(config, {
+      loadChunks: () => this.loadChunks(),
+      semanticSearch: (query, allowedIds) => this.embeddings.search(query, allowedIds),
+      repository: this.repositoryIntelligence,
+    });
   }
 
   private get workspaceRoot(): string {
@@ -183,14 +178,28 @@ export class LocalKnowledgeBase {
       : documents.filter((document) => !document.managedByConfig || configuredDocumentIds.has(document.id));
     await this.persist(retained);
     await this.syncEmbeddings(onProgress);
-    await this.repositoryLookup.refresh();
     onProgress?.({ stage: "complete", completed: sortedFiles.length, total: sortedFiles.length, message: "Knowledge index is ready" });
     return changed;
   }
 
-  /** Rebuild structural repository context after a verified source commit. */
-  async rebuildRepositoryGraph(): Promise<boolean> {
-    return this.repositoryLookup.rebuild();
+  async repositoryIntelligenceStatus() {
+    return this.repositoryIntelligence.status();
+  }
+
+  async prepareRepositoryIntelligence() {
+    return this.repositoryIntelligence.prepare();
+  }
+
+  async refreshRepositoryIntelligence() {
+    const result = await this.repositoryIntelligence.refresh();
+    this.retrieval.clear();
+    return result;
+  }
+
+  async repositoryPathsChanged(paths: string[]) {
+    const result = await this.repositoryIntelligence.changed(paths);
+    this.retrieval.clear();
+    return result;
   }
 
   async upsertFile(
@@ -270,248 +279,7 @@ export class LocalKnowledgeBase {
     options: KnowledgeSearchOptions = {},
   ): Promise<KnowledgeSearchAudit> {
     const generation = await this.ensureIndexGeneration();
-    const cacheKey = searchResultCacheKey(query, limit, options, generation);
-    const cached = this.searchResultCache.get(cacheKey);
-    if (cached) return cloneSearchAudit(cached);
-
-    const result = await this.searchWithAuditUncached(query, limit, options);
-    rememberFifo(this.searchResultCache, cacheKey, cloneSearchAudit(result), LocalKnowledgeBase.RESULT_CACHE_LIMIT);
-    return cloneSearchAudit(result);
-  }
-
-  private async searchWithAuditUncached(
-    query: string,
-    limit = 6,
-    options: KnowledgeSearchOptions = {},
-  ): Promise<KnowledgeSearchAudit> {
-    const omitted: RetrievalOmission[] = [];
-    const emptyCodegraph = {
-      shapedQuery: "",
-      usedFallback: false,
-      included: false,
-      skippedReason: "not-requested" as string | undefined,
-    };
-    const terms = [...new Set(tokenize(query))];
-    if (terms.length === 0 || limit <= 0) {
-      return {
-        results: [],
-        audit: {
-          query,
-          fallbackQuery: options.fallbackQuery,
-          codegraph: { ...emptyCodegraph, skippedReason: "empty-query" },
-          kept: [],
-          omitted,
-        },
-      };
-    }
-    const documentsEnabled = options.documents !== false;
-    const activeProjectId = options.projectId ?? this.config.knowledge.projectId;
-    const [chunks, repositoryLookup] = await Promise.all([
-      documentsEnabled
-        ? this.loadChunks()
-        : Promise.resolve([] as KnowledgeChunk[]),
-      options.repository === false
-        ? Promise.resolve({
-            result: undefined,
-            shapedQuery: "",
-            usedFallback: false,
-            skippedReason: "repository-disabled",
-          } satisfies Awaited<ReturnType<RepositoryLookup["search"]>>)
-        : this.repositoryLookup.search(query, {
-            fallbackQuery: options.fallbackQuery,
-            pathHints: options.pathHints,
-          }),
-    ]);
-    const codegraphAudit = {
-      shapedQuery: repositoryLookup.shapedQuery,
-      usedFallback: repositoryLookup.usedFallback,
-      included: false,
-      skippedReason: repositoryLookup.skippedReason,
-    };
-    if (
-      repositoryLookup.skippedReason &&
-      !repositoryLookup.result &&
-      repositoryLookup.skippedReason !== "repository-disabled" &&
-      repositoryLookup.skippedReason !== "disabled"
-    ) {
-      omitted.push({
-        source: INDEX_SOURCE,
-        title: "Repository relationships (CodeGraph)",
-        score: 0,
-        reason: "codegraph-skipped",
-      });
-    }
-    if (!documentsEnabled) {
-      const repositoryResult = repositoryLookup.result
-        ? toCurrentProjectResult(repositoryLookup.result, activeProjectId)
-        : undefined;
-      const results = repositoryResult ? [repositoryResult] : [];
-      codegraphAudit.included = Boolean(repositoryResult);
-      if (repositoryResult) codegraphAudit.skippedReason = undefined;
-      return {
-        results: capResultCharacters(results, options.maxCharacters),
-        audit: {
-          query,
-          fallbackQuery: options.fallbackQuery,
-          codegraph: codegraphAudit,
-          kept: results.map(toKeptEntry),
-          omitted,
-          skipped: "rag-disabled",
-        },
-      };
-    }
-    const stateDirectory = normalizePath(this.config.stateDirectory);
-    // Guidance is injected-only and never indexed; every chunk is a document.
-    const allowedChunks = chunks.filter(
-      (chunk) =>
-        isVisibleToProject(chunk, activeProjectId, options.includeProjects ?? []) &&
-        isVisibleForRun(chunk.source, options.runId, stateDirectory),
-    );
-    if (allowedChunks.length === 0) {
-      const repositoryResult = repositoryLookup.result
-        ? toCurrentProjectResult(repositoryLookup.result, activeProjectId)
-        : undefined;
-      const results = repositoryResult ? [repositoryResult] : [];
-      codegraphAudit.included = Boolean(repositoryResult);
-      if (repositoryResult) codegraphAudit.skippedReason = undefined;
-      return {
-        results: capResultCharacters(results, options.maxCharacters),
-        audit: {
-          query,
-          fallbackQuery: options.fallbackQuery,
-          codegraph: codegraphAudit,
-          kept: results.map(toKeptEntry),
-          omitted,
-        },
-      };
-    }
-    const documentFrequency = new Map<string, number>();
-    for (const chunk of allowedChunks) {
-      for (const term of new Set(Object.keys(chunk.terms))) {
-        documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
-      }
-    }
-    const pathHints = options.pathHints ?? [];
-    const scoredLexical: IndexedSearchResult[] = allowedChunks
-      .map((chunk) => {
-        let score = 0;
-        for (const term of terms) {
-          const frequency = chunk.terms[term] ?? 0;
-          if (frequency === 0) continue;
-          const inverseDocumentFrequency = Math.log(
-            1 + allowedChunks.length / (1 + (documentFrequency.get(term) ?? 0)),
-          );
-          score += (1 + Math.log(frequency)) * inverseDocumentFrequency;
-        }
-        // Prefer the active project's conventions when lexical evidence is otherwise equal.
-        if (score > 0 && chunk.scope === "project" && chunk.projectId === activeProjectId) score += 0.001;
-        if (score > 0) score += pathAffinityBoost(chunk.source, terms, pathHints);
-        return {
-          source: chunk.source,
-          title: chunk.title,
-          excerpt: chunk.text,
-          score: Number(score.toFixed(6)),
-          id: chunk.id,
-          scope: chunk.scope,
-          projectId: chunk.projectId,
-          visibility: chunk.visibility,
-          kind: chunk.kind,
-        };
-      })
-      .filter((result) => result.score > 0)
-      .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
-
-    const {
-      relevanceFloor,
-      minLexicalScore,
-      maxChunksPerSource,
-      maxForTopSource,
-    } = this.config.knowledge;
-    const topLexical = scoredLexical[0]?.score ?? 0;
-    const relativeFloor = topLexical > 0 ? topLexical * relevanceFloor : 0;
-    const lexical: IndexedSearchResult[] = [];
-    for (const result of scoredLexical) {
-      if (result.score < minLexicalScore) {
-        omitted.push({
-          source: result.source,
-          title: result.title,
-          score: result.score,
-          reason: "below-min-lexical",
-        });
-        continue;
-      }
-      if (result.score < relativeFloor) {
-        omitted.push({
-          source: result.source,
-          title: result.title,
-          score: result.score,
-          reason: "below-floor",
-        });
-        continue;
-      }
-      lexical.push(result);
-    }
-
-    const semanticScores = await this.embeddings.search(
-      query,
-      new Set(allowedChunks.map((chunk) => chunk.id)),
-    );
-    const scoredLexicalIds = new Set(scoredLexical.map((result) => result.id));
-    const acceptedLexicalIds = new Set(lexical.map((result) => result.id));
-    const { minSemanticOnlySimilarity } = this.config.knowledge.embeddings;
-    const semanticCandidates: IndexedSearchResult[] = allowedChunks
-      .filter((chunk) => {
-        if (!semanticScores.has(chunk.id)) return false;
-        // Embeddings must not resurrect lexical rows already refused by the floor.
-        if (scoredLexicalIds.has(chunk.id) && !acceptedLexicalIds.has(chunk.id)) return false;
-        // Semantic-only hits (no lexical evidence) need a stricter cosine floor.
-        if (!acceptedLexicalIds.has(chunk.id)) {
-          const cosine = semanticScores.get(chunk.id) ?? 0;
-          if (cosine < minSemanticOnlySimilarity) return false;
-        }
-        return true;
-      })
-      .map((chunk) => ({
-        source: chunk.source,
-        title: chunk.title,
-        excerpt: chunk.text,
-        score: semanticScores.get(chunk.id) ?? 0,
-        id: chunk.id,
-        scope: chunk.scope,
-        projectId: chunk.projectId,
-        visibility: chunk.visibility,
-        kind: chunk.kind,
-      }))
-      .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
-    const ranked = rankHybridResults(lexical, semanticCandidates, this.config);
-    const documentSlots = repositoryLookup.result ? Math.max(0, limit - 1) : limit;
-    const diversified = diversifyBySource(
-      ranked,
-      documentSlots,
-      {
-        maxPerSource: maxChunksPerSource,
-        maxForTopSource,
-        // Soft diversity: do not pad weak secondary sources to fill slots.
-        newSourceScoreRatio: 0.85,
-      },
-      omitted,
-    );
-    const merged = repositoryLookup.result
-      ? [toCurrentProjectResult(repositoryLookup.result, activeProjectId), ...diversified]
-      : diversified;
-    codegraphAudit.included = Boolean(repositoryLookup.result);
-    if (repositoryLookup.result) codegraphAudit.skippedReason = undefined;
-    const capped = capResultCharactersWithOmissions(merged, options.maxCharacters, omitted);
-    return {
-      results: capped,
-      audit: {
-        query,
-        fallbackQuery: options.fallbackQuery,
-        codegraph: codegraphAudit,
-        kept: capped.map(toKeptEntry),
-        omitted,
-      },
-    };
+    return this.retrieval.search(query, limit, options, generation);
   }
 
   async selectGuidance(
@@ -679,7 +447,7 @@ export class LocalKnowledgeBase {
     if (generation !== this.indexGeneration) {
       this.cachedDocuments = undefined;
       this.cachedChunks = undefined;
-      this.searchResultCache.clear();
+      this.retrieval.clear();
       this.indexGeneration = generation;
     }
     return this.indexGeneration;
@@ -700,7 +468,7 @@ export class LocalKnowledgeBase {
     this.cachedDocuments = undefined;
     this.cachedChunks = undefined;
     this.indexGeneration = "";
-    this.searchResultCache.clear();
+    this.retrieval.clear();
   }
 
   private async persist(documents: KnowledgeDocument[]): Promise<void> {

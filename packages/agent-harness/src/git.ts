@@ -116,33 +116,38 @@ export class GitService {
   }
 
   /**
-   * Keep CodeGraph's generated index out of run-local Git evidence.
+   * Keep repository-intelligence indexes out of run-local Git evidence.
    *
    * A run worktree is created from a committed base, so an uncommitted
    * `.gitignore` rule in the control checkout cannot protect it. Install the
    * invariant in Git's repository-local exclude file instead; that metadata is
    * shared by linked worktrees and does not dirty any checkout.
    */
-  async ensureCodegraphOutputIgnored(): Promise<void> {
+  async ensureRepositoryIntelligenceArtifactsIgnored(
+    directories: string[] = [".gitnexus", ".codegraph"],
+  ): Promise<void> {
     if (!this.config.git.enabled) return;
 
-    const tracked = await this.git(["ls-files", "--", ".codegraph"]);
+    const safeDirectories = directories.map((directory) =>
+      normalize(directory).replace(/^\/+|\/+$/g, ""),
+    );
+    const tracked = await this.git(["ls-files", "--", ...safeDirectories]);
     if (tracked.stdout.trim()) {
       throw new HarnessFailure(
-        "CodeGraph index must be generated and Git-ignored, but .codegraph contains tracked files. " +
-          "Remove them from Git before enabling CodeGraph for harness runs.",
+        "Repository intelligence indexes must be generated and Git-ignored, but tracked index files exist. " +
+          `Remove tracked files under ${safeDirectories.join(", ")} before enabling repository intelligence.`,
         "workspace",
         true,
       );
     }
 
-    if (await this.isCodegraphOutputIgnored()) return;
+    if (await this.areRepositoryIntelligenceArtifactsIgnored(safeDirectories)) return;
 
     const excludeResult = await this.git(["rev-parse", "--git-path", "info/exclude"]);
     const rawExcludePath = excludeResult.stdout.trim();
     if (!rawExcludePath) {
       throw new HarnessFailure(
-        "Git did not provide an info/exclude path for CodeGraph's generated index.",
+        "Git did not provide an info/exclude path for generated repository intelligence indexes.",
         "workspace",
         true,
       );
@@ -159,25 +164,37 @@ export class GitService {
     const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
     await appendFile(
       excludePath,
-      `${prefix}# agent-harness generated repository artifacts\n/.codegraph/\n`,
+      `${prefix}# agent-harness generated repository intelligence indexes\n${
+        safeDirectories.map((directory) => `/${directory}/`).join("\n")
+      }\n`,
       "utf8",
     );
 
-    if (!(await this.isCodegraphOutputIgnored())) {
+    if (!(await this.areRepositoryIntelligenceArtifactsIgnored(safeDirectories))) {
       throw new HarnessFailure(
-        "CodeGraph index is not ignored by Git. Add .codegraph/ to the repository's ignore rules before retrying.",
+        "Repository intelligence indexes are not ignored by Git. Add .gitnexus/ and .codegraph/ to ignore rules before retrying.",
         "workspace",
         true,
       );
     }
   }
 
-  private async isCodegraphOutputIgnored(): Promise<boolean> {
-    const result = await this.git(
-      ["check-ignore", "--quiet", "--no-index", "--", ".codegraph/codegraph.db"],
-      true,
-    );
-    return result.exitCode === 0;
+  /** @deprecated Retained until the operator-surface phase removes old calls. */
+  ensureCodegraphOutputIgnored(): Promise<void> {
+    return this.ensureRepositoryIntelligenceArtifactsIgnored();
+  }
+
+  private async areRepositoryIntelligenceArtifactsIgnored(
+    directories: string[],
+  ): Promise<boolean> {
+    for (const directory of directories) {
+      const result = await this.git(
+        ["check-ignore", "--quiet", "--no-index", "--", `${directory}/.harness-probe`],
+        true,
+      );
+      if (result.exitCode !== 0) return false;
+    }
+    return true;
   }
 
   /**

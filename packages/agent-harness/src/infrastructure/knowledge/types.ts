@@ -60,14 +60,14 @@ export type KnowledgeClassification = {
 
 export type KnowledgeSearchOptions = {
   repository?: boolean;
-  /** When false, skip document lexical/semantic search (CodeGraph-only path). Default true. */
+  /** When false, skip document lexical/semantic search (repository-only path). Default true. */
   documents?: boolean;
   projectId?: string;
   includeProjects?: string[];
   maxCharacters?: number;
   /** When set, only this run's `.agent-harness/runs/<id>/*` artifacts are visible. */
   runId?: string;
-  /** Domain seed tried when CodeGraph shaping of `query` is empty/generic. */
+  /** Domain seed tried when repository query shaping is empty/generic. */
   fallbackQuery?: string;
   /** Paths from the invocation (affectedPaths / changedFiles) for ranking affinity. */
   pathHints?: string[];
@@ -94,18 +94,25 @@ export type RetrievalOmission = {
     | "per-source-cap"
     | "limit"
     | "diversity-gap"
-    | "codegraph-skipped"
+    | "repository-skipped"
     | "character-budget";
 };
 
 export type RetrievalAudit = {
   query: string;
   fallbackQuery?: string;
-  codegraph: {
+  repository: {
     shapedQuery: string;
     usedFallback: boolean;
     included: boolean;
+    providerId?: string;
     skippedReason?: string;
+    attempts: Array<{
+      providerId: string;
+      outcome: string;
+      reason?: string;
+      refreshed?: boolean;
+    }>;
   };
   kept: Array<{ source: string; title: string; score: number; kind?: GuidanceKind }>;
   omitted: RetrievalOmission[];
@@ -145,7 +152,10 @@ export type GuidanceSourceRef = {
 
 export type GuidanceSelectionOptions = {
   role: string;
-  /** Authoritative name lists for this role. Undefined retains relevance-based selection. */
+  /**
+   * Authoritative name lists for this role. When omitted, selection uses an empty
+   * assignment (no relevance fallback — see ADR 0006 / legacy sunset S7).
+   */
   assignment?: {
     rules: string[];
     skills: string[];

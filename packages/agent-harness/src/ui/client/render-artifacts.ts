@@ -8,7 +8,7 @@ export const renderArtifactsScript = `    function renderArtifacts() {
       state.view = "knowledge"; state.selected = null; state.detail = null; state.inlineError = ""; renderSidebar();
       $("crumbTitle").textContent = "Knowledge base";
       $("topActions").innerHTML = '<button class="btn small" id="refreshKnowledge">Refresh sources</button>';
-      $("content").innerHTML = '<div class="title-row"><div><div class="eyebrow">RAG inspector</div><h1>Knowledge base</h1><div class="subtitle">Manually test the same lexical, semantic, and repository context retrieval used in agent work packets.</div></div></div><div class="card" id="knowledgeStatus"><div class="muted">Loading retrieval configuration…</div></div><div class="knowledge-layout"><div class="card"><form id="knowledgeSearch"><div class="field"><label for="knowledgeQuery">Manual RAG query</label><div style="display:flex;gap:8px"><input id="knowledgeQuery" type="text" required placeholder="e.g. where is retry logic configured?"><button class="btn primary">Search</button></div></div></form><div class="knowledge-results" id="knowledgeResults"><div class="empty">Enter a query to inspect retrieved chunks.</div></div></div><aside class="card"><div class="card-label">Add a source</div><p class="muted">Index a text file already inside this repository.</p><form id="knowledgeAdd"><div class="field"><label for="knowledgePath">Repository-relative path</label><input id="knowledgePath" type="text" required placeholder="docs/api.md"></div><button class="btn" style="width:100%">Add document</button></form><hr style="border:0;border-top:1px solid var(--line-soft);margin:20px 0"><div class="card-label">Storage</div><p class="faint"><code>.agent-harness/knowledge/</code><br>Lexical chunks and optional vectors stay local; CodeGraph reads <code>.codegraph/</code>.</p></aside></div>';
+      $("content").innerHTML = '<div class="title-row"><div><div class="eyebrow">RAG inspector</div><h1>Knowledge base</h1><div class="subtitle">Manually test the same lexical, semantic, and repository context retrieval used in agent work packets.</div></div></div><div class="card" id="knowledgeStatus"><div class="muted">Loading retrieval configuration…</div></div><div class="knowledge-layout"><div class="card"><form id="knowledgeSearch"><div class="field"><label for="knowledgeQuery">Manual RAG query</label><div style="display:flex;gap:8px"><input id="knowledgeQuery" type="text" required placeholder="e.g. where is retry logic configured?"><button class="btn primary">Search</button></div></div></form><div class="knowledge-results" id="knowledgeResults"><div class="empty">Enter a query to inspect retrieved chunks.</div></div></div><aside class="card"><div class="card-label">Add a source</div><p class="muted">Index a text file already inside this repository.</p><form id="knowledgeAdd"><div class="field"><label for="knowledgePath">Repository-relative path</label><input id="knowledgePath" type="text" required placeholder="docs/api.md"></div><button class="btn" style="width:100%">Add document</button></form><hr style="border:0;border-top:1px solid var(--line-soft);margin:20px 0"><div class="card-label">Storage</div><p class="faint"><code>.agent-harness/knowledge/</code><br>Lexical chunks and optional vectors stay local; repository intelligence reads provider indexes such as <code>.gitnexus/</code> and <code>.codegraph/</code>.</p></aside></div>';
       void loadKnowledgeStatus();
     }
 
@@ -19,7 +19,18 @@ export const renderArtifactsScript = `    function renderArtifacts() {
         var semanticText = semantic.enabled
           ? 'Enabled · ' + String(semantic.provider) + ' · ' + String(semantic.model)
           : 'Disabled · lexical retrieval remains active';
-        $("knowledgeStatus").innerHTML = '<div class="item-head"><div><div class="card-label">Retrieval configuration</div><div class="muted" style="margin-top:6px"><strong>Lexical:</strong> enabled &nbsp; <strong>Semantic:</strong> ' + esc(semanticText) + ' &nbsp; <strong>CodeGraph:</strong> ' + (status.codegraph && status.codegraph.enabled ? 'enabled' : 'disabled') + '</div></div><span class="tag">' + esc((status.sources || []).length + ' source(s)') + '</span></div>';
+        var ri = status.repositoryIntelligence || {};
+        var searchRoute = ri.routes && Array.isArray(ri.routes.search) ? ri.routes.search : [];
+        var providerRows = Array.isArray(ri.providers) ? ri.providers.map(function (provider) {
+          var health = !provider.enabled
+            ? 'disabled'
+            : (provider.available
+              ? (provider.indexReady ? 'ready' : 'index missing')
+              : (provider.detail || 'unavailable'));
+          return '<div style="margin-top:6px"><strong>' + esc(provider.id) + ':</strong> ' + esc(health) +
+            (provider.command ? ' · <code>' + esc(provider.command) + '</code>' : '') + '</div>';
+        }).join('') : '';
+        $("knowledgeStatus").innerHTML = '<div class="item-head"><div><div class="card-label">Retrieval configuration</div><div class="muted" style="margin-top:6px"><strong>Lexical:</strong> enabled &nbsp; <strong>Semantic:</strong> ' + esc(semanticText) + ' &nbsp; <strong>Repository intelligence:</strong> ' + (ri.enabled ? 'enabled' : 'disabled') + '</div><div class="faint" style="margin-top:8px">Search route: ' + esc(searchRoute.length ? searchRoute.join(' → ') : 'none') + '</div>' + providerRows + '</div><span class="tag">' + esc((status.sources || []).length + ' source(s)') + '</span></div>';
       } catch (error) {
         $("knowledgeStatus").innerHTML = '<div class="muted">Retrieval configuration unavailable.</div>';
       }

@@ -90,7 +90,7 @@ export const eventsScript = `    async function waitForJob(runId) {
                   ? 'Baseline passed — review the plan'
                   : 'Baseline passed — planning'))
             : (action === 'set_rag' ? 'RAG updated'
-            : (action === 'set_codegraph' ? 'CodeGraph updated'
+            : (action === 'set_repository_intelligence' ? 'Repository intelligence updated'
             : (action === 'commit_preflight' ? 'Working tree committed — continuing'
             : (action === 'accept_tree' ? 'Current tree accepted — continuing'
             : (action === 'retry' ? 'Retry started' : 'Action completed')))))))))));
@@ -163,16 +163,16 @@ export const eventsScript = `    async function waitForJob(runId) {
         var packet = data.packet || {};
         var context = Array.isArray(packet.context) ? packet.context : [];
         var retrieval = data.retrieval;
-        var codegraph = retrieval && retrieval.codegraph ? retrieval.codegraph : null;
-        var codegraphSkipped = codegraph && codegraph.included === false && codegraph.skippedReason;
-        var weakContext = context.length === 0 || codegraphSkipped;
+        var repository = retrieval && retrieval.repository ? retrieval.repository : null;
+        var repositorySkipped = repository && repository.included === false && repository.skippedReason;
+        var weakContext = context.length === 0 || repositorySkipped;
         var html = '<div class="session-meta">' + meta + '</div>';
         html += sessionSection('Actual submitted input', String(data.inputSource || 'unknown source') + ' · ' + number(prompt.length) + ' characters', prompt, true);
         html += sessionSection('Work packet', session.packet || 'No packet linked', data.packet, false);
         if (weakContext && retrieval) {
           var retrievalDetail = context.length === 0
             ? 'Empty context'
-            : (codegraphSkipped ? 'CodeGraph skipped · ' + String(codegraph.skippedReason) : 'Weak context');
+            : (repositorySkipped ? 'Repository intelligence skipped · ' + String(repository.skippedReason) : 'Weak context');
           html += sessionSection('Retrieval audit', retrievalDetail + ' · ' + number((retrieval.kept || []).length) + ' kept / ' + number((retrieval.omitted || []).length) + ' omitted', retrieval, true);
         } else if (retrieval) {
           html += sessionSection('Retrieval audit', number((retrieval.kept || []).length) + ' kept / ' + number((retrieval.omitted || []).length) + ' omitted', retrieval, false);
@@ -559,8 +559,8 @@ export const eventsScript = `    async function waitForJob(runId) {
       if (event.target.id === 'runRagToggle') {
         runAction('set_rag', { rag: event.target.checked });
       }
-      if (event.target.id === 'runCodegraphToggle') {
-        runAction('set_codegraph', { codegraph: event.target.checked });
+      if (event.target.id === 'runRepositoryIntelligenceToggle') {
+        runAction('set_repository_intelligence', { repositoryIntelligence: event.target.checked });
       }
     });
     document.addEventListener('keydown', function (event) {
@@ -604,7 +604,7 @@ export const eventsScript = `    async function waitForJob(runId) {
       submit.textContent = 'Starting reflect…';
       setNewRunFeedback('Creating the durable run and queuing the reflector…', false);
       try {
-        var body = { idea:$("idea").value, rag:$("rag").checked, codegraph:$("codegraph").checked, push:$("push").checked, openPullRequest:$("openPr").checked, smallModel:$("smallModel").value || undefined, capableModel:$("capableModel").value || undefined };
+        var body = { idea:$("idea").value, rag:$("rag").checked, repositoryIntelligence:$("repositoryIntelligence").checked, push:$("push").checked, openPullRequest:$("openPr").checked, smallModel:$("smallModel").value || undefined, capableModel:$("capableModel").value || undefined };
         var baseBranchSelect = $("baseBranch");
         if (baseBranchSelect && !baseBranchSelect.disabled && baseBranchSelect.value) body.baseBranch = baseBranchSelect.value;
         var data = await api('/api/runs',{method:'POST',body:body});
@@ -658,7 +658,7 @@ export const eventsScript = `    async function waitForJob(runId) {
           await loadRun(state.selected, false);
         } catch (error) { toast(error.message, true); }
       }
-      if (event.target.id === 'knowledgeSearch') { event.preventDefault(); try { var data = await api('/api/knowledge/search',{method:'POST',body:{query:$("knowledgeQuery").value}}); $("knowledgeResults").innerHTML = data.results.length ? data.results.map(function (result) { var scoreLabel = String(result.source || '').indexOf('codegraph:') === 0 ? 'structural' : Number(result.score).toFixed(3); return '<article class="item"><div class="item-head"><div class="item-title">' + esc(result.title) + '</div><span class="score">' + scoreLabel + '</span></div><div class="faint">' + esc(result.source) + '</div><p class="muted">' + esc(result.excerpt) + '</p></article>'; }).join('') : '<div class="empty">No retrieved chunks matched this query.</div>'; } catch(error) { toast(error.message,true); } }
+      if (event.target.id === 'knowledgeSearch') { event.preventDefault(); try { var data = await api('/api/knowledge/search',{method:'POST',body:{query:$("knowledgeQuery").value}}); $("knowledgeResults").innerHTML = data.results.length ? data.results.map(function (result) { var scoreLabel = String(result.source || '').indexOf('repository:') === 0 ? 'structural' : Number(result.score).toFixed(3); return '<article class="item"><div class="item-head"><div class="item-title">' + esc(result.title) + '</div><span class="score">' + scoreLabel + '</span></div><div class="faint">' + esc(result.source) + '</div><p class="muted">' + esc(result.excerpt) + '</p></article>'; }).join('') : '<div class="empty">No retrieved chunks matched this query.</div>'; } catch(error) { toast(error.message,true); } }
       if (event.target.id === 'knowledgeAdd') { event.preventDefault(); try { var added = await api('/api/knowledge/add',{method:'POST',body:{path:$("knowledgePath").value}}); toast(added.changed ? 'Document indexed' : 'Document unchanged'); } catch(error) { toast(error.message,true); } }
     });
     document.addEventListener('click', async function (event) { if (event.target.id === 'refreshKnowledge') { try { var result = await api('/api/knowledge/refresh',{method:'POST'}); toast('Indexed ' + result.changed + ' changed document(s)'); } catch(error) { toast(error.message,true); } } });
@@ -675,7 +675,7 @@ export const eventsScript = `    async function waitForJob(runId) {
       $("rag").checked = state.bootstrap.project.defaults.rag !== false;
       $("push").checked = state.bootstrap.project.defaults.push;
       $("openPr").checked = state.bootstrap.project.defaults.openPullRequest;
-      $("codegraph").checked = state.bootstrap.project.codegraph && state.bootstrap.project.codegraph.enabled === true;
+      $("repositoryIntelligence").checked = state.bootstrap.project.repositoryIntelligence && state.bootstrap.project.repositoryIntelligence.enabled === true;
       $("smallModel").value = state.bootstrap.project.models.small;
       $("capableModel").value = state.bootstrap.project.models.capable;
       fillBaseBranchSelect();

@@ -19,7 +19,6 @@ const terminal = isTerminalPhase;
 import { CONFIG_FAILURE_PATTERN, HarnessFailure, RunCancelledError } from "../errors.js";
 import { commandEvidence, recentEvidenceOutput } from "../commands.js";
 import { compactDomainSeed } from "../knowledge.js";
-import { prepareCodegraphForRun } from "../codegraph.js";
 import { taskFrontier } from "../tracker.js";
 import type { ApplicationContext } from "./application-context.js";
 import type { InvocationKind } from "./agent-activity.js";
@@ -396,17 +395,17 @@ export class TaskExecutionService {
       : MessageOutputSchema.parse(fallback);
     assertCanMarkTaskDone(task);
     const commitSha = await this.ctx.git.commitTask(task.id, message, task.changedFiles);
-    const codegraphUpdated = includesSourcePath(
+    const repositoryIntelligenceUpdated = includesSourcePath(
       task.changedFiles,
-      this.ctx.config.knowledge.codegraph.sourceExtensions,
+      this.ctx.config.knowledge.repositoryIntelligence.sourceExtensions,
     )
-      ? await this.ctx.knowledge.rebuildRepositoryGraph()
-      : false;
+      ? await this.ctx.knowledge.repositoryPathsChanged(task.changedFiles)
+      : undefined;
     return this.updateTask(
       await this.ctx.withTreeFingerprint(state),
       { ...task, status: "done", step: "done", commitSha },
       "task.committed",
-      { commitSha, codegraphUpdated },
+      { commitSha, repositoryIntelligenceUpdated },
     );
   }
 
@@ -566,26 +565,26 @@ export class TaskExecutionService {
     });
   }
 
-  async setCodegraph(runId: string, enabled: boolean): Promise<RunState> {
+  async setRepositoryIntelligence(runId: string, enabled: boolean): Promise<RunState> {
     return this.ctx.store.withLock(runId, async () => {
       let state = await this.ctx.store.load(runId);
       if (terminal(state.phase)) {
         throw new Error(`Run ${runId} is already ${state.phase}`);
       }
-      if (this.ctx.config.knowledge.codegraph.enabled === enabled) {
+      if (this.ctx.config.knowledge.repositoryIntelligence.enabled === enabled) {
         return state;
       }
       const result = await updateRunConfig(
         this.ctx,
         state.runId,
         state.configRevision ?? 0,
-        { knowledge: { codegraph: { enabled } } },
-        { reason: "codegraph", detail: { enabled } },
+        { knowledge: { repositoryIntelligence: { enabled } } },
+        { reason: "repository-intelligence", detail: { enabled } },
         { alreadyLocked: true },
       );
       state = result.state;
       if (enabled) {
-        await prepareCodegraphForRun(this.ctx.config, this.ctx.codegraphRunner, this.ctx.paths);
+        await this.ctx.knowledge.prepareRepositoryIntelligence();
       }
       await this.ctx.syncArtifacts(state);
       return state;

@@ -123,13 +123,13 @@ export class AgentCoordinator {
   ): Promise<AgentInvocation<T>> {
     const invocationId = randomUUID();
     const invocationRetrieval = input.retrieval !== false;
-    // Guidance is independent of document RAG / CodeGraph retrieval.
+    // Guidance is independent of document RAG / repository retrieval.
     const guidanceEnabled = invocationRetrieval && this.config.knowledge.guidance.enabled;
     const ragEnabled = invocationRetrieval && this.config.workflow.rag;
-    const codegraphWanted =
+    const repositoryWanted =
       invocationRetrieval &&
-      this.config.knowledge.codegraph.enabled &&
-      this.config.knowledge.codegraph.roles.includes(input.role);
+      this.config.knowledge.repositoryIntelligence.enabled &&
+      this.config.knowledge.repositoryIntelligence.roles.includes(input.role);
     let guidancePack: Awaited<ReturnType<LocalKnowledgeBase["compileRoleGuidancePack"]>> = {
       text: "",
       sources: [],
@@ -141,11 +141,12 @@ export class AgentCoordinator {
       results: [],
       audit: {
         query: "",
-        codegraph: {
+        repository: {
           shapedQuery: "",
           usedFallback: false,
           included: false,
           skippedReason: "retrieval-disabled",
+          attempts: [],
         },
         kept: [],
         omitted: [],
@@ -167,11 +168,12 @@ export class AgentCoordinator {
         audit: {
           query: knowledgeQuery,
           fallbackQuery: knowledgeFallbackQuery,
-          codegraph: {
+          repository: {
             shapedQuery: "",
             usedFallback: false,
             included: false,
-            skippedReason: codegraphWanted ? "not-requested" : "disabled",
+            skippedReason: repositoryWanted ? "not-requested" : "disabled",
+            attempts: [],
           },
           kept: [],
           omitted: [],
@@ -191,9 +193,9 @@ export class AgentCoordinator {
               missingAssignments: [],
               omittedOverrides: [],
             }),
-        ragEnabled || codegraphWanted
+        ragEnabled || repositoryWanted
           ? this.knowledge.searchWithAudit(knowledgeQuery, contextLimit, {
-              repository: codegraphWanted,
+              repository: repositoryWanted,
               documents: ragEnabled,
               runId: input.runId,
               fallbackQuery: knowledgeFallbackQuery,
@@ -206,11 +208,12 @@ export class AgentCoordinator {
         results: [],
         audit: {
           query: "",
-          codegraph: {
+          repository: {
             shapedQuery: "",
             usedFallback: false,
             included: false,
             skippedReason: "retrieval-disabled",
+            attempts: [],
           },
           kept: [],
           omitted: [],
@@ -240,7 +243,7 @@ export class AgentCoordinator {
       budgets: {
         contextCharacters: this.config.workflow.contextCharacters,
         inputCharacters: this.config.workflow.inputCharacters,
-        codegraphCharacters: this.config.workflow.codegraphCharacters,
+        repositoryContextCharacters: this.config.workflow.repositoryContextCharacters,
       },
       domainArtifacts,
     });

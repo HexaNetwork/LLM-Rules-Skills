@@ -199,7 +199,7 @@ export class GitService {
 
   /**
    * Paths that differ between `baseRef` and the worktree (committed + dirty + untracked).
-   * Used for TDD review over `redBaseSha..worktree`.
+   * Used for task review over `workspace.baseSha..worktree`.
    */
   async changedFilesVersusRef(baseRef: string): Promise<string[]> {
     if (!this.config.git.enabled) return [];

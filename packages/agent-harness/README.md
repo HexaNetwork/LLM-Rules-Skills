@@ -197,13 +197,16 @@ knowledge:
       griller: { rules: [], skills: [grill-me, domain-modeling] }
       docs-writer: { rules: [], skills: [domain-modeling] }
       planner: { rules: [], skills: [domain-modeling, improve-codebase-architecture] }
+      scenario-planner: { rules: [], skills: [] }
+      issue-slicer: { rules: [], skills: [prd-to-issues, domain-modeling] }
       prompt-builder: { rules: [], skills: [] }
-      red-writer: { rules: [], skills: [red-writer-tdd] }
+      scenario-writer: { rules: [], skills: [] }
+      unit-test-writer: { rules: [], skills: [] }
       implementer: { rules: [], skills: [] }
       reviewer: { rules: [], skills: [code-review] }
       task-reviewer: { rules: [], skills: [task-review] }
       message-writer: { rules: [], skills: [] }
-      fixer: { rules: [], skills: [diagnose, tdd] }
+      fixer: { rules: [], skills: [diagnose] }
       config-fixer: { rules: [], skills: [] }
 ```
 

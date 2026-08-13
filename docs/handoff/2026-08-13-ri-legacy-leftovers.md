@@ -86,13 +86,17 @@ Capture actionable cleanup of leftovers so the next session can delete or migrat
 
 ## Remaining gaps
 
-- `templates/guidance/General/skills/harness-run/SKILL.md` still mentions `--tdd on|off` — left alone (orthogonal TDD sunset / guidance template; not in operator README path).
-- Dead `src/graphify.ts` / `graphify-lookup.ts` still on disk — out of this checklist; sunset separately if desired.
-- Migration read-compat for `knowledge.codegraph` / `graphify` intentionally retained.
+- ~~`templates/.../harness-run/SKILL.md` still mentions `--tdd`~~ — cleaned in TDD sunset follow-up.
+- ~~Dead `src/graphify.ts` / `graphify-lookup.ts`~~ — already deleted in `52503be` (Graphify → CodeGraph); confirmed absent on disk.
+- Migration read-compat for `knowledge.codegraph` / `graphify` intentionally retained (`rewriteGraphifyConfigKeys`).
 
 ## Blockers
 
-None. Do not edit `docs/plans/agent-harness-legacy-sunset.md` unless the user asks.
+None.
+
+## Follow-up (done in TDD sunset session)
+
+See `docs/handoff/2026-08-13-tdd-sunset.md` and `docs/plans/agent-harness-legacy-sunset.md`.
 
 ## Tests run (leftover cleanup)
 

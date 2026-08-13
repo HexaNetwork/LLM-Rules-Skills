@@ -53,10 +53,10 @@ describe("createScriptedBackend", () => {
               blockedBy: []}],
           proposedInstalls: []}},
       {
-        role: "red-writer",
+        role: "scenario-writer",
         output: {
           status: "continue",
-          summary: "RED",
+          summary: "Scenario coverage",
           changedFiles: ["tests/greet.test.ts"],
           behaviorsAdded: ["greeting fails until implemented"],
           edgeCasesAdded: []}},
@@ -76,7 +76,7 @@ describe("createScriptedBackend", () => {
       "planner",
       "planner",
       "issue-slicer",
-      "red-writer",
+      "scenario-writer",
       "implementer",
       "reviewer",
       "message-writer"] as const) {
@@ -90,7 +90,7 @@ describe("createScriptedBackend", () => {
       "planner",
       "planner",
       "issue-slicer",
-      "red-writer",
+      "scenario-writer",
       "implementer",
       "reviewer",
       "message-writer"]);
@@ -132,17 +132,17 @@ describe("createScriptedBackend", () => {
     const observed: string[] = [];
     const scripted = createScriptedBackend([
       {
-        role: "red-writer",
+        role: "scenario-writer",
         steps: [
           { type: "toolCall", toolName: "readFile", summary: "readFile" },
           { type: "toolCall", toolName: "shell", summary: "shell" }],
-        output: { summary: "red", changedFiles: [] }}]);
+        output: { summary: "scenarios", changedFiles: [] }}]);
     const result = await scripted.backend.run({
-      ...request("red-writer"),
+      ...request("scenario-writer"),
       onStep: (step) => {
         if (step.toolName) observed.push(step.toolName);
       }});
-    expect(result.output).toEqual({ summary: "red", changedFiles: [] });
+    expect(result.output).toEqual({ summary: "scenarios", changedFiles: [] });
     expect(observed).toEqual(["readFile", "shell"]);
     scripted.assertExhausted();
   });

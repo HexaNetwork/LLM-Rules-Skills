@@ -275,6 +275,14 @@ Use these before opening S11/S12 PRs:
 | S7 Guidance pre-assignments | **done** (2026-08-13) — `selectGuidanceWithAudit` always uses role assignments / `compileRoleGuidancePack` |
 | S8 Scalar fingerprints | **done** (2026-08-13) — removed `isLegacyTreeFingerprint` / `legacyTreeFingerprint`; structured evidence only |
 | S9 Config migrations | **done** (2026-08-13) — removed deleted-role preprocess + `stripLegacyGuidanceSources`; kept ADR 0006 missing-guidance→disabled via `normalizeFrozenRunConfig`; **leftover:** string knowledge-source YAML shorthand still transforms to objects |
-| S10 TDD legacy steps | **done** (2026-08-13) — removed `LegacyTaskStepSchema` / `writing_tests`/`red` resume branches |
+| S10 TDD legacy steps | **done** (2026-08-13) — removed `LegacyTaskStepSchema` / `writing_tests`/`red` resume branches; **2026-08-13 follow-up:** stripped orphaned `--tdd` / `red-writer` / `tddLoop` tests, skills, and docs after intent-first superseded ADR 0013 |
 | S11 Repo-local install | **done** (2026-08-13) — removed `allowLegacy` / `tryLoadLegacyConfig` / `migrate-home`; `--config` is explicit path override only |
 | S12 legacy-shared stack | **done** (2026-08-13) — removed `legacy-shared` kind, repository lock gating, migrate-workspace, preflight commit-order UI/CLI |
+
+### Post-checklist leftover cleanup (2026-08-13)
+
+Orthogonal to S1–S12 gates but required for a clean TDD sunset after intent-first:
+
+- Confirmed Graphify modules already deleted (`52503be`); kept `rewriteGraphifyConfigKeys` read-compat.
+- Removed `--tdd` from `harness-run` skill + e2e helpers; deleted `red-writer-tdd` skill; aligned README assignments example.
+- Marked ADR 0013 superseded; purged skipped/orphan `red-writer` / `tddLoop` integration tests.

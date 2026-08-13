@@ -315,7 +315,7 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/java.mdc":
         "---\ndescription: Java implementation guidance\nglobs: src/**/*.java\n---\n\nUse Java braces.",
       "General/skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: Test-first behavior\nroles: [red-writer]\n---\n\nWrite a failing behavioral test first."});
+        "---\nname: tdd\ndescription: Test-first behavior\nroles: [unit-test-writer]\n---\n\nWrite a failing behavioral test first."});
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
       sharedRoot});
 
@@ -462,12 +462,12 @@ describe("LocalKnowledgeBase", () => {
       "General/rules/no-legacy-fallback-code.mdc":
         "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nglobal authorization fallback text.",
       "General/skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer]\n---\n\nglobal authorization test skill."});
+        "---\nname: tdd\ndescription: authorization tests\nroles: [unit-test-writer]\n---\n\nglobal authorization test skill."});
     await writeGuidanceFiles(projectRoot, {
       "rules/no-legacy-fallback-code.mdc":
         "---\ndescription: authorization fallback guidance\nalwaysApply: true\n---\n\nproject authorization fallback text.",
       "skills/tdd/SKILL.md":
-        "---\nname: tdd\ndescription: authorization tests\nroles: [red-writer]\n---\n\nproject authorization test skill."});
+        "---\nname: tdd\ndescription: authorization tests\nroles: [unit-test-writer]\n---\n\nproject authorization test skill."});
     const knowledge = new LocalKnowledgeBase(fixtureConfig(root), undefined, undefined, {
       projectRoot,
       sharedRoot});
@@ -517,7 +517,7 @@ describe("LocalKnowledgeBase", () => {
       sharedRoot});
 
     const audit = await knowledge.selectGuidanceWithAudit("unrelated words", {
-      role: "red-writer",
+      role: "unit-test-writer",
       assignment: {
         rules: ["no-legacy-fallback-code"],
         skills: ["tdd"]}});

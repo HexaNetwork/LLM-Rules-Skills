@@ -1,6 +1,6 @@
 ---
 name: harness-run
-description: Run or resume the durable Agent Harness idea-to-feature workflow, including reflect confirmation, grill-me interviews, persisted human questions, local retrieval, optional TDD, deterministic test repairs, and harness-owned commits or pull requests. Use when the user explicitly asks to use the harness, continue a harness run, answer a harness question, inspect a blocked run, or launch autonomous feature delivery.
+description: Run or resume the durable Agent Harness idea-to-feature workflow, including reflect confirmation, grill-me interviews, persisted human questions, local retrieval, scenario testing, crystallizing, deterministic repairs, and harness-owned commits or pull requests. Use when the user explicitly asks to use the harness, continue a harness run, answer a harness question, inspect a blocked run, or launch autonomous feature delivery.
 ---
 
 # Harness Run
@@ -23,12 +23,10 @@ Require a clean git working tree, an initialized `agent-harness.config.yaml`, an
 
 ```bash
 npx agent-harness start --idea "<idea>"
-npx agent-harness start --idea @idea.md --tdd on
+npx agent-harness start --idea @idea.md
 ```
 
-These CLI commands remain useful for automation and headless operation; the dashboard exposes the same start controls, including the per-run TDD choice and model overrides.
-
-Use `--tdd off` only when the user chooses implementation-first. Do not reinterpret the toggle during a resumed run; the harness freezes it in `config.json`.
+These CLI commands remain useful for automation and headless operation; the dashboard exposes the same start controls and model overrides. Each run freezes the project config into its snapshot so later project edits cannot silently change an active run.
 
 ## Handle human questions
 

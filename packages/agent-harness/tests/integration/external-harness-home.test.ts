@@ -76,7 +76,7 @@ describe("external harness home", () => {
           home.sharedGuidanceRoot,
           "General",
           "skills",
-          "red-writer-tdd",
+          "harness-run",
           "SKILL.md",
         ),
       ),

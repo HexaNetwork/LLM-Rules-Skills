@@ -13,7 +13,6 @@ const EXECUTION_MODULES = [
   "application/recovery-service.ts",
   "infrastructure/agents/agent-coordinator.ts",
   "git.ts",
-  "codegraph.ts",
   "knowledge.ts"] as const;
 
 /** Control-plane helpers may still read repositoryRoot while deriving HarnessPaths. */

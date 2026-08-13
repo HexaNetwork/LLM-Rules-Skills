@@ -7,7 +7,7 @@ import {
 import type { CommandEvidence } from "../../src/domain.js";
 
 const evidence = (overrides: Partial<CommandEvidence> = {}): CommandEvidence => ({
-  purpose: "tdd:green",
+  purpose: "verification",
   command: "npm test",
   exitCode: 1,
   passed: false,
@@ -67,9 +67,9 @@ describe("evaluateRepairProgress", () => {
     const result = evaluateRepairProgress({
       fingerprint,
       seenFingerprints: [],
-      seenEdges: [`${fingerprint}:implementer->red-writer`],
+      seenEdges: [`${fingerprint}:implementer->implementer`],
       fromRole: "implementer",
-      toRole: "red-writer"});
+      toRole: "implementer"});
     expect(result.allowed).toBe(false);
     if (!result.allowed) expect(result.reason).toBe("repeated_edge");
   });

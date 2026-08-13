@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted; extends [ADR 0001](0001-executable-agent-harness.md) / [ADR 0002](0002-durable-wayfinder-harness.md) task execution and the session-retention posture in [ADR 0009](0009-operational-intervention-and-budgets.md)
+**Superseded** by the intent-first workflow ([intent-first-workflow plan](../plans/intent-first-workflow.md)): per-task RED/GREEN / `red-writer` / `tddLoop` machinery was removed. Historical runs with TDD steps remain readable but cannot be resumed. Kept for decision history.
+
+Was: Accepted; extends [ADR 0001](0001-executable-agent-harness.md) / [ADR 0002](0002-durable-wayfinder-harness.md) task execution and the session-retention posture in [ADR 0009](0009-operational-intervention-and-budgets.md)
 
 ## Context
 

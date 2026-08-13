@@ -190,11 +190,7 @@ export async function withE2EHarness(
   }
 }
 
-export async function startNewRun(
-  page: Page,
-  idea: string,
-  options: { tdd?: boolean } = {},
-): Promise<void> {
+export async function startNewRun(page: Page, idea: string): Promise<void> {
   const dialog = page.locator("#newRunDialog");
   if (!(await dialog.isVisible())) {
     const newRun = page.locator("#newRunBtn");
@@ -207,12 +203,6 @@ export async function startNewRun(
   await expect(dialog).toBeVisible();
   await expect(dialog).toBeEnabled();
   await page.locator("#idea").fill(idea);
-  const tdd = page.locator("#tdd");
-  if (options.tdd === true) {
-    await tdd.check();
-  } else {
-    await tdd.uncheck();
-  }
   await page.getByTestId("start-run").click();
   await expect(dialog).toBeHidden({ timeout: 20_000 });
 }
@@ -318,7 +308,6 @@ async function writeFixtureConfigYaml(configPath: string, config: HarnessConfig)
       promptBuilder: config.agent.promptBuilder,
       schemaRepairAttempts: config.agent.schemaRepairAttempts},
     workflow: {
-      tdd: config.workflow.tdd,
       testPathPatterns: config.workflow.testPathPatterns,
       maxGrillQuestionsPerEpisode: config.workflow.maxGrillQuestionsPerEpisode,
       staleAnswerMinutes: config.workflow.staleAnswerMinutes,

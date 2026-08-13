@@ -14,7 +14,8 @@ npx agent-harness ui
 ```
 
 `project add` registers the repository in harness home (guidance lives there too).
-Install structural providers yourself when you want repository intelligence (default on):
+Install structural providers yourself when you want repository intelligence (default on).
+The install wizard can install both and warns about GitNexus’s PolyForm Noncommercial license first:
 
 ```bash
 npm install -g gitnexus
@@ -246,6 +247,8 @@ scoped document retrieval continues and the audit records each attempt.
 npm install -g gitnexus                 # primary
 npm install -g @colbymchenry/codegraph  # fallback
 ```
+
+GitNexus is under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/) — free for noncommercial use; commercial use of the OSS package requires a separate license from [Akon Labs](https://akonlabs.com). The install wizard surfaces that warning before `npm install -g gitnexus`.
 
 Before the first agent step of each new run (CLI and UI), the harness prepares
 the primary route provider (GitNexus `analyze … --index-only --skip-agents-md

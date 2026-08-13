@@ -8,7 +8,7 @@ Install Node, build this checkout, then register a target project in harness hom
 scripts\Install-AgentHarness.cmd
 ```
 
-That opens PowerShell with `-ExecutionPolicy Bypass` and runs `scripts\install-agent-harness.ps1`. It walks through Node, build, Cursor API key (stored as a Windows User environment variable — not `.env`), `project add` registration, an optional CodeGraph CLI install, and the dashboard.
+That opens PowerShell with `-ExecutionPolicy Bypass` and runs `scripts\install-agent-harness.ps1`. It walks through Node, build, Cursor API key (stored as a Windows User environment variable — not `.env`), `project add` registration, optional GitNexus (with license warning) and CodeGraph CLI installs, and the dashboard.
 
 Alternatives:
 
@@ -27,7 +27,7 @@ Manual steps below match the same flow.
 - **Node.js 20.3+** (required; there is no non-Node CLI)
 - **npm** (comes with Node)
 - **Cursor API key** for real agent runs (`CURSOR_API_KEY`)
-- Optional: **Ollama** for local embeddings, **CodeGraph** (`npm install -g @colbymchenry/codegraph`)
+- Optional: **Ollama** for local embeddings; **GitNexus** (`npm install -g gitnexus`, PolyForm Noncommercial — see below); **CodeGraph** (`npm install -g @colbymchenry/codegraph`)
 
 ## 1. Install Node (if needed)
 
@@ -110,10 +110,17 @@ node "C:\path\to\LLM-Rules-Skills\packages\agent-harness\dist\cli.js" project ad
 
 This seeds shared guidance under harness home and does not write guidance or setup scripts into the target.
 
-The interactive wizard asks **Install CodeGraph now for structural code retrieval?** (`[y/N]`). **y** runs `npm install -g @colbymchenry/codegraph` (or reports that it is already installed). **n** skips — CodeGraph stays optional, same as today. `init` / `deploy` still only write config/gitignore; they do not install the CLI. Manual:
+The interactive wizard stage **Repository intelligence** asks about both providers.
+
+**GitNexus (primary)** — before installing, the wizard warns that GitNexus uses the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/). Free for noncommercial / personal use; commercial use of the OSS package needs a separate license from [Akon Labs](https://akonlabs.com) (`founders@akonlabs.com`). Upstream: [abhigyanpatwari/GitNexus](https://github.com/abhigyanpatwari/GitNexus). Answering **y** confirms you understand those terms and runs `npm install -g gitnexus` (or reports that it is already installed).
+
+**CodeGraph (fallback)** — **y** runs `npm install -g @colbymchenry/codegraph` (or reports that it is already installed). **n** skips.
+
+`init` / `deploy` still only write config/gitignore; they do not install either CLI. Manual:
 
 ```powershell
-npm install -g @colbymchenry/codegraph
+npm install -g gitnexus                 # primary — check PolyForm Noncommercial first
+npm install -g @colbymchenry/codegraph  # fallback
 ```
 
 Or write a repo-local config with `deploy` (does **not** open the dashboard — that is a separate `ui` step):
@@ -204,15 +211,16 @@ The process prints a loopback URL with a one-time access token, for example:
 
 Open that exact URL. The token is generated at startup and is only valid for that UI process.
 
-## 6. Optional: CodeGraph and Ollama
+## 6. Optional: GitNexus, CodeGraph, and Ollama
 
-The install wizard can install CodeGraph when you answer **y**. If you skipped that prompt, or you are following the manual steps:
+The install wizard can install GitNexus and/or CodeGraph when you answer **y**. GitNexus prompts include a PolyForm Noncommercial license warning first. If you skipped those prompts, or you are following the manual steps:
 
 ```powershell
-npm install -g @colbymchenry/codegraph
+npm install -g gitnexus                 # primary — PolyForm Noncommercial; commercial use needs a separate license
+npm install -g @colbymchenry/codegraph  # fallback
 ```
 
-On Windows, global npm binaries often land in `%AppData%\Roaming\npm` — add that directory to User PATH if `codegraph --version` fails in a new terminal.
+On Windows, global npm binaries often land in `%AppData%\Roaming\npm` — add that directory to User PATH if `gitnexus --version` / `codegraph --version` fails in a new terminal.
 
 Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`setup-local-embeddings.ps1` / `.sh`). Enable embeddings in the harness-home project config when ready.
 

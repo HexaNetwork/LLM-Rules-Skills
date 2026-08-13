@@ -239,15 +239,15 @@ _ensure_npm_global_bin_on_path() {
   hash -r 2>/dev/null || true
 }
 
-_codegraph_version() {
-  local bin candidate
+_cli_version() {
+  local name="$1" bin candidate
   _ensure_npm_global_bin_on_path
-  if command -v codegraph >/dev/null 2>&1; then
-    codegraph --version 2>/dev/null && return 0
+  if command -v "$name" >/dev/null 2>&1; then
+    "$name" --version 2>/dev/null && return 0
   fi
   bin="$(_npm_global_bin)"
   if [[ -n "$bin" ]]; then
-    for candidate in "$bin/codegraph" "$bin/codegraph.cmd" "$bin/codegraph.exe"; do
+    for candidate in "$bin/$name" "$bin/$name.cmd" "$bin/$name.exe"; do
       if [[ -e "$candidate" ]]; then
         "$candidate" --version 2>/dev/null && return 0
       fi
@@ -256,43 +256,62 @@ _codegraph_version() {
   return 1
 }
 
-_install_codegraph_cli() {
+_codegraph_version() { _cli_version codegraph; }
+_gitnexus_version() { _cli_version gitnexus; }
+
+_install_npm_global_package() {
+  local display="$1" package="$2" command="$3"
   local existing npm bin ver
-  existing="$(_codegraph_version || true)"
+  existing="$(_cli_version "$command" || true)"
   existing="${existing//$'\r'/}"
   if [[ -n "$existing" ]]; then
-    printf '  %s✓ CodeGraph already installed%s (%s)\n' "$GREEN" "$RESET" "$existing"
+    printf '  %s✓ %s already installed%s (%s)\n' "$GREEN" "$display" "$RESET" "$existing"
     return 0
   fi
   npm="$(_npm_cmd)"
   if [[ -z "$npm" ]]; then
-    printf '  %snpm is not on PATH — cannot install CodeGraph.%s\n' "$RED" "$RESET"
-    note "Install Node.js (includes npm), then: npm install -g @colbymchenry/codegraph"
-    SKIPPED+=("CodeGraph (npm missing)")
+    printf '  %snpm is not on PATH — cannot install %s.%s\n' "$RED" "$display" "$RESET"
+    note "Install Node.js (includes npm), then: npm install -g $package"
+    SKIPPED+=("$display (npm missing)")
     return 0
   fi
-  say "Running npm install -g @colbymchenry/codegraph..."
-  if ! "$npm" install -g @colbymchenry/codegraph; then
-    printf '  %snpm install -g @colbymchenry/codegraph failed.%s\n' "$RED" "$RESET"
-    SKIPPED+=("CodeGraph (npm install failed)")
+  say "Running npm install -g $package..."
+  if ! "$npm" install -g "$package"; then
+    printf '  %snpm install -g %s failed.%s\n' "$RED" "$package" "$RESET"
+    SKIPPED+=("$display (npm install failed)")
     return 0
   fi
   bin="$(_npm_global_bin)"
   _ensure_npm_global_bin_on_path
-  ver="$(_codegraph_version || true)"
+  ver="$(_cli_version "$command" || true)"
   ver="${ver//$'\r'/}"
   if [[ -n "$ver" ]]; then
-    printf '  %s✓ installed CodeGraph%s (%s)\n' "$GREEN" "$RESET" "$ver"
+    printf '  %s✓ installed %s%s (%s)\n' "$GREEN" "$display" "$RESET" "$ver"
     [[ -n "$bin" ]] && note "npm global bin: $bin"
   else
-    warn "CodeGraph installed, but this session cannot find codegraph --version."
+    warn "$display installed, but this session cannot find $command --version."
     if [[ -n "$bin" ]]; then
       note "Add $bin to PATH (Windows default: %AppData%\\Roaming\\npm), then open a new terminal."
     else
       note "Ensure the npm global bin directory is on PATH, then open a new terminal."
     fi
-    SKIPPED+=("CodeGraph PATH (new terminal may be required)")
+    SKIPPED+=("$display PATH (new terminal may be required)")
   fi
+}
+
+_warn_gitnexus_license() {
+  warn "GitNexus is licensed under PolyForm Noncommercial License 1.0.0."
+  note "Free for noncommercial / personal use only. Commercial use of the OSS package needs a separate license from Akon Labs."
+  note "License: https://github.com/abhigyanpatwari/GitNexus/blob/main/LICENSE"
+  note "Commercial / enterprise: https://akonlabs.com or founders@akonlabs.com"
+}
+
+_install_gitnexus_cli() {
+  _install_npm_global_package "GitNexus" "gitnexus" "gitnexus"
+}
+
+_install_codegraph_cli() {
+  _install_npm_global_package "CodeGraph" "@colbymchenry/codegraph" "codegraph"
 }
 
 _read_windows_user_env() {
@@ -488,11 +507,21 @@ if [[ "$INITIALIZED_GIT_REPO" -eq 1 ]]; then
   fi
 fi
 
-# ── 5. CodeGraph ──────────────────────────────────────────────────────────
-stage "CodeGraph"
-say "CodeGraph adds structural code retrieval (enabled by default in harness configs)."
-note "Needs the codegraph CLI on PATH. Skip to leave it optional."
-if confirm "Install CodeGraph now for structural code retrieval?"; then
+# ── 5. Repository intelligence ────────────────────────────────────────────
+stage "Repository intelligence"
+say "Harness structural lookup prefers GitNexus, then falls back to CodeGraph."
+note "Both CLIs are optional. Skip either to leave that provider unset."
+printf '\n'
+_warn_gitnexus_license
+if confirm "Install GitNexus now (primary)? Confirm you understand the license terms above."; then
+  _install_gitnexus_cli
+else
+  note "Skipped GitNexus. Install later with: npm install -g gitnexus"
+fi
+printf '\n'
+say "CodeGraph is the fallback structural provider."
+note "Needs the codegraph CLI on PATH."
+if confirm "Install CodeGraph now (fallback)?"; then
   _install_codegraph_cli
 else
   note "Skipped CodeGraph. Install later with: npm install -g @colbymchenry/codegraph"

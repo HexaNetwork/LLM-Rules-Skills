@@ -5,7 +5,8 @@
 
 .DESCRIPTION
   Lean walkthrough: Node check, build, CURSOR_API_KEY (Windows User env - never .env),
-  target project registration (project add), and optional dashboard start.
+  target project registration (project add), optional GitNexus/CodeGraph CLIs
+  (with GitNexus license warning), and optional dashboard start.
 
 .EXAMPLE
   .\scripts\install-agent-harness.ps1
@@ -174,17 +175,18 @@ function Add-NpmGlobalBinToPath {
   return $bin
 }
 
-function Get-CodegraphVersion {
+function Get-NpmGlobalCliVersion {
+  param([Parameter(Mandatory = $true)][string]$CommandName)
   $bin = Add-NpmGlobalBinToPath
   $candidates = @()
   if ($bin) {
     $candidates += @(
-      (Join-Path $bin "codegraph.cmd"),
-      (Join-Path $bin "codegraph.exe"),
-      (Join-Path $bin "codegraph")
+      (Join-Path $bin "$CommandName.cmd"),
+      (Join-Path $bin "$CommandName.exe"),
+      (Join-Path $bin $CommandName)
     )
   }
-  foreach ($name in @("codegraph.cmd", "codegraph.exe", "codegraph")) {
+  foreach ($name in @("$CommandName.cmd", "$CommandName.exe", $CommandName)) {
     $cmd = Get-Command $name -ErrorAction SilentlyContinue
     if ($cmd -and $cmd.Source) { $candidates += $cmd.Source }
   }
@@ -203,42 +205,65 @@ function Get-CodegraphVersion {
   return $null
 }
 
-function Install-CodegraphCli {
-  $existing = Get-CodegraphVersion
+function Get-GitnexusVersion { return Get-NpmGlobalCliVersion -CommandName "gitnexus" }
+function Get-CodegraphVersion { return Get-NpmGlobalCliVersion -CommandName "codegraph" }
+
+function Install-NpmGlobalPackage {
+  param(
+    [Parameter(Mandatory = $true)][string]$DisplayName,
+    [Parameter(Mandatory = $true)][string]$PackageName,
+    [Parameter(Mandatory = $true)][string]$CommandName
+  )
+  $existing = Get-NpmGlobalCliVersion -CommandName $CommandName
   if ($existing) {
-    Write-Ok "CodeGraph already installed ($existing)"
+    Write-Ok "$DisplayName already installed ($existing)"
     return
   }
   $npm = Get-NpmCommand
   if (-not $npm) {
-    Write-Host "  npm is not on PATH - cannot install CodeGraph." -ForegroundColor Red
-    Write-Note "Install Node.js (includes npm), then: npm install -g @colbymchenry/codegraph"
-    $script:SKIPPED.Add("CodeGraph (npm missing)") | Out-Null
+    Write-Host "  npm is not on PATH - cannot install $DisplayName." -ForegroundColor Red
+    Write-Note "Install Node.js (includes npm), then: npm install -g $PackageName"
+    $script:SKIPPED.Add("$DisplayName (npm missing)") | Out-Null
     return
   }
-  Write-Say "Running npm install -g @colbymchenry/codegraph..."
-  & $npm.Source install -g @colbymchenry/codegraph
+  Write-Say "Running npm install -g $PackageName..."
+  & $npm.Source install -g $PackageName
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "npm install -g @colbymchenry/codegraph failed (exit $LASTEXITCODE)" -ForegroundColor Red
-    $script:SKIPPED.Add("CodeGraph (npm install failed)") | Out-Null
+    Write-Host "npm install -g $PackageName failed (exit $LASTEXITCODE)" -ForegroundColor Red
+    $script:SKIPPED.Add("$DisplayName (npm install failed)") | Out-Null
     return
   }
   $bin = Add-NpmGlobalBinToPath
-  $ver = Get-CodegraphVersion
+  $ver = Get-NpmGlobalCliVersion -CommandName $CommandName
   if ($ver) {
-    Write-Ok "installed CodeGraph ($ver)"
+    Write-Ok "installed $DisplayName ($ver)"
     if ($bin) {
       Write-Note "npm global bin: $bin"
     }
   } else {
-    Write-WarnLine "CodeGraph installed, but this session cannot find codegraph --version."
+    Write-WarnLine "$DisplayName installed, but this session cannot find $CommandName --version."
     if ($bin) {
       Write-Note "Add $bin to your User PATH (Windows default: %AppData%\Roaming\npm), then open a new terminal."
     } else {
       Write-Note "Add %AppData%\Roaming\npm to your User PATH, then open a new terminal."
     }
-    $script:SKIPPED.Add("CodeGraph PATH (new terminal may be required)") | Out-Null
+    $script:SKIPPED.Add("$DisplayName PATH (new terminal may be required)") | Out-Null
   }
+}
+
+function Write-GitnexusLicenseWarning {
+  Write-WarnLine "GitNexus is licensed under PolyForm Noncommercial License 1.0.0."
+  Write-Note "Free for noncommercial / personal use only. Commercial use of the OSS package needs a separate license from Akon Labs."
+  Write-Note "License: https://github.com/abhigyanpatwari/GitNexus/blob/main/LICENSE"
+  Write-Note "Commercial / enterprise: https://akonlabs.com or founders@akonlabs.com"
+}
+
+function Install-GitnexusCli {
+  Install-NpmGlobalPackage -DisplayName "GitNexus" -PackageName "gitnexus" -CommandName "gitnexus"
+}
+
+function Install-CodegraphCli {
+  Install-NpmGlobalPackage -DisplayName "CodeGraph" -PackageName "@colbymchenry/codegraph" -CommandName "codegraph"
 }
 
 function Get-WindowsUserEnv {
@@ -475,11 +500,21 @@ if ($script:InitializedGitRepo) {
   }
 }
 
-# -- 5. CodeGraph ----------------------------------------------------------
-Write-Stage "CodeGraph"
-Write-Say "CodeGraph adds structural code retrieval (enabled by default in harness configs)."
-Write-Note "Needs the codegraph CLI on PATH. Skip to leave it optional."
-if (Confirm-Yes "Install CodeGraph now for structural code retrieval?") {
+# -- 5. Repository intelligence --------------------------------------------
+Write-Stage "Repository intelligence"
+Write-Say "Harness structural lookup prefers GitNexus, then falls back to CodeGraph."
+Write-Note "Both CLIs are optional. Skip either to leave that provider unset."
+Write-Host ""
+Write-GitnexusLicenseWarning
+if (Confirm-Yes "Install GitNexus now (primary)? Confirm you understand the license terms above.") {
+  Install-GitnexusCli
+} else {
+  Write-Note "Skipped GitNexus. Install later with: npm install -g gitnexus"
+}
+Write-Host ""
+Write-Say "CodeGraph is the fallback structural provider."
+Write-Note "Needs the codegraph CLI on PATH."
+if (Confirm-Yes "Install CodeGraph now (fallback)?") {
   Install-CodegraphCli
 } else {
   Write-Note "Skipped CodeGraph. Install later with: npm install -g @colbymchenry/codegraph"

@@ -12,7 +12,7 @@ Shared engineering skills and rules, plus a durable Agent Harness for turning an
 
 ## Agent Harness
 
-The harness uses Wayfinder-style decision maps, local Markdown issues, offline lexical retrieval with optional CodeGraph repository traversal, bounded fresh agent sessions, optional TDD, deterministic command evidence, harness-owned git publication, and an authenticated local dashboard.
+The harness uses Wayfinder-style decision maps, local Markdown issues, offline lexical retrieval with optional GitNexus/CodeGraph repository intelligence, bounded fresh agent sessions, optional TDD, deterministic command evidence, harness-owned git publication, and an authenticated local dashboard.
 
 Its knowledge index supports a scope gate: `General/` is indexed as universal guidance and `E&E/` as `exploration-and-empire` project guidance. For each worker step, the harness deterministically selects only relevant rules and skills by role, known paths, and lexical relevance, then uses the remaining context budget for repository documents. A normal query searches only global material plus the active project's documents; a different project's shared material must be named explicitly.
 

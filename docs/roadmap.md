@@ -6,7 +6,7 @@
 - Editable reflect gate, then a grill-me interview over a visible open-unknowns register
 - Local Markdown brief/resolutions/unknowns/tasks as the default tracker
 - Offline full-document storage and deterministic lexical retrieval
-- Optional fail-soft Graphify traversal for structural repository lookup
+- Optional fail-soft CodeGraph traversal for structural repository lookup
 - Complete work packets with bounded resumable grill episodes and no provider-session dependency for recovery
 - Exact HITL question/answer persistence, batched independent questions, skip/park, and operator notes
 - Tracer-bullet task planning and sequential dependency execution

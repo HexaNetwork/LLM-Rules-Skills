@@ -379,6 +379,12 @@ export const BuildTaskSchema = z.object({
   testPaths: z.array(z.string()).default([]),
   changedFiles: z.array(z.string()).default([]),
   reviewSummary: z.string().optional(),
+  /** Retained provider context so verification and task-review repairs return to the implementer. */
+  implementerSession: z
+    .object({
+      providerSessionId: z.string().min(1),
+    })
+    .optional(),
   commitSha: z.string().optional(),
   failure: z.string().optional(),
   // Last failed-transition fingerprint; identical evidence blocks another model call.

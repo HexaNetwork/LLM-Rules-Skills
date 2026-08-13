@@ -11,10 +11,10 @@ import type { HarnessConfig } from "../config/schema.js";
 import type { GitService } from "../git.js";
 import { GitService as GitServiceImpl } from "../git.js";
 import {
-  GraphifyRepositoryLookup,
-  runGraphify,
-  type GraphifyRunner,
-} from "../graphify.js";
+  CodegraphRepositoryLookup,
+  runCodegraph,
+  type CodegraphRunner,
+} from "../codegraph.js";
 import type { LocalKnowledgeBase } from "../knowledge.js";
 import { LocalKnowledgeBase as LocalKnowledgeBaseImpl } from "../knowledge.js";
 import { RunStore } from "../store.js";
@@ -51,7 +51,7 @@ export type ApplicationDependencies = {
   commands: CommandRunner;
   clock: Clock;
   sleep(ms: number): Promise<void>;
-  graphifyRunner: GraphifyRunner;
+  codegraphRunner: CodegraphRunner;
   projectContext?: ProjectContext;
 };
 
@@ -62,7 +62,7 @@ export type HarnessDependencies = {
   store?: RunStore;
   knowledge?: LocalKnowledgeBase;
   git?: GitService;
-  graphifyRunner?: GraphifyRunner;
+  codegraphRunner?: CodegraphRunner;
   /** Test seam for provider-retry backoff; defaults to real wall-clock sleep. */
   sleep?: (ms: number) => Promise<void>;
   clock?: Clock;
@@ -85,13 +85,13 @@ export function createApplicationDependencies(
 ): ApplicationDependencies {
   const paths = dependencies.paths ?? resolveHarnessPaths(config);
   const store = dependencies.store ?? new RunStore(config, paths.stateRoot);
-  const graphifyRunner = dependencies.graphifyRunner ?? runGraphify;
+  const codegraphRunner = dependencies.codegraphRunner ?? runCodegraph;
   const project = dependencies.projectContext;
   const knowledge =
     dependencies.knowledge ??
     new LocalKnowledgeBaseImpl(
       config,
-      new GraphifyRepositoryLookup(config, graphifyRunner, paths),
+      new CodegraphRepositoryLookup(config, codegraphRunner, paths),
       paths,
       {
         projectRoot:
@@ -111,7 +111,7 @@ export function createApplicationDependencies(
     commands: dependencies.commands ?? processCommandRunner,
     clock: dependencies.clock ?? systemClock,
     sleep: dependencies.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
-    graphifyRunner,
+    codegraphRunner,
     projectContext: dependencies.projectContext,
   };
 }

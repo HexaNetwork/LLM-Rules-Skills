@@ -56,8 +56,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       await writeFile(target, defaultConfigYaml(), "utf8");
       await mkdir(path.join(project, ".agent-harness"), { recursive: true });
       await ensureIgnored(path.join(project, ".gitignore"), ".agent-harness/");
-      await ensureIgnored(path.join(project, ".gitignore"), "graphify-out/");
-      await ensureGraphifyIgnore(project);
+      await ensureIgnored(path.join(project, ".gitignore"), ".codegraph/");
       console.log(`Wrote ${target}`);
     });
 
@@ -69,7 +68,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .option("--sources <paths>", "comma-separated repository-relative source paths")
     .option("--ollama", "configure local Ollama semantic retrieval", false)
     .option("--model <name>", "Ollama embedding model", "qwen3-embedding")
-    .option("--no-graphify", "advanced: disable structural code retrieval")
+    .option("--no-codegraph", "advanced: disable structural code retrieval")
     .option("--refresh", "build the first knowledge index", false)
     .action(async (options: {
       project: string;
@@ -77,7 +76,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       sources?: string;
       ollama: boolean;
       model: string;
-      graphify: boolean;
+      codegraph: boolean;
       refresh: boolean;
     }) => {
       const project = path.resolve(options.project);
@@ -99,21 +98,20 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         sources,
         ollama: options.ollama,
         model: options.model,
-        graphify: options.graphify,
+        codegraph: options.codegraph,
       }), "utf8");
       await mkdir(path.join(project, ".agent-harness"), { recursive: true });
       await ensureIgnored(path.join(project, ".gitignore"), ".agent-harness/");
-      await ensureIgnored(path.join(project, ".gitignore"), "graphify-out/");
-      await ensureGraphifyIgnore(project);
+      await ensureIgnored(path.join(project, ".gitignore"), ".codegraph/");
       console.log(`Deployed harness config to ${target}`);
       console.log(
         `Knowledge sources: ${sources.map((source) => `${source.path} (${source.scope})`).join(", ") || "none"}`,
       );
       if (options.ollama) console.log(`Semantic retrieval: Ollama / ${options.model}`);
       console.log(
-        options.graphify
-          ? "Repository structure: Graphify (requires `graphify` on PATH; graph built before new runs and after task commits)"
-          : "Repository structure: Graphify disabled (--no-graphify)",
+        options.codegraph
+          ? "Repository structure: CodeGraph (requires `codegraph` on PATH; index built before new runs and after task commits)"
+          : "Repository structure: CodeGraph disabled (--no-codegraph)",
       );
       if (options.refresh) {
         const { config } = await loadConfig(target);
@@ -123,7 +121,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       await warnIfNotGitRepository(project);
       await warnIfDeployedFilesUntracked(project, [
         target,
-        path.join(project, ".graphifyignore"),
+        path.join(project, ".gitignore"),
       ]);
     });
 
@@ -735,7 +733,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       });
     });
 
-  const knowledge = program.command("knowledge").description("Manage local lexical and Graphify retrieval");
+  const knowledge = program.command("knowledge").description("Manage local lexical and CodeGraph retrieval");
 
   knowledge
     .command("refresh")
@@ -1043,32 +1041,6 @@ async function ensureIgnored(filePath: string, entry: string): Promise<void> {
   if (current.split(/\r?\n/).includes(entry)) return;
   const separator = current.length > 0 && !current.endsWith("\n") ? "\n" : "";
   await writeFile(filePath, `${current}${separator}${entry}\n`, "utf8");
-}
-
-/**
- * Graphify merges .gitignore + .graphifyignore. Exclude harness package trees and
- * underscore-prefixed .txt scratch dumps from the structural graph.
- */
-const GRAPHIFY_IGNORE_DEFAULTS = ["agent-harness/", "**/_*.txt"] as const;
-
-async function ensureGraphifyIgnore(project: string): Promise<void> {
-  const filePath = path.join(project, ".graphifyignore");
-  if (!(await exists(filePath))) {
-    await writeFile(
-      filePath,
-      [
-        "# Defaults from agent-harness for Graphify structural mapping.",
-        "# Edit freely; init/deploy append missing defaults only.",
-        ...GRAPHIFY_IGNORE_DEFAULTS,
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    return;
-  }
-  for (const entry of GRAPHIFY_IGNORE_DEFAULTS) {
-    await ensureIgnored(filePath, entry);
-  }
 }
 
 const execFileAsync = promisify(execFile);

@@ -43,7 +43,7 @@ export async function handleKnowledgeRoutes(
         model: embeddings.model,
         endpoint: embeddings.endpoint,
       },
-      graphify: { enabled: projectConfig.knowledge.graphify.enabled },
+      codegraph: { enabled: projectConfig.knowledge.codegraph.enabled },
       sources: projectConfig.knowledge.sources.map((source) => source.path),
     });
     return true;

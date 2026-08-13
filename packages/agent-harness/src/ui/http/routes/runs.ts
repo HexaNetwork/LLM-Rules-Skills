@@ -60,7 +60,7 @@ function initialSetupFromOpened(
     config: opened.config,
     store: ctx.store,
     paths: opened.paths,
-    graphifyRunner: ctx.graphifyRunner,
+    codegraphRunner: ctx.codegraphRunner,
     git: opened.engine.git,
     knowledge: opened.engine.knowledge,
     advance: () => opened.engine.advance(runId),
@@ -85,7 +85,7 @@ export async function handleRunsRoutes(
         configPath: ctx.configPath,
         models: projectConfig.models,
         agent: { provider: projectConfig.agent.provider, ...ctx.agentReadiness },
-        graphify: { enabled: projectConfig.knowledge.graphify.enabled },
+        codegraph: { enabled: projectConfig.knowledge.codegraph.enabled },
         git: {
           enabled: projectConfig.git.enabled,
           baseBranch: projectConfig.git.baseBranch,
@@ -129,7 +129,7 @@ export async function handleRunsRoutes(
       projectConfig.git.openPullRequest;
     const smallModel = optionalString(body.smallModel, "smallModel", 200);
     const capableModel = optionalString(body.capableModel, "capableModel", 200);
-    const graphify = optionalBoolean(body.graphify, "graphify");
+    const codegraph = optionalBoolean(body.codegraph, "codegraph");
     const baseBranchOverride = optionalString(body.baseBranch, "baseBranch", 200);
     const baseBranch = await resolveBaseBranchOverride(projectConfig, baseBranchOverride);
     const runConfig = HarnessConfigSchema.parse({
@@ -148,20 +148,20 @@ export async function handleRunsRoutes(
       },
       knowledge: {
         ...projectConfig.knowledge,
-        graphify: {
-          ...projectConfig.knowledge.graphify,
-          enabled: graphify ?? projectConfig.knowledge.graphify.enabled,
+        codegraph: {
+          ...projectConfig.knowledge.codegraph,
+          enabled: codegraph ?? projectConfig.knowledge.codegraph.enabled,
         },
       },
     });
     const engine = new HarnessEngine(runConfig, {
       backend: ctx.backend,
-      graphifyRunner: ctx.graphifyRunner,
+      codegraphRunner: ctx.codegraphRunner,
     });
     // Creating the durable run must be quick. A first semantic index may
     // take minutes for a large repository, so run it in the visible job
     // queue rather than holding the browser request open.
-    // UI already prepares Graphify and refreshes knowledge inside the job
+    // UI already prepares CodeGraph and refreshes knowledge inside the job
     // queue so the browser request can return immediately.
     const state = await engine.start(idea, runId, false, false);
     if (state.phase !== "blocked" && state.phase !== "cancelled" && state.phase !== "completed") {
@@ -169,7 +169,7 @@ export async function handleRunsRoutes(
         const opened = await openRunHarness(projectConfig, runId, {
           backend: ctx.backend,
           store: ctx.store,
-          graphifyRunner: ctx.graphifyRunner,
+          codegraphRunner: ctx.codegraphRunner,
         });
         await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
       });
@@ -219,7 +219,7 @@ export async function handleRunsRoutes(
     const retrievalPolicy = runConfig
       ? {
           rag: runConfig.workflow.rag,
-          graphify: runConfig.knowledge.graphify.enabled,
+          codegraph: runConfig.knowledge.codegraph.enabled,
         }
       : undefined;
     const deliveryWorkspace = workspace
@@ -273,7 +273,7 @@ export async function handleRunsRoutes(
     const opened = await openRunHarness(
       projectConfig,
       runId,
-      { backend: ctx.backend, store: ctx.store, graphifyRunner: ctx.graphifyRunner },
+      { backend: ctx.backend, store: ctx.store, codegraphRunner: ctx.codegraphRunner },
       {
         validateWorktree:
           action !== "cancel" &&
@@ -289,7 +289,7 @@ export async function handleRunsRoutes(
         ? new HarnessEngine(opened.config, {
             backend: ctx.backend,
             store: ctx.store,
-            graphifyRunner: ctx.graphifyRunner,
+            codegraphRunner: ctx.codegraphRunner,
           })
         : opened.engine;
     if (action === "continue") {
@@ -303,7 +303,7 @@ export async function handleRunsRoutes(
       // Jobs are intentionally process-local. A dashboard restart keeps the
       // durable run state but cannot safely assume that an interrupted
       // provider call should be retried. Make recovery an explicit action.
-      // Runs still in `new` retry Graphify then the document index; later
+      // Runs still in `new` retry CodeGraph then the document index; later
       // phases refresh the index in case it was cleared while stopped.
       ctx.jobs.enqueue(runId, "resume run", async () => {
         const latest = await ctx.store.load(runId);
@@ -486,10 +486,10 @@ export async function handleRunsRoutes(
       const rag = optionalBoolean(body.rag, "rag");
       if (rag == null) throw new HttpError(400, "rag must be a boolean");
       ctx.jobs.enqueue(runId, action, () => engine.setRag(runId, rag));
-    } else if (action === "set_graphify") {
-      const enabled = optionalBoolean(body.graphify, "graphify");
-      if (enabled == null) throw new HttpError(400, "graphify must be a boolean");
-      ctx.jobs.enqueue(runId, action, () => engine.setGraphify(runId, enabled));
+    } else if (action === "set_codegraph") {
+      const enabled = optionalBoolean(body.codegraph, "codegraph");
+      if (enabled == null) throw new HttpError(400, "codegraph must be a boolean");
+      ctx.jobs.enqueue(runId, action, () => engine.setCodegraph(runId, enabled));
     } else if (action === "stop") {
       // Stop must not wait behind the work it is pausing after (same as cancel).
       const state = await engine.requestStop(runId);

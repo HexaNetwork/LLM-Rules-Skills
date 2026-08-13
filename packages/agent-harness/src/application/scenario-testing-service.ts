@@ -93,7 +93,7 @@ export class ScenarioTestingService {
       expectedOutput: SCENARIO_WRITER_EXPECTED_OUTPUT,
       schema: ScenarioWriterOutputSchema,
       // Anchor retrieval to the neighborhoods implementers actually touched,
-      // not just scenario prose, so Graphify starts from concrete symbols.
+      // not just scenario prose, so CodeGraph starts from concrete symbols.
       knowledgeQuery: compactDomainSeed(
         ...knowledgeSeedsFromTasks(linkedTasks),
         ...scenarios.flatMap((scenario) => [

@@ -60,14 +60,14 @@ export type KnowledgeClassification = {
 
 export type KnowledgeSearchOptions = {
   repository?: boolean;
-  /** When false, skip document lexical/semantic search (Graphify-only path). Default true. */
+  /** When false, skip document lexical/semantic search (CodeGraph-only path). Default true. */
   documents?: boolean;
   projectId?: string;
   includeProjects?: string[];
   maxCharacters?: number;
   /** When set, only this run's `.agent-harness/runs/<id>/*` artifacts are visible. */
   runId?: string;
-  /** Domain seed tried when Graphify shaping of `query` is empty/generic. */
+  /** Domain seed tried when CodeGraph shaping of `query` is empty/generic. */
   fallbackQuery?: string;
   /** Paths from the invocation (affectedPaths / changedFiles) for ranking affinity. */
   pathHints?: string[];
@@ -94,14 +94,14 @@ export type RetrievalOmission = {
     | "per-source-cap"
     | "limit"
     | "diversity-gap"
-    | "graphify-skipped"
+    | "codegraph-skipped"
     | "character-budget";
 };
 
 export type RetrievalAudit = {
   query: string;
   fallbackQuery?: string;
-  graphify: {
+  codegraph: {
     shapedQuery: string;
     usedFallback: boolean;
     included: boolean;

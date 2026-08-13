@@ -17,23 +17,23 @@ describe("token-conscious defaults", () => {
     expect(config.agent.promptBuilder).toBe(false);
     expect(config.workflow.maxGrillQuestionsPerEpisode).toBe(5);
     expect(config.workflow.staleAnswerMinutes).toBe(30);
-    expect(config.knowledge.graphify.enabled).toBe(false);
-    expect(config.knowledge.graphify.updateTimeoutMs).toBe(600_000);
-    expect(config.knowledge.graphify.queryTimeoutMs).toBe(15_000);
+    expect(config.knowledge.codegraph.enabled).toBe(true);
+    expect(config.knowledge.codegraph.updateTimeoutMs).toBe(600_000);
+    expect(config.knowledge.codegraph.queryTimeoutMs).toBe(15_000);
     expect(config.workflow.rag).toBe(true);
     expect(config.workflow).not.toHaveProperty("tdd");
-    expect(config.knowledge.graphify.roles).toContain("implementer");
-    expect(config.knowledge.graphify.roles).toContain("reviewer");
-    expect(config.knowledge.graphify.roles).toContain("task-reviewer");
-    expect(config.knowledge.graphify.roles).not.toContain("message-writer");
-    expect(config.knowledge.graphify.roles).not.toContain("reflector");
-    expect(config.knowledge.graphify.roles).not.toContain("griller");
+    expect(config.knowledge.codegraph.roles).toContain("implementer");
+    expect(config.knowledge.codegraph.roles).toContain("reviewer");
+    expect(config.knowledge.codegraph.roles).toContain("task-reviewer");
+    expect(config.knowledge.codegraph.roles).not.toContain("message-writer");
+    expect(config.knowledge.codegraph.roles).not.toContain("reflector");
+    expect(config.knowledge.codegraph.roles).not.toContain("griller");
     expect(config.workflow.contextCharacters).toBe(12_000);
     expect(config.workflow.inputCharacters).toBe(24_000);
     // Prefer Math.min(20_000, inputCharacters/2) so a full-size diff fits inputCharacters.
     expect(config.workflow.reviewDiffCharacters).toBe(12_000);
-    expect(config.workflow.graphifyCharacters).toBe(3_000);
-    expect(config.knowledge.graphify.queryBudgetTokens).toBe(4_000);
+    expect(config.workflow.codegraphCharacters).toBe(3_000);
+    expect(config.knowledge.codegraph.maxFiles).toBe(12);
     expect(config.workflow.generateCommitMessages).toBe(false);
     expect(config.workflow.maxRunTokens).toBe(0);
     expect(config.workflow.maxRunCostUsd).toBe(0);
@@ -56,7 +56,7 @@ describe("token-conscious defaults", () => {
     expect(config.knowledge.minLexicalScore).toBe(0.05);
     expect(config.knowledge.maxChunksPerSource).toBe(1);
     expect(config.knowledge.maxForTopSource).toBe(2);
-    expect(config.knowledge.graphify.stopwords).toEqual([]);
+    expect(config.knowledge.codegraph.stopwords).toEqual([]);
     expect(config.workflow.testPathPatterns).toEqual([
       "tests/**",
       "test/**",
@@ -65,7 +65,7 @@ describe("token-conscious defaults", () => {
       "**/*.spec.*",
       "**/*_test.*",
       "src/test/**"]);
-    expect(config.knowledge.graphify.sourceExtensions).toEqual([
+    expect(config.knowledge.codegraph.sourceExtensions).toEqual([
       ".ts",
       ".tsx",
       ".js",
@@ -114,13 +114,13 @@ describe("token-conscious defaults", () => {
       enabled: true,
       provider: "ollama",
       model: "qwen3-embedding"});
-    expect(deployed.knowledge.graphify).toMatchObject({
+    expect(deployed.knowledge.codegraph).toMatchObject({
       enabled: true,
       updateOnRefresh: false,
       updateTimeoutMs: 600_000});
     expect(defaultConfigYaml()).toContain("updateTimeoutMs: 600000");
-    const documentOnly = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({ graphify: false })));
-    expect(documentOnly.knowledge.graphify).toMatchObject({
+    const documentOnly = HarnessConfigSchema.parse(yaml.load(deploymentConfigYaml({ codegraph: false })));
+    expect(documentOnly.knowledge.codegraph).toMatchObject({
       enabled: false,
       updateOnRefresh: false});
   });
@@ -252,6 +252,28 @@ repositoryRoot: .
       workflow: { maxStepsPerRun: 25 }});
     expect("maxStepsPerRun" in parsed.workflow).toBe(false);
     expect(parsed.workflow).not.toHaveProperty("tdd");
+  });
+
+  it("rewrites frozen Graphify keys onto CodeGraph instead of enabling by default", () => {
+    const frozen = normalizeFrozenRunConfig({
+      repositoryRoot: "C:/tmp/project",
+      workflow: { graphifyCharacters: 2_500 },
+      knowledge: {
+        graphify: {
+          enabled: false,
+          command: "graphify-custom",
+          queryBudgetTokens: 8,
+          updateTimeoutMs: 120_000,
+        },
+      },
+    });
+    expect(frozen.knowledge.codegraph.enabled).toBe(false);
+    expect(frozen.knowledge.codegraph.command).toBe("graphify-custom");
+    expect(frozen.knowledge.codegraph.maxFiles).toBe(8);
+    expect(frozen.knowledge.codegraph.updateTimeoutMs).toBe(120_000);
+    expect(frozen.workflow.codegraphCharacters).toBe(2_500);
+    expect(frozen.knowledge).not.toHaveProperty("graphify");
+    expect(frozen.workflow).not.toHaveProperty("graphifyCharacters");
   });
 
   it("migrates frozen-run snapshots missing knowledge.guidance via normalizeFrozenRunConfig", () => {

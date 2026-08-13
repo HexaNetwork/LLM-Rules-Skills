@@ -45,7 +45,7 @@ agent:
   sandbox: true
 
 workflow:
-  # Document RAG into work packets (independent of Graphify / guidance).
+  # Document RAG into work packets (independent of CodeGraph / guidance).
   rag: true
   # Hard spend ceilings (0 = unlimited); enforced between steps, never mid-step.
   maxRunTokens: 0
@@ -73,8 +73,8 @@ workflow:
   inputCharacters: 24000
   # Reviewer diff budget (defaults to min(20000, inputCharacters/2) when omitted).
   reviewDiffCharacters: 12000
-  # Graphify excerpt sub-budget inside contextCharacters.
-  graphifyCharacters: 3000
+  # CodeGraph excerpt sub-budget inside contextCharacters.
+  codegraphCharacters: 3000
   # Deterministic commit subjects by default; PR bodies still use the model.
   generateCommitMessages: false
   # Paths treated as tests for test-writer path validation; tune for Go (_test.go), Maven (src/test), etc.
@@ -215,23 +215,22 @@ knowledge:
     minSemanticOnlySimilarity: 0.45
     lexicalWeight: 1
     semanticWeight: 1
-  graphify:
-    # Structural code retrieval is on for new harnesses. Use --no-graphify
+  codegraph:
+    # Structural code retrieval is on for new harnesses. Use --no-codegraph
     # during deploy, or set enabled: false, for document-only projects.
     enabled: true
-    command: graphify
+    command: codegraph
     # Initial setup happens before the first new run; later rebuilds happen
     # after each verified source-file commit. Keep this false so a document
     # index refresh does not needlessly rebuild the repository graph.
     updateOnRefresh: false
     updateTimeoutMs: 600000
     queryTimeoutMs: 15000
-    # Larger CLI budget so seed nodes are present for harness re-ranking;
-    # prompt size remains workflow.graphifyCharacters.
-    queryBudgetTokens: 4000
+    # Explore file cap; prompt size remains workflow.codegraphCharacters.
+    maxFiles: 12
     # Extra stopwords merged over the built-in English + harness lists.
     stopwords: []
-    # File extensions that trigger a graphify rebuild after a verified commit.
+    # File extensions that trigger a CodeGraph rebuild after a verified commit.
     sourceExtensions:
       - .ts
       - .tsx
@@ -260,7 +259,7 @@ export function deploymentConfigYaml(options: {
   sources?: Array<string | { path: string; scope?: KnowledgeScope; visibility?: KnowledgeVisibility }>;
   ollama?: boolean;
   model?: string;
-  graphify?: boolean;
+  codegraph?: boolean;
 } = {}): string {
   const value: unknown = yaml.load(defaultConfigYaml());
   if (!isRecord(value) || !isRecord(value.knowledge)) {
@@ -294,9 +293,9 @@ export function deploymentConfigYaml(options: {
           },
         }
       : {}),
-    ...(options.graphify === false
+    ...(options.codegraph === false
       ? {
-          graphify: {
+          codegraph: {
             enabled: false,
             updateOnRefresh: false,
           },

@@ -175,6 +175,51 @@ describe("task-reviewer routing", () => {
     expect(events).toContain('"reviewRepairRoute":"production"');
   });
 
+  it("returns task-review production findings to the retained implementer session", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, { agent: { promptBuilder: false } as never });
+    let implementerProviderSessionId: string | undefined;
+    let implementerContinuation = "";
+    let reviewCalls = 0;
+    const backend = createFakeBackend({
+      "task-reviewer": () => {
+        reviewCalls += 1;
+        return reviewCalls === 1
+          ? {
+              approved: false,
+              summary: "null dereference",
+              findings: [
+                {
+                  severity: "blocking" as const,
+                  kind: "production" as const,
+                  message: "Handle null input",
+                },
+              ],
+            }
+          : { approved: true, summary: "fixed", findings: [] };
+      },
+      implementer: (request) => {
+        implementerProviderSessionId = request.providerSessionId;
+        implementerContinuation = request.continuationPrompt ?? "";
+        return { summary: "repaired", changedFiles: ["src/greet.ts"] };
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+    const started = await seedReviewingRun(
+      engine,
+      config,
+      "task-review-retained-implementer",
+      reviewingTask({ implementerSession: { providerSessionId: "implementer-context-1" } }),
+    );
+
+    const repaired = await engine.advance(started.runId);
+
+    expect(implementerProviderSessionId).toBe("implementer-context-1");
+    expect(implementerContinuation).toContain("Handle null input");
+    expect(repaired.tasks[0]?.status).toBe("done");
+    expect(repaired.tasks[0]?.implementerSession).toBeUndefined();
+  });
+
   it("invokes reviewer, not task-reviewer, during final_review", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, { agent: { promptBuilder: false } as never });

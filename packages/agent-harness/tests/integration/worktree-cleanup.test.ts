@@ -28,7 +28,7 @@ describe("worktree cleanup (Slice 7)", () => {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const engine = new HarnessEngine(fixture.config, { backend: createFakeBackend({}) });
@@ -43,7 +43,7 @@ describe("worktree cleanup (Slice 7)", () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true, baseBranch: "main" },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false, maxResults: 0, maxCharacters: 1 } }}});
+        knowledge: { codegraph: { enabled: false }, guidance: { enabled: false, maxResults: 0, maxCharacters: 1 } }}});
     await fixture.initGit({ branch: "main" });
     const engine = new HarnessEngine(fixture.config, { backend: createFakeBackend({}) });
     await engine.start("Active run", "cleanup-active", false, false);

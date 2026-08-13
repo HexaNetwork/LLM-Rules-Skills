@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
-import type { RepositoryLookup } from "../../src/graphify.js";
+import type { RepositoryLookup } from "../../src/codegraph.js";
 import { LocalKnowledgeBase } from "../../src/knowledge.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
@@ -86,8 +86,8 @@ describe("LocalKnowledgeBase", () => {
       async search() {
         return {
           result: {
-            source: "graphify:graphify-out/graph.json",
-            title: "Repository relationships (Graphify)",
+            source: "codegraph:.codegraph",
+            title: "Repository relationships (CodeGraph)",
             excerpt: "AgentCoordinator --calls--> LocalKnowledgeBase",
             score: 0},
           shapedQuery: "AgentCoordinator",
@@ -99,7 +99,7 @@ describe("LocalKnowledgeBase", () => {
     const results = await knowledge.search("AgentCoordinator context", 2);
 
     expect(results).toHaveLength(2);
-    expect(results[0]?.source).toBe("graphify:graphify-out/graph.json");
+    expect(results[0]?.source).toBe("codegraph:.codegraph");
     expect(results[0]?.score).toBe(0);
     expect(results[1]?.source).toBe("docs/architecture.md");
   });
@@ -689,7 +689,7 @@ describe("LocalKnowledgeBase", () => {
       "docs/features/dungeon-sign-cache.md"]);
   });
 
-  it("supports documents-off Graphify-only search", async () => {
+  it("supports documents-off CodeGraph-only search", async () => {
     const root = await fixtureRoot();
     await writeFile(
       path.join(root, "docs", "settlement.md"),
@@ -706,8 +706,8 @@ describe("LocalKnowledgeBase", () => {
           shapedQuery: "SettlementWindow",
           usedFallback: false,
           result: {
-            source: "graphify:graphify-out/graph.json",
-            title: "Repository relationships (Graphify)",
+            source: "codegraph:.codegraph",
+            title: "Repository relationships (CodeGraph)",
             excerpt: "SettlementWindow -> Ledger",
             score: 1}};
       }};
@@ -719,9 +719,9 @@ describe("LocalKnowledgeBase", () => {
       repository: true});
 
     expect(results).toHaveLength(1);
-    expect(results[0]?.source).toBe("graphify:graphify-out/graph.json");
+    expect(results[0]?.source).toBe("codegraph:.codegraph");
     expect(audit.skipped).toBe("rag-disabled");
-    expect(audit.graphify.included).toBe(true);
+    expect(audit.codegraph.included).toBe(true);
   });
 
   it("diversifies results so one noisy source cannot fill every slot", async () => {
@@ -906,7 +906,7 @@ describe("LocalKnowledgeBase", () => {
     }
   });
 
-  it("records Graphify skips in the retrieval audit", async () => {
+  it("records CodeGraph skips in the retrieval audit", async () => {
     const root = await fixtureRoot();
     const lookup: RepositoryLookup = {
       async refresh() {},
@@ -927,11 +927,11 @@ describe("LocalKnowledgeBase", () => {
 
     const { results, audit } = await knowledge.searchWithAudit("SettlementWindow ledger", 3);
 
-    expect(results.every((result) => !result.source.startsWith("graphify:"))).toBe(true);
-    expect(audit.graphify).toMatchObject({
+    expect(results.every((result) => !result.source.startsWith("codegraph:"))).toBe(true);
+    expect(audit.codegraph).toMatchObject({
       included: false,
       skippedReason: "generic-query",
       usedFallback: true});
-    expect(audit.omitted.some((item) => item.reason === "graphify-skipped")).toBe(true);
+    expect(audit.omitted.some((item) => item.reason === "codegraph-skipped")).toBe(true);
   });
 });

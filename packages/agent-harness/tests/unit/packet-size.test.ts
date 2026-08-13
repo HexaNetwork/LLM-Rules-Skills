@@ -42,8 +42,8 @@ function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
   const guidancePack = "G".repeat(5_600);
   const context = [
     {
-      source: "graphify:graphify-out/graph.json",
-      title: "Repository relationships (Graphify)",
+      source: "codegraph:.codegraph",
+      title: "Repository relationships (CodeGraph)",
       excerpt: "GRAPH".repeat(1_200)},
     ...Array.from({ length: 5 }, (_, index) => ({
       source: `docs/doc-${index}.md`,
@@ -78,7 +78,7 @@ function packetForRole(role: WorkPacket["role"], task: BuildTask): WorkPacket {
     budgets: {
       contextCharacters: 12_000,
       inputCharacters: 24_000,
-      graphifyCharacters: 3_000}}).packet;
+      codegraphCharacters: 3_000}}).packet;
 }
 
 describe("packet size baseline", () => {

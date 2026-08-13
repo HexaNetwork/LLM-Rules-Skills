@@ -123,13 +123,13 @@ export class AgentCoordinator {
   ): Promise<AgentInvocation<T>> {
     const invocationId = randomUUID();
     const invocationRetrieval = input.retrieval !== false;
-    // Guidance is independent of document RAG / Graphify retrieval.
+    // Guidance is independent of document RAG / CodeGraph retrieval.
     const guidanceEnabled = invocationRetrieval && this.config.knowledge.guidance.enabled;
     const ragEnabled = invocationRetrieval && this.config.workflow.rag;
-    const graphifyWanted =
+    const codegraphWanted =
       invocationRetrieval &&
-      this.config.knowledge.graphify.enabled &&
-      this.config.knowledge.graphify.roles.includes(input.role);
+      this.config.knowledge.codegraph.enabled &&
+      this.config.knowledge.codegraph.roles.includes(input.role);
     let guidancePack: Awaited<ReturnType<LocalKnowledgeBase["compileRoleGuidancePack"]>> = {
       text: "",
       sources: [],
@@ -141,7 +141,7 @@ export class AgentCoordinator {
       results: [],
       audit: {
         query: "",
-        graphify: {
+        codegraph: {
           shapedQuery: "",
           usedFallback: false,
           included: false,
@@ -167,11 +167,11 @@ export class AgentCoordinator {
         audit: {
           query: knowledgeQuery,
           fallbackQuery: knowledgeFallbackQuery,
-          graphify: {
+          codegraph: {
             shapedQuery: "",
             usedFallback: false,
             included: false,
-            skippedReason: graphifyWanted ? "not-requested" : "disabled",
+            skippedReason: codegraphWanted ? "not-requested" : "disabled",
           },
           kept: [],
           omitted: [],
@@ -191,9 +191,9 @@ export class AgentCoordinator {
               missingAssignments: [],
               omittedOverrides: [],
             }),
-        ragEnabled || graphifyWanted
+        ragEnabled || codegraphWanted
           ? this.knowledge.searchWithAudit(knowledgeQuery, contextLimit, {
-              repository: graphifyWanted,
+              repository: codegraphWanted,
               documents: ragEnabled,
               runId: input.runId,
               fallbackQuery: knowledgeFallbackQuery,
@@ -206,7 +206,7 @@ export class AgentCoordinator {
         results: [],
         audit: {
           query: "",
-          graphify: {
+          codegraph: {
             shapedQuery: "",
             usedFallback: false,
             included: false,
@@ -240,7 +240,7 @@ export class AgentCoordinator {
       budgets: {
         contextCharacters: this.config.workflow.contextCharacters,
         inputCharacters: this.config.workflow.inputCharacters,
-        graphifyCharacters: this.config.workflow.graphifyCharacters,
+        codegraphCharacters: this.config.workflow.codegraphCharacters,
       },
       domainArtifacts,
     });

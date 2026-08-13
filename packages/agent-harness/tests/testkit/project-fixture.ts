@@ -227,7 +227,7 @@ export function buildFixtureConfig(
       push: false,
       openPullRequest: false},
     tracker: { kind: "local" },
-    knowledge: { sources: ["README.md", "docs"], chunkCharacters: 400 }});
+    knowledge: { sources: ["README.md", "docs"], chunkCharacters: 400, codegraph: { enabled: false }}});
   return HarnessConfigSchema.parse({
     ...base,
     ...overrides,

@@ -11,7 +11,7 @@ import { createRunState } from "../../src/domain.js";
 import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { GitService } from "../../src/git.js";
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
-import type { GraphifyRunner } from "../../src/graphify.js";
+import type { CodegraphRunner } from "../../src/codegraph.js";
 import {
   fixtureConfig,
   fixtureRoot,
@@ -1280,7 +1280,7 @@ describe("central dashboard", () => {
       knowledge: {
         ...fixtureConfig(root).knowledge,
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
+        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
     const backend = createFakeBackend({
       implementer: async () => {
         await mkdir(path.join(root, "src"), { recursive: true });
@@ -1389,7 +1389,7 @@ describe("central dashboard", () => {
       git: { enabled: true, baseBranch: "main" } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
+        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
     const backend = createFakeBackend({ reflector: () => REFLECT_OUTPUT });
     ui = await startUiServer({ config, backend, port: 0, token: "ui-test" });
 
@@ -1419,22 +1419,22 @@ describe("central dashboard", () => {
     expect(frozen.git.baseBranch).toBe("develop");
   });
 
-  it("records a Graphify setup failure from POST /api/runs as a blocked run", async () => {
+  it("records a CodeGraph setup failure from POST /api/runs as a blocked run", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true }}});
-    const graphifyRunner: GraphifyRunner = async (_executable, args) => {
+        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: true }}});
+    const codegraphRunner: CodegraphRunner = async (_executable, args) => {
       if (args[0] === "--version") {
-        return { exitCode: 0, stdout: "graphify 1.0\n", stderr: "", timedOut: false };
+        return { exitCode: 0, stdout: "1.5.0\n", stderr: "", timedOut: false };
       }
       return { exitCode: 1, stdout: "", stderr: "", timedOut: true };
     };
     ui = await startUiServer({
       config,
       backend: createFakeBackend({ reflector: () => REFLECT_OUTPUT }),
-      graphifyRunner,
+      codegraphRunner,
       port: 0,
       token: "ui-test"});
 
@@ -1447,37 +1447,37 @@ describe("central dashboard", () => {
 
     expect(detail.state.phase).toBe("blocked");
     expect(detail.state.blockedFrom).toBe("new");
-    expect(detail.state.failure).toMatch(/Graphify graph/i);
+    expect(detail.state.failure).toMatch(/CodeGraph index/i);
   });
 
-  it("retries Graphify setup from a new-phase block and leaves new", async () => {
+  it("retries CodeGraph setup from a new-phase block and leaves new", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true }}});
+        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: true }}});
     let failUpdate = true;
-    const graphifyRunner: GraphifyRunner = async (_executable, args, options) => {
+    const codegraphRunner: CodegraphRunner = async (_executable, args, options) => {
       if (args[0] === "--version") {
-        return { exitCode: 0, stdout: "graphify 1.0\n", stderr: "", timedOut: false };
+        return { exitCode: 0, stdout: "1.5.0\n", stderr: "", timedOut: false };
       }
       if (!failUpdate) {
-        await mkdir(path.join(options.cwd, "graphify-out"), { recursive: true });
-        await writeFile(path.join(options.cwd, "graphify-out", "graph.json"), "{}\n", "utf8");
-        return { exitCode: 0, stdout: "Updated graph\n", stderr: "", timedOut: false };
+        await mkdir(path.join(options.cwd, ".codegraph"), { recursive: true });
+        await writeFile(path.join(options.cwd, ".codegraph", "codegraph.db"), "index\n", "utf8");
+        return { exitCode: 0, stdout: "Indexed\n", stderr: "", timedOut: false };
       }
       return { exitCode: 1, stdout: "", stderr: "", timedOut: true };
     };
     ui = await startUiServer({
       config,
       backend: createFakeBackend({ reflector: () => REFLECT_OUTPUT }),
-      graphifyRunner,
+      codegraphRunner,
       port: 0,
       token: "ui-test"});
 
     const created = await request(ui, "/api/runs", {
       method: "POST",
-      body: { idea: "Retry Graphify after a timeout" }});
+      body: { idea: "Retry CodeGraph after a timeout" }});
     expect(created.status).toBe(202);
     const runId = ((await created.json()) as { run: { runId: string } }).run.runId;
     const blocked = await waitForBlocked(ui, runId);

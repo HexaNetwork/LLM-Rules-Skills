@@ -40,7 +40,7 @@ describe("verification gate integration", () => {
           verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }]},
         git: { enabled: false },
         knowledge: {
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false }}},
       initialFiles: {
         "package.json": JSON.stringify({
@@ -156,7 +156,7 @@ describe("verification gate integration", () => {
         workflow: { },
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         git: { enabled: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
+        knowledge: { codegraph: { enabled: false }, guidance: { enabled: false } }}});
     const scripted = createScriptedBackend([
       { role: "reflector", output: REFLECT_OUTPUT },
       {
@@ -216,7 +216,7 @@ describe("verification gate integration", () => {
         workflow: { },
         commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] },
         git: { enabled: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
+        knowledge: { codegraph: { enabled: false }, guidance: { enabled: false } }}});
     const scripted = createScriptedBackend([
       { role: "reflector", output: REFLECT_OUTPUT },
       {

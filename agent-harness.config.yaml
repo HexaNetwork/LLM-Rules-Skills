@@ -106,10 +106,10 @@ knowledge:
   #   provider: ollama
   #   endpoint: http://localhost:11434/api/embed
   #   model: qwen3-embedding
-  graphify:
+  codegraph:
     enabled: true
-    command: graphify
-    updateOnRefresh: true
+    command: codegraph
+    updateOnRefresh: false
     updateTimeoutMs: 600000
     queryTimeoutMs: 15000
-    queryBudgetTokens: 4000
+    maxFiles: 12

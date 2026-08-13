@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { AgentCoordinator } from "../../src/infrastructure/agents/agent-coordinator.js";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
-import type { RepositoryLookup } from "../../src/graphify.js";
+import type { RepositoryLookup } from "../../src/codegraph.js";
 import { compactDomainSeed, LocalKnowledgeBase } from "../../src/knowledge.js";
 import { WorkerOutputSchema, createRunState } from "../../src/domain.js";
 import { RunStore } from "../../src/store.js";
@@ -51,7 +51,7 @@ describe("retrieval audit artifact", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
+        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -87,13 +87,13 @@ describe("retrieval audit artifact", () => {
       context: unknown[];
     };
     const retrieval = (await store.readJson(runId, retrievalPath!)) as {
-      retrieval: { skipped?: string; graphify: { skippedReason?: string } };
+      retrieval: { skipped?: string; codegraph: { skippedReason?: string } };
     };
 
     expect(packet.guidance).toEqual([]);
     expect(packet.context).toEqual([]);
     expect(retrieval.retrieval.skipped).toBe("retrieval-disabled");
-    expect(retrieval.retrieval.graphify.skippedReason).toBe("retrieval-disabled");
+    expect(retrieval.retrieval.codegraph.skippedReason).toBe("retrieval-disabled");
   });
 
   it("persists packets/*.retrieval.json and avoids padding with below-floor junk", async () => {
@@ -112,7 +112,7 @@ describe("retrieval audit artifact", () => {
       agent: { promptBuilder: false } as never,
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
+        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -156,7 +156,7 @@ describe("retrieval audit artifact", () => {
         query: string;
         kept: Array<{ source: string; score: number }>;
         omitted: Array<{ source: string; reason: string }>;
-        graphify: { included: boolean };
+        codegraph: { included: boolean };
       };
       budget: { truncations: unknown[] };
     };
@@ -168,12 +168,12 @@ describe("retrieval audit artifact", () => {
     expect(artifact.retrieval.kept.map((item) => item.source)).toEqual(["docs/settlement.md"]);
     expect(packet.context.map((item) => item.source)).toEqual(["docs/settlement.md"]);
     expect(packet.context).toHaveLength(1);
-    expect(artifact.retrieval.graphify.included).toBe(false);
+    expect(artifact.retrieval.codegraph.included).toBe(false);
     expect(artifact.retrieval.omitted.some((item) => item.source === "docs/colors.md")).toBe(true);
     expect(artifact.budget).toBeDefined();
   });
 
-  it("honors the RAG/Graphify independence matrix while keeping guidance", async () => {
+  it("honors the RAG/CodeGraph independence matrix while keeping guidance", async () => {
     const root = await fixtureRoot();
     await mkdir(path.join(root, "docs"), { recursive: true });
     await writeFile(
@@ -189,9 +189,9 @@ describe("retrieval audit artifact", () => {
       "utf8",
     );
     const base = fixtureConfig(root);
-    const graphifyHit = {
-      source: "graphify:graphify-out/graph.json",
-      title: "Repository relationships (Graphify)",
+    const codegraphHit = {
+      source: "codegraph:.codegraph",
+      title: "Repository relationships (CodeGraph)",
       excerpt: "SettlementWindow -> Ledger",
       score: 1};
     const lookup: RepositoryLookup = {
@@ -203,16 +203,16 @@ describe("retrieval audit artifact", () => {
         return {
           shapedQuery: "SettlementWindow",
           usedFallback: false,
-          result: graphifyHit};
+          result: codegraphHit};
       }};
 
-    async function invokeWith(options: { rag: boolean; graphify: boolean }) {
+    async function invokeWith(options: { rag: boolean; codegraph: boolean }) {
       const config = fixtureConfig(root, {
         agent: { promptBuilder: false } as never,
         workflow: { ...base.workflow, rag: options.rag } as never,
         knowledge: {
           ...base.knowledge,
-          graphify: { ...base.knowledge.graphify, enabled: options.graphify },
+          codegraph: { ...base.knowledge.codegraph, enabled: options.codegraph },
           guidance: {
             ...base.knowledge.guidance,
             enabled: true,
@@ -224,7 +224,7 @@ describe("retrieval audit artifact", () => {
       await store.initialize();
       const knowledge = new LocalKnowledgeBase(config, lookup, undefined, { sharedRoot });
       await knowledge.refresh();
-      const runId = `matrix-${options.rag ? "rag" : "norag"}-${options.graphify ? "g" : "nog"}`;
+      const runId = `matrix-${options.rag ? "rag" : "norag"}-${options.codegraph ? "g" : "nog"}`;
       await store.create(createRunState(runId, "Build SettlementWindow", new Date().toISOString()));
       const agents = new AgentCoordinator(
         config,
@@ -259,28 +259,28 @@ describe("retrieval audit artifact", () => {
         context: Array<{ source: string }>;
       };
       const retrieval = (await store.readJson(runId, retrievalPath!)) as {
-        retrieval: { skipped?: string; graphify: { included: boolean } };
+        retrieval: { skipped?: string; codegraph: { included: boolean } };
       };
       return { packet, retrieval };
     }
 
-    const bothOn = await invokeWith({ rag: true, graphify: true });
+    const bothOn = await invokeWith({ rag: true, codegraph: true });
     expect(bothOn.packet.guidance.length).toBeGreaterThan(0);
     expect(bothOn.packet.context.some((item) => item.source === "docs/settlement.md")).toBe(true);
-    expect(bothOn.packet.context.some((item) => item.source.startsWith("graphify:"))).toBe(true);
+    expect(bothOn.packet.context.some((item) => item.source.startsWith("codegraph:"))).toBe(true);
 
-    const docsOnly = await invokeWith({ rag: true, graphify: false });
+    const docsOnly = await invokeWith({ rag: true, codegraph: false });
     expect(docsOnly.packet.guidance.length).toBeGreaterThan(0);
-    expect(docsOnly.packet.context.every((item) => !item.source.startsWith("graphify:"))).toBe(true);
+    expect(docsOnly.packet.context.every((item) => !item.source.startsWith("codegraph:"))).toBe(true);
     expect(docsOnly.packet.context.some((item) => item.source === "docs/settlement.md")).toBe(true);
 
-    const graphifyOnly = await invokeWith({ rag: false, graphify: true });
-    expect(graphifyOnly.packet.guidance.length).toBeGreaterThan(0);
-    expect(graphifyOnly.packet.context.map((item) => item.source)).toEqual([
-      "graphify:graphify-out/graph.json"]);
-    expect(graphifyOnly.retrieval.retrieval.skipped).toBe("rag-disabled");
+    const codegraphOnly = await invokeWith({ rag: false, codegraph: true });
+    expect(codegraphOnly.packet.guidance.length).toBeGreaterThan(0);
+    expect(codegraphOnly.packet.context.map((item) => item.source)).toEqual([
+      "codegraph:.codegraph"]);
+    expect(codegraphOnly.retrieval.retrieval.skipped).toBe("rag-disabled");
 
-    const bothOff = await invokeWith({ rag: false, graphify: false });
+    const bothOff = await invokeWith({ rag: false, codegraph: false });
     expect(bothOff.packet.guidance.length).toBeGreaterThan(0);
     expect(bothOff.packet.context).toEqual([]);
     expect(bothOff.retrieval.retrieval.skipped).toBe("rag-disabled");

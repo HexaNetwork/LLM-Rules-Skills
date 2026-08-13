@@ -63,6 +63,7 @@ export function prohibitedAgentPathAccess(args: unknown, cwd: string): string | 
   if (!text) return undefined;
   if (/(^|\/)agent-transcripts(?:\/|$)/m.test(text)) return "agent-transcripts";
   if (/(^|\/)\.cursor(?:\/|$)/m.test(text)) return ".cursor";
+  if (/(^|\/)\.codegraph(?:\/|$)/m.test(text)) return ".codegraph";
   if (/(^|\/)graphify-out(?:\/|$)/m.test(text)) return "graphify-out";
 
   const resolvedCwd = path.resolve(cwd);

@@ -19,7 +19,7 @@ const terminal = isTerminalPhase;
 import { CONFIG_FAILURE_PATTERN, HarnessFailure, RunCancelledError } from "../errors.js";
 import { commandEvidence, recentEvidenceOutput } from "../commands.js";
 import { compactDomainSeed } from "../knowledge.js";
-import { prepareGraphifyForRun } from "../graphify.js";
+import { prepareCodegraphForRun } from "../codegraph.js";
 import { taskFrontier } from "../tracker.js";
 import type { ApplicationContext } from "./application-context.js";
 import type { InvocationKind } from "./agent-activity.js";
@@ -145,6 +145,7 @@ export class TaskExecutionService {
       objective: `Implement or repair the behavior in “${task.title}”`,
       input: fullImplementerInput,
       continuationInput,
+      providerSessionId: task.implementerSession?.providerSessionId,
       expectedOutput: "{summary,changedFiles}",
       schema: WorkerOutputSchema,
       constraints: [
@@ -180,6 +181,19 @@ export class TaskExecutionService {
       },
     });
     const workerResult = invocation.value as { summary: string; changedFiles: string[] };
+    const implementerSession = invocation.providerSessionId
+      ? { providerSessionId: invocation.providerSessionId }
+      : task.implementerSession;
+    const workingTask: BuildTask = { ...task, implementerSession };
+    if (
+      implementerSession?.providerSessionId !== task.implementerSession?.providerSessionId
+    ) {
+      state = await this.updateTask(
+        state,
+        workingTask,
+        "task.implementer_session_retained",
+      );
+    }
 
     const testPatterns = this.ctx.config.workflow.testPathPatterns;
     const testEdits = workerResult.changedFiles.filter((file) => isTestPath(file, testPatterns));
@@ -193,19 +207,20 @@ export class TaskExecutionService {
 
     const evidence = await this.runTaskVerification(state.runId, "test");
     const attempts = {
-      ...task.attempts,
-      implementation: task.attempts.implementation + 1,
+      ...workingTask.attempts,
+      implementation: workingTask.attempts.implementation + 1,
     };
     if (evidence.passed) {
       const updated: BuildTask = {
-        ...task,
+        ...workingTask,
         attempts,
-        changedFiles: unique([...task.changedFiles, ...workerResult.changedFiles]),
-        evidence: [...task.evidence, evidence],
+        changedFiles: unique([...workingTask.changedFiles, ...workerResult.changedFiles]),
+        evidence: [...workingTask.evidence, evidence],
         step: "verifying",
         status: "active",
         failure: undefined,
         reviewSummary: undefined,
+        implementerSession,
       };
       return this.updateTask(
         await this.ctx.withTreeFingerprint(state),
@@ -214,22 +229,23 @@ export class TaskExecutionService {
       );
     }
 
-    const fingerprint = await this.fingerprintFor(task, evidence, "verification");
+    const fingerprint = await this.fingerprintFor(workingTask, evidence, "verification");
     const exhausted = attempts.implementation >= this.ctx.config.workflow.maxImplementationAttempts;
     const edge = repairEdgeKey(fingerprint, "implementer", "implementer");
     const updated: BuildTask = {
-      ...task,
+      ...workingTask,
       attempts,
-      changedFiles: unique([...task.changedFiles, ...workerResult.changedFiles]),
-      evidence: [...task.evidence, evidence],
+      changedFiles: unique([...workingTask.changedFiles, ...workerResult.changedFiles]),
+      evidence: [...workingTask.evidence, evidence],
       evidenceFingerprint: fingerprint,
-      seenEvidenceFingerprints: unique([...task.seenEvidenceFingerprints, fingerprint]),
-      seenRepairEdges: unique([...task.seenRepairEdges, edge]),
+      seenEvidenceFingerprints: unique([...workingTask.seenEvidenceFingerprints, fingerprint]),
+      seenRepairEdges: unique([...workingTask.seenRepairEdges, edge]),
       step: exhausted ? "failed" : "implementing",
       status: exhausted ? "failed" : "active",
       failure: exhausted
         ? `Targeted test failed after ${attempts.implementation} implementation attempts`
         : undefined,
+      implementerSession,
     };
     return this.updateTask(
       await this.ctx.withTreeFingerprint(state),
@@ -380,9 +396,9 @@ export class TaskExecutionService {
       : MessageOutputSchema.parse(fallback);
     assertCanMarkTaskDone(task);
     const commitSha = await this.ctx.git.commitTask(task.id, message, task.changedFiles);
-    const graphifyUpdated = includesSourcePath(
+    const codegraphUpdated = includesSourcePath(
       task.changedFiles,
-      this.ctx.config.knowledge.graphify.sourceExtensions,
+      this.ctx.config.knowledge.codegraph.sourceExtensions,
     )
       ? await this.ctx.knowledge.rebuildRepositoryGraph()
       : false;
@@ -390,7 +406,7 @@ export class TaskExecutionService {
       await this.ctx.withTreeFingerprint(state),
       { ...task, status: "done", step: "done", commitSha },
       "task.committed",
-      { commitSha, graphifyUpdated },
+      { commitSha, codegraphUpdated },
     );
   }
 
@@ -550,26 +566,26 @@ export class TaskExecutionService {
     });
   }
 
-  async setGraphify(runId: string, enabled: boolean): Promise<RunState> {
+  async setCodegraph(runId: string, enabled: boolean): Promise<RunState> {
     return this.ctx.store.withLock(runId, async () => {
       let state = await this.ctx.store.load(runId);
       if (terminal(state.phase)) {
         throw new Error(`Run ${runId} is already ${state.phase}`);
       }
-      if (this.ctx.config.knowledge.graphify.enabled === enabled) {
+      if (this.ctx.config.knowledge.codegraph.enabled === enabled) {
         return state;
       }
       const result = await updateRunConfig(
         this.ctx,
         state.runId,
         state.configRevision ?? 0,
-        { knowledge: { graphify: { enabled } } },
-        { reason: "graphify", detail: { enabled } },
+        { knowledge: { codegraph: { enabled } } },
+        { reason: "codegraph", detail: { enabled } },
         { alreadyLocked: true },
       );
       state = result.state;
       if (enabled) {
-        await prepareGraphifyForRun(this.ctx.config, this.ctx.graphifyRunner, this.ctx.paths);
+        await prepareCodegraphForRun(this.ctx.config, this.ctx.codegraphRunner, this.ctx.paths);
       }
       await this.ctx.syncArtifacts(state);
       return state;

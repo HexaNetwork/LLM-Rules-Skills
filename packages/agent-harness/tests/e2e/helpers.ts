@@ -145,7 +145,7 @@ export async function withE2EHarness(
         enabled: false,
         ...(options.config?.git ?? {})},
       knowledge: {
-        graphify: { enabled: false },
+        codegraph: { enabled: false },
         guidance: { enabled: false },
         ...(options.config?.knowledge ?? {})},
       models: options.config?.models,
@@ -337,7 +337,7 @@ async function writeFixtureConfigYaml(configPath: string, config: HarnessConfig)
     tracker: config.tracker,
     knowledge: {
       sources: config.knowledge.sources,
-      graphify: { enabled: false },
+      codegraph: { enabled: false },
       guidance: { enabled: false }}};
   await writeFile(configPath, `${yaml.dump(serializable, { noRefs: true, lineWidth: -1 })}\n`, "utf8");
 }

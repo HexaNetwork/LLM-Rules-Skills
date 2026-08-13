@@ -15,7 +15,7 @@ export type BudgetAudit = {
   limits: {
     contextCharacters: number;
     inputCharacters: number;
-    graphifyCharacters: number;
+    codegraphCharacters: number;
   };
 };
 
@@ -35,7 +35,7 @@ export type BuildWorkPacketInput = {
   budgets: {
     contextCharacters: number;
     inputCharacters: number;
-    graphifyCharacters: number;
+    codegraphCharacters: number;
   };
   domainArtifacts?: WorkPacket["domainArtifacts"];
 };
@@ -62,15 +62,15 @@ export function buildWorkPacket(input: BuildWorkPacketInput): {
   const context: WorkPacket["context"] = [];
   for (const result of input.retrievalResults) {
     if (remaining <= 0) break;
-    const isGraphify = result.source.startsWith("graphify:");
-    const sectionCap = isGraphify
-      ? Math.min(remaining, input.budgets.graphifyCharacters)
+    const isCodegraph = result.source.startsWith("codegraph:");
+    const sectionCap = isCodegraph
+      ? Math.min(remaining, input.budgets.codegraphCharacters)
       : remaining;
     const excerpt = result.excerpt.slice(0, sectionCap);
-    if (isGraphify && result.excerpt.length > excerpt.length) {
+    if (isCodegraph && result.excerpt.length > excerpt.length) {
       truncations.push({
-        path: "context.graphify.excerpt",
-        reason: "graphify-budget",
+        path: "context.codegraph.excerpt",
+        reason: "codegraph-budget",
         before: result.excerpt.length,
         after: excerpt.length,
       });

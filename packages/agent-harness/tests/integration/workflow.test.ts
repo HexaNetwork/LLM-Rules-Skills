@@ -752,23 +752,23 @@ describe("durable idea-to-feature workflow", () => {
     }
   });
 
-  it("prepares Graphify on start and blocks with a readable failure", async () => {
+  it("prepares CodeGraph on start and blocks with a readable failure", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       knowledge: {
         ...fixtureConfig(root).knowledge,
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: true }}});
+        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: true }}});
     const runner = async () => ({
       exitCode: 1,
       stdout: "",
-      stderr: "graphify missing",
+      stderr: "codegraph missing",
       timedOut: false});
     const engine = new HarnessEngine(config, {
       backend: createFakeBackend({}),
-      graphifyRunner: runner});
+      codegraphRunner: runner});
     const state = await engine.start("Needs graph");
     expect(state.phase).toBe("blocked");
-    expect(state.failure).toMatch(/Graphify|graphifyy/i);
+    expect(state.failure).toMatch(/CodeGraph|@colbymchenry\/codegraph/i);
   });
 
   it.skip("routes implementers that touch recorded test files back to repair", async () => {

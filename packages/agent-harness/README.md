@@ -14,10 +14,10 @@ npx agent-harness ui
 ```
 
 `project add` registers the repository in harness home (guidance lives there too).
-Install Graphify with `uv tool install graphifyy` when you want structural code
-retrieval; the harness builds `graphify-out/graph.json` before new runs and after
-verified task commits. `init` / `deploy` write a repo-local config when needed.
-Use `--no-graphify` on deploy for document-only projects.
+The install wizard asks whether to install CodeGraph now (`npm install -g @colbymchenry/codegraph`);
+you can also install it yourself. The harness builds `.codegraph/` before new runs and after
+verified task commits. `init` / `deploy` write a repo-local config when needed and do not
+install the CLI. Use `--no-codegraph` on deploy for document-only projects.
 
 The dashboard opens on an authenticated loopback URL and centralizes run creation, human questions, progress, test evidence, session handoffs, artifacts, retries, cancellation, and local knowledge search. Set `CURSOR_API_KEY` for real agent runs. The generated config pins models, commands, retry budgets, coverage policy, git publication, and local knowledge sources.
 
@@ -68,9 +68,9 @@ The dependency-free browser UI is a read/write client of the same persisted stat
 
 Answering a batch is keyboard-driven: `1`–`4` pick an option for the focused question and advance, arrows move between questions, and `Escape` skips one. These fire only when the question container itself holds focus, so typing a digit in the free-text box is never swallowed. "Accept all recommendations" fills every unanswered question with its recommended option but never submits on its own.
 
-Blocked runs key remediation on `blockedKind` (dirty tree, missing agent credential, missing Graphify graph, changed configuration, workspace divergence, provider, budget) with the raw failure kept in a collapsed section. Token/cost ceilings surface a raise-and-retry control. While an agent step is in flight, the header shows live activity from `activity.json` (role, model, elapsed, last step summary). The **Agent activity** tab defaults to a chronological **Execution sequence** (invocations interleaved with verification and routing transitions) and keeps **Provider contexts** as a secondary view for context reuse and token analysis. The Overview Usage card shows accrued tokens, cached total, and cost against any configured ceiling.
+Blocked runs key remediation on `blockedKind` (dirty tree, missing agent credential, missing CodeGraph index, changed configuration, workspace divergence, provider, budget) with the raw failure kept in a collapsed section. Token/cost ceilings surface a raise-and-retry control. While an agent step is in flight, the header shows live activity from `activity.json` (role, model, elapsed, last step summary). The **Agent activity** tab defaults to a chronological **Execution sequence** (invocations interleaved with verification and routing transitions) and keeps **Provider contexts** as a secondary view for context reuse and token analysis. The Overview Usage card shows accrued tokens, cached total, and cost against any configured ceiling.
 
-Local Cursor workers run with `agent.sandbox: true` by default. Cursor applies its native cross-platform sandbox (Seatbelt on macOS, Landlock/seccomp on Linux, and WSL2 isolation on Windows) around local tools. Worker prompts also prohibit reading `.cursor`, `agent-transcripts`, raw `graphify-out`, and sibling worktrees; conspicuous path-bearing tool calls are cancelled as defense in depth. Set `agent.sandbox: false` only for a runner where Cursor's sandbox is unavailable and the weaker prompt/detection boundary is acceptable.
+Local Cursor workers run with `agent.sandbox: true` by default. Cursor applies its native cross-platform sandbox (Seatbelt on macOS, Landlock/seccomp on Linux, and WSL2 isolation on Windows) around local tools. Worker prompts also prohibit reading `.cursor`, `agent-transcripts`, raw `.codegraph`, and sibling worktrees; conspicuous path-bearing tool calls are cancelled as defense in depth. Set `agent.sandbox: false` only for a runner where Cursor's sandbox is unavailable and the weaker prompt/detection boundary is acceptable.
 
 Background polling (~1.8s while the tab is visible) must not feel like a page reload. The server returns a cheap change `signature`, and an unchanged poll short-circuits before any payload is serialized. Focused HITL editors — and half-filled batch cards with no control currently focused — block silent rewrites, and scroll / `<details>` chrome is restored when a silent poll does rewrite the DOM. The full checklist lives in [docs/ui-polling.md](./docs/ui-polling.md).
 
@@ -166,13 +166,13 @@ Assigned entries are compiled into one lean **guidance pack** per role: YAML fro
 
 Configurations without `assignments` retain the legacy relevance selector for compatibility. It uses the worker role, objective, known paths, rule `globs`, optional front-matter `roles`, and lexical relevance. In legacy mode, `alwaysApply: true` is a ranking priority rather than unconditional prompt injection. Selected excerpts and reasons are persisted in the work packet, and omitted `alwaysApply` rules are recorded in the sibling guidance audit. Guidance is loaded from filesystem roots rather than the document index, so it never appears in generic retrieval.
 
-New runs enable this behavior by default with separate packet budgets: guidance+context, serialized `input`, and a Graphify sub-budget. Guidance itself is capped at 6,000 characters and six entries:
+New runs enable this behavior by default with separate packet budgets: guidance+context, serialized `input`, and a CodeGraph sub-budget. Guidance itself is capped at 6,000 characters and six entries:
 
 ```yaml
 workflow:
   contextCharacters: 12000   # guidance + retrieved context
   inputCharacters: 24000     # serialized packet.input
-  graphifyCharacters: 3000   # Graphify excerpt within contextCharacters
+  codegraphCharacters: 3000   # CodeGraph excerpt within contextCharacters
   reviewDiffCharacters: 12000  # whole-file diff budget for the reviewer packet
   maxRunTokens: 0            # 0 = unlimited; hard stop between steps when exceeded
   maxRunCostUsd: 0           # 0 = unlimited; needs models.pricing for the models in use
@@ -220,22 +220,21 @@ knowledge:
 
 Document sources are constrained to the configured repository root. Harness guidance lives under harness home (or a frozen run copy) and is never listed in `knowledge.sources`. A remotely deployed multi-user RAG service must additionally authenticate callers and enforce the same scope filter server-side; the local CLI has no user identity model.
 
-Graphify complements document matches with structural repository traversal. New
-harness configs enable it by default. Install Graphify yourself
-(`uv tool install graphifyy`). Before the first agent step of each new run
-(CLI and UI), the harness verifies the `graphify` command and builds
-`graphify-out/graph.json` with `graphify update` when the graph is missing.
+CodeGraph complements document matches with structural repository lookup. New
+harness configs enable it by default. The install wizard offers to install the CLI
+(`npm install -g @colbymchenry/codegraph`); you can also install it later. Before the first agent step of each new run
+(CLI and UI), the harness verifies the `codegraph` command and builds
+`.codegraph/` with `codegraph init` when the index is missing.
 After each verified harness task commit that includes a source-file path, it
-runs `graphify update` again so the next task receives fresh structural
-context. Default Graphify roles are planner, scenario-planner, issue-slicer, scenario-writer, unit-test-writer, implementer, reviewer, and
+runs `codegraph sync` again so the next task receives fresh structural
+context. Default CodeGraph roles are planner, scenario-planner, issue-slicer, scenario-writer, unit-test-writer, implementer, reviewer, and
 task-reviewer (not reflector/griller). Project-specific
-`knowledge.graphify.stopwords` merge over the built-in English and harness-meta
-lists. Enable `knowledge.graphify.updateOnRefresh` if a
-document-refresh-triggered rebuild is specifically desired. Graphify is invoked
-with an argument array rather than a shell, reads only
-`graphify-out/graph.json`, and fails softly during later retrieval. Set
-`knowledge.graphify.enabled: false` (or deploy with the advanced
-`--no-graphify`) for a document-only project.
+`knowledge.codegraph.stopwords` merge over the built-in English and harness-meta
+lists. Enable `knowledge.codegraph.updateOnRefresh` if a
+document-refresh-triggered rebuild is specifically desired. CodeGraph is invoked
+with an argument array rather than a shell, and fails softly during later retrieval. Set
+`knowledge.codegraph.enabled: false` (or deploy with the advanced
+`--no-codegraph`) for a document-only project.
 
 ## Model tiers and handoffs
 
@@ -260,7 +259,7 @@ Agents cannot claim a command passed. The harness owns process execution and rec
 
 ## Per-run worktrees
 
-Every new Git-enabled run gets a registered linked worktree under `<stateDirectory>/worktrees/<runId>` (see [ADR 0010](../../docs/adr/0010-per-run-worktrees.md)). The project checkout is the **control root**; the worktree is the **execution root**. Durable harness state (`runs/`, locks, knowledge) stays on the control/state root. Agents, commands, Graphify, and Git mutations for the run use the worktree.
+Every new Git-enabled run gets a registered linked worktree under `<stateDirectory>/worktrees/<runId>` (see [ADR 0010](../../docs/adr/0010-per-run-worktrees.md)). The project checkout is the **control root**; the worktree is the **execution root**. Durable harness state (`runs/`, locks, knowledge) stays on the control/state root. Agents, commands, CodeGraph, and Git mutations for the run use the worktree.
 
 At start the harness resolves `git.baseBranch` to an immutable `baseSha`, runs `git worktree add --detach`, and writes `workspace.json`. No delivery branch is created yet. A human-readable branch is created later at publish from the confirmed feature title plus a short run id. Local task commits are valid on detached `HEAD`.
 
@@ -272,7 +271,7 @@ A dirty operator checkout is **not** a blocker for ordinary new worktree runs. T
 
 - **Per-run lock** — state/config/workspace mutation for one run.
 - **Workspace-admin lock** — short lock around shared Git worktree metadata (add/remove/rename branch refs).
-- **Shared-index lock** — knowledge/Graphify refresh coordination.
+- **Shared-index lock** — knowledge/CodeGraph refresh coordination.
 
 Independent worktree runs can advance concurrently. Inspect locks with `agent-harness unlock --run-id <id> --inspect-only` (distinguishes run, workspace-admin, and shared-index).
 

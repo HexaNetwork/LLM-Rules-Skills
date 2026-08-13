@@ -70,9 +70,9 @@ describe("dashboard document", () => {
     expect(html).toContain("newRunFeedback");
     expect(html).toContain("Confirm & continue to grill");
     expect(html).toContain("Resume run");
-    expect(html).toContain("Use Graphify");
-    expect(html).toContain("graphify:$(\"graphify\").checked");
-    expect(html).toContain("indexOf('graphify:') === 0 ? 'structural'");
+    expect(html).toContain("Use CodeGraph");
+    expect(html).toContain("codegraph:$(\"codegraph\").checked");
+    expect(html).toContain("indexOf('codegraph:') === 0 ? 'structural'");
     expect(html).toContain("Start from branch");
     expect(html).toContain('id="baseBranch"');
     expect(html).toContain("Creates the run worktree from this local branch tip");
@@ -82,7 +82,7 @@ describe("dashboard document", () => {
     expect(html).not.toContain("Control checkout is dirty");
     expect(html).not.toContain("run.control_checkout_notice");
     expect(html).toContain("Dashboard work does not continue automatically after a restart");
-    expect(html).toContain("Setup did not finish. Resume retries Graphify and indexing first.");
+    expect(html).toContain("Setup did not finish. Resume retries CodeGraph and indexing first.");
     expect(html).toMatch(/phase === "new"[\s\S]{0,400}Setup did not finish/);
     expect(html).toContain("Confirm feature understanding");
     expect(html).toContain("Our recommendation:");
@@ -122,6 +122,8 @@ describe("dashboard document", () => {
     expect(html).not.toMatch(/model sessions/);
     expect(html).toContain("NEW CONTEXT");
     expect(html).toContain("REUSED CONTEXT");
+    expect(html).toContain("context.sessionNumber");
+    expect(html).toContain("invocation.sessionNumber");
     expect(html).toContain("context-badge");
     expect(html).toContain("Project settings");
     expect(html).toContain("settingsBtn");
@@ -156,13 +158,13 @@ describe("dashboard document", () => {
     expect(html).toContain("Installs observed");
     expect(html).toContain("harnessSoundsMuted");
     expect(html).toContain("set_rag");
-    expect(html).toContain("set_graphify");
+    expect(html).toContain("set_codegraph");
     expect(html).toContain("Document RAG");
     expect(html).toContain('id="rag"');
     expect(html).toContain('id="runRagToggle"');
-    expect(html).toContain('id="runGraphifyToggle"');
+    expect(html).toContain('id="runCodegraphToggle"');
     expect(html).toContain("runAction('set_rag', { rag: event.target.checked })");
-    expect(html).toContain("runAction('set_graphify', { graphify: event.target.checked })");
+    expect(html).toContain("runAction('set_codegraph', { codegraph: event.target.checked })");
     expect(html).toContain("resolve_installs");
     expect(html).toContain("Grilling complete");
     expect(html).toContain("Send feedback to griller");
@@ -492,7 +494,7 @@ describe("dashboard document", () => {
     expect(html).toContain("dirty working tree|uncommitted changes");
     expect(html).toContain("not a git repository");
     expect(html).toContain("CURSOR_API_KEY");
-    expect(html).toContain("graphify-out");
+    expect(html).toContain(".codegraph");
     expect(html).toContain("run configuration changed");
     expect(html).toContain("draft a configuration repair");
     expect(html).toContain("<summary>Raw failure detail</summary>");

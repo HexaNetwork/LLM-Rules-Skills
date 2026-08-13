@@ -1,7 +1,7 @@
 import type { HarnessConfig } from "../config/schema.js";
 import type { RunState } from "../domain.js";
 import { classifyFailure } from "../errors.js";
-import { prepareGraphifyForRun, type GraphifyRunner } from "../graphify.js";
+import { prepareCodegraphForRun, type CodegraphRunner } from "../codegraph.js";
 import type { RunStore } from "../store.js";
 import type { HarnessPaths } from "./paths.js";
 
@@ -38,8 +38,8 @@ export type InitialRunSetupOptions = {
   config: HarnessConfig;
   store: RunStore;
   paths: HarnessPaths;
-  graphifyRunner?: GraphifyRunner;
-  git: { ensureGraphifyOutputIgnored(): Promise<void> };
+  codegraphRunner?: CodegraphRunner;
+  git: { ensureCodegraphOutputIgnored(): Promise<void> };
   knowledge: {
     refresh(onProgress?: (progress: { message: string }) => void): Promise<unknown>;
   };
@@ -48,29 +48,29 @@ export type InitialRunSetupOptions = {
 };
 
 /**
- * Graphify → knowledge refresh → advance for a run that has not left `new`.
+ * CodeGraph → knowledge refresh → advance for a run that has not left `new`.
  * Records `run.blocked` from `new` when setup fails, then rethrows.
  */
 export async function runInitialSetupThenAdvance(options: InitialRunSetupOptions): Promise<void> {
   try {
     const latest = await options.store.load(options.runId);
     if (TERMINAL_PHASES.has(latest.phase)) return;
-    if (options.config.knowledge.graphify.enabled) {
-      options.onProgress?.("Checking Graphify for this project");
+    if (options.config.knowledge.codegraph.enabled) {
+      options.onProgress?.("Checking CodeGraph for this project");
       await options.store.withWorkspaceAdminLock(
-        { runId: options.runId, action: "ensure-graphify-ignore" },
-        () => options.git.ensureGraphifyOutputIgnored(),
+        { runId: options.runId, action: "ensure-codegraph-ignore" },
+        () => options.git.ensureCodegraphOutputIgnored(),
       );
-      const graphifyReady = await prepareGraphifyForRun(
+      const codegraphReady = await prepareCodegraphForRun(
         options.config,
-        options.graphifyRunner,
+        options.codegraphRunner,
         options.paths,
       );
-      if (graphifyReady.enabled) {
+      if (codegraphReady.enabled) {
         options.onProgress?.(
-          graphifyReady.setupRan
+          codegraphReady.setupRan
             ? "Repository graph built and ready"
-            : "Graphify repository graph is ready",
+            : "CodeGraph repository index is ready",
         );
       }
     }

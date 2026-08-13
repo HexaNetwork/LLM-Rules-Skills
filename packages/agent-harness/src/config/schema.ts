@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { AgentRoleSchema, type AgentRole } from "../domain.js";
 
-/** Structural Graphify lookup is valuable for workers that edit or review code. */
+/** Structural CodeGraph lookup is valuable for workers that edit or review code. */
 const REPOSITORY_LOOKUP_ROLES: AgentRole[] = [
   "planner",
   "scenario-planner",
@@ -181,7 +181,7 @@ export const HarnessConfigSchema = z.object({
     .default({}),
   workflow: z
     .object({
-      /** Document RAG into work packets; independent of Graphify and guidance. */
+      /** Document RAG into work packets; independent of CodeGraph and guidance. */
       rag: z.boolean().default(true),
       // Hard spend ceilings enforced between steps; 0 = unlimited.
       maxRunTokens: z.number().int().nonnegative().default(0),
@@ -216,8 +216,8 @@ export const HarnessConfigSchema = z.object({
       // Reviewer diff budget; defaults to Math.min(20_000, inputCharacters/2) so
       // a full-size diff survives buildWorkPacket without input-budget truncation.
       reviewDiffCharacters: z.number().int().positive().optional(),
-      // Graphify excerpt sub-budget within the context ceiling.
-      graphifyCharacters: z.number().int().positive().default(3_000),
+      // CodeGraph excerpt sub-budget within the context ceiling.
+      codegraphCharacters: z.number().int().positive().default(3_000),
       // Per-task commit subjects use the deterministic fallback unless enabled.
       generateCommitMessages: z.boolean().default(false),
       // Globs that mark paths as test files for test-writer path validation.
@@ -333,19 +333,19 @@ export const HarnessConfigSchema = z.object({
           semanticWeight: z.number().positive().default(1),
         })
         .default({}),
-      graphify: z
+      codegraph: z
         .object({
-          enabled: z.boolean().default(false),
-          command: z.string().min(1).default("graphify"),
+          enabled: z.boolean().default(true),
+          command: z.string().min(1).default("codegraph"),
           updateOnRefresh: z.boolean().default(false),
-          // First `graphify update` on a large repo often needs longer than 2 minutes.
+          // First `codegraph init` on a large repo often needs longer than 2 minutes.
           updateTimeoutMs: z.number().int().positive().default(600_000),
           queryTimeoutMs: z.number().int().positive().default(15_000),
-          queryBudgetTokens: z.number().int().positive().max(10_000).default(4_000),
+          maxFiles: z.number().int().positive().max(50).default(12),
           roles: z.array(AgentRoleSchema).default(REPOSITORY_LOOKUP_ROLES),
           // Project-specific noise merged over the built-in English + harness lists.
           stopwords: z.array(z.string().min(1)).default([]),
-          // Extensions that count as source for post-commit graphify rebuild.
+          // Extensions that count as source for post-commit CodeGraph rebuild.
           sourceExtensions: z.array(z.string().min(1)).default([
             ".ts",
             ".tsx",
@@ -470,7 +470,7 @@ export const RunPolicyPatchSchema = z
       .optional(),
     knowledge: z
       .object({
-        graphify: z
+        codegraph: z
           .object({
             enabled: z.boolean().optional(),
           })

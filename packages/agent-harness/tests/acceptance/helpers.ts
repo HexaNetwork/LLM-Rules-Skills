@@ -86,7 +86,7 @@ export async function writeAcceptanceConfig(
     tracker: { kind: "local" },
     knowledge: {
       sources: ["README.md", "docs"],
-      graphify: { enabled: false },
+      codegraph: { enabled: false },
       guidance: { enabled: false },
       ...(overrides.knowledge ?? {})}};
   await writeFile(configPath, `${yaml.dump(serializable, { noRefs: true, lineWidth: -1 })}\n`, "utf8");

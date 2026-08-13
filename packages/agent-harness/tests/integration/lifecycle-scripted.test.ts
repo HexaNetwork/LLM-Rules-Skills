@@ -54,7 +54,7 @@ describe("Phase 5 scripted full lifecycle", () => {
         },
         git: { enabled: true },
         knowledge: {
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false },
         },
       },

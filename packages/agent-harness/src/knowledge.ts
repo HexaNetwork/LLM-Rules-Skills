@@ -6,10 +6,10 @@ import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
 import type { HarnessConfig, KnowledgeScope, KnowledgeVisibility } from "./config/schema.js";
 import { LocalEmbeddingIndex } from "./embeddings.js";
 import {
-  GraphifyRepositoryLookup,
-  GRAPH_PATH,
+  CodegraphRepositoryLookup,
+  INDEX_SOURCE,
   type RepositoryLookup,
-} from "./graphify.js";
+} from "./codegraph.js";
 import {
   TEXT_EXTENSIONS,
   assertInside,
@@ -25,7 +25,6 @@ import {
   loadGuidanceDocuments,
   type GuidanceLoadRoot,
 } from "./infrastructure/knowledge/guidance-loader.js";
-import { compactDomainSeed, toCurrentProjectResult } from "./infrastructure/knowledge/graphify-lookup.js";
 import {
   cloneCompiledGuidancePack,
   compileRoleGuidancePack,
@@ -81,7 +80,7 @@ export type {
 } from "./infrastructure/knowledge/types.js";
 export { isVisibleForRun } from "./infrastructure/knowledge/lexical-search.js";
 export { matchesGlob } from "./infrastructure/knowledge/guidance-selector.js";
-export { compactDomainSeed } from "./infrastructure/knowledge/graphify-lookup.js";
+export { compactDomainSeed } from "./codegraph.js";
 
 /** Optional filesystem roots for injected-only guidance (not knowledge.sources). */
 export type KnowledgeGuidanceRoots = {
@@ -120,7 +119,7 @@ export class LocalKnowledgeBase {
       sharedRoot: guidanceRoots.sharedRoot ?? config.knowledge.guidance.sharedRoot,
       runsRoot: guidanceRoots.runsRoot ?? path.join(paths.stateRoot, "runs"),
     };
-    this.repositoryLookup = repositoryLookup ?? new GraphifyRepositoryLookup(config, undefined, paths);
+    this.repositoryLookup = repositoryLookup ?? new CodegraphRepositoryLookup(config, undefined, paths);
     this.directory = config.knowledge.sharedIndexDirectory
       ? path.resolve(paths.controlRoot, config.knowledge.sharedIndexDirectory)
       : path.join(paths.stateRoot, "knowledge");
@@ -176,9 +175,9 @@ export class LocalKnowledgeBase {
     const documents = await this.loadDocuments();
     // A shared index can be maintained by more than one project config, so it
     // must never delete another project's configured sources. A private local
-    // index, on the other hand, drops stale automatically-managed entries when
+      // index, on the other hand, drops stale automatically-managed entries when
     // the source list changes (for example, when source code is removed from
-    // document retrieval in favour of Graphify).
+    // document retrieval in favour of CodeGraph).
     const retained = this.config.knowledge.sharedIndexDirectory
       ? documents
       : documents.filter((document) => !document.managedByConfig || configuredDocumentIds.has(document.id));
@@ -286,7 +285,7 @@ export class LocalKnowledgeBase {
     options: KnowledgeSearchOptions = {},
   ): Promise<KnowledgeSearchAudit> {
     const omitted: RetrievalOmission[] = [];
-    const emptyGraphify = {
+    const emptyCodegraph = {
       shapedQuery: "",
       usedFallback: false,
       included: false,
@@ -299,7 +298,7 @@ export class LocalKnowledgeBase {
         audit: {
           query,
           fallbackQuery: options.fallbackQuery,
-          graphify: { ...emptyGraphify, skippedReason: "empty-query" },
+          codegraph: { ...emptyCodegraph, skippedReason: "empty-query" },
           kept: [],
           omitted,
         },
@@ -323,7 +322,7 @@ export class LocalKnowledgeBase {
             pathHints: options.pathHints,
           }),
     ]);
-    const graphifyAudit = {
+    const codegraphAudit = {
       shapedQuery: repositoryLookup.shapedQuery,
       usedFallback: repositoryLookup.usedFallback,
       included: false,
@@ -336,10 +335,10 @@ export class LocalKnowledgeBase {
       repositoryLookup.skippedReason !== "disabled"
     ) {
       omitted.push({
-        source: `graphify:${GRAPH_PATH}`,
-        title: "Repository relationships (Graphify)",
+        source: INDEX_SOURCE,
+        title: "Repository relationships (CodeGraph)",
         score: 0,
-        reason: "graphify-skipped",
+        reason: "codegraph-skipped",
       });
     }
     if (!documentsEnabled) {
@@ -347,14 +346,14 @@ export class LocalKnowledgeBase {
         ? toCurrentProjectResult(repositoryLookup.result, activeProjectId)
         : undefined;
       const results = repositoryResult ? [repositoryResult] : [];
-      graphifyAudit.included = Boolean(repositoryResult);
-      if (repositoryResult) graphifyAudit.skippedReason = undefined;
+      codegraphAudit.included = Boolean(repositoryResult);
+      if (repositoryResult) codegraphAudit.skippedReason = undefined;
       return {
         results: capResultCharacters(results, options.maxCharacters),
         audit: {
           query,
           fallbackQuery: options.fallbackQuery,
-          graphify: graphifyAudit,
+          codegraph: codegraphAudit,
           kept: results.map(toKeptEntry),
           omitted,
           skipped: "rag-disabled",
@@ -373,14 +372,14 @@ export class LocalKnowledgeBase {
         ? toCurrentProjectResult(repositoryLookup.result, activeProjectId)
         : undefined;
       const results = repositoryResult ? [repositoryResult] : [];
-      graphifyAudit.included = Boolean(repositoryResult);
-      if (repositoryResult) graphifyAudit.skippedReason = undefined;
+      codegraphAudit.included = Boolean(repositoryResult);
+      if (repositoryResult) codegraphAudit.skippedReason = undefined;
       return {
         results: capResultCharacters(results, options.maxCharacters),
         audit: {
           query,
           fallbackQuery: options.fallbackQuery,
-          graphify: graphifyAudit,
+          codegraph: codegraphAudit,
           kept: results.map(toKeptEntry),
           omitted,
         },
@@ -500,15 +499,15 @@ export class LocalKnowledgeBase {
     const merged = repositoryLookup.result
       ? [toCurrentProjectResult(repositoryLookup.result, activeProjectId), ...diversified]
       : diversified;
-    graphifyAudit.included = Boolean(repositoryLookup.result);
-    if (repositoryLookup.result) graphifyAudit.skippedReason = undefined;
+    codegraphAudit.included = Boolean(repositoryLookup.result);
+    if (repositoryLookup.result) codegraphAudit.skippedReason = undefined;
     const capped = capResultCharactersWithOmissions(merged, options.maxCharacters, omitted);
     return {
       results: capped,
       audit: {
         query,
         fallbackQuery: options.fallbackQuery,
-        graphify: graphifyAudit,
+        codegraph: codegraphAudit,
         kept: capped.map(toKeptEntry),
         omitted,
       },
@@ -739,4 +738,11 @@ export class LocalKnowledgeBase {
       console.warn(`Embedding index unavailable; continuing with lexical retrieval: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+}
+
+function toCurrentProjectResult(
+  result: Omit<SearchResult, "scope" | "projectId" | "visibility" | "kind">,
+  projectId: string,
+): SearchResult {
+  return { ...result, scope: "project", projectId, visibility: "private", kind: "document" };
 }

@@ -29,7 +29,7 @@ describe("Phase 5 stale-lock recovery", () => {
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000, provider: "cursor" },
         workflow: {},
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } },
+        knowledge: { codegraph: { enabled: false }, guidance: { enabled: false } },
       },
     });
 

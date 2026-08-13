@@ -56,7 +56,7 @@ function classifyByMessage(message: string): { kind: FailureKind; retriable: boo
   ) {
     return { kind: "workspace", retriable: true };
   }
-  if (/graphify-out[/\\]graph\.json|graphify graph|missing graph/i.test(message)) {
+  if (/\.codegraph[/\\]|codegraph index|missing graph|codegraph init/i.test(message)) {
     return { kind: "workspace", retriable: true };
   }
   if (/CURSOR_API_KEY|agent backend (is )?unavailable|missing.*api.?key|timed out|aborted|Cursor run /i.test(message)) {

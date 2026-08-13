@@ -27,6 +27,25 @@ function event(
 }
 
 describe("buildAgentActivity", () => {
+  it("assigns one stable numerical id to every provider context in first-seen order", () => {
+    const activity = buildAgentActivity([
+      record({ path: "sessions/impl-1.json", sessionId: "impl-1", role: "implementer", providerSessionId: "impl", startedAt: "2026-08-10T20:00:00.000Z" }),
+      record({ path: "sessions/review.json", sessionId: "review", role: "task-reviewer", providerSessionId: "review", startedAt: "2026-08-10T20:01:00.000Z" }),
+      record({ path: "sessions/impl-2.json", sessionId: "impl-2", role: "implementer", providerSessionId: "impl", providerSessionReused: true, startedAt: "2026-08-10T20:02:00.000Z" }),
+    ]);
+
+    const invocations = activity.timeline
+      .filter((entry) => entry.type === "invocation")
+      .map((entry) => entry.type === "invocation" ? [entry.invocation.role, entry.invocation.sessionNumber] : []);
+    expect(invocations).toEqual([
+      ["implementer", 1],
+      ["task-reviewer", 2],
+      ["implementer", 1],
+    ]);
+    expect(activity.providerContexts.find((context) => context.id === "impl")?.sessionNumber).toBe(1);
+    expect(activity.providerContexts.find((context) => context.id === "review")?.sessionNumber).toBe(2);
+  });
+
   it("groups three implementer records sharing one providerSessionId into one context", () => {
     const activity = buildAgentActivity([
       record({

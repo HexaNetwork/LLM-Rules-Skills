@@ -83,7 +83,7 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: config.workflow.contextCharacters,
         inputCharacters: config.workflow.inputCharacters,
-        graphifyCharacters: config.workflow.graphifyCharacters}});
+        codegraphCharacters: config.workflow.codegraphCharacters}});
 
     expect((packet.input as { diff: string }).diff).toBe(diff);
     expect(
@@ -110,7 +110,7 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: 12_000,
         inputCharacters: 24_000,
-        graphifyCharacters: 3_000}});
+        codegraphCharacters: 3_000}});
     expect(packet.input).toEqual(input);
     expect(budgetAudit.truncations).toEqual([]);
   });
@@ -134,14 +134,14 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: 12_000,
         inputCharacters: 1_200,
-        graphifyCharacters: 3_000}});
+        codegraphCharacters: 3_000}});
     expect(JSON.stringify(packet.input).length).toBeLessThanOrEqual(1_200);
     expect(budgetAudit.truncations.length).toBeGreaterThan(0);
     expect(budgetAudit.truncations[0]?.path).toContain("long");
     expect(budgetAudit.truncations.every((item) => item.reason === "input-budget")).toBe(true);
   });
 
-  it("caps Graphify excerpts before document context fills the budget", () => {
+  it("caps CodeGraph excerpts before document context fills the budget", () => {
     const { packet, budgetAudit } = buildWorkPacket({
       invocationId: "inv",
       runId: "run",
@@ -152,8 +152,8 @@ describe("buildWorkPacket budgets", () => {
       guidance: [],
       retrievalResults: [
         {
-          source: "graphify:graphify-out/graph.json",
-          title: "Repository relationships (Graphify)",
+          source: "codegraph:.codegraph",
+          title: "Repository relationships (CodeGraph)",
           excerpt: "G".repeat(5_000)},
         {
           source: "docs/settlement.md",
@@ -165,10 +165,10 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: 12_000,
         inputCharacters: 24_000,
-        graphifyCharacters: 3_000}});
+        codegraphCharacters: 3_000}});
     expect(packet.context[0]?.excerpt.length).toBe(3_000);
     expect(packet.context.some((item) => item.source === "docs/settlement.md")).toBe(true);
-    expect(budgetAudit.truncations.some((item) => item.reason === "graphify-budget")).toBe(true);
+    expect(budgetAudit.truncations.some((item) => item.reason === "codegraph-budget")).toBe(true);
   });
 
   it("keeps guidance + context + input under the configured sum", () => {
@@ -194,7 +194,7 @@ describe("buildWorkPacket budgets", () => {
       budgets: {
         contextCharacters: 5_000,
         inputCharacters: 2_000,
-        graphifyCharacters: 1_000}});
+        codegraphCharacters: 1_000}});
     expect(budgetAudit.guidanceCharacters + budgetAudit.contextCharacters).toBeLessThanOrEqual(5_000);
     expect(budgetAudit.inputCharacters).toBeLessThanOrEqual(2_000);
     expect(JSON.stringify(packet.input).length).toBeLessThanOrEqual(2_000);
@@ -212,11 +212,11 @@ describe("implementer packet evidence projection", () => {
         ...fixtureConfig(root).workflow,
         contextCharacters: 12_000,
         inputCharacters: 24_000,
-        graphifyCharacters: 3_000},
+        codegraphCharacters: 3_000},
       knowledge: {
         ...fixtureConfig(root).knowledge,
         guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
-        graphify: { ...fixtureConfig(root).knowledge.graphify, enabled: false }}});
+        codegraph: { ...fixtureConfig(root).knowledge.codegraph, enabled: false }}});
     const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
     await store.initialize();
     const knowledge = new LocalKnowledgeBase(config);
@@ -288,7 +288,7 @@ describe("implementer packet evidence projection", () => {
       budgets: {
         contextCharacters: config.workflow.contextCharacters,
         inputCharacters: config.workflow.inputCharacters,
-        graphifyCharacters: config.workflow.graphifyCharacters}}).packet;
+        codegraphCharacters: config.workflow.codegraphCharacters}}).packet;
     expect(renderPrompt(packet).length).toBeLessThan(60_000);
   });
 });

@@ -24,7 +24,7 @@ $ErrorActionPreference = "Stop"
 # Wizard helpers
 # ---------------------------------------------------------------------------
 
-$script:TOTAL_STAGES = 5
+$script:TOTAL_STAGES = 6
 $script:STAGE_INDEX = 0
 $script:SKIPPED = [System.Collections.Generic.List[string]]::new()
 $script:WRITTEN_USER_ENV = [System.Collections.Generic.List[string]]::new()
@@ -136,6 +136,109 @@ function Test-HarnessCheckout {
   if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
   return (Test-Path -LiteralPath (Join-Path $Path "package.json")) -and
     (Test-Path -LiteralPath (Join-Path $Path "packages\agent-harness"))
+}
+
+function Get-NpmCommand {
+  $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+  if ($npm) { return $npm }
+  return (Get-Command npm -ErrorAction SilentlyContinue)
+}
+
+function Get-NpmGlobalBin {
+  $npm = Get-NpmCommand
+  $prefix = $null
+  if ($npm) {
+    try {
+      $prefix = ((& $npm.Source prefix -g 2>$null) | Out-String).Trim()
+    } catch {
+      $prefix = $null
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($prefix)) {
+    $fallback = Join-Path $env:APPDATA "npm"
+    if (Test-Path -LiteralPath $fallback) { return $fallback }
+    return $null
+  }
+  $bin = Join-Path $prefix "bin"
+  if (Test-Path -LiteralPath $bin) { return $bin }
+  return $prefix
+}
+
+function Add-NpmGlobalBinToPath {
+  $bin = Get-NpmGlobalBin
+  if ([string]::IsNullOrWhiteSpace($bin)) { return $null }
+  $parts = $env:PATH -split ';' | ForEach-Object { $_.TrimEnd('\') }
+  if ($parts -notcontains $bin.TrimEnd('\')) {
+    $env:PATH = "$bin;$env:PATH"
+  }
+  return $bin
+}
+
+function Get-CodegraphVersion {
+  $bin = Add-NpmGlobalBinToPath
+  $candidates = @()
+  if ($bin) {
+    $candidates += @(
+      (Join-Path $bin "codegraph.cmd"),
+      (Join-Path $bin "codegraph.exe"),
+      (Join-Path $bin "codegraph")
+    )
+  }
+  foreach ($name in @("codegraph.cmd", "codegraph.exe", "codegraph")) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source) { $candidates += $cmd.Source }
+  }
+  foreach ($candidate in $candidates) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+    if (-not (Test-Path -LiteralPath $candidate)) { continue }
+    try {
+      $ver = (& $candidate --version 2>$null | Out-String).Trim()
+      if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($ver)) {
+        return $ver
+      }
+    } catch {
+      continue
+    }
+  }
+  return $null
+}
+
+function Install-CodegraphCli {
+  $existing = Get-CodegraphVersion
+  if ($existing) {
+    Write-Ok "CodeGraph already installed ($existing)"
+    return
+  }
+  $npm = Get-NpmCommand
+  if (-not $npm) {
+    Write-Host "  npm is not on PATH - cannot install CodeGraph." -ForegroundColor Red
+    Write-Note "Install Node.js (includes npm), then: npm install -g @colbymchenry/codegraph"
+    $script:SKIPPED.Add("CodeGraph (npm missing)") | Out-Null
+    return
+  }
+  Write-Say "Running npm install -g @colbymchenry/codegraph..."
+  & $npm.Source install -g @colbymchenry/codegraph
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "npm install -g @colbymchenry/codegraph failed (exit $LASTEXITCODE)" -ForegroundColor Red
+    $script:SKIPPED.Add("CodeGraph (npm install failed)") | Out-Null
+    return
+  }
+  $bin = Add-NpmGlobalBinToPath
+  $ver = Get-CodegraphVersion
+  if ($ver) {
+    Write-Ok "installed CodeGraph ($ver)"
+    if ($bin) {
+      Write-Note "npm global bin: $bin"
+    }
+  } else {
+    Write-WarnLine "CodeGraph installed, but this session cannot find codegraph --version."
+    if ($bin) {
+      Write-Note "Add $bin to your User PATH (Windows default: %AppData%\Roaming\npm), then open a new terminal."
+    } else {
+      Write-Note "Add %AppData%\Roaming\npm to your User PATH, then open a new terminal."
+    }
+    $script:SKIPPED.Add("CodeGraph PATH (new terminal may be required)") | Out-Null
+  }
 }
 
 function Get-WindowsUserEnv {
@@ -372,9 +475,18 @@ if ($script:InitializedGitRepo) {
   }
 }
 
-Write-Note "Optional later: Ollama embeddings, and Graphify via: uv tool install graphifyy"
+# -- 5. CodeGraph ----------------------------------------------------------
+Write-Stage "CodeGraph"
+Write-Say "CodeGraph adds structural code retrieval (enabled by default in harness configs)."
+Write-Note "Needs the codegraph CLI on PATH. Skip to leave it optional."
+if (Confirm-Yes "Install CodeGraph now for structural code retrieval?") {
+  Install-CodegraphCli
+} else {
+  Write-Note "Skipped CodeGraph. Install later with: npm install -g @colbymchenry/codegraph"
+}
+Write-Note "Optional later: Ollama embeddings (packages/agent-harness/scripts/setup-local-embeddings.ps1)"
 
-# -- 5. Start dashboard ----------------------------------------------------
+# -- 6. Start dashboard ----------------------------------------------------
 Write-Stage "Start dashboard"
 Write-Say "The dashboard prints a loopback URL with a one-time access token."
 Write-Note ('node "' + $Cli + '" ui --repository "' + $ProjectPath + '"')

@@ -32,7 +32,7 @@ Use these terms consistently in code, prompts, artifacts, and operator messages.
 
 **Local tracker** — Human-readable `map.md`, `issues/*.md`, and `tasks/*.md` stored with a run when no external tracker is configured.
 
-**Local knowledge base** — Full local document storage plus a deterministic lexical chunk index used to retrieve relevant context into work packets. It may add bounded Graphify traversal output for repository relationships; the graph is a regenerable projection, not durable run state.
+**Local knowledge base** — Full local document storage plus a deterministic lexical chunk index used to retrieve relevant context into work packets. It may add bounded CodeGraph traversal output for repository relationships; the graph is a regenerable projection, not durable run state.
 
 **Dashboard** — The authenticated loopback browser client for the harness engine and persisted artifacts. It may issue actions but never owns lifecycle state.
 

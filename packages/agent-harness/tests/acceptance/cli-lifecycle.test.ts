@@ -36,10 +36,8 @@ describe("CLI acceptance lifecycle", () => {
       await access(configPath);
       const gitignore = await readFile(path.join(fixture!.root, ".gitignore"), "utf8");
       expect(gitignore).toContain(".agent-harness/");
-      expect(gitignore).toContain("graphify-out/");
-      const graphifyignore = await readFile(path.join(fixture!.root, ".graphifyignore"), "utf8");
-      expect(graphifyignore).toContain("agent-harness/");
-      expect(graphifyignore).toContain("**/_*.txt");
+      expect(gitignore).toContain(".codegraph/");
+      await expect(access(path.join(fixture!.root, ".graphifyignore"))).rejects.toThrow();
       await access(path.join(fixture!.root, ".agent-harness"));
       await expect(access(path.join(fixture!.root, "agent-harness", "scripts"))).rejects.toThrow();
       await expect(access(path.join(fixture!.root, "agent-harness", "guidance"))).rejects.toThrow();
@@ -51,7 +49,7 @@ describe("CLI acceptance lifecycle", () => {
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000 },
         workflow: { generateCommitMessages: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
+        knowledge: { codegraph: { enabled: false }, guidance: { enabled: false } }}});
     const configPath = await writeAcceptanceConfig(fixture);
     const scripted = createScriptedBackend([
       { role: "reflector", output: ACCEPTANCE_REFLECT },
@@ -212,7 +210,7 @@ describe("CLI acceptance lifecycle", () => {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 },
         workflow: { },
         git: { enabled: true, autoCommitPreflight: false },
-        knowledge: { graphify: { enabled: false }, guidance: { enabled: false } }}});
+        knowledge: { codegraph: { enabled: false }, guidance: { enabled: false } }}});
     const configPath = await writeAcceptanceConfig(fixture, {
       git: { enabled: true, autoCommitPreflight: false }});
     await fixture.initGit();

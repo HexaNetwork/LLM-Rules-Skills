@@ -17,7 +17,7 @@ import {
   type RunWorkspace} from "../../src/domain/workspace.js";
 import { HarnessEngine } from "../../src/application/harness-engine.js";
 import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
-import type { GraphifyRunner } from "../../src/graphify.js";
+import type { CodegraphRunner } from "../../src/codegraph.js";
 import { git as runGit } from "../testkit/git.js";
 import {
   createProjectFixture,
@@ -72,7 +72,7 @@ describe("per-run worktrees (Slice 2)", () => {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const baseSha = (await fixture.git("rev-parse", "HEAD")).trim();
@@ -138,44 +138,43 @@ describe("per-run worktrees (Slice 2)", () => {
     expect(afterAdvance).toEqual(before);
   });
 
-  it("keeps startup Graphify output ignored when the committed base has no ignore rule", async () => {
+  it("keeps startup CodeGraph output ignored when the committed base has no ignore rule", async () => {
     await assertGitWorktreeCapability();
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          graphify: { enabled: true },
+          codegraph: { enabled: true },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
 
-    const graphifyRunner = vi.fn<GraphifyRunner>(async (_executable, args, options) => {
+    const codegraphRunner = vi.fn<CodegraphRunner>(async (_executable, args, options) => {
       if (args[0] === "--version") {
-        return { exitCode: 0, stdout: "graphify 0.9.1\n", stderr: "", timedOut: false };
+        return { exitCode: 0, stdout: "1.5.0\n", stderr: "", timedOut: false };
       }
-      if (args[0] === "update") {
-        const graphRoot = path.join(options.cwd, "graphify-out");
-        await mkdir(path.join(graphRoot, "cache"), { recursive: true });
-        await writeFile(path.join(graphRoot, "graph.json"), "{}\n", "utf8");
-        await writeFile(path.join(graphRoot, "cache", "entry.json"), "{}\n", "utf8");
-        return { exitCode: 0, stdout: "Updated graph\n", stderr: "", timedOut: false };
+      if (args[0] === "init") {
+        const graphRoot = path.join(options.cwd, ".codegraph");
+        await mkdir(graphRoot, { recursive: true });
+        await writeFile(path.join(graphRoot, "codegraph.db"), "index\n", "utf8");
+        return { exitCode: 0, stdout: "Indexed\n", stderr: "", timedOut: false };
       }
       return { exitCode: 1, stdout: "", stderr: "unexpected", timedOut: false };
     });
 
     const engine = new HarnessEngine(fixture.config, {
       backend: createFakeBackend({ reflector: () => REFLECT_OUTPUT }),
-      graphifyRunner});
-    const runId = "worktree-graphify-ignore";
+      codegraphRunner});
+    const runId = "worktree-codegraph-ignore";
     const state = await engine.start("Ship a feature", runId, false, true);
     const workspace = migrateRunWorkspace(await engine.store.readJson(runId, "workspace.json"), {
       controlRoot: fixture.root});
 
     expect(state.phase).toBe("new");
-    const updateCall = graphifyRunner.mock.calls.find(([, args]) => args[0] === "update");
-    expect(updateCall).toBeDefined();
-    expect(canonicalizeWorkspacePath(updateCall![1][1]!)).toBe(workspace.worktreePath);
-    expect(canonicalizeWorkspacePath(updateCall![2].cwd)).toBe(workspace.worktreePath);
+    const initCall = codegraphRunner.mock.calls.find(([, args]) => args[0] === "init");
+    expect(initCall).toBeDefined();
+    expect(canonicalizeWorkspacePath(initCall![1][1]!)).toBe(workspace.worktreePath);
+    expect(canonicalizeWorkspacePath(initCall![2].cwd)).toBe(workspace.worktreePath);
     expect(
       (await runGit(workspace.worktreePath!, "status", "--porcelain=v1", "--untracked-files=all")).trim(),
     ).toBe("");
@@ -186,7 +185,7 @@ describe("per-run worktrees (Slice 2)", () => {
         "--quiet",
         "--no-index",
         "--",
-        "graphify-out/graph.json",
+        ".codegraph/codegraph.db",
       ),
     ).resolves.toBe("");
 
@@ -202,7 +201,7 @@ describe("per-run worktrees (Slice 2)", () => {
         git: { enabled: true, baseBranch: "main" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const backend = createFakeBackend({});
@@ -238,7 +237,7 @@ describe("per-run worktrees (Slice 2)", () => {
         git: { enabled: true, baseBranch: "main" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const backend = createFakeBackend({});
@@ -284,7 +283,7 @@ describe("per-run worktrees (Slice 3 — run-local evidence)", () => {
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const backend = createFakeBackend({
@@ -401,7 +400,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
         git: { enabled: true, baseBranch: "main", branchPrefix: "harness" },
         knowledge: {
           sources: [{ path: "README.md" }],
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const baseSha = (await fixture.git("rev-parse", "HEAD")).trim();
@@ -478,7 +477,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     await fixture.git("remote", "add", "origin", bareRoot);
@@ -550,7 +549,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     const runId = "legacy-branch-1";
@@ -591,7 +590,7 @@ describe("per-run worktrees (Slice 4 — late delivery branch)", () => {
         commands: { verification: [{ id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 }] },
         knowledge: {
           sources: [{ path: "README.md" }],
-          graphify: { enabled: false },
+          codegraph: { enabled: false },
           guidance: { enabled: false, maxResults: 0, maxCharacters: 1 }}}});
     await fixture.initGit({ branch: "main" });
     // Conflicting branch at base, not at the run tip after the task commit.

@@ -443,11 +443,11 @@ export function renderDashboard(): string {
         <div class="field"><label for="idea">What do you want to build?</label><textarea id="idea" name="idea" rows="7" required placeholder="Describe the outcome, the user, and any constraints you already know…"></textarea></div>
         <div class="form-feedback" id="newRunFeedback" hidden></div>
         <div class="field"><label for="ideaFile">Or load an idea file</label><input id="ideaFile" type="file" accept=".md,.txt,.json"></div>
-        <div class="switch-row"><div><strong>Document RAG</strong><div class="faint">Retrieve project docs into agent work packets (independent of Graphify).</div></div><input id="rag" type="checkbox"></div>
+        <div class="switch-row"><div><strong>Document RAG</strong><div class="faint">Retrieve project docs into agent work packets (independent of CodeGraph).</div></div><input id="rag" type="checkbox"></div>
         <div class="field" id="baseBranchField" hidden><label for="baseBranch">Start from branch</label><select id="baseBranch"></select><small class="faint">Creates the run worktree from this local branch tip. Does not switch or clean the project folder. PRs target it. Defaults to the project base branch.</small></div>
         <details><summary>Advanced run settings</summary><div style="padding-top:14px">
           <div class="columns"><div class="field"><label for="smallModel">Small model</label><input id="smallModel" type="text"></div><div class="field"><label for="capableModel">Capable model</label><input id="capableModel" type="text"></div></div>
-          <div class="switch-row"><div><strong>Use Graphify</strong><div class="faint">Prepare and query structural code context for this run.</div></div><input id="graphify" type="checkbox"></div>
+          <div class="switch-row"><div><strong>Use CodeGraph</strong><div class="faint">Prepare and query structural code context for this run.</div></div><input id="codegraph" type="checkbox"></div>
           <div class="switch-row"><div><strong>Push branch</strong><div class="faint">Push verified commits to the configured remote.</div></div><input id="push" type="checkbox"></div>
           <div class="switch-row"><div><strong>Open pull request</strong><div class="faint">Uses <code>gh</code>; also enables push.</div></div><input id="openPr" type="checkbox"></div>
         </div></details>

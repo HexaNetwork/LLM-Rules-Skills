@@ -60,7 +60,7 @@ import type {
 } from "./config.js";
 import { LocalEmbeddingIndex } from "./embeddings.js";
 import {
-  GraphifyRepositoryLookup,
+  CodegraphRepositoryLookup,
   GRAPH_PATH,
   type RepositoryLookup,
 } from "./graphify.js";

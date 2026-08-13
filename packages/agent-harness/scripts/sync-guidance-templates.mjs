@@ -1,6 +1,6 @@
 /**
  * Copy monorepo General/ rules+skills into the package templates tree so
- * init/deploy can seed them the same way Graphify setup scripts are shipped.
+ * init/deploy can seed them the same way CodeGraph setup scripts are shipped.
  */
 import { cp, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";

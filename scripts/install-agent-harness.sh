@@ -179,7 +179,7 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=5
+TOTAL_STAGES=6
 
 # Prefer paths relative to this script (repo root = parent of scripts/).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -204,6 +204,95 @@ _node_ok() {
 _harness_checkout_ok() {
   local path="$1"
   [[ -n "$path" && -f "$path/package.json" && -d "$path/packages/agent-harness" ]]
+}
+
+_npm_cmd() {
+  if command -v npm.cmd >/dev/null 2>&1; then
+    printf '%s' "npm.cmd"
+  elif command -v npm >/dev/null 2>&1; then
+    printf '%s' "npm"
+  fi
+}
+
+_npm_global_bin() {
+  local npm prefix
+  npm="$(_npm_cmd)"
+  [[ -n "$npm" ]] || return 0
+  prefix="$("$npm" prefix -g 2>/dev/null || true)"
+  prefix="${prefix//$'\r'/}"
+  [[ -n "$prefix" ]] || return 0
+  if [[ -d "$prefix/bin" ]]; then
+    printf '%s' "$prefix/bin"
+  else
+    printf '%s' "$prefix"
+  fi
+}
+
+_ensure_npm_global_bin_on_path() {
+  local bin
+  bin="$(_npm_global_bin)"
+  [[ -n "$bin" ]] || return 0
+  case ":$PATH:" in
+    *":$bin:"*) ;;
+    *) export PATH="$bin:$PATH" ;;
+  esac
+  hash -r 2>/dev/null || true
+}
+
+_codegraph_version() {
+  local bin candidate
+  _ensure_npm_global_bin_on_path
+  if command -v codegraph >/dev/null 2>&1; then
+    codegraph --version 2>/dev/null && return 0
+  fi
+  bin="$(_npm_global_bin)"
+  if [[ -n "$bin" ]]; then
+    for candidate in "$bin/codegraph" "$bin/codegraph.cmd" "$bin/codegraph.exe"; do
+      if [[ -e "$candidate" ]]; then
+        "$candidate" --version 2>/dev/null && return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+_install_codegraph_cli() {
+  local existing npm bin ver
+  existing="$(_codegraph_version || true)"
+  existing="${existing//$'\r'/}"
+  if [[ -n "$existing" ]]; then
+    printf '  %s✓ CodeGraph already installed%s (%s)\n' "$GREEN" "$RESET" "$existing"
+    return 0
+  fi
+  npm="$(_npm_cmd)"
+  if [[ -z "$npm" ]]; then
+    printf '  %snpm is not on PATH — cannot install CodeGraph.%s\n' "$RED" "$RESET"
+    note "Install Node.js (includes npm), then: npm install -g @colbymchenry/codegraph"
+    SKIPPED+=("CodeGraph (npm missing)")
+    return 0
+  fi
+  say "Running npm install -g @colbymchenry/codegraph..."
+  if ! "$npm" install -g @colbymchenry/codegraph; then
+    printf '  %snpm install -g @colbymchenry/codegraph failed.%s\n' "$RED" "$RESET"
+    SKIPPED+=("CodeGraph (npm install failed)")
+    return 0
+  fi
+  bin="$(_npm_global_bin)"
+  _ensure_npm_global_bin_on_path
+  ver="$(_codegraph_version || true)"
+  ver="${ver//$'\r'/}"
+  if [[ -n "$ver" ]]; then
+    printf '  %s✓ installed CodeGraph%s (%s)\n' "$GREEN" "$RESET" "$ver"
+    [[ -n "$bin" ]] && note "npm global bin: $bin"
+  else
+    warn "CodeGraph installed, but this session cannot find codegraph --version."
+    if [[ -n "$bin" ]]; then
+      note "Add $bin to PATH (Windows default: %AppData%\\Roaming\\npm), then open a new terminal."
+    else
+      note "Ensure the npm global bin directory is on PATH, then open a new terminal."
+    fi
+    SKIPPED+=("CodeGraph PATH (new terminal may be required)")
+  fi
 }
 
 _read_windows_user_env() {
@@ -398,9 +487,19 @@ if [[ "$INITIALIZED_GIT_REPO" -eq 1 ]]; then
     note "nothing to commit after registration"
   fi
 fi
-note "Optional later: Ollama embeddings, and Graphify via: uv tool install graphifyy"
 
-# ── 5. Start dashboard ────────────────────────────────────────────────────
+# ── 5. CodeGraph ──────────────────────────────────────────────────────────
+stage "CodeGraph"
+say "CodeGraph adds structural code retrieval (enabled by default in harness configs)."
+note "Needs the codegraph CLI on PATH. Skip to leave it optional."
+if confirm "Install CodeGraph now for structural code retrieval?"; then
+  _install_codegraph_cli
+else
+  note "Skipped CodeGraph. Install later with: npm install -g @colbymchenry/codegraph"
+fi
+note "Optional later: Ollama embeddings (packages/agent-harness/scripts/setup-local-embeddings.sh)"
+
+# ── 6. Start dashboard ────────────────────────────────────────────────────
 stage "Start dashboard"
 say "The dashboard prints a loopback URL with a one-time access token."
 note "node \"$CLI\" ui --repository \"$PROJECT_PATH\""

@@ -10,13 +10,12 @@ export type RepositorySearchResult = Omit<
   "scope" | "projectId" | "visibility"
 >;
 
-export const GRAPH_PATH = "graphify-out/graph.json";
+export const INDEX_DIR = ".codegraph";
+export const INDEX_DB = ".codegraph/codegraph.db";
+export const INDEX_SOURCE = "codegraph:.codegraph";
 const OUTPUT_LIMIT = 1_000_000;
-const GRAPHIFY_QUERY_TOKEN_CAP = 12;
-const HUB_TRAVERSAL_NODE_LIMIT = 1_000;
-const MAX_EXPLAIN_SYMBOLS = 4;
-const HUB_DEGREE_LIMIT = 100;
-const HUB_CONNECTION_LIMIT = 5;
+const QUERY_TOKEN_CAP = 12;
+const MAX_PATH_HINT_SYMBOLS = 4;
 
 /** Articles, pronouns, auxiliaries, prepositions, and conjunctions only. */
 export const ENGLISH_STOPWORDS = [
@@ -130,7 +129,7 @@ export const ENGLISH_STOPWORDS = [
   "per",
 ] as const;
 
-/** Harness process words that are noise in any project Graphify query. */
+/** Harness process words that are noise in any project repository query. */
 export const HARNESS_META_STOPWORDS = [
   "objective",
   "acceptance",
@@ -142,160 +141,9 @@ export const HARNESS_META_STOPWORDS = [
   "packet",
 ] as const;
 
-const MIN_GRAPHIFY_TOKENS = 2;
+const MIN_QUERY_TOKENS = 2;
 
-const SEED_SCORE = 1_000_000;
-const QUERY_SCORE = 1_000;
-const METHOD_NOISE_PENALTY = 100;
-
-const HEADER_START_RE =
-  /^Traversal:.*?\|\s*Start:\s*\[([^\]]*)\]\s*\|\s*(\d+)\s+nodes?\s+found\b/im;
-const NODE_LINE_RE = /^NODE\s+(.+?)\s+\[([^\]]*)\]\s*$/;
-const START_TOKEN_RE = /['"]([^'"]+)['"]/g;
-
-/**
- * Re-rank Graphify CLI stdout so seed / query hits appear before hub noise,
- * then pack under maxChars. Unparseable dumps pass through unchanged.
- */
-export function rankGraphifyExcerpt(
-  raw: string,
-  shapedQuery: string,
-  maxChars: number,
-): string {
-  const trimmed = raw.trim();
-  if (!trimmed || maxChars <= 0) return trimmed;
-
-  const lines = trimmed.split(/\r?\n/);
-  const headerIndex = lines.findIndex((line) => HEADER_START_RE.test(line));
-  const nodes: Array<{ line: string; label: string; src: string; index: number }> = [];
-  let truncationNotice: string | undefined;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const match = NODE_LINE_RE.exec(line);
-    if (match) {
-      const attrs = match[2] ?? "";
-      const srcMatch = /\bsrc=(\S+)/.exec(attrs);
-      nodes.push({
-        line,
-        label: (match[1] ?? "").trim(),
-        src: srcMatch?.[1] ?? "",
-        index: nodes.length,
-      });
-      continue;
-    }
-    if (nodes.length > 0 && line.trim() && i !== headerIndex) {
-      // Trailing non-NODE text after the body (e.g. truncation notices).
-      truncationNotice = truncationNotice
-        ? `${truncationNotice}\n${line}`
-        : line;
-    }
-  }
-
-  if (nodes.length === 0) return trimmed;
-  if (headerIndex < 0) return trimmed;
-
-  const headerLine = lines[headerIndex]!;
-  const startMatch = HEADER_START_RE.exec(headerLine);
-  if (!startMatch) return trimmed;
-
-  const seeds = parseStartTokens(startMatch[1] ?? "");
-  const traversalNodeCount = Number(startMatch[2] ?? 0);
-  const queryTokens = shapedQuery
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter(Boolean);
-
-  const ranked = [...nodes].sort((a, b) => {
-    const scoreDiff =
-      scoreGraphifyNode(b, seeds, queryTokens) - scoreGraphifyNode(a, seeds, queryTokens);
-    if (scoreDiff !== 0) return scoreDiff;
-    return a.index - b.index;
-  });
-  const candidates = traversalNodeCount > HUB_TRAVERSAL_NODE_LIMIT
-    ? ranked.filter((node) => scoreGraphifyNode(node, seeds, queryTokens) > 0)
-    : ranked;
-
-  const parts: string[] = [];
-  let used = 0;
-  const pushIfFits = (chunk: string): boolean => {
-    const next = used === 0 ? chunk.length : used + 1 + chunk.length;
-    if (next > maxChars) return false;
-    parts.push(chunk);
-    used = next;
-    return true;
-  };
-
-  if (!pushIfFits(headerLine)) return trimmed.slice(0, maxChars);
-
-  for (const node of candidates) {
-    pushIfFits(node.line);
-  }
-
-  if (truncationNotice) {
-    pushIfFits(truncationNotice);
-  }
-
-  return parts.join("\n");
-}
-
-function parseStartTokens(rawList: string): string[] {
-  const tokens: string[] = [];
-  for (const match of rawList.matchAll(START_TOKEN_RE)) {
-    const token = match[1]?.trim();
-    if (token) tokens.push(token);
-  }
-  return tokens;
-}
-
-function scoreGraphifyNode(
-  node: { label: string; src: string },
-  seeds: readonly string[],
-  queryTokens: readonly string[],
-): number {
-  let score = 0;
-  const labelLower = node.label.toLocaleLowerCase();
-  const srcLower = node.src.toLocaleLowerCase();
-  const basenameLower = pathBasenameWithoutExt(node.src).toLocaleLowerCase();
-
-  for (const seed of seeds) {
-    const seedLower = seed.toLocaleLowerCase();
-    if (
-      labelLower === seedLower ||
-      basenameLower === seedLower ||
-      labelLower.includes(seedLower)
-    ) {
-      score += SEED_SCORE;
-      break;
-    }
-  }
-
-  for (const token of queryTokens) {
-    const tokenLower = token.toLocaleLowerCase();
-    if (
-      labelLower.includes(tokenLower) ||
-      srcLower.includes(tokenLower) ||
-      basenameLower.includes(tokenLower)
-    ) {
-      score += QUERY_SCORE;
-      break;
-    }
-  }
-
-  if (node.label.startsWith(".")) {
-    score -= METHOD_NOISE_PENALTY;
-  }
-
-  return score;
-}
-
-function pathBasenameWithoutExt(src: string): string {
-  if (!src) return "";
-  const base = src.replace(/\\/g, "/").split("/").pop() ?? src;
-  return base.replace(/\.[^.]+$/, "");
-}
-
-export function graphifyStopwordSet(extra: readonly string[] = []): Set<string> {
+export function codegraphStopwordSet(extra: readonly string[] = []): Set<string> {
   return new Set(
     [...ENGLISH_STOPWORDS, ...HARNESS_META_STOPWORDS, ...extra].map((word) =>
       word.toLocaleLowerCase(),
@@ -304,15 +152,15 @@ export function graphifyStopwordSet(extra: readonly string[] = []): Set<string> 
 }
 
 /**
- * Shape a free-text knowledge query into distinctive Graphify seeds:
+ * Shape a free-text knowledge query into distinctive CodeGraph seeds:
  * prefer PascalCase / camelCase identifiers and dotted paths, then nouns.
  */
-export function buildGraphifyQuery(
+export function buildCodegraphQuery(
   raw: string,
-  maxTokens = GRAPHIFY_QUERY_TOKEN_CAP,
+  maxTokens = QUERY_TOKEN_CAP,
   extraStopwords: readonly string[] = [],
 ): string {
-  const stopwords = graphifyStopwordSet(extraStopwords);
+  const stopwords = codegraphStopwordSet(extraStopwords);
   const distinctive: string[] = [];
   const ordinary: string[] = [];
   const seen = new Set<string>();
@@ -323,26 +171,26 @@ export function buildGraphifyQuery(
     const key = token.toLocaleLowerCase();
     if (stopwords.has(key) || seen.has(key)) continue;
     seen.add(key);
-    if (isDistinctiveGraphifyToken(token)) distinctive.push(token);
+    if (isDistinctiveToken(token)) distinctive.push(token);
     else ordinary.push(token);
   }
   return [...distinctive, ...ordinary].slice(0, maxTokens).join(" ");
 }
 
-export function shapeGraphifyQuery(
+export function shapeCodegraphQuery(
   raw: string,
   fallbackQuery?: string,
-  maxTokens = GRAPHIFY_QUERY_TOKEN_CAP,
+  maxTokens = QUERY_TOKEN_CAP,
   extraStopwords: readonly string[] = [],
 ): { query: string; usedFallback: boolean; skippedReason?: string } {
-  const primary = buildGraphifyQuery(raw, maxTokens, extraStopwords);
-  if (isUsableGraphifyQuery(primary)) {
+  const primary = buildCodegraphQuery(raw, maxTokens, extraStopwords);
+  if (isUsableQuery(primary)) {
     return { query: primary, usedFallback: false };
   }
   const fallback = fallbackQuery?.trim()
-    ? buildGraphifyQuery(fallbackQuery, maxTokens, extraStopwords)
+    ? buildCodegraphQuery(fallbackQuery, maxTokens, extraStopwords)
     : "";
-  if (isUsableGraphifyQuery(fallback)) {
+  if (isUsableQuery(fallback)) {
     return { query: fallback, usedFallback: true };
   }
   return {
@@ -352,7 +200,19 @@ export function shapeGraphifyQuery(
   };
 }
 
-function isDistinctiveGraphifyToken(token: string): boolean {
+/**
+ * Compact a bounded domain seed from idea / destination text: prefer
+ * identifier-like and distinctive tokens, drop harness meta-language.
+ */
+export function compactDomainSeed(
+  ...parts: Array<string | undefined | null>
+): string {
+  const text = parts.filter((part): part is string => Boolean(part?.trim())).join(" ");
+  if (!text) return "";
+  return buildCodegraphQuery(text, 8);
+}
+
+function isDistinctiveToken(token: string): boolean {
   return (
     /[A-Za-z][A-Za-z0-9]*\.[A-Za-z]/.test(token) ||
     /[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+/.test(token) ||
@@ -362,31 +222,42 @@ function isDistinctiveGraphifyToken(token: string): boolean {
   );
 }
 
-function isUsableGraphifyQuery(query: string): boolean {
+function isUsableQuery(query: string): boolean {
   const tokens = query.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return false;
-  if (tokens.some(isDistinctiveGraphifyToken)) return true;
-  return tokens.length >= MIN_GRAPHIFY_TOKENS;
+  if (tokens.some(isDistinctiveToken)) return true;
+  return tokens.length >= MIN_QUERY_TOKENS;
 }
 
-export type GraphifyCommandResult = {
+/** Pack CLI stdout under maxChars; unparseable dumps pass through until the cap. */
+export function packCodegraphExcerpt(raw: string, maxChars: number): string {
+  const trimmed = raw.trim();
+  if (!trimmed || maxChars <= 0) return trimmed;
+  if (trimmed.length <= maxChars) return trimmed;
+  const sliced = trimmed.slice(0, maxChars);
+  const lastBreak = Math.max(sliced.lastIndexOf("\n"), sliced.lastIndexOf("\r"));
+  if (lastBreak >= Math.floor(maxChars * 0.5)) return sliced.slice(0, lastBreak);
+  return sliced;
+}
+
+export type CodegraphCommandResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
   timedOut: boolean;
 };
 
-export type GraphifyRunner = (
+export type CodegraphRunner = (
   executable: string,
   args: string[],
   options: { cwd: string; timeoutMs: number },
-) => Promise<GraphifyCommandResult>;
+) => Promise<CodegraphCommandResult>;
 
-export type GraphifyPreparation = {
+export type CodegraphPreparation = {
   enabled: boolean;
   installed: boolean;
   graphReady: boolean;
-  /** True when this call built or refreshed graphify-out/graph.json. */
+  /** True when this call created or refreshed `.codegraph/`. */
   setupRan: boolean;
 };
 
@@ -412,14 +283,14 @@ export interface RepositoryLookup {
   ): Promise<RepositoryLookupSearch>;
 }
 
-export class GraphifyRepositoryLookup implements RepositoryLookup {
+export class CodegraphRepositoryLookup implements RepositoryLookup {
   private readonly paths: HarnessPaths;
   private readonly warned = new Set<string>();
   private readonly searchCache = new Map<string, RepositoryLookupSearch>();
 
   constructor(
     private readonly config: HarnessConfig,
-    private readonly runner: GraphifyRunner = runGraphify,
+    private readonly runner: CodegraphRunner = runCodegraph,
     paths: HarnessPaths = resolveHarnessPaths(config),
   ) {
     this.paths = paths;
@@ -429,40 +300,40 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
     return this.paths.workspaceRoot;
   }
 
-  private get graphPath(): string {
-    const resolved = path.resolve(this.workspaceRoot, GRAPH_PATH);
+  private get indexPath(): string {
+    const resolved = path.resolve(this.workspaceRoot, INDEX_DB);
     assertInside(this.workspaceRoot, resolved);
     return resolved;
   }
 
   async refresh(): Promise<void> {
-    const settings = this.config.knowledge.graphify;
+    const settings = this.config.knowledge.codegraph;
     if (!settings.enabled || !settings.updateOnRefresh) return;
     await this.update();
   }
 
   /** Rebuild after a verified source commit, regardless of updateOnRefresh. */
   async rebuild(): Promise<boolean> {
-    if (!this.config.knowledge.graphify.enabled) return false;
+    if (!this.config.knowledge.codegraph.enabled) return false;
     return this.update();
   }
 
   private async update(): Promise<boolean> {
-    const settings = this.config.knowledge.graphify;
+    const settings = this.config.knowledge.codegraph;
     try {
       const result = await this.runner(
         settings.command,
-        ["update", this.workspaceRoot],
+        ["sync", this.workspaceRoot],
         { cwd: this.workspaceRoot, timeoutMs: settings.updateTimeoutMs },
       );
       if (result.exitCode !== 0 || result.timedOut) {
-        this.warn(`update failed: ${failureDetail(result)}`);
+        this.warn(`sync failed: ${failureDetail(result)}`);
         return false;
       }
       this.searchCache.clear();
       return true;
     } catch (error) {
-      this.warn(`update failed: ${messageOf(error)}`);
+      this.warn(`sync failed: ${messageOf(error)}`);
       return false;
     }
   }
@@ -471,7 +342,7 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
     query: string,
     options: RepositoryLookupSearchOptions = {},
   ): Promise<RepositoryLookupSearch> {
-    const settings = this.config.knowledge.graphify;
+    const settings = this.config.knowledge.codegraph;
     if (!settings.enabled) {
       return {
         shapedQuery: "",
@@ -479,16 +350,16 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
         skippedReason: "disabled",
       };
     }
-    const exactSymbols = graphifySymbolsFromPaths(
+    const exactSymbols = symbolsFromPaths(
       options.pathHints,
       settings.sourceExtensions,
-    ).slice(0, MAX_EXPLAIN_SYMBOLS);
+    ).slice(0, MAX_PATH_HINT_SYMBOLS);
     const shaped = exactSymbols.length > 0
       ? { query: exactSymbols.join(" "), usedFallback: false }
-      : shapeGraphifyQuery(
+      : shapeCodegraphQuery(
           query,
           options.fallbackQuery,
-          GRAPHIFY_QUERY_TOKEN_CAP,
+          QUERY_TOKEN_CAP,
           settings.stopwords,
         );
     if (!shaped.query) {
@@ -498,24 +369,24 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
         skippedReason: shaped.skippedReason ?? "generic-query",
       };
     }
-    let graphMtime = 0;
+    let indexMtime = 0;
     try {
-      graphMtime = (await stat(this.graphPath)).mtimeMs;
+      indexMtime = (await stat(this.indexPath)).mtimeMs;
     } catch {
-      this.warn(`lookup skipped because ${GRAPH_PATH} does not exist`);
+      this.warn(`lookup skipped because ${INDEX_DB} does not exist`);
       return {
         shapedQuery: shaped.query,
         usedFallback: shaped.usedFallback,
-        skippedReason: "graph-missing",
+        skippedReason: "index-missing",
       };
     }
 
-    const cacheKey = `${exactSymbols.length > 0 ? "explain" : "query"}:${shaped.query}\0${graphMtime}`;
+    const cacheKey = `${exactSymbols.length > 0 ? "node" : "explore"}:${shaped.query}\0${indexMtime}`;
     const cached = this.searchCache.get(cacheKey);
     if (cached) return cloneRepositoryLookupSearch(cached);
 
     if (exactSymbols.length > 0) {
-      const explained = await this.explainSymbols(exactSymbols);
+      const explained = await this.lookupSymbols(exactSymbols);
       this.searchCache.set(cacheKey, explained);
       return cloneRepositoryLookupSearch(explained);
     }
@@ -524,24 +395,19 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
       const result = await this.runner(
         settings.command,
         [
-          "query",
+          "explore",
           shaped.query,
-          "--budget",
-          String(settings.queryBudgetTokens),
-          "--graph",
-          this.graphPath,
+          "-p",
+          this.workspaceRoot,
+          "--max-files",
+          String(settings.maxFiles),
         ],
         { cwd: this.workspaceRoot, timeoutMs: settings.queryTimeoutMs },
       );
       const rawExcerpt = result.stdout.trim();
-      if (
-        result.exitCode !== 0 ||
-        result.timedOut ||
-        !rawExcerpt ||
-        /^No matching nodes found\.?$/im.test(rawExcerpt)
-      ) {
+      if (result.exitCode !== 0 || result.timedOut || !rawExcerpt) {
         if (result.exitCode !== 0 || result.timedOut) {
-          this.warn(`query failed: ${failureDetail(result)}`);
+          this.warn(`explore failed: ${failureDetail(result)}`);
         }
         const miss: RepositoryLookupSearch = {
           shapedQuery: shaped.query,
@@ -552,15 +418,14 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
         this.searchCache.set(cacheKey, miss);
         return cloneRepositoryLookupSearch(miss);
       }
-      const excerpt = rankGraphifyExcerpt(
+      const excerpt = packCodegraphExcerpt(
         rawExcerpt,
-        shaped.query,
-        this.config.workflow.graphifyCharacters,
+        this.config.workflow.codegraphCharacters,
       );
       const hit: RepositoryLookupSearch = {
         result: {
-          source: `graphify:${GRAPH_PATH}`,
-          title: "Repository relationships (Graphify)",
+          source: INDEX_SOURCE,
+          title: "Repository relationships (CodeGraph)",
           excerpt,
           // Structural context is prepended; score is not comparable to doc RRF/TF-IDF.
           score: 0,
@@ -571,7 +436,7 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
       this.searchCache.set(cacheKey, hit);
       return cloneRepositoryLookupSearch(hit);
     } catch (error) {
-      this.warn(`query failed: ${messageOf(error)}`);
+      this.warn(`explore failed: ${messageOf(error)}`);
       return {
         shapedQuery: shaped.query,
         usedFallback: shaped.usedFallback,
@@ -580,22 +445,20 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
     }
   }
 
-  private async explainSymbols(symbols: string[]): Promise<RepositoryLookupSearch> {
-    const settings = this.config.knowledge.graphify;
+  private async lookupSymbols(symbols: string[]): Promise<RepositoryLookupSearch> {
+    const settings = this.config.knowledge.codegraph;
     const results = await Promise.all(
       symbols.map(async (symbol) => {
         try {
           const result = await this.runner(
             settings.command,
-            ["explain", symbol, "--graph", this.graphPath],
+            ["node", symbol, "-p", this.workspaceRoot],
             { cwd: this.workspaceRoot, timeoutMs: settings.queryTimeoutMs },
           );
           const text = result.stdout.trim();
-          return result.exitCode === 0 && !result.timedOut && /^Node:\s+/m.test(text)
-            ? text
-            : undefined;
+          return result.exitCode === 0 && !result.timedOut && text ? text : undefined;
         } catch (error) {
-          this.warn(`explain ${symbol} failed: ${messageOf(error)}`);
+          this.warn(`node ${symbol} failed: ${messageOf(error)}`);
           return undefined;
         }
       }),
@@ -611,9 +474,12 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
     }
     return {
       result: {
-        source: `graphify:${GRAPH_PATH}`,
-        title: "Exact repository relationships (Graphify)",
-        excerpt: packGraphifyExplains(excerpts, this.config.workflow.graphifyCharacters),
+        source: INDEX_SOURCE,
+        title: "Exact repository relationships (CodeGraph)",
+        excerpt: packCodegraphExcerpt(
+          excerpts.join("\n\n"),
+          this.config.workflow.codegraphCharacters,
+        ),
         score: 0,
       },
       shapedQuery,
@@ -624,12 +490,12 @@ export class GraphifyRepositoryLookup implements RepositoryLookup {
   private warn(detail: string): void {
     if (this.warned.has(detail)) return;
     this.warned.add(detail);
-    console.warn(`Graphify ${detail}; continuing with lexical retrieval`);
+    console.warn(`CodeGraph ${detail}; continuing with lexical retrieval`);
   }
 }
 
 /** Exact code symbols from packet paths; non-source assets are not useful graph seeds. */
-function graphifySymbolsFromPaths(
+function symbolsFromPaths(
   pathHints: string[] | undefined,
   sourceExtensions: string[],
 ): string[] {
@@ -643,34 +509,6 @@ function graphifySymbolsFromPaths(
   }))];
 }
 
-/** Keep focused explains intact and bound high-degree hubs to a few representative edges. */
-function packGraphifyExplains(excerpts: string[], maxChars: number): string {
-  const compacted = excerpts.map((excerpt) => compactGraphifyExplain(excerpt));
-  const parts: string[] = [];
-  let used = 0;
-  for (const excerpt of compacted) {
-    const remaining = maxChars - used - (parts.length > 0 ? 2 : 0);
-    if (remaining <= 0) break;
-    const next = excerpt.length <= remaining ? excerpt : excerpt.slice(0, remaining);
-    parts.push(next);
-    used += next.length + (parts.length > 1 ? 2 : 0);
-  }
-  return parts.join("\n\n");
-}
-
-function compactGraphifyExplain(excerpt: string): string {
-  const degree = Number(/^\s*Degree:\s*(\d+)\s*$/im.exec(excerpt)?.[1] ?? 0);
-  if (degree <= HUB_DEGREE_LIMIT) return excerpt.trim();
-  const lines = excerpt.trim().split(/\r?\n/);
-  const connectionsIndex = lines.findIndex((line) => /^Connections\s*\(/.test(line));
-  if (connectionsIndex < 0) return excerpt.trim();
-  return [
-    ...lines.slice(0, connectionsIndex + 1),
-    ...lines.slice(connectionsIndex + 1, connectionsIndex + 1 + HUB_CONNECTION_LIMIT),
-    `  ... high-degree hub (${degree}); remaining connections omitted`,
-  ].join("\n");
-}
-
 function cloneRepositoryLookupSearch(value: RepositoryLookupSearch): RepositoryLookupSearch {
   return {
     ...value,
@@ -678,7 +516,7 @@ function cloneRepositoryLookupSearch(value: RepositoryLookupSearch): RepositoryL
   };
 }
 
-export const runGraphify: GraphifyRunner = (executable, args, options) =>
+export const runCodegraph: CodegraphRunner = (executable, args, options) =>
   new Promise((resolve) => {
     execFile(
       executable,
@@ -710,54 +548,54 @@ export const runGraphify: GraphifyRunner = (executable, args, options) =>
   });
 
 /**
- * A new agent run needs a usable `graphify` command and graphify-out/graph.json.
- * Install Graphify yourself (`uv tool install graphifyy`); the harness only builds
- * the graph when the command is already available.
+ * A new agent run needs a usable `codegraph` command and `.codegraph/` index.
+ * Install CodeGraph yourself (`npm install -g @colbymchenry/codegraph`); the harness
+ * only builds the index when the command is already available.
  */
-export async function prepareGraphifyForRun(
+export async function prepareCodegraphForRun(
   config: HarnessConfig,
-  runner: GraphifyRunner = runGraphify,
+  runner: CodegraphRunner = runCodegraph,
   paths: HarnessPaths = resolveHarnessPaths(config),
-): Promise<GraphifyPreparation> {
-  const settings = config.knowledge.graphify;
+): Promise<CodegraphPreparation> {
+  const settings = config.knowledge.codegraph;
   if (!settings.enabled) {
     return { enabled: false, installed: false, graphReady: false, setupRan: false };
   }
   const workspaceRoot = paths.workspaceRoot;
-  const graphPath = path.resolve(workspaceRoot, GRAPH_PATH);
-  assertInside(workspaceRoot, graphPath);
-  const [version, graphReady] = await Promise.all([
+  const indexPath = path.resolve(workspaceRoot, INDEX_DB);
+  assertInside(workspaceRoot, indexPath);
+  const [version, indexReady] = await Promise.all([
     runner(settings.command, ["--version"], {
       cwd: workspaceRoot,
       timeoutMs: settings.queryTimeoutMs,
     }),
-    exists(graphPath),
+    exists(indexPath),
   ]);
-  if (version.exitCode === 0 && !version.timedOut && graphReady) {
+  if (version.exitCode === 0 && !version.timedOut && indexReady) {
     return { enabled: true, installed: true, graphReady: true, setupRan: false };
   }
   if (version.exitCode !== 0 || version.timedOut) {
     throw new Error(
-      `Graphify is enabled but \`${settings.command}\` is unavailable. Install it with \`uv tool install graphifyy\` (or pipx), then retry.`,
+      `CodeGraph is enabled but \`${settings.command}\` is unavailable. Install it with \`npm install -g @colbymchenry/codegraph\`, then retry.`,
     );
   }
 
-  const update = await runner(settings.command, ["update", workspaceRoot], {
+  const init = await runner(settings.command, ["init", workspaceRoot], {
     cwd: workspaceRoot,
     timeoutMs: settings.updateTimeoutMs,
   });
-  if (update.exitCode !== 0 || update.timedOut) {
-    throw new Error(`Graphify graph update failed: ${failureDetail(update)}`);
+  if (init.exitCode !== 0 || init.timedOut) {
+    throw new Error(`CodeGraph index init failed: ${failureDetail(init)}`);
   }
-  if (!(await exists(graphPath))) {
+  if (!(await exists(indexPath))) {
     throw new Error(
-      `Graphify update completed but ${GRAPH_PATH} is still missing under ${workspaceRoot}.`,
+      `CodeGraph init completed but ${INDEX_DB} is still missing under ${workspaceRoot}.`,
     );
   }
   return { enabled: true, installed: true, graphReady: true, setupRan: true };
 }
 
-function failureDetail(result: GraphifyCommandResult): string {
+function failureDetail(result: CodegraphCommandResult): string {
   if (result.timedOut) return "timed out";
   return (result.stderr || result.stdout || `exit ${result.exitCode}`).trim().slice(0, 1_000);
 }
@@ -769,7 +607,7 @@ function messageOf(error: unknown): string {
 function assertInside(root: string, target: string): void {
   const relative = path.relative(path.resolve(root), target);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error(`Graphify graph escapes repository: ${target}`);
+    throw new Error(`CodeGraph index escapes repository: ${target}`);
   }
 }
 

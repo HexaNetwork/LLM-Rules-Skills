@@ -162,9 +162,9 @@ export const renderRunScript = `    function renderSidebar() {
         { test: /CURSOR_API_KEY|agent backend (is )?unavailable|missing.*api.?key/i,
           title: "The agent backend is unavailable",
           hint: "Set the required credential (e.g. CURSOR_API_KEY) in the terminal running the harness, then restart the dashboard and retry." },
-        { test: /graphify-out[\\\\/]graph\\.json|graphify graph|missing graph/i,
-          title: "The Graphify repository graph is missing",
-          hint: "Run Graphify's setup for this repository so graphify-out/graph.json exists, then retry." },
+        { test: /\\.codegraph[/\\\\]|codegraph index|missing graph|codegraph init/i,
+          title: "The CodeGraph repository index is missing",
+          hint: "Install CodeGraph (npm install -g @colbymchenry/codegraph) and retry so .codegraph/ exists." },
         { test: /run configuration changed|configurationHash|resume with the persisted run config/i,
           title: "The run configuration changed since this run started",
           hint: "A hashed run setting drifted from this run's frozen snapshot. Restore that frozen policy, draft a configuration repair, or start a new run." }
@@ -483,14 +483,14 @@ export const renderRunScript = `    function renderSidebar() {
       var locked = !s || ["completed","cancelled"].includes(s.phase);
       var policy = (state.detail && state.detail.retrievalPolicy) || {};
       var ragOn = policy.rag !== false;
-      var graphifyOn = !!policy.graphify;
+      var codegraphOn = !!policy.codegraph;
       if (locked) {
         return '<div style="margin-top:8px"><div><strong>Document RAG:</strong> ' + (ragOn ? "Enabled" : "Disabled") + '</div>' +
-          '<div style="margin-top:6px"><strong>Graphify:</strong> ' + (graphifyOn ? "Enabled" : "Disabled") + '</div></div>';
+          '<div style="margin-top:6px"><strong>CodeGraph:</strong> ' + (codegraphOn ? "Enabled" : "Disabled") + '</div></div>';
       }
       return '<div style="margin-top:8px">' +
         '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runRagToggle"' + (ragOn ? " checked" : "") + '> <strong>Document RAG</strong> · ' + (ragOn ? "Enabled" : "Disabled") + '</label>' +
-        '<div style="margin-top:8px"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runGraphifyToggle"' + (graphifyOn ? " checked" : "") + '> <strong>Graphify</strong> · ' + (graphifyOn ? "Enabled" : "Disabled") + '</label></div>' +
+        '<div style="margin-top:8px"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="runCodegraphToggle"' + (codegraphOn ? " checked" : "") + '> <strong>CodeGraph</strong> · ' + (codegraphOn ? "Enabled" : "Disabled") + '</label></div>' +
         '<div class="faint" style="margin-top:4px">Applies to the next agent step</div></div>';
     }
 
@@ -577,7 +577,7 @@ export const renderRunScript = `    function renderSidebar() {
         html += '<div class="card"><div class="alert warning"><div><strong>Stopped after task</strong><div class="muted" style="margin-top:5px">The current task finished and the next frontier task was not started. Resume continues from here. Cancel remains available to abort immediately.</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       } else if (!state.detail.job && !["completed","cancelled","awaiting_input","blocked"].includes(s.phase) && !s.stopAfterTask) {
         var pauseHint = s.phase === "new"
-          ? "Setup did not finish. Resume retries Graphify and indexing first."
+          ? "Setup did not finish. Resume retries CodeGraph and indexing first."
           : "Dashboard work does not continue automatically after a restart. Resume queues the next transition and refreshes the document index first.";
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">' + pauseHint + '</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }
@@ -833,7 +833,7 @@ export const renderRunScript = `    function renderSidebar() {
           if (task) { taskTitle = task.title; taskId = task.id; return true; }
           return false;
         });
-        var roleLabel = displayActivityRole(context.role, taskId);
+        var roleLabel = displayActivityRole(context.role, taskId) + ' - ' + String(context.sessionNumber || '?');
         html += '<article class="activity-context' + (expanded ? ' open' : '') + '" data-context-key="' + attr(key) + '">';
         html += '<button type="button" class="activity-context-head" data-toggle-context="' + attr(key) + '">';
         html += '<div class="item-head"><div><div class="session-role">' + esc(roleLabel) + (taskTitle ? ' · ' + esc(taskTitle) : '') + '</div>';
@@ -906,7 +906,7 @@ export const renderRunScript = `    function renderSidebar() {
           var badge = invocation.providerSessionReused === true || turn > 1 ? 'REUSED CONTEXT · turn ' + turn : 'NEW CONTEXT';
           var badgeClass = invocation.providerSessionReused === true || turn > 1 ? 'reused' : 'new';
           var kind = invocation.invocationKind || 'invocation';
-          var role = displayActivityRole(invocation.role, invocation.taskId);
+          var role = displayActivityRole(invocation.role, invocation.taskId) + ' - ' + String(invocation.sessionNumber || '?');
           var taskTitle = taskTitleForId(invocation.taskId);
           var trigger = invocation.triggerSummary || (invocation.trigger && invocation.trigger.summary) || 'Reason unavailable for historical invocation';
           var providerKey = invocation.providerSessionId || ('synthetic:' + invocation.sessionId);

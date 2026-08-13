@@ -195,7 +195,7 @@ export function cloneSearchAudit(value: KnowledgeSearchAudit): KnowledgeSearchAu
     results: value.results.map((result) => ({ ...result })),
     audit: {
       ...value.audit,
-      graphify: { ...value.audit.graphify },
+      codegraph: { ...value.audit.codegraph },
       kept: value.audit.kept.map((item) => ({ ...item })),
       omitted: value.audit.omitted.map((item) => ({ ...item })),
     },

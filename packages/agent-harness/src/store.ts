@@ -424,7 +424,7 @@ export class RunStore {
 
   /**
    * Short lock around mutable shared knowledge-index updates under stateRoot.
-   * Graphify graphs in a run worktree are run-local and do not need this lock.
+   * CodeGraph indexes in a run worktree are run-local and do not need this lock.
    */
   async withSharedIndexLock<T>(
     holder: { runId: string; action: string },

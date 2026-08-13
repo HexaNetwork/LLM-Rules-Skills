@@ -15,7 +15,7 @@ import {
   type HarnessConfig,
   type ProjectSettingsPatch,
 } from "./schema.js";
-import { normalizeFrozenRunConfig } from "./migrations.js";
+import { normalizeFrozenRunConfig, rewriteGraphifyConfigKeys } from "./migrations.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -69,7 +69,7 @@ export async function loadConfig(
   }
   const raw = await readFile(resolved, "utf8");
   const value: unknown = resolved.endsWith(".json") ? JSON.parse(raw) : yaml.load(raw);
-  const parsed = HarnessConfigSchema.parse(value);
+  const parsed = HarnessConfigSchema.parse(rewriteGraphifyConfigKeys(value));
   return {
     path: resolved,
     config: {

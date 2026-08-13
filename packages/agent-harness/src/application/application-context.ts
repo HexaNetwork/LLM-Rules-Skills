@@ -7,7 +7,7 @@ import type { HarnessConfig } from "../config/schema.js";
 import type { BuildTask, RunState } from "../domain.js";
 import { HarnessFailure } from "../errors.js";
 import type { GitService } from "../git.js";
-import type { GraphifyRunner } from "../graphify.js";
+import type { CodegraphRunner } from "../codegraph.js";
 import type { LocalKnowledgeBase } from "../knowledge.js";
 import type { RunStore } from "../store.js";
 import type { TrackerPort } from "../tracker.js";
@@ -41,7 +41,7 @@ export class ApplicationContext {
   readonly git: GitService;
   readonly agents: AgentCoordinator;
   readonly deps: ApplicationDependencies;
-  readonly graphifyRunner: GraphifyRunner;
+  readonly codegraphRunner: CodegraphRunner;
   readonly sleep: (ms: number) => Promise<void>;
   readonly cancellation: RunCancellationRegistry;
   readonly projectContext?: ProjectContext;
@@ -60,7 +60,7 @@ export class ApplicationContext {
     this.tracker = this.deps.tracker;
     this.git = this.deps.git;
     this.agents = this.deps.agents;
-    this.graphifyRunner = this.deps.graphifyRunner;
+    this.codegraphRunner = this.deps.codegraphRunner;
     this.sleep = this.deps.sleep;
     this.projectContext = this.deps.projectContext;
     this.cancellation = cancellation;
@@ -263,7 +263,11 @@ export class ApplicationContext {
 
   /** Release any retained worker sessions for a finished task. */
   async releaseTaskWorkerSessions(task: BuildTask): Promise<BuildTask> {
-    return task;
+    await this.agents
+      .releaseProviderSession(task.implementerSession?.providerSessionId)
+      .catch(() => undefined);
+    if (!task.implementerSession) return task;
+    return { ...task, implementerSession: undefined };
   }
 
   async releaseAllTaskWorkerSessions(state: RunState): Promise<RunState> {

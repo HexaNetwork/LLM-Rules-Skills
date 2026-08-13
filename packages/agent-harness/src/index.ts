@@ -76,7 +76,7 @@ export { openRunHarness } from "./application/run-engine-factory.js";
 export * from "./errors.js";
 export * from "./git.js";
 export * from "./knowledge.js";
-export * from "./graphify.js";
+export * from "./codegraph.js";
 export * from "./packet.js";
 export * from "./store.js";
 export * from "./tracker.js";

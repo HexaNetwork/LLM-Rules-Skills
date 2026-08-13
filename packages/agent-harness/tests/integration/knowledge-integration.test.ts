@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GraphifyRepositoryLookup, type GraphifyRunner } from "../../src/graphify.js";
+import { CodegraphRepositoryLookup, type CodegraphRunner } from "../../src/codegraph.js";
 import { LocalKnowledgeBase } from "../../src/knowledge.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
@@ -14,14 +14,14 @@ describe("Phase 5 knowledge integration", () => {
     fixture = undefined;
   });
 
-  it("refreshes invalidate caches, honors scope gates, selects guidance, and soft-fails Graphify", async () => {
+  it("refreshes invalidate caches, honors scope gates, selects guidance, and soft-fails CodeGraph", async () => {
     fixture = await createProjectFixture({
       initialFiles: {
         "README.md": "# Fixture\n",
         "docs/alpha.md": "# AlphaModule\n\nAlphaModule refund ledger for project A.\n"}});
 
     await withDiagnosticArtifacts(
-      { testName: "knowledge-integration-cache-scope-graphify", fixture },
+      { testName: "knowledge-integration-cache-scope-codegraph", fixture },
       async () => {
         const sharedRoot = path.join(fixture!.root, "guidance-shared");
         const rulesDir = path.join(sharedRoot, "General", "rules");
@@ -42,13 +42,13 @@ describe("Phase 5 knowledge integration", () => {
           "utf8",
         );
 
-        const graphPath = path.join(fixture!.root, "graphify-out", "graph.json");
-        await mkdir(path.dirname(graphPath), { recursive: true });
-        await writeFile(graphPath, "{}\n", "utf8");
+        const indexPath = path.join(fixture!.root, ".codegraph", "codegraph.db");
+        await mkdir(path.dirname(indexPath), { recursive: true });
+        await writeFile(indexPath, "index\n", "utf8");
 
         let queryCalls = 0;
-        const runner = vi.fn<GraphifyRunner>().mockImplementation(async (_executable, args) => {
-          if (args[0] === "update") {
+        const runner = vi.fn<CodegraphRunner>().mockImplementation(async (_executable, args) => {
+          if (args[0] === "sync") {
             return { exitCode: 0, stdout: "updated\n", stderr: "", timedOut: false };
           }
           queryCalls += 1;
@@ -56,12 +56,12 @@ describe("Phase 5 knowledge integration", () => {
             return {
               exitCode: 1,
               stdout: "",
-              stderr: "graphify query exploded",
+              stderr: "codegraph explore exploded",
               timedOut: false};
           }
           return {
             exitCode: 0,
-            stdout: "NODE AlphaModule [src=src/alpha.ts]\n",
+            stdout: "AlphaModule search\nsrc/alpha.ts\n",
             stderr: "",
             timedOut: false};
         });
@@ -78,14 +78,14 @@ describe("Phase 5 knowledge integration", () => {
               maxResults: 6,
               maxCharacters: 6_000,
               sharedRoot},
-            graphify: {
-              ...fixture!.config.knowledge.graphify,
+            codegraph: {
+              ...fixture!.config.knowledge.codegraph,
               enabled: true,
               updateOnRefresh: false}}};
 
         const knowledge = new LocalKnowledgeBase(
           config,
-          new GraphifyRepositoryLookup(config, runner),
+          new CodegraphRepositoryLookup(config, runner),
           undefined,
           { sharedRoot },
         );
@@ -93,13 +93,13 @@ describe("Phase 5 knowledge integration", () => {
 
         const firstSearch = await knowledge.searchWithAudit("AlphaModule refunds", 4, {
           repository: true});
-        // Soft-fail: Graphify error does not throw; lexical docs still surface.
+        // Soft-fail: CodeGraph error does not throw; lexical docs still surface.
         expect(firstSearch.results.some((result) => result.source.includes("docs/alpha.md"))).toBe(
           true,
         );
         expect(
-          firstSearch.audit.omitted.some((item) => item.reason === "graphify-skipped") ||
-            firstSearch.audit.graphify.skippedReason,
+          firstSearch.audit.omitted.some((item) => item.reason === "codegraph-skipped") ||
+            firstSearch.audit.codegraph.skippedReason,
         ).toBeTruthy();
 
         const guidance = await knowledge.selectGuidanceWithAudit("AlphaModule refunds", {

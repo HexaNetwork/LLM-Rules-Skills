@@ -8,7 +8,7 @@ Install Node, build this checkout, then register a target project in harness hom
 scripts\Install-AgentHarness.cmd
 ```
 
-That opens PowerShell with `-ExecutionPolicy Bypass` and runs `scripts\install-agent-harness.ps1`. It walks through Node, build, Cursor API key (stored as a Windows User environment variable — not `.env`), `project add` registration, and the dashboard.
+That opens PowerShell with `-ExecutionPolicy Bypass` and runs `scripts\install-agent-harness.ps1`. It walks through Node, build, Cursor API key (stored as a Windows User environment variable — not `.env`), `project add` registration, an optional CodeGraph CLI install, and the dashboard.
 
 Alternatives:
 
@@ -27,7 +27,7 @@ Manual steps below match the same flow.
 - **Node.js 20.3+** (required; there is no non-Node CLI)
 - **npm** (comes with Node)
 - **Cursor API key** for real agent runs (`CURSOR_API_KEY`)
-- Optional: **Ollama** for local embeddings, **uv**/**pipx** for Graphify
+- Optional: **Ollama** for local embeddings, **CodeGraph** (`npm install -g @colbymchenry/codegraph`)
 
 ## 1. Install Node (if needed)
 
@@ -108,10 +108,12 @@ node "C:\path\to\LLM-Rules-Skills\packages\agent-harness\dist\cli.js" project ad
   --repository "C:\path\to\your-project"
 ```
 
-This seeds shared guidance under harness home and does not write guidance or setup scripts into the target. For structural code retrieval:
+This seeds shared guidance under harness home and does not write guidance or setup scripts into the target.
+
+The interactive wizard asks **Install CodeGraph now for structural code retrieval?** (`[y/N]`). **y** runs `npm install -g @colbymchenry/codegraph` (or reports that it is already installed). **n** skips — CodeGraph stays optional, same as today. `init` / `deploy` still only write config/gitignore; they do not install the CLI. Manual:
 
 ```powershell
-uv tool install graphifyy
+npm install -g @colbymchenry/codegraph
 ```
 
 Or write a repo-local config with `deploy` (does **not** open the dashboard — that is a separate `ui` step):
@@ -122,7 +124,7 @@ node "C:\path\to\LLM-Rules-Skills\packages\agent-harness\dist\cli.js" deploy `
   --ollama --refresh
 ```
 
-Useful deploy flags: `--force`, `--sources a,b`, `--no-graphify`.
+Useful deploy flags: `--force`, `--sources a,b`, `--no-codegraph`.
 
 ## 5. Start the dashboard
 
@@ -202,13 +204,15 @@ The process prints a loopback URL with a one-time access token, for example:
 
 Open that exact URL. The token is generated at startup and is only valid for that UI process.
 
-## 6. Optional: Graphify and Ollama
+## 6. Optional: CodeGraph and Ollama
 
-Graphify (structural code retrieval):
+The install wizard can install CodeGraph when you answer **y**. If you skipped that prompt, or you are following the manual steps:
 
 ```powershell
-uv tool install graphifyy
+npm install -g @colbymchenry/codegraph
 ```
+
+On Windows, global npm binaries often land in `%AppData%\Roaming\npm` — add that directory to User PATH if `codegraph --version` fails in a new terminal.
 
 Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`setup-local-embeddings.ps1` / `.sh`). Enable embeddings in the harness-home project config when ready.
 

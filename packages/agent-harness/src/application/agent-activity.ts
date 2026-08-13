@@ -70,6 +70,8 @@ export type InvocationSummary = {
   status?: string;
   attempt: number;
   contextTurn: number;
+  /** Run-local numeric identity of the provider context, ordered by first appearance. */
+  sessionNumber: number;
   startedAt?: string;
   endedAt?: string;
   providerSessionId?: string;
@@ -88,6 +90,8 @@ export type InvocationSummary = {
 
 export type ProviderContextGroup = {
   id: string;
+  /** Run-local numeric identity, shared by every invocation in this provider context. */
+  sessionNumber: number;
   role: AgentRole | "mixed" | string;
   model: string;
   startedAt: string;
@@ -298,7 +302,11 @@ function resolveOutcome(record: InvocationRecord): InvocationOutcome | undefined
   return record.outcome ?? deriveInvocationOutcome(record.role, record.output);
 }
 
-function toSummary(record: InvocationRecord, contextTurn: number): InvocationSummary {
+function toSummary(
+  record: InvocationRecord,
+  contextTurn: number,
+  sessionNumber: number,
+): InvocationSummary {
   return {
     path: record.path,
     sessionId: record.sessionId,
@@ -308,6 +316,7 @@ function toSummary(record: InvocationRecord, contextTurn: number): InvocationSum
     status: record.status,
     attempt: typeof record.attempt === "number" ? record.attempt : 0,
     contextTurn,
+    sessionNumber,
     startedAt: record.startedAt,
     endedAt: record.endedAt,
     providerSessionId: record.providerSessionId,
@@ -643,6 +652,26 @@ export function buildAgentActivity(
 
   const providerContexts: ProviderContextGroup[] = [];
   const summariesByPath = new Map<string, InvocationSummary>();
+  const chronologicalContexts = [...byContext.entries()].sort(([keyA, recordsA], [keyB, recordsB]) => {
+    const firstA = [...recordsA].sort((a, b) =>
+      String(a.startedAt ?? MISSING_TIMESTAMP_SORT_KEY).localeCompare(
+        String(b.startedAt ?? MISSING_TIMESTAMP_SORT_KEY),
+      ) || a.path.localeCompare(b.path),
+    )[0];
+    const firstB = [...recordsB].sort((a, b) =>
+      String(a.startedAt ?? MISSING_TIMESTAMP_SORT_KEY).localeCompare(
+        String(b.startedAt ?? MISSING_TIMESTAMP_SORT_KEY),
+      ) || a.path.localeCompare(b.path),
+    )[0];
+    return (
+      String(firstA?.startedAt ?? MISSING_TIMESTAMP_SORT_KEY).localeCompare(
+        String(firstB?.startedAt ?? MISSING_TIMESTAMP_SORT_KEY),
+      ) || firstA?.path.localeCompare(firstB?.path ?? "") || keyA.localeCompare(keyB)
+    );
+  });
+  const sessionNumbers = new Map(
+    chronologicalContexts.map(([key], index) => [key, index + 1] as const),
+  );
   let continuedInvocations = 0;
   let schemaRepairs = 0;
 
@@ -650,7 +679,10 @@ export function buildAgentActivity(
     const ordered = [...group].sort((a, b) =>
       String(a.startedAt ?? "").localeCompare(String(b.startedAt ?? "")),
     );
-    const invocations = ordered.map((record, index) => toSummary(record, index + 1));
+    const sessionNumber = sessionNumbers.get(key)!;
+    const invocations = ordered.map((record, index) =>
+      toSummary(record, index + 1, sessionNumber),
+    );
     for (const invocation of invocations) {
       summariesByPath.set(invocation.path, invocation);
     }
@@ -681,6 +713,7 @@ export function buildAgentActivity(
 
     providerContexts.push({
       id: key.startsWith("provider:") ? key.slice("provider:".length) : key,
+      sessionNumber,
       role: roles.length === 1 ? roles[0]! : roles.length > 1 ? "mixed" : "unknown",
       model: models.length === 1 ? models[0]! : models.join(", ") || "unknown",
       startedAt,

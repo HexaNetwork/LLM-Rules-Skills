@@ -99,7 +99,7 @@ type InvokeBase<T> = {
   schema: z.ZodType<T, z.ZodTypeDef, any>;
   constraints?: string[];
   priorArtifacts?: string[];
-  /** Domain seed for Graphify when the primary query shapes to generic tokens. */
+  /** Domain seed for CodeGraph when the primary query shapes to generic tokens. */
   knowledgeFallbackQuery?: string;
   buildPrompt?: boolean;
   previousGuidanceFingerprint?: string;

@@ -206,7 +206,7 @@ describe("CLI acceptance lifecycle", () => {
     });
   });
 
-  it("cancel, unlock --repo, dirty control start, and cleanup work against real fixture files", async () => {
+  it("cancel, unlock, dirty control start, and cleanup work against real fixture files", async () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 10_000 },
@@ -288,32 +288,19 @@ describe("CLI acceptance lifecycle", () => {
       expect(cleaned.code).toBe(0);
       expect(cleaned.stdout.join("\n")).toMatch(/Removed worktree|Cleanup no-op/i);
 
-      // Plant an abandoned repository lock and clear it via unlock --repo.
-      const lockPath = path.join(fixture!.root, ".agent-harness", "repo.lock");
-      await mkdir(path.dirname(lockPath), { recursive: true });
-      await writeFile(
-        lockPath,
-        `${JSON.stringify({
-          pid: 9_999_992,
-          hostname: "gone",
-          at: new Date(0).toISOString(),
-          runId: "dead",
-          action: "advance"})}\n`,
-        "utf8",
-      );
+      // Inspect remaining locks after cleanup (repository lock is no longer a product surface).
       const unlocked = await runCli(
-        ["unlock", "--run-id", runId, "--repo", "--inspect-only", "--config", configPath],
+        ["unlock", "--run-id", runId, "--inspect-only", "--config", configPath],
         deps,
       );
       expect(unlocked.code).toBe(0);
-      expect(unlocked.stdout.join("\n")).toMatch(/workspace-admin|shared-index|repository \(legacy-shared\)/i);
+      expect(unlocked.stdout.join("\n")).toMatch(/workspace-admin|shared-index/i);
 
       const unlockedRemove = await runCli(
-        ["unlock", "--run-id", runId, "--repo", "--config", configPath],
+        ["unlock", "--run-id", runId, "--config", configPath],
         deps,
       );
       expect(unlockedRemove.code).toBe(0);
-      await expect(access(lockPath)).rejects.toThrow();
     });
   });
 

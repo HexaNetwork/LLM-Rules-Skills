@@ -23,6 +23,14 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "Human answers and operator notes are authoritative and used verbatim — never second-guess or soften them.",
     "Return exactly one JSON object matching the expected output contract. Do not write Markdown interview prose, headings, or reports as the deliverable. If you use CreatePlan, the plan body must be that JSON only — not a Markdown research plan.",
   ],
+  "docs-writer": [
+    "Edit the working tree but never commit, push, or open a pull request.",
+    "Update only GLOSSARY.md files (and GLOSSARY-MAP.md when needed) from the confirmed brief and grill resolutions.",
+    "Capture resolved domain vocabulary only. Do not add implementation details, plans, specifications, or ADRs.",
+    "Preserve existing glossary entries unless a grill resolution explicitly sharpens or replaces their meaning.",
+    "If no glossary term was resolved, make no edits and return an empty changedFiles array.",
+    "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
+  ],
   planner: [
     "Do not edit the working tree. Produce a high-level plan only — not executable tickets.",
     "Capture the problem, solution, approach (modules and sequencing), constraints, and out-of-scope items.",

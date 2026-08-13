@@ -29,6 +29,26 @@ export function createScriptedBackend(steps: ScriptedStep[]): {
 
   const backend: AgentBackend = {
     async run(request) {
+      // Glossary maintenance is a newly inserted low-cost hook. Existing
+      // lifecycle scripts may omit it unless they are explicitly testing it.
+      if (request.role === "docs-writer" && queue[0]?.role !== "docs-writer") {
+        calls.push({
+          role: request.role,
+          input: sanitizeRequest(request),
+          objective: deriveObjective(request),
+          retrieval: {
+            cwd: request.cwd,
+            mode: request.mode,
+            providerSessionId: request.providerSessionId,
+            taskId: request.taskId}});
+        const providerSessionId = request.providerSessionId ?? randomUUID();
+        return {
+          output: { summary: "No glossary changes needed", changedFiles: [] },
+          providerSessionId,
+          providerRunId: randomUUID(),
+          providerSessionReused: request.providerSessionId != null,
+          submittedPrompt: request.continuationPrompt ?? request.prompt};
+      }
       if (queue.length === 0) {
         throw new Error(
           `ScriptedBackend: unexpected call for role "${request.role}" with no remaining steps`,

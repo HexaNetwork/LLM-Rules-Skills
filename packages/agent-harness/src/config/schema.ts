@@ -73,6 +73,8 @@ const GuidanceAssignmentSchema = z.object({
 const GuidanceAssignmentsObjectSchema = z.object({
   reflector: GuidanceAssignmentSchema,
   griller: GuidanceAssignmentSchema,
+  // Default keeps older assignment maps valid when this role is introduced.
+  "docs-writer": GuidanceAssignmentSchema.default({ rules: [], skills: ["domain-modeling"] }),
   planner: GuidanceAssignmentSchema,
   "scenario-planner": GuidanceAssignmentSchema.default({ rules: [], skills: [] }),
   "issue-slicer": GuidanceAssignmentSchema.default({
@@ -100,6 +102,7 @@ const GuidanceAssignmentsSchema = GuidanceAssignmentsObjectSchema;
 export const DEFAULT_GUIDANCE_ASSIGNMENTS: z.infer<typeof GuidanceAssignmentsObjectSchema> = {
   reflector: { rules: [], skills: ["domain-modeling"] },
   griller: { rules: [], skills: ["grill-me", "domain-modeling"] },
+  "docs-writer": { rules: [], skills: ["domain-modeling"] },
   planner: { rules: [], skills: ["domain-modeling", "to-prd"] },
   "scenario-planner": { rules: [], skills: [] },
   "issue-slicer": {

@@ -28,4 +28,4 @@ Do not enact the plan until understanding is confirmed (`ready_to_plan` in harne
 
 ## Domain language
 
-Use the `/domain-modeling` skill throughout. In harness mode, use `domainArtifacts` from the work packet for glossary/ADR paths; outside the harness, read `GLOSSARY.md` at the start. Challenge conflicts and update the glossary when a term is resolved. Record load-bearing trade-offs as ADRs (harness: `domainArtifacts.adrDirs`, else `docs/adr/`). In harness mode, still deliver the turn as JSON; glossary/ADR edits are side effects, not a substitute for the JSON contract.
+Use the `/domain-modeling` skill throughout. Challenge conflicts as terms are resolved. In harness mode, do not edit glossary files: return the resolutions in the JSON contract so the small `docs-writer` can update the glossary once the operator confirms the completed session. Outside the harness, read `GLOSSARY.md` at the start and update it when a term is resolved. Record load-bearing trade-offs as ADRs (`domainArtifacts.adrDirs` in harness, otherwise `docs/adr/`). In harness mode, ADR edits are side effects, not a substitute for the JSON contract.

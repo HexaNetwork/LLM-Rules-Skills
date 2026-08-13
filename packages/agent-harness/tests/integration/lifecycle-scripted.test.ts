@@ -227,6 +227,7 @@ describe("Phase 5 scripted full lifecycle", () => {
           "reflector",
           "griller",
           "griller",
+          "docs-writer",
           "project-profiler",
           "planner",
           "planner",

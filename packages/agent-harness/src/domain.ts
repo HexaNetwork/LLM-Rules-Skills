@@ -580,6 +580,7 @@ export type RunEvent = z.infer<typeof RunEventSchema>;
 export const AgentRoleSchema = z.enum([
   "reflector",
   "griller",
+  "docs-writer",
   "planner",
   "scenario-planner",
   "issue-slicer",

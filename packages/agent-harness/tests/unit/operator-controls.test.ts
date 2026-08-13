@@ -49,6 +49,58 @@ const PLAN_WITH_INSTALLS = {
       reason: "Tiny helper used by the greeting"}]};
 
 describe("operator controls", () => {
+
+  it("uses the small docs-writer to capture glossary terms when grilling completes", async () => {
+    const root = await fixtureRoot();
+    const config = fixtureConfig(root, {
+      models: {
+        ...fixtureConfig(root).models,
+        small: "small-model",
+        capable: "capable-model",
+      },
+      agent: { promptBuilder: false } as never,
+    });
+    const store = new RunStore(config, resolveHarnessPaths(config).stateRoot);
+    await store.initialize();
+    const runId = "grill-glossary-run";
+    const now = new Date().toISOString();
+    const hash = configurationHash(config);
+    await store.create({
+      ...createRunState(runId, "Define checkout language", now, hash, CONFIG_VERSION),
+      phase: "awaiting_input",
+      reflectBrief: {
+        draft: "Define checkout language",
+        confirmed: "Define checkout language",
+        confirmedAt: now,
+      },
+      grillReady: { summary: "Ready", readyAt: now },
+      grillResolutions: [{
+        id: "checkout-term",
+        question: "What does checkout mean?",
+        answer: "The process of placing an order.",
+        summary: "Checkout means placing an order.",
+        resolvedAt: now,
+      }],
+    });
+    await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
+    let docsWriterCalls = 0;
+    const backend = createFakeBackend({
+      "docs-writer": (request) => {
+        docsWriterCalls += 1;
+        expect(request.model).toBe("small-model");
+        expect(request.prompt).toContain("Checkout means placing an order.");
+        expect(request.prompt).toContain("Update only GLOSSARY.md files");
+        return { summary: "Defined Checkout", changedFiles: ["GLOSSARY.md"] };
+      },
+    });
+    const engine = new HarnessEngine(config, { backend });
+
+    const state = await engine.confirmGrill(runId);
+
+    expect(state.phase).toBe("planning");
+    expect(state.grillReady).toBeUndefined();
+    expect(docsWriterCalls).toBe(1);
+  });
   it("gates on proposed installs then enters executing after deny-all", async () => {
     const root = await fixtureRoot();
     const planner = createPlannerPrdSequence(HIGH_LEVEL_PLAN);

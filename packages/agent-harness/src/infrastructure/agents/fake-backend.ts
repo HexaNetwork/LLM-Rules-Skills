@@ -25,6 +25,11 @@ export function createFakeBackend(
   handlers: Partial<Record<AgentRole, FakeBackendHandler>>,
 ): AgentBackend {
   const withDefaults: Partial<Record<AgentRole, FakeBackendHandler>> = {
+    // Most tests do not exercise glossary edits; keep the completion hook a no-op.
+    "docs-writer": () => ({
+      summary: "No glossary changes needed",
+      changedFiles: [],
+    }),
     // Keep current verification settings unless a test overrides the profiler.
     "project-profiler": () => ({
       summary: "Keep current verification settings",

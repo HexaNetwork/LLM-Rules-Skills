@@ -24,7 +24,7 @@ The dashboard opens on an authenticated loopback URL and centralizes run creatio
 The lifecycle is:
 
 ```text
-idea → reflect → grill-me → verification settings → plan → PRD → scenario-planner
+idea → reflect → grill-me → small docs-writer glossary update → verification settings → plan → PRD → scenario-planner
      → one operator gate (plan + PRD + scenarios) → issue-slicer
      → implement → gates → per-task review → commit
      → scenario_testing → crystallizing (optional coverage) → final_review → publish
@@ -188,6 +188,7 @@ knowledge:
     assignments:
       reflector: { rules: [], skills: [domain-modeling] }
       griller: { rules: [], skills: [grill-me, domain-modeling] }
+      docs-writer: { rules: [], skills: [domain-modeling] }
       planner: { rules: [], skills: [domain-modeling, improve-codebase-architecture] }
       prompt-builder: { rules: [], skills: [] }
       red-writer: { rules: [], skills: [red-writer-tdd] }

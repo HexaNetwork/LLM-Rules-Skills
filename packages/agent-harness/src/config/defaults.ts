@@ -11,6 +11,7 @@ import {
 const SMALL_ROLES = new Set<AgentRole>([
   "prompt-builder",
   "message-writer",
+  "docs-writer",
   "config-fixer",
   "project-profiler",
   "run-analysis-prompt-writer",
@@ -158,6 +159,9 @@ knowledge:
       griller:
         rules: []
         skills: [grill-me, domain-modeling]
+      docs-writer:
+        rules: []
+        skills: [domain-modeling]
       planner:
         rules: []
         skills: [domain-modeling, to-prd]

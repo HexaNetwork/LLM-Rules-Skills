@@ -4,7 +4,7 @@ import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 
 import { CONFIG_VERSION, DEFAULT_GUIDANCE_ASSIGNMENTS, HarnessConfigSchema, configurationHash, configurationPolicyDiff } from "../../src/config/schema.js";
-import { defaultConfigYaml, deploymentConfigYaml } from "../../src/config/defaults.js";
+import { defaultConfigYaml, deploymentConfigYaml, modelForRole } from "../../src/config/defaults.js";
 import { loadConfig, loadRunConfig, writeProjectSettings } from "../../src/config/io.js";
 import { normalizeFrozenRunConfig } from "../../src/config/migrations.js";
 import { isTestPath } from "../../src/domain.js";
@@ -44,6 +44,12 @@ describe("token-conscious defaults", () => {
     expect(config.knowledge.guidance.assignments?.planner.skills).toEqual([
       "domain-modeling",
       "to-prd"]);
+  expect(config.knowledge.guidance.assignments?.["docs-writer"].skills).toEqual([
+    "domain-modeling"]);
+  expect(modelForRole({
+    ...config,
+    models: { ...config.models, small: "small-model", capable: "capable-model" },
+  }, "docs-writer")).toBe("small-model");
     expect(config.knowledge.guidance.assignments).not.toHaveProperty("red-writer");
     expect(config.knowledge.guidance.assignments).not.toHaveProperty("test-writer");
     expect(HarnessConfigSchema.parse({
@@ -98,6 +104,7 @@ describe("token-conscious defaults", () => {
     expect(defaultConfigYaml()).toContain("sourceExtensions:");
     expect(defaultConfigYaml()).toContain("assignments:");
     expect(defaultConfigYaml()).toContain("task-reviewer:");
+  expect(defaultConfigYaml()).toContain("docs-writer:");
     expect(defaultConfigYaml()).toContain("scope: project");
     expect(defaultConfigYaml()).toContain("Implementation attempt limit per task during executing");
     expect(defaultConfigYaml()).toContain("Paths treated as tests for test-writer path validation");
@@ -129,6 +136,7 @@ describe("token-conscious defaults", () => {
     const complete = {
       reflector: { rules: [], skills: [] },
       griller: { rules: [], skills: [] },
+    "docs-writer": { rules: [], skills: ["domain-modeling"] },
       planner: { rules: [], skills: [] },
       "scenario-planner": { rules: [], skills: [] },
       "issue-slicer": { rules: [], skills: [] },

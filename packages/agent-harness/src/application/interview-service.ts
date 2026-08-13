@@ -16,7 +16,9 @@ import {
   type QuestionPurpose,
   type ReflectOutput,
   type RunState,
+  WorkerOutputSchema,
 } from "../domain.js";
+import { HarnessFailure } from "../errors.js";
 import type { InvokeInput } from "../infrastructure/agents/types.js";
 import { compactDomainSeed } from "../knowledge.js";
 import type { ApplicationContext } from "./application-context.js";
@@ -287,6 +289,49 @@ export class InterviewService {
         await this.ctx.syncArtifacts(state);
         return state;
       }
+      const glossaryUpdate = await this.ctx.agents.invoke({
+        runId: state.runId,
+        role: "docs-writer",
+        objective: "Update the project glossary with domain terms resolved during the completed grill-me session",
+        input: {
+          confirmedBrief: state.reflectBrief?.confirmed,
+          resolutions: state.grillResolutions,
+        },
+        constraints: [
+          "Edit only GLOSSARY.md files and GLOSSARY-MAP.md when necessary; do not edit code, tests, plans, or ADRs.",
+        ],
+        expectedOutput: "{summary,changedFiles}",
+        schema: WorkerOutputSchema,
+        knowledgeQuery: compactDomainSeed(
+          state.reflectBrief?.confirmed,
+          ...state.grillResolutions.flatMap((item) => [
+            item.question,
+            item.answer,
+            item.summary,
+          ]),
+        ),
+        buildPrompt: false,
+        signal: this.ctx.signalFor(state.runId),
+        causal: {
+          phase: state.phase,
+          invocationKind: "initial",
+          trigger: {
+            event: "grill.completed",
+            classification: "documentation",
+            summary: "Capture resolved grill vocabulary in the glossary",
+          },
+        },
+      });
+      const nonGlossaryFiles = glossaryUpdate.changedFiles.filter(
+        (file) => !isGlossaryArtifact(file),
+      );
+      if (nonGlossaryFiles.length > 0) {
+        throw new HarnessFailure(
+          `Docs-writer must only edit glossary files; got: ${nonGlossaryFiles.join(", ")}`,
+          "contract",
+          true,
+        );
+      }
       state = await this.ctx.store.record(
         {
           ...state,
@@ -294,7 +339,11 @@ export class InterviewService {
           phase: "planning",
         },
         "grill.completed",
-        { resolutions: state.grillResolutions.length },
+        {
+          resolutions: state.grillResolutions.length,
+          glossarySummary: glossaryUpdate.summary,
+          glossaryChangedFiles: glossaryUpdate.changedFiles,
+        },
       );
       await this.ctx.syncArtifacts(state);
       return state;
@@ -615,4 +664,10 @@ export class InterviewService {
       { questionIds: newQuestions.map((q) => q.id), purpose, batchId },
     );
   }
+}
+
+function isGlossaryArtifact(file: string): boolean {
+  const normalized = file.replaceAll("\\", "/");
+  const name = normalized.slice(normalized.lastIndexOf("/") + 1);
+  return name === "GLOSSARY.md" || name === "GLOSSARY-MAP.md";
 }

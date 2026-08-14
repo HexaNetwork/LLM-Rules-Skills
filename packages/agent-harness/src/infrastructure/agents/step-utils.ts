@@ -71,6 +71,7 @@ export function prohibitedAgentPathAccess(args: unknown, cwd: string): string | 
   if (containerWorkspace) {
     if (/(^|[\s"'])\/run-state(?:\/|$)/m.test(text)) return "run-state";
     if (/(^|[\s"'])\/seed\.bundle(?:\/|$)/m.test(text)) return "seed-bundle";
+    if (/(^|[\s"'])\/(?!workspace(?:\/|$))/m.test(text)) return "outside-workspace";
     if (/(^|[\s"'])\.\.\//m.test(text)) return "outside-workspace";
     return undefined;
   }

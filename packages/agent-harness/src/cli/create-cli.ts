@@ -758,7 +758,11 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         const configPath = loaded.path;
 
         const configuredWorker = config.execution?.docker?.workerImageDigest?.trim();
-        const pullImage = options.image?.trim() || configuredWorker || undefined;
+        // --force-rebuild must build from docker/worker/Dockerfile. Do not fall back to
+        // the configured digest pin (that path only pull/reuses and never rebuilds).
+        const pullImage = options.forceRebuild
+          ? options.image?.trim() || undefined
+          : options.image?.trim() || configuredWorker || undefined;
         const prepared = await prepareMaintainedWorkerImage({
           docker: createDockerClient(),
           packageRoot: options.packageRoot?.trim() || defaultPackageRoot(),
@@ -775,7 +779,12 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
             enableDockerRuntime: options.enableRuntime,
           });
           settingsWritten = true;
-          const reloaded = await loadConfig(configPath);
+          // External project files are sparse overrides. Reload them through the
+          // registry/home merge path or repositoryRoot "." and the shared base
+          // catalog are incorrectly resolved relative to the state directory.
+          const reloaded = options.repository
+            ? await resolvedProjectConfig({ repository: options.repository })
+            : await loadConfig(configPath);
           config = reloaded.config;
         }
 

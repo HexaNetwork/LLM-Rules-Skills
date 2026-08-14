@@ -212,6 +212,7 @@ export {
   mapHostActionToWorkerRpc,
   type DockerMutationProxy,
 } from "./docker-run-proxy.js";
+export { resolveRunBaseBranch, type BranchInspector } from "./run-base-branch.js";
 export {
   RUN_STATE_PORT_VERSION,
   RUN_DOCUMENT_NAMES,

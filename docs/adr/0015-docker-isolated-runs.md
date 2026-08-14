@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted; extends [ADR 0010](0010-per-run-worktrees.md) and [ADR 0011](0011-external-harness-home.md). Local linked worktrees remain the default runtime.
+**Superseded** by [ADR 0016](0016-docker-only-host-owned-state.md): the dual local/Docker runtime and the `/run-state` mount are replaced by a Docker-only runtime whose worker reaches durable state exclusively through a host-owned state API. Kept for decision history.
+
+Was: Accepted; extends [ADR 0010](0010-per-run-worktrees.md) and [ADR 0011](0011-external-harness-home.md). Local linked worktrees remain the default runtime.
 
 ## Context
 

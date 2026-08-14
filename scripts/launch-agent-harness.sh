@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Launcher — git pull the harness checkout, rebuild, start the dashboard.
+# Launcher — update, verify Docker-only readiness, and start the dashboard.
 # Usage:
 #   bash scripts/launch-agent-harness.sh [project-path]
 #   AGENT_HARNESS_PROJECT=/path/to/project bash scripts/launch-agent-harness.sh
@@ -32,8 +32,8 @@ usage() {
   cat <<'EOF'
 Usage: bash scripts/launch-agent-harness.sh [project-path] [--no-pull] [--no-build]
 
-  Pulls latest LLM-Rules-Skills, rebuilds the harness CLI, then starts `ui`
-  against a registered project (config lives in harness home).
+  Updates LLM-Rules-Skills, rebuilds the harness CLI, checks the required
+  Docker worker, then starts `ui` against a registered project.
 
   Project path (first match wins):
     1. positional argument
@@ -46,8 +46,8 @@ Usage: bash scripts/launch-agent-harness.sh [project-path] [--no-pull] [--no-bui
     Windows: %LOCALAPPDATA%\agent-harness\settings.json
     Unix:    ${XDG_CONFIG_HOME:-$HOME/.config}/agent-harness/settings.json
 
-  CURSOR_API_KEY must be set (Windows User env is loaded automatically when empty).
-  Never stored in settings.json.
+  CURSOR_API_KEY is optional for dashboard/readiness use. A Windows User value
+  is loaded automatically when present and is never stored in settings.json.
 EOF
 }
 
@@ -144,6 +144,42 @@ if [[ ! -f "$CLI" ]]; then
   exit 1
 fi
 
+docker_ready() {
+  command -v docker >/dev/null 2>&1 || return 1
+  local info
+  info="$(docker info 2>&1)" || return 1
+  if printf '%s' "$info" | grep -qi 'OSType:[[:space:]]*windows' \
+    && ! printf '%s' "$info" | grep -qi 'OSType:[[:space:]]*linux'; then
+    return 1
+  fi
+}
+
+if ! docker_ready; then
+  echo "Docker is required but is not ready." >&2
+  echo "Start Docker with Linux containers, wait for 'docker info' to work, then retry." >&2
+  exit 1
+fi
+
+echo "→ checking Docker worker readiness"
+STATUS_JSON="$(node "$CLI" execution status --repository "$PROJECT_PATH" --json)"
+if ! printf '%s' "$STATUS_JSON" | node -e \
+  "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.exit(JSON.parse(s).ready?0:1))"; then
+  node "$CLI" execution status --repository "$PROJECT_PATH"
+  if [[ -t 0 ]]; then
+    printf 'Prepare/repair the maintained worker now? [Y/n] '
+    read -r reply || true
+    if [[ ! "${reply:-}" =~ ^[Nn] ]]; then
+      node "$CLI" execution prepare-worker --repository "$PROJECT_PATH" --force-rebuild --write-settings
+      STATUS_JSON="$(node "$CLI" execution status --repository "$PROJECT_PATH" --json)"
+    fi
+  fi
+  if ! printf '%s' "$STATUS_JSON" | node -e \
+    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.exit(JSON.parse(s).ready?0:1))"; then
+    echo "Docker worker readiness is still blocked; dashboard launch stopped." >&2
+    exit 1
+  fi
+fi
+
 UI_ARGS=(ui --repository "$PROJECT_PATH" --port "$UI_PORT")
 if [[ "$UI_OPEN" -eq 0 ]]; then
   UI_ARGS+=(--no-open)
@@ -151,5 +187,8 @@ fi
 
 echo "→ starting dashboard for $PROJECT_PATH"
 echo "  Open the full http://127.0.0.1:…/?token=… URL printed below."
+if [[ -n "${CURSOR_API_KEY:-}" ]]; then
+  echo "  Note: real Cursor-in-Docker execution stays fail-closed until the credential isolation gate passes."
+fi
 cd "$PROJECT_PATH"
 exec node "$CLI" "${UI_ARGS[@]}"

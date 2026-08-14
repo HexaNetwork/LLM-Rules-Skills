@@ -179,8 +179,7 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=8
-DOCKER_PROBE_OPT_IN=0
+TOTAL_STAGES=7
 DOCKER_DAEMON_READY=0
 
 # Prefer paths relative to this script (repo root = parent of scripts/).
@@ -369,13 +368,11 @@ else
   fi
 fi
 
-# ── 1b. Optional Docker execution runtime ─────────────────────────────────
-stage "Docker execution runtime (optional)"
-say "Docker is an opt-in alternative to local worktrees. Default remains local."
+# ── 2. Required Docker execution runtime ───────────────────────────────────
+stage "Docker readiness"
+say "Production execution is Docker-only. Local worktrees and generated per-run images are retired."
 note "This stage never silently installs Docker Desktop / docker.io."
-note "Costs: disk for images/volumes, CPU/memory limits, bridge networking (not egress-proof)."
-note "Generated Dockerfiles still require operator review before first project-image build. Prune unused images/volumes periodically."
-note "Revert: set execution.runtime=local in project settings (affects new runs only)."
+note "Bridge networking provides filesystem isolation, not an egress-proof boundary."
 _docker_ready() {
   command -v docker >/dev/null 2>&1 || return 1
   local info
@@ -392,23 +389,18 @@ _docker_ready() {
 if _docker_ready; then
   printf '  %s✓ docker info succeeded%s\n' "$GREEN" "$RESET"
   DOCKER_DAEMON_READY=1
-  if confirm "Rebuild and probe the maintained worker image later in this wizard? (opt-in Docker)"; then
-    DOCKER_PROBE_OPT_IN=1
-    note "Will run after package build + project registration: agent-harness execution prepare-worker"
-  else
-    note "Skipped. Later: agent-harness execution prepare-worker --repository <path>"
-  fi
+  note "The maintained worker image will be rebuilt and probed after project registration."
 else
-  warn "Docker CLI/daemon not ready (missing, permissions, or not Linux containers)."
+  warn "Docker is required, but the CLI/daemon is not ready."
   if _is_windows; then
-    note "On Windows use Docker Desktop + WSL2 backend + Linux containers before enabling Docker mode."
+    note "Use Docker Desktop + WSL2 backend + Linux containers, then re-run setup."
   else
     note "Ensure your user can access the Docker daemon (docker group / socket permissions)."
   fi
-  SKIPPED+=("Docker execution runtime (optional)")
+  exit 1
 fi
 
-# ── 2. Build this checkout ────────────────────────────────────────────────
+# ── 3. Build this checkout ────────────────────────────────────────────────
 stage "Build this checkout"
 HARNESS_ROOT="${HARNESS_ROOT:-$DEFAULT_HARNESS_ROOT}"
 # Skip asking when the script's parent checkout is already valid (includes LLM-Rules-Skills).
@@ -436,9 +428,10 @@ if [[ ! -f "$CLI" ]]; then
 fi
 printf '  %s✓ built%s %s\n' "$GREEN" "$RESET" "$CLI"
 
-# ── 3. Cursor API key (Windows User env — never .env) ─────────────────────
+# ── 4. Cursor API key (Windows User env — never .env) ─────────────────────
 stage "Cursor API key"
-say "Real agent runs need CURSOR_API_KEY (User env on Windows, not .env)."
+say "The dashboard does not need a key. Real Cursor runs eventually need CURSOR_API_KEY."
+warn "Real Cursor credential mounting into Docker is currently fail-closed until its isolation release gate passes."
 EXISTING_KEY="${CURSOR_API_KEY:-}"
 if [[ -z "$EXISTING_KEY" ]] && _is_windows; then
   EXISTING_KEY="$(_read_windows_user_env CURSOR_API_KEY || true)"
@@ -451,12 +444,13 @@ if [[ -n "$EXISTING_KEY" ]]; then
   fi
 fi
 if [[ -z "${CURSOR_API_KEY:-}" ]]; then
-  open_url "https://cursor.com/dashboard/api"
-  step "Create a user API key, then paste it here."
-  ask_secret CURSOR_API_KEY "Paste the Cursor API key:"
+  if confirm "Save a Cursor API key now?"; then
+    open_url "https://cursor.com/dashboard/api"
+    step "Create a user API key, then paste it here."
+    ask_secret CURSOR_API_KEY "Paste the Cursor API key:"
+  fi
   if [[ -z "${CURSOR_API_KEY:-}" ]]; then
-    warn "No key pasted — agent runs will fail until CURSOR_API_KEY is set."
-    SKIPPED+=("CURSOR_API_KEY")
+    note "No key saved. You can still open the dashboard and run deterministic checks."
   fi
 fi
 if [[ -n "${CURSOR_API_KEY:-}" ]]; then
@@ -474,7 +468,7 @@ if [[ -n "${CURSOR_API_KEY:-}" ]]; then
   fi
 fi
 
-# ── 4. Target project + register ──────────────────────────────────────────
+# ── 5. Target project + register ──────────────────────────────────────────
 stage "Target project"
 say "Registers the repo in harness home (config stays outside the project)."
 ask PROJECT_PATH "Absolute path to the target project:"
@@ -493,7 +487,7 @@ fi
 note "Project: $PROJECT_PATH"
 if [[ -f "$PROJECT_PATH/agent-harness.config.yaml" || -e "$PROJECT_PATH/.agent-harness" ]]; then
   warn "Found leftover repo-local harness files (agent-harness.config.yaml and/or .agent-harness/)."
-  note "Registration does not need them. Delete them after a successful project add, or run: agent-harness migrate-home"
+  note "Legacy repo-local state is unsupported. Archive or remove it after confirming the external registration."
 fi
 INITIALIZED_GIT_REPO=0
 if [[ -e "$PROJECT_PATH/.git" ]]; then
@@ -548,19 +542,16 @@ if [[ "$INITIALIZED_GIT_REPO" -eq 1 ]]; then
   fi
 fi
 
-# ── 4b. Docker worker image prepare (deferred from stage 1b) ───────────────
-stage "Docker worker image (opt-in)"
+# ── 6. Docker worker image prepare ─────────────────────────────────────────
+stage "Prepare Docker worker"
 PACKAGE_ROOT="$HARNESS_ROOT/packages/agent-harness"
-if [[ "$DOCKER_PROBE_OPT_IN" -ne 1 ]]; then
-  note "Skipped (not opted in earlier). Later: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\""
-elif ! _docker_ready; then
+if ! _docker_ready; then
   warn "Docker is no longer ready; cannot prepare the worker image."
-  note "Fix docker info / Linux containers, then re-run: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\""
+  note "Restart Docker in Linux-container mode, then re-run setup."
   exit 1
 else
-  say "Probing Docker and rebuilding the maintained worker image from this installation."
+  say "Rebuilding the maintained worker image, writing its digest, and running the isolation probe."
   note "Package root: $PACKAGE_ROOT"
-  ENABLE_DOCKER_RUNTIME=0
   PREPARE_WORKER_ARGS=(
     "$CLI"
     execution
@@ -568,28 +559,25 @@ else
     --repository "$PROJECT_PATH"
     --package-root "$PACKAGE_ROOT"
     --force-rebuild
-    --json
+    --write-settings
   )
-  if confirm "Use the rebuilt Docker worker for new runs in this project?"; then
-    ENABLE_DOCKER_RUNTIME=1
-    PREPARE_WORKER_ARGS+=(--write-settings --enable-runtime)
-  fi
   if ! node "${PREPARE_WORKER_ARGS[@]}"; then
-    warn "execution prepare-worker failed. Docker setup did not succeed."
-    note "Fix Docker / rebuild, then re-run: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\" --package-root \"$PACKAGE_ROOT\" --force-rebuild"
+    warn "Worker preparation failed. Setup is not ready."
+    note "Fix the reported Docker/probe blocker, then re-run setup."
     exit 1
   fi
-  printf '  %s✓ worker image rebuild succeeded%s\n' "$GREEN" "$RESET"
-  if [[ "$ENABLE_DOCKER_RUNTIME" -eq 1 ]]; then
-    printf '  %s✓ project settings: execution.runtime=docker + workerImageDigest pinned%s\n' "$GREEN" "$RESET"
-    note "Confirm readiness: agent-harness execution status --repository \"$PROJECT_PATH\""
-    note "Still required: pin at least one approved base image (Settings → Execution runtime)."
-  else
-    note "Left runtime=local. Later: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\" --write-settings --enable-runtime"
+  printf '  %s✓ worker image rebuilt and digest written%s\n' "$GREEN" "$RESET"
+  STATUS_JSON="$(node "$CLI" execution status --repository "$PROJECT_PATH" --json)"
+  if ! printf '%s' "$STATUS_JSON" | node -e \
+    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.exit(JSON.parse(s).ready?0:1))"; then
+    node "$CLI" execution status --repository "$PROJECT_PATH"
+    warn "The Docker-only runtime is still blocked after worker preparation."
+    exit 1
   fi
+  printf '  %s✓ Docker worker and isolation probe are ready%s\n' "$GREEN" "$RESET"
 fi
 
-# ── 5. Repository intelligence ────────────────────────────────────────────
+# ── 7. Repository intelligence ────────────────────────────────────────────
 stage "Repository intelligence"
 say "Harness structural lookup prefers GitNexus, then falls back to CodeGraph."
 note "Both CLIs are optional. Skip either to leave that provider unset."
@@ -610,18 +598,9 @@ else
 fi
 note "Optional later: Ollama embeddings (packages/agent-harness/scripts/setup-local-embeddings.sh)"
 
-# ── 6. Start dashboard ────────────────────────────────────────────────────
-stage "Start dashboard"
-say "The dashboard prints a loopback URL with a one-time access token."
-note "node \"$CLI\" ui --repository \"$PROJECT_PATH\""
-if [[ -z "${CURSOR_API_KEY:-}" ]]; then
-  warn "CURSOR_API_KEY is not set in this shell — set it before starting ui."
-fi
-
 finish
+say "Future launches: bash scripts/launch-agent-harness.sh"
 
-if [[ -f "$CLI" && -d "$PROJECT_PATH" ]] && confirm "Start the dashboard now in this terminal?"; then
-  cd "$PROJECT_PATH"
-  export CURSOR_API_KEY="${CURSOR_API_KEY:-}"
-  exec node "$CLI" ui --repository "$PROJECT_PATH"
+if [[ -f "$CLI" && -d "$PROJECT_PATH" ]] && confirm "Open the dashboard now?"; then
+  exec bash "$SCRIPT_DIR/launch-agent-harness.sh" "$PROJECT_PATH" --no-pull --no-build
 fi

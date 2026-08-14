@@ -1,5 +1,6 @@
 @echo off
 setlocal
+title Agent Harness
 cd /d "%~dp0"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0launch-agent-harness.ps1" %*
 set "ERR=%ERRORLEVEL%"

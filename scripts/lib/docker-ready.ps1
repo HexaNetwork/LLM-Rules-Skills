@@ -81,98 +81,23 @@ function Start-AgentHarnessDockerDesktop {
   return $false
 }
 
-function Get-AgentHarnessProjectsRoot {
-  $base = $env:LOCALAPPDATA
-  if ([string]::IsNullOrWhiteSpace($base)) {
-    $base = Join-Path $env:USERPROFILE "AppData\Local"
-  }
-  return (Join-Path $base "agent-harness\projects")
-}
-
-function Test-AgentHarnessPathsEqual {
-  param([string]$Left, [string]$Right)
-  if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) {
-    return $false
-  }
-  try {
-    $a = [System.IO.Path]::GetFullPath($Left.TrimEnd('\', '/'))
-    $b = [System.IO.Path]::GetFullPath($Right.TrimEnd('\', '/'))
-    return [string]::Equals($a, $b, [StringComparison]::OrdinalIgnoreCase)
-  } catch {
-    return $false
-  }
-}
-
 <#
 .SYNOPSIS
-  True when the registered project's harness-home config sets execution.runtime: docker.
-#>
-function Test-AgentHarnessProjectDockerRuntime {
-  param([Parameter(Mandatory = $true)][string]$Repository)
-
-  $projectsRoot = Get-AgentHarnessProjectsRoot
-  if (-not (Test-Path -LiteralPath $projectsRoot)) { return $false }
-
-  $resolved = $Repository
-  try {
-    if (Test-Path -LiteralPath $Repository) {
-      $resolved = (Resolve-Path -LiteralPath $Repository).Path
-    }
-  } catch {
-    $resolved = $Repository
-  }
-
-  foreach ($dir in Get-ChildItem -LiteralPath $projectsRoot -Directory -ErrorAction SilentlyContinue) {
-    $regPath = Join-Path $dir.FullName "registration.json"
-    if (-not (Test-Path -LiteralPath $regPath)) { continue }
-    try {
-      $reg = Get-Content -LiteralPath $regPath -Raw -ErrorAction Stop | ConvertFrom-Json
-    } catch {
-      continue
-    }
-    $roots = @($reg.controlRoot, $reg.canonicalControlRoot) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    $match = $false
-    foreach ($root in $roots) {
-      if (Test-AgentHarnessPathsEqual -Left $root -Right $resolved) {
-        $match = $true
-        break
-      }
-    }
-    if (-not $match) { continue }
-
-    $cfg = Join-Path $dir.FullName "config.yaml"
-    if (-not (Test-Path -LiteralPath $cfg)) { return $false }
-    try {
-      $text = Get-Content -LiteralPath $cfg -Raw -ErrorAction Stop
-    } catch {
-      return $false
-    }
-    return [bool]($text -match '(?m)^\s*runtime:\s*["'']?docker["'']?\s*$')
-  }
-  return $false
-}
-
-<#
-.SYNOPSIS
-  When the project uses Docker runtime and the daemon is down, start Desktop and wait.
-  No-op for local runtime. Does not fail launch if Docker stays down.
+  Ensure the required Docker-only runtime is available for launch.
 #>
 function Ensure-AgentHarnessDockerForLaunch {
   param(
     [Parameter(Mandatory = $true)][string]$Repository,
     [int]$TimeoutSec = 120
   )
-  if (-not (Test-AgentHarnessProjectDockerRuntime -Repository $Repository)) {
-    return
-  }
+  $null = $Repository
   if (Test-AgentHarnessDockerReady) {
-    Write-Host "-> Docker runtime: daemon already ready"
+    Write-Host "-> Docker runtime: daemon ready (Linux containers)"
     return
   }
-  Write-Host "-> project execution.runtime=docker but daemon is not ready"
+  Write-Host "-> Docker is required but the daemon is not ready"
   if (Start-AgentHarnessDockerDesktop -TimeoutSec $TimeoutSec) {
     return
   }
-  Write-Host "  ! Continuing launch anyway; Docker runs will fail until docker info works." -ForegroundColor Yellow
-  Write-Host "  Start Docker Desktop manually, or set execution.runtime=local in project settings." -ForegroundColor DarkGray
+  throw "Docker is required. Start Docker Desktop in Linux-container mode and retry."
 }

@@ -4,12 +4,10 @@
   Interactive installation wizard for the Agent Harness (Windows).
 
 .DESCRIPTION
-  Lean walkthrough: Node check, WSL2 for Cursor agent sandbox, optional
-  Docker detect (may start Desktop if installed), deferred worker image
-  prepare/probe, build,
-  CURSOR_API_KEY (Windows User env - never .env), target project registration
-  (project add), optional GitNexus/CodeGraph CLIs (with GitNexus license
-  warning), and optional dashboard start.
+  Docker-only setup/repair walkthrough: Node and Docker checks, package build,
+  project registration, maintained worker prepare/probe, optional repository
+  intelligence providers, and dashboard launch. Docker Desktop may be started
+  when already installed, but is never silently installed.
 
 .EXAMPLE
   .\scripts\install-agent-harness.ps1
@@ -29,11 +27,10 @@ $ErrorActionPreference = "Stop"
 # Wizard helpers
 # ---------------------------------------------------------------------------
 
-$script:TOTAL_STAGES = 9
+$script:TOTAL_STAGES = 8
 $script:STAGE_INDEX = 0
 $script:SKIPPED = [System.Collections.Generic.List[string]]::new()
 $script:WRITTEN_USER_ENV = [System.Collections.Generic.List[string]]::new()
-$script:DockerProbeOptIn = $false
 $script:DockerDaemonReady = $false
 
 function Write-Banner {
@@ -147,8 +144,8 @@ function Install-Wsl2Prompt {
   Write-Step "Microsoft install: wsl --install (admin/UAC; often needs a reboot)."
   Write-Note "Docs: https://learn.microsoft.com/windows/wsl/install"
   if (-not (Confirm-Yes "Install or repair WSL2 now?")) {
-    Write-Note "Skipped WSL2. Agent sandbox stays weak until WSL2 is ready and the harness runs under Linux/WSL."
-    $script:SKIPPED.Add("WSL2 (required for Cursor agent sandbox on Windows)") | Out-Null
+    Write-Note "Skipped WSL2. Docker Desktop's Linux-container backend may remain unavailable."
+    $script:SKIPPED.Add("WSL2 (required by the recommended Docker Desktop backend)") | Out-Null
     return
   }
   try {
@@ -379,26 +376,21 @@ if (Test-NodeOk) {
   }
 }
 
-# -- 2. Agent sandbox (WSL2) -----------------------------------------------
-Write-Stage "Agent sandbox (WSL2)"
-Write-Say "Local Cursor agents default to agent.sandbox: true so tools stay inside the run worktree."
-Write-Note "On Windows the Cursor SDK only applies that OS sandbox when the harness itself runs under Linux/WSL2."
-Write-Note "A Windows-hosted Node process cannot enable SDK sandboxing even if WSL is installed."
+# -- 2. Windows Docker backend (WSL2) --------------------------------------
+Write-Stage "Windows Docker backend"
+Write-Say "Production execution is Docker-only. Docker Desktop should use its WSL2 backend and Linux containers."
 if (Test-Wsl2Ready) {
   Write-Ok "WSL2 is available"
-  Write-Note "For full sandbox: start the dashboard from Ubuntu/WSL with a Linux Node, not from Windows node.exe."
 } else {
-  Write-WarnLine "WSL2 is missing, unfinished, or stuck on version 1."
+  Write-WarnLine "WSL2 is missing, unfinished, or stuck on version 1; Docker Desktop may not be able to run Linux containers."
   Install-Wsl2Prompt
 }
 
-# -- 2b. Optional Docker execution runtime ---------------------------------
-Write-Stage "Docker execution runtime (optional)"
-Write-Say "Docker is an opt-in alternative to local worktrees. Default remains local; do not flip projects to Docker unless you want isolated clones."
+# -- 3. Required Docker execution runtime ----------------------------------
+Write-Stage "Docker readiness"
+Write-Say "Docker with Linux containers is required. Local worktrees and generated per-run images are retired."
 Write-Note "This stage never silently installs Docker Desktop. If Desktop is already installed but stopped, it may offer to start it."
-Write-Note "Costs: disk for images/volumes, CPU/memory limits per run, bridge networking (filesystem isolation, not egress-proof)."
-Write-Note "Generated Dockerfiles still require operator review before first project-image build. Prune unused images/volumes periodically."
-Write-Note "Revert anytime: set execution.runtime=local in project settings (new runs only; existing runs stay frozen)."
+Write-Note "Bridge networking provides filesystem isolation, not an egress-proof boundary."
 function Start-DockerDesktopIfPresent {
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
   if (-not (Get-AgentHarnessDockerDesktopExe)) {
@@ -417,23 +409,14 @@ if (-not $dockerReady) {
 if ($dockerReady) {
   Write-Ok "docker info succeeded (Linux containers / daemon reachable)"
   $script:DockerDaemonReady = $true
-  if (Confirm-Yes "Rebuild and probe the maintained worker image later in this wizard? (opt-in Docker)") {
-    $script:DockerProbeOptIn = $true
-    Write-Note "Will run after package build + project registration: agent-harness execution prepare-worker"
-  } else {
-    Write-Note "Skipped worker image prepare. Enable later from dashboard Settings → Execution runtime, or: agent-harness execution prepare-worker --repository <path>"
-  }
+  Write-Note "The maintained worker image will be rebuilt and probed after project registration."
 } else {
-  Write-WarnLine "Docker CLI/daemon not ready (missing docker, permission denied, or not Linux containers)."
-  if ($IsWindows -or $env:OS -eq "Windows_NT") {
-    Write-Note "On Windows use Docker Desktop with WSL2 backend + Linux containers. Do not enable Docker mode until docker info works."
-  } else {
-    Write-Note "Ensure your user can talk to the Docker daemon (group membership / socket permissions)."
-  }
-  $script:SKIPPED.Add("Docker execution runtime (optional)") | Out-Null
+  Write-WarnLine "Docker is required but docker info is not ready."
+  Write-Note "Install/start Docker Desktop with the WSL2 backend and Linux containers, then re-run setup."
+  exit 1
 }
 
-# -- 3. Build this checkout ------------------------------------------------
+# -- 4. Build this checkout ------------------------------------------------
 Write-Stage "Build this checkout"
 $HarnessRoot = $DefaultHarnessRoot
 # Skip asking when the script's parent checkout is already valid (includes LLM-Rules-Skills).
@@ -473,9 +456,10 @@ if (-not (Test-Path -LiteralPath $Cli)) {
 }
 Write-Ok "built $Cli"
 
-# -- 4. Cursor API key (Windows User env - never .env) ---------------------
+# -- 5. Cursor API key (Windows User env - never .env) ---------------------
 Write-Stage "Cursor API key"
-Write-Say "Real agent runs need CURSOR_API_KEY (Windows User env, not .env)."
+Write-Say "The dashboard does not need a key. Real Cursor runs eventually need CURSOR_API_KEY (Windows User env, never .env)."
+Write-WarnLine "Real Cursor credential mounting into Docker is currently fail-closed until its isolation release gate passes."
 $ExistingKey = $env:CURSOR_API_KEY
 if ([string]::IsNullOrWhiteSpace($ExistingKey)) {
   $ExistingKey = Get-WindowsUserEnv "CURSOR_API_KEY"
@@ -489,12 +473,13 @@ if (-not [string]::IsNullOrWhiteSpace($ExistingKey)) {
   }
 }
 if ([string]::IsNullOrWhiteSpace($CursorApiKey)) {
-  Open-Url "https://cursor.com/dashboard/api"
-  Write-Step "Create a user API key, then paste it here."
-  $CursorApiKey = Read-AskSecret "Paste the Cursor API key:"
+  if (Confirm-Yes "Save a Cursor API key now?") {
+    Open-Url "https://cursor.com/dashboard/api"
+    Write-Step "Create a user API key, then paste it here."
+    $CursorApiKey = Read-AskSecret "Paste the Cursor API key:"
+  }
   if ([string]::IsNullOrWhiteSpace($CursorApiKey)) {
-    Write-WarnLine "No key pasted - agent runs will fail until CURSOR_API_KEY is set."
-    $script:SKIPPED.Add("CURSOR_API_KEY") | Out-Null
+    Write-Note "No key saved. The dashboard and deterministic checks are still available."
   }
 }
 if (-not [string]::IsNullOrWhiteSpace($CursorApiKey)) {
@@ -506,7 +491,7 @@ if (-not [string]::IsNullOrWhiteSpace($CursorApiKey)) {
   }
 }
 
-# -- 5. Target project + register ------------------------------------------
+# -- 6. Target project + register ------------------------------------------
 Write-Stage "Target project"
 Write-Say "Registers the repo in harness home (config stays outside the project)."
 $ProjectPath = Read-Ask "Absolute path to the target project:"
@@ -527,7 +512,7 @@ $configPath = Join-Path $ProjectPath "agent-harness.config.yaml"
 $statePath = Join-Path $ProjectPath ".agent-harness"
 if ((Test-Path -LiteralPath $configPath) -or (Test-Path -LiteralPath $statePath)) {
   Write-WarnLine "Found leftover repo-local harness files (agent-harness.config.yaml and/or .agent-harness/)."
-  Write-Note "Registration does not need them. Delete them after a successful project add, or run: agent-harness migrate-home"
+  Write-Note "Legacy repo-local state is unsupported. Archive or remove it after confirming the external registration."
 }
 
 $script:InitializedGitRepo = $false
@@ -604,19 +589,16 @@ if ($script:InitializedGitRepo) {
   }
 }
 
-# -- 5b. Docker worker image prepare (deferred from stage 2b) ---------------
-Write-Stage "Docker worker image (opt-in)"
+# -- 7. Docker worker image prepare -----------------------------------------
+Write-Stage "Prepare Docker worker"
 $PackageRoot = Join-Path $HarnessRoot "packages\agent-harness"
-if (-not $script:DockerProbeOptIn) {
-  Write-Note "Skipped (not opted in earlier). Later: agent-harness execution prepare-worker --repository `"$ProjectPath`""
-} elseif (-not (Test-AgentHarnessDockerReady)) {
+if (-not (Test-AgentHarnessDockerReady)) {
   Write-WarnLine "Docker is no longer ready; cannot prepare the worker image."
-  Write-Note "Fix docker info / Linux containers, then re-run: agent-harness execution prepare-worker --repository `"$ProjectPath`""
+  Write-Note "Restart Docker Desktop in Linux-container mode, then choose setup/repair again."
   exit 1
 } else {
-  Write-Say "Probing Docker and rebuilding the maintained worker image from this installation."
+  Write-Say "Rebuilding the maintained worker image, writing its digest, and running the isolation probe."
   Write-Note "Package root: $PackageRoot"
-  $EnableDockerRuntime = Confirm-Yes "Use the rebuilt Docker worker for new runs in this project?"
   $PrepareWorkerArgs = @(
     $Cli,
     "execution",
@@ -626,28 +608,32 @@ if (-not $script:DockerProbeOptIn) {
     "--package-root",
     $PackageRoot,
     "--force-rebuild",
-    "--json"
+    "--write-settings"
   )
-  if ($EnableDockerRuntime) {
-    $PrepareWorkerArgs += @("--write-settings", "--enable-runtime")
-  }
   & node @PrepareWorkerArgs
   if ($LASTEXITCODE -ne 0) {
-    Write-WarnLine "execution prepare-worker failed (exit $LASTEXITCODE). Docker setup did not succeed."
-    Write-Note "Fix Docker / rebuild, then re-run: agent-harness execution prepare-worker --repository `"$ProjectPath`" --package-root `"$PackageRoot`" --force-rebuild"
+    Write-WarnLine "Worker preparation failed (exit $LASTEXITCODE). Setup is not ready."
+    Write-Note "Fix the reported Docker/probe blocker, then choose setup/repair again."
     exit 1
   }
-  Write-Ok "worker image rebuild succeeded"
-  if ($EnableDockerRuntime) {
-    Write-Ok "project settings: execution.runtime=docker + workerImageDigest pinned"
-    Write-Note "Confirm readiness: agent-harness execution status --repository `"$ProjectPath`""
-    Write-Note "Still required: pin at least one approved base image (Settings → Execution runtime)."
-  } else {
-    Write-Note "Left runtime=local. Pin digest / enable Docker later from Settings, or: agent-harness execution prepare-worker --repository `"$ProjectPath`" --write-settings --enable-runtime"
+  Write-Ok "worker image rebuilt and digest written"
+  $statusJson = (& node $Cli execution status --repository $ProjectPath --json | Out-String)
+  if ($LASTEXITCODE -ne 0) {
+    Write-WarnLine "The readiness check command failed after worker preparation."
+    exit 1
   }
+  $runtimeStatus = $statusJson | ConvertFrom-Json
+  if (-not [bool]$runtimeStatus.ready) {
+    Write-WarnLine "The Docker-only runtime is still blocked after worker preparation."
+    foreach ($blocker in @($runtimeStatus.blockers)) {
+      Write-Note ("- " + $blocker.message)
+    }
+    exit 1
+  }
+  Write-Ok "Docker worker and isolation probe are ready"
 }
 
-# -- 6. Repository intelligence --------------------------------------------
+# -- 8. Repository intelligence --------------------------------------------
 Write-Stage "Repository intelligence"
 Write-Say "Harness structural lookup prefers GitNexus, then falls back to CodeGraph."
 Write-Note "Both CLIs are optional. Skip either to leave that provider unset."
@@ -668,19 +654,11 @@ if (Confirm-Yes "Install CodeGraph now (fallback)?") {
 }
 Write-Note "Optional later: Ollama embeddings (packages/agent-harness/scripts/setup-local-embeddings.ps1)"
 
-# -- 7. Start dashboard ----------------------------------------------------
-Write-Stage "Start dashboard"
-Write-Say "The dashboard prints a loopback URL with a one-time access token."
-Write-Note ('node "' + $Cli + '" ui --repository "' + $ProjectPath + '"')
-if ([string]::IsNullOrWhiteSpace($env:CURSOR_API_KEY)) {
-  Write-WarnLine "CURSOR_API_KEY is not set in this shell - set it before starting ui."
-}
-
 Write-Finish
+Write-Say "Future launches: double-click scripts\Launch-AgentHarness.cmd and choose Open dashboard."
 
 if ((Test-Path -LiteralPath $Cli) -and (Test-Path -LiteralPath $ProjectPath) -and
-    (Confirm-Yes "Start the dashboard now in this terminal?")) {
-  Set-Location -LiteralPath $ProjectPath
-  & node $Cli ui --repository $ProjectPath
+    (Confirm-Yes "Open the dashboard now?")) {
+  & (Join-Path $PSScriptRoot "launch-agent-harness.ps1") -Project $ProjectPath -Action Dashboard -NoPull -NoBuild
   exit $LASTEXITCODE
 }

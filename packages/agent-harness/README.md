@@ -6,6 +6,11 @@ Agent Harness turns an idea into verified, committed feature slices through a du
 
 Requires **Node.js 20.3+** (`AbortSignal.any` for cancellable agent timeouts).
 
+On Windows, the primary entry point is the repository-level
+`scripts\Launch-AgentHarness.cmd`. Its menu guides setup/repair, Docker worker
+readiness, vNext composition inspection, and dashboard launch without requiring
+the command sequence below. See [INSTALL.md](../../INSTALL.md).
+
 The Docker-only vNext composition uses `@deepseek-ai/cordis`. Inspect the
 trusted host/worker plugin tree without starting Docker:
 
@@ -23,7 +28,9 @@ serves worker state RPC for CLI runs; dashboard routes are an optional adapter.
 npm install
 npm run build
 npx agent-harness project add --repository "/path/to/your-project"
-npx agent-harness ui
+npx agent-harness execution prepare-worker --repository "/path/to/your-project" --force-rebuild --write-settings
+npx agent-harness execution status --repository "/path/to/your-project"
+npx agent-harness ui --repository "/path/to/your-project"
 ```
 
 `project add` registers the repository in harness home (guidance lives there too).
@@ -40,7 +47,7 @@ and after verified task commits that touch source files. `init` / `deploy` write
 config when needed and do not install either CLI. Use `--no-repository-intelligence` on deploy for
 document-only projects (disables `knowledge.repositoryIntelligence`).
 
-The dashboard opens on an authenticated loopback URL and centralizes run creation, human questions, progress, test evidence, session handoffs, artifacts, retries, cancellation, and local knowledge search. Set `CURSOR_API_KEY` for real agent runs. The generated config pins models, commands, retry budgets, coverage policy, git publication, and local knowledge sources.
+The dashboard opens on an authenticated loopback URL and centralizes run creation, human questions, progress, test evidence, session handoffs, artifacts, retries, cancellation, and local knowledge search. `CURSOR_API_KEY` is needed for real agent runs, but real Cursor secret mounting remains fail-closed until the credential isolation release gate passes. The generated config pins models, commands, retry budgets, coverage policy, git publication, and local knowledge sources.
 
 The lifecycle is:
 

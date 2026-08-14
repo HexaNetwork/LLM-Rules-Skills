@@ -1,19 +1,38 @@
 # Agent Harness — Installation
 
-Install Node, build this checkout, then register a target project in harness home.
+The Windows experience is guided and Docker-only. You do not need to remember
+the CLI sequence for normal setup or day-to-day use.
 
-**Interactive wizard (recommended on Windows):** double-click or run from this checkout:
+**Primary entry point (recommended on Windows):** double-click:
+
+```text
+scripts\Launch-AgentHarness.cmd
+```
+
+The launcher presents four choices:
+
+1. **Open dashboard** — update/build, check Docker and the maintained worker, then open the browser.
+2. **Set up or repair a project** — run the full guided setup.
+3. **Check Docker and worker readiness** — show actionable blockers without starting the dashboard.
+4. **Inspect trusted vNext composition** — render the host and worker Cordis profiles.
+
+For a first install, choice 2 checks Node, WSL2/Docker Desktop on Windows,
+registers the project with `project add`, runs
+`execution prepare-worker --force-rebuild --write-settings`, verifies readiness,
+and offers optional repository-intelligence tools. It never installs Docker
+Desktop silently and never writes secrets to `.env`.
+
+The setup-only shortcut remains available:
 
 ```text
 scripts\Install-AgentHarness.cmd
 ```
 
-That opens PowerShell with `-ExecutionPolicy Bypass` and runs `scripts\install-agent-harness.ps1`. It walks through Node, **WSL2** (for Cursor agent sandbox on Windows), optional **Docker execution runtime** (detect; may offer to start an already-installed Docker Desktop; deferred worker image prepare/probe; never silently installs Docker Desktop), build, Cursor API key (stored as a Windows User environment variable — not `.env`), `project add` registration, optional GitNexus (with license warning) and CodeGraph CLI installs, and the dashboard.
-
 Alternatives:
 
 ```powershell
-.\scripts\install-agent-harness.ps1
+.\scripts\launch-agent-harness.ps1
+.\scripts\launch-agent-harness.ps1 -Action Setup
 ```
 
 ```bash
@@ -26,8 +45,8 @@ Manual steps below match the same flow.
 
 - **Node.js 20.3+** (required; there is no non-Node CLI)
 - **npm** (comes with Node)
-- **Cursor API key** for real agent runs (`CURSOR_API_KEY`)
-- **Windows only:** **WSL2** for Cursor agent OS sandbox — the Windows install wizard checks this and can run `wsl --install`. Full sandbox still requires running the harness under Linux/WSL (not native `node.exe`).
+- **Cursor API key** (`CURSOR_API_KEY`) for real agent runs once credential mounting clears its isolation release gate; the dashboard and deterministic readiness checks do not require it
+- **Windows only:** **WSL2** for the Docker Desktop Linux-container backend
 - **Docker** (required; Linux containers). The install wizard detects `docker info`, Linux container mode, and daemon permissions; if Desktop is installed but stopped it may ask to start it and wait for the daemon. It prepares the maintained worker image after the package build. It does **not** silently install Docker Desktop.
 - Optional: **Ollama** for local embeddings; **GitNexus** (`npm install -g gitnexus`, PolyForm Noncommercial — see below); **CodeGraph** (`npm install -g @colbymchenry/codegraph`)
 
@@ -87,7 +106,12 @@ npm run build
 
 This creates `packages/agent-harness/dist/cli.js`. If that file is missing, registration will fail with `MODULE_NOT_FOUND`.
 
-## 3. Set the Cursor API key
+## 3. Optionally set the Cursor API key
+
+The setup wizard can save this as a Windows User environment variable. The
+dashboard can be explored without it. Real Cursor-in-Docker execution remains
+fail-closed while the credential-isolation smoke gate is unresolved; having a
+key does not bypass that gate.
 
 Current PowerShell session:
 
@@ -137,23 +161,33 @@ Useful deploy flags: `--force`, `--sources a,b`, `--no-codegraph`.
 
 ## 5. Start the dashboard
 
-**Launcher (pull + rebuild + ui):** double-click or run:
+**Normal launch:** double-click:
 
 ```text
 scripts\Launch-AgentHarness.cmd
 ```
 
-If you omit the project path, the launcher offers remembered projects (from user settings) or prompts for a path. Scripted use:
+Choose **Open dashboard**. The launcher uses the last remembered project by
+default, updates and builds the checkout, starts Docker Desktop when it is
+already installed but stopped, checks the worker image/isolation probe, and
+opens the authenticated dashboard. If the worker is stale or missing, it offers
+to repair it in place.
+
+Scripted/advanced use remains available:
 
 ```powershell
-.\scripts\launch-agent-harness.ps1 -Project "C:\path\to\your-project"
+.\scripts\launch-agent-harness.ps1 -Action Dashboard -Project "C:\path\to\your-project"
+.\scripts\launch-agent-harness.ps1 -Action Check -Project "C:\path\to\your-project"
+.\scripts\launch-agent-harness.ps1 -Action Config
 ```
 
 ```bash
 bash scripts/launch-agent-harness.sh "/path/to/your-project"
 ```
 
-Or set `AGENT_HARNESS_PROJECT` and omit the path. Use `--no-pull` / `-NoPull` or `--no-build` / `-NoBuild` to skip steps (explicit flags always win over settings).
+Or set `AGENT_HARNESS_PROJECT` and omit the path. Use `--no-pull` /
+`-NoPull` or `--no-build` / `-NoBuild` to skip update/build steps (explicit
+flags always win over settings).
 
 ### User settings (machine defaults)
 
@@ -187,7 +221,7 @@ Schema (defaults apply when keys are missing; first write creates the file with 
 | Concern | Where |
 | --- | --- |
 | Remembered projects, last project, launch/UI machine defaults | User `settings.json` |
-| Per-project harness policy | Project’s `agent-harness.config.yaml` |
+| Per-project harness policy | Harness-home project `config.yaml` |
 | Secrets (`CURSOR_API_KEY`) | Windows User env / shell profile only — **never** in `settings.json` |
 
 **Project path resolution** when starting the dashboard:
@@ -198,7 +232,9 @@ Schema (defaults apply when keys are missing; first write creates the file with 
 4. Interactive picker from remembered projects that still exist (default highlight = `lastProject`); option to type a new path
 5. If the list is empty, prompt for a path
 
-**Launch / UI knobs:** explicit launcher flags → values from `settings.json` → built-in defaults (`pull`/`build` on, port `8787`, open browser on). The launcher passes `--repository`, `--port`, and `--no-open` to `agent-harness ui` from `ui.*` settings. A successful install wizard registration seeds the remembered project list.
+**Launch / UI knobs:** explicit launcher flags → values from `settings.json`
+→ built-in defaults (`pull`/`build` on, port `8787`, open browser on). A
+successful setup registration seeds the remembered project list.
 
 **Manual:** against a registered repository:
 
@@ -231,14 +267,14 @@ Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`se
 Docker is the only production execution runtime. Local linked worktrees and generated per-run images are retired; old active runs must be finished, exported, or discarded before cutover.
 
 1. Install Docker yourself (Docker Desktop on Windows with **WSL2 + Linux containers**, or a Linux/macOS daemon with permission to run `docker info`). The install wizard never silently installs Docker Desktop; on Windows it may offer to **start** Desktop if the CLI is present but the daemon is down.
-2. Run the install wizard’s Docker stage:
-   - Early stage detects `docker info` / Linux containers (optionally starting Desktop).
-   - After package build + `project add`, installs run `agent-harness execution prepare-worker --force-rebuild --write-settings`.
-   - Fail-closed: image preparation or isolation-probe failure stops installation with an actionable message.
-3. Check readiness: `agent-harness execution status --repository <path>` or `GET /api/execution/status`.
+2. Double-click `scripts\Launch-AgentHarness.cmd`, then choose **Set up or repair a project**. It performs `project add`, rebuilds the one maintained worker with `--force-rebuild --write-settings`, and runs the isolation probe.
+3. Use launcher choice **Check Docker and worker readiness** whenever you want a readable readiness report without opening the dashboard.
 4. Expect disk/CPU/memory cost for the shared image and named volumes. Bridge networking is filesystem isolation, **not** egress-proof.
 
-Launch scripts start Docker Desktop on Windows when installed but stopped, wait briefly for Linux-container readiness, and then start the host control process.
+Launch is fail-closed: if Docker, the maintained worker, or its isolation probe
+is not ready, the dashboard launcher stops or offers repair instead of implying
+that local execution is available. Real Cursor secrets are also fail-closed
+until the credential-gated isolation smoke test passes.
 
 ## Troubleshooting
 
@@ -248,8 +284,8 @@ Launch scripts start Docker Desktop on Windows when installed but stopped, wait 
 | `node` / `npm` not recognized | Install Node 20.3+, then open a new terminal |
 | `npm.ps1 cannot be loaded` / ExecutionPolicy | Use `scripts\Install-AgentHarness.cmd`, or `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or `npm.cmd` |
 | Dashboard access denied / `Invalid or missing dashboard token` | Close the tab, copy the **full** URL printed by the current `ui` process (including `?token=...`), and open that. Restarting `ui` invalidates the old token; an old tab or a bookmark without `?token=` will fail on Start reflect. |
-| Agent backend / missing API key | Set `CURSOR_API_KEY` in the same environment that runs the harness, then restart `ui` |
-| Leftover `agent-harness.config.yaml` / `.agent-harness/` in the target | Safe leftovers from older installs. Delete them, or run `agent-harness migrate-home` |
+| Agent backend / missing API key | The dashboard still opens. For real runs, set `CURSOR_API_KEY` and restart `ui`; credential mounting remains blocked until the isolation release gate passes. |
+| Leftover `agent-harness.config.yaml` / `.agent-harness/` in the target | Pre-cutover repo-local state is unsupported. Archive or remove it after confirming the external project registration. |
 | `not a git repository` / `git status failed (128)` on Start reflect | The target folder is not a git repo but `git.enabled` is true. The install wizard auto-inits git and commits after registration; otherwise `git init` + initial commit, or set `git.enabled: false` in the harness-home project config |
 
 ## More detail

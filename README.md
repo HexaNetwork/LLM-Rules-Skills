@@ -16,21 +16,17 @@ The harness uses Wayfinder-style decision maps, local Markdown issues, offline l
 
 Its knowledge index supports a scope gate: `General/` is indexed as universal guidance and `E&E/` as `exploration-and-empire` project guidance. For each worker step, the harness deterministically selects only relevant rules and skills by role, known paths, and lexical relevance, then uses the remaining context budget for repository documents. A normal query searches only global material plus the active project's documents; a different project's shared material must be named explicitly.
 
-```bash
-npm install
-npm run build
-npm run test:run
+On Windows, double-click `scripts\Launch-AgentHarness.cmd`. Its guided menu can
+set up/repair a project, check the required Docker worker, inspect the trusted
+Cordis composition, or open the dashboard. `scripts\Install-AgentHarness.cmd`
+remains a setup-only shortcut.
 
-npx agent-harness init
-npx agent-harness ui
-npx agent-harness start --idea "Add saved searches" # CLI alternative
-npx agent-harness status --run-id <id>
-```
+The production runtime is Docker-only, with durable state held by the host.
+Real Cursor credential mounting remains fail-closed until its isolation release
+gate passes; the dashboard and deterministic readiness checks can still be used.
 
-Set `CURSOR_API_KEY` for agent execution. Generated run state is local under `.agent-harness/` and should remain gitignored.
-
-For a step-by-step install (Node, build, API key, deploy into another folder, UI), see [INSTALL.md](INSTALL.md). On Windows, double-click or run `scripts\Install-AgentHarness.cmd` (or `.\scripts\install-agent-harness.ps1`). Bash alternative: `bash scripts/install-agent-harness.sh`.
-
-Day-to-day: `scripts\Launch-AgentHarness.cmd` (or `.\scripts\launch-agent-harness.ps1 -Project <path>`; bash: `bash scripts/launch-agent-harness.sh <path>`) pulls this checkout, rebuilds, and starts the dashboard.
+See [INSTALL.md](INSTALL.md) for the guided and scripted paths. Bash alternatives
+are `bash scripts/install-agent-harness.sh` and
+`bash scripts/launch-agent-harness.sh <path>`.
 
 See [the package guide](packages/agent-harness/README.md) and [`/harness-run`](General/skills/harness-run/SKILL.md).

@@ -1,6 +1,7 @@
 import { loadRunConfig, loadRunWorkspace } from "../config/io.js";
 import type { HarnessConfig } from "../config/schema.js";
 import type { RunWorkspace } from "../domain/workspace.js";
+import { HarnessFailure } from "../errors.js";
 import { HarnessEngine } from "./harness-engine.js";
 import { RunStore } from "../store.js";
 import { resolveWorkspaceProvisioner } from "../workspace/index.js";
@@ -17,6 +18,12 @@ export type OpenedRunHarness = {
 export type OpenRunHarnessOptions = {
   /** When false, skip worktree registration checks (status/cancel/unlock). Default true. */
   validateWorktree?: boolean;
+  /**
+   * When true, missing workspace.json yields a provisional engine (no provisioner.open).
+   * Used for Docker image approve/build before the clone exists, and cancel/retry of
+   * runs still gated on that step.
+   */
+  allowMissingWorkspace?: boolean;
 };
 
 /**
@@ -30,8 +37,15 @@ export async function openRunHarness(
   options: OpenRunHarnessOptions = {},
 ): Promise<OpenedRunHarness> {
   const config = await loadRunConfig(projectConfig, runId);
-  const workspace = await loadRunWorkspace(projectConfig, runId);
-  const paths = resolveHarnessPaths(config, workspace);
+  let workspace: RunWorkspace | undefined;
+  try {
+    workspace = await loadRunWorkspace(projectConfig, runId);
+  } catch (error) {
+    const missing =
+      error instanceof HarnessFailure && /workspace metadata is missing/i.test(error.message);
+    if (!missing || options.allowMissingWorkspace !== true) throw error;
+  }
+  const paths = resolveHarnessPaths(config, workspace ?? null);
 
   const store = dependencies.store ?? new RunStore(config, paths.stateRoot);
   const workspaceProvisioner =
@@ -43,6 +57,7 @@ export async function openRunHarness(
     });
 
   if (
+    workspace &&
     (workspace.kind === "git-worktree" || workspace.kind === "docker-clone") &&
     options.validateWorktree !== false
   ) {
@@ -55,6 +70,6 @@ export async function openRunHarness(
     store,
     workspaceProvisioner,
   });
-  engine.bindWorkspace(workspace);
-  return { engine, config, paths, workspace };
+  if (workspace) engine.bindWorkspace(workspace);
+  return { engine, config, paths, workspace: workspace ?? engine.workspace };
 }

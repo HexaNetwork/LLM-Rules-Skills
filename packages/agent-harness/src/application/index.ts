@@ -41,6 +41,8 @@ export {
   BASE_IMAGE_ALLOWLIST_VERSION,
   KNOWN_STACK_BASE_FAMILIES,
   WORKER_IMAGE_BINARY_PATH,
+  WORKER_IMAGE_ROOT,
+  WORKER_ISOLATION_SELF_CHECK_PATH,
   type GeneratedExecutionImage,
   type ExecutionImageGenerationFailure,
 } from "./execution-image-generator.js";
@@ -55,6 +57,7 @@ export {
   buildApprovedExecutionImage,
   ensureExecutionImageForRun,
   approveAndBuildExecutionImage,
+  saveExecutionDockerfile,
   executionImageArtifactPaths,
   loadProjectImageCache,
   EXECUTION_IMAGE_APPROVAL_REQUIRED_MESSAGE,

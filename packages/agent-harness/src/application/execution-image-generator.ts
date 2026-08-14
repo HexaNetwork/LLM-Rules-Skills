@@ -3,7 +3,7 @@ import type { ExecutionImageEvidence, ExecutionImageStackId } from "./execution-
 import { canonicalProfileInputs, hashExecutionImageProfile } from "./execution-image-evidence.js";
 
 /** Bump when Dockerfile generation rules change (invalidates caches). */
-export const EXECUTION_IMAGE_GENERATOR_VERSION = 1 as const;
+export const EXECUTION_IMAGE_GENERATOR_VERSION = 3 as const;
 
 /**
  * Allowlist catalog version. Cache keys include this so policy updates
@@ -11,8 +11,24 @@ export const EXECUTION_IMAGE_GENERATOR_VERSION = 1 as const;
  */
 export const BASE_IMAGE_ALLOWLIST_VERSION = 1 as const;
 
+/** Maintained worker install root inside worker + generated execution images. */
+export const WORKER_IMAGE_ROOT = "/opt/agent-harness" as const;
+
 /** Worker binary path inside the maintained worker image / final image. */
-export const WORKER_IMAGE_BINARY_PATH = "/opt/agent-harness/worker" as const;
+export const WORKER_IMAGE_BINARY_PATH = `${WORKER_IMAGE_ROOT}/worker` as const;
+
+/** CLI wrapper used by one-shot init/probe containers. */
+export const WORKER_IMAGE_CLI_PATH = `${WORKER_IMAGE_ROOT}/cli` as const;
+
+/** Node binary copied from the maintained worker into generated toolchain images. */
+export const WORKER_IMAGE_NODE_PATH = "/usr/local/bin/node" as const;
+
+/**
+ * Isolation self-check entrypoint (does not go through the long-lived `worker` wrapper).
+ * Must exist in the worker image and be copied into generated execution images.
+ */
+export const WORKER_ISOLATION_SELF_CHECK_PATH =
+  `${WORKER_IMAGE_ROOT}/sandbox-isolation-self-check` as const;
 
 /**
  * Known stack → digest-pinned-friendly base image family.
@@ -217,14 +233,21 @@ function renderDockerfile(input: {
     `# Do not commit this file into the control checkout.`,
     `FROM ${input.workerImage} AS harness-worker`,
     `FROM ${input.baseImage}`,
-    `# Copy only the maintained harness worker binary — never project source.`,
-    `COPY --from=harness-worker ${WORKER_IMAGE_BINARY_PATH} ${WORKER_IMAGE_BINARY_PATH}`,
+    `# Copy the maintained harness install (CLI + worker wrappers) — never project source.`,
+    `COPY --from=harness-worker ${WORKER_IMAGE_ROOT} ${WORKER_IMAGE_ROOT}`,
+    `# Worker CLI is Node-based; toolchain bases may not ship Node (python/go/rust/jvm).`,
+    `COPY --from=harness-worker ${WORKER_IMAGE_NODE_PATH} ${WORKER_IMAGE_NODE_PATH}`,
+    `# Seed-clone initialization and volume probes require Git in every stack image.`,
+    `RUN apt-get update && apt-get install --no-install-recommends -y git ca-certificates && rm -rf /var/lib/apt/lists/*`,
+    `# Fail during image build, before approval can advance into workspace startup.`,
+    `RUN ${WORKER_IMAGE_NODE_PATH} --version && git --version && test -x ${WORKER_IMAGE_CLI_PATH} && test -x ${WORKER_IMAGE_BINARY_PATH} && test -x ${WORKER_ISOLATION_SELF_CHECK_PATH}`,
     `RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin harness || true`,
     `USER 10001:10001`,
     `WORKDIR /workspace`,
     `# Entrypoint is the maintained worker binary; docker run supplies:`,
     `#   --run-id <id> --listen 0.0.0.0:8787 --secret-file /run-state/execution-secrets/rpc.token`,
     `# (equivalent to: agent-harness worker …).`,
+    `# Isolation probe overrides entrypoint to ${WORKER_ISOLATION_SELF_CHECK_PATH}.`,
     `ENTRYPOINT ["${WORKER_IMAGE_BINARY_PATH}"]`,
     "",
   ];

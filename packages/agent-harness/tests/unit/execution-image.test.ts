@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -21,6 +21,7 @@ import {
   ensureExecutionImageForRun,
   EXECUTION_IMAGE_APPROVAL_REQUIRED_MESSAGE,
   prepareExecutionImage,
+  saveExecutionDockerfile,
 } from "../../src/application/execution-image-service.js";
 import { HarnessConfigSchema } from "../../src/config/schema.js";
 import { createFakeDockerClient } from "../../src/infrastructure/container/fake-docker-client.js";
@@ -78,7 +79,19 @@ describe("dockerfile generation and allowlist validation", () => {
     if (!result.ok) return;
     expect(result.image.dockerfile).toContain(`FROM ${WORKER} AS harness-worker`);
     expect(result.image.dockerfile).toContain(`FROM ${NODE_BASE}`);
-    expect(result.image.dockerfile).toMatch(/COPY --from=harness-worker/);
+    expect(result.image.dockerfile).toContain(
+      "COPY --from=harness-worker /opt/agent-harness /opt/agent-harness",
+    );
+    expect(result.image.dockerfile).toContain(
+      "COPY --from=harness-worker /usr/local/bin/node /usr/local/bin/node",
+    );
+    expect(result.image.dockerfile).toContain(
+      "apt-get install --no-install-recommends -y git ca-certificates",
+    );
+    expect(result.image.dockerfile).toContain("test -x /opt/agent-harness/cli");
+    expect(result.image.dockerfile).toContain(
+      'ENTRYPOINT ["/opt/agent-harness/worker"]',
+    );
     expect(result.image.dockerfile).not.toMatch(/^COPY (?!--from=)/m);
     expect(result.image.generatorVersion).toBe(EXECUTION_IMAGE_GENERATOR_VERSION);
     expect(result.image.allowlistVersion).toBe(BASE_IMAGE_ALLOWLIST_VERSION);
@@ -320,6 +333,131 @@ describe("execution image prepare / approval artifacts", () => {
     expect(ensured.status).toBe("needs-approval");
     if (ensured.status !== "needs-approval") return;
     expect(ensured.reason).toBe(EXECUTION_IMAGE_APPROVAL_REQUIRED_MESSAGE);
+  });
+
+  it("saveExecutionDockerfile persists edits, rehashes, and clears prior approval/digest", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ah-img-edit-"));
+    const stateRoot = await mkdtemp(path.join(tmpdir(), "ah-img-edit-state-"));
+    await writeFile(path.join(root, "package.json"), '{"name":"demo"}\n', "utf8");
+    const config = HarnessConfigSchema.parse({
+      repositoryRoot: root,
+      stateDirectory: stateRoot,
+      execution: {
+        runtime: "docker",
+        docker: {
+          workerImageDigest: WORKER,
+          approvedBaseImages: [NODE_BASE],
+          sandboxRequired: false,
+        },
+      },
+    });
+    const prepared = await prepareExecutionImage({
+      config,
+      stateRoot,
+      runId: "run-edit",
+      repositoryRoot: root,
+      autoReuseApproved: false,
+    });
+    expect(prepared.status).toBe("needs-approval");
+    if (prepared.status === "blocked" || !("generated" in prepared)) {
+      throw new Error("expected generated image");
+    }
+    await approveExecutionImage({
+      stateRoot,
+      runId: "run-edit",
+      generated: prepared.generated,
+      cacheKey: prepared.cacheKey,
+      imageDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    });
+    await writeFile(prepared.artifacts.digestPath, "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n", "utf8");
+
+    const edited =
+      prepared.generated.dockerfile.trimEnd() +
+      "\n# operator note: keep worker entrypoint\n";
+    const saved = await saveExecutionDockerfile({
+      stateRoot,
+      runId: "run-edit",
+      dockerfile: edited,
+      allowlist: [WORKER, NODE_BASE],
+    });
+    expect(saved.validation.ok).toBe(true);
+    expect(saved.dockerfileHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(saved.dockerfileHash).not.toBe(prepared.generated.dockerfileHash);
+    expect(saved.clearedApproval).toBe(true);
+
+    const onDisk = await readFile(prepared.artifacts.dockerfilePath, "utf8");
+    expect(onDisk).toContain("operator note");
+    const hashOnDisk = (await readFile(prepared.artifacts.dockerfileHashPath, "utf8")).trim();
+    expect(hashOnDisk).toBe(saved.dockerfileHash);
+    await expect(access(prepared.artifacts.approvalPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(prepared.artifacts.digestPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const again = await prepareExecutionImage({
+      config,
+      stateRoot,
+      runId: "run-edit",
+      repositoryRoot: root,
+      autoReuseApproved: false,
+    });
+    expect(again.status).toBe("needs-approval");
+    if (again.status === "blocked" || !("generated" in again)) throw new Error("expected generated");
+    expect(again.generated.dockerfile).toContain("operator note");
+    expect(again.generated.dockerfileHash).toBe(saved.dockerfileHash);
+  });
+
+  it("refreshes a stale generated Dockerfile when generator version advances", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ah-img-stale-"));
+    const stateRoot = await mkdtemp(path.join(tmpdir(), "ah-img-stale-state-"));
+    await writeFile(path.join(root, "package.json"), '{"name":"demo"}\n', "utf8");
+    const config = HarnessConfigSchema.parse({
+      repositoryRoot: root,
+      stateDirectory: stateRoot,
+      execution: {
+        runtime: "docker",
+        docker: {
+          workerImageDigest: WORKER,
+          approvedBaseImages: [NODE_BASE],
+        },
+      },
+    });
+    const first = await prepareExecutionImage({
+      config,
+      stateRoot,
+      runId: "run-stale",
+      repositoryRoot: root,
+      autoReuseApproved: false,
+    });
+    expect(first.status).toBe("needs-approval");
+    if (first.status === "blocked" || !("artifacts" in first)) throw new Error("expected artifacts");
+    const stale = [
+      `FROM ${WORKER} AS harness-worker`,
+      `FROM ${NODE_BASE}`,
+      "COPY --from=harness-worker /opt/agent-harness/worker /opt/agent-harness/worker",
+      'ENTRYPOINT ["/opt/agent-harness/worker"]',
+      "",
+    ].join("\n");
+    await writeFile(first.artifacts.dockerfilePath, stale, "utf8");
+    await writeFile(
+      first.artifacts.profilePath,
+      `${JSON.stringify({ generatorVersion: 1, operatorEdited: false }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const refreshed = await prepareExecutionImage({
+      config,
+      stateRoot,
+      runId: "run-stale",
+      repositoryRoot: root,
+      autoReuseApproved: false,
+    });
+    expect(refreshed.status).toBe("needs-approval");
+    if (refreshed.status === "blocked" || !("generated" in refreshed)) {
+      throw new Error("expected generated");
+    }
+    expect(refreshed.generated.dockerfile).toContain(
+      "COPY --from=harness-worker /opt/agent-harness /opt/agent-harness",
+    );
+    expect(refreshed.generated.dockerfile).not.toBe(stale);
   });
 
   it("approveAndBuildExecutionImage writes image.digest after operator approval", async () => {

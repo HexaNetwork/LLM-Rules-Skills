@@ -12,7 +12,11 @@ COPY dist ./dist
 
 RUN printf '%s\n' '#!/bin/sh' 'exec node /opt/agent-harness/dist/cli.js worker "$@"' \
   > /opt/agent-harness/worker \
-  && chmod 0755 /opt/agent-harness/worker \
+  && printf '%s\n' '#!/bin/sh' 'exec node /opt/agent-harness/dist/cli.js "$@"' \
+  > /opt/agent-harness/cli \
+  && printf '%s\n' '#!/bin/sh' 'exec node /opt/agent-harness/dist/cli.js sandbox-isolation-self-check "$@"' \
+  > /opt/agent-harness/sandbox-isolation-self-check \
+  && chmod 0755 /opt/agent-harness/worker /opt/agent-harness/cli /opt/agent-harness/sandbox-isolation-self-check \
   && useradd --create-home --uid 10001 --shell /usr/sbin/nologin harness || true
 
 USER 10001:10001

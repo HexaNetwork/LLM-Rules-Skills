@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile, access } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile, access, unlink } from "node:fs/promises";
 import path from "node:path";
 import {
   collectExecutionImageEvidence,
@@ -162,16 +163,34 @@ export async function prepareExecutionImage(
   }
 
   const image = generated.image;
-  const allowlist = [image.workerImage, image.baseImage];
-  const validation = validateExecutionDockerfile(image.dockerfile, { allowlist });
+  // Preserve operator-edited Dockerfiles. Otherwise refresh when missing or when the
+  // generator version advanced (stale v1 images lack isolation self-check packaging).
+  const existingDockerfile = await readTextIfExists(artifacts.dockerfilePath);
+  const existingProfile = await readJsonIfExists<Record<string, unknown>>(artifacts.profilePath);
+  const operatorEdited = existingProfile?.operatorEdited === true;
+  const existingGeneratorVersion = Number(existingProfile?.generatorVersion ?? NaN);
+  const shouldRefreshDockerfile =
+    existingDockerfile == null ||
+    (!operatorEdited && existingGeneratorVersion !== EXECUTION_IMAGE_GENERATOR_VERSION);
+  const dockerfile = shouldRefreshDockerfile ? image.dockerfile : existingDockerfile!;
+  const dockerfileHash = createHash("sha256").update(dockerfile).digest("hex");
+  const effective: GeneratedExecutionImage = {
+    ...image,
+    dockerfile,
+    dockerfileHash,
+  };
+  const allowlist = [effective.workerImage, effective.baseImage];
+  const validation = validateExecutionDockerfile(effective.dockerfile, { allowlist });
   const cacheKey = computeExecutionImageCacheKey({
     evidence,
-    dockerfile: image.dockerfile,
-    workerImage: image.workerImage,
-    platform: image.platform,
+    dockerfile: effective.dockerfile,
+    workerImage: effective.workerImage,
+    platform: effective.platform,
   });
 
-  await persistGeneratedArtifacts(artifacts, evidence, image, validation);
+  await persistGeneratedArtifacts(artifacts, evidence, effective, validation, {
+    overwriteDockerfile: shouldRefreshDockerfile,
+  });
 
   if (!validation.ok) {
     return {
@@ -201,19 +220,19 @@ export async function prepareExecutionImage(
   const approval = await readJsonIfExists<ExecutionImageApprovalRecord>(artifacts.approvalPath);
   const approved =
     (approval &&
-      approval.profileHash === image.profileHash &&
-      approval.dockerfileHash === image.dockerfileHash) ||
+      approval.profileHash === effective.profileHash &&
+      approval.dockerfileHash === effective.dockerfileHash) ||
     (options.autoReuseApproved !== false &&
       prior &&
-      prior.profileHash === image.profileHash &&
-      prior.dockerfileHash === image.dockerfileHash &&
+      prior.profileHash === effective.profileHash &&
+      prior.dockerfileHash === effective.dockerfileHash &&
       Boolean(imageDigest ?? prior.imageDigest));
 
   if (approved) {
     return {
       status: "ready",
       evidence,
-      generated: image,
+      generated: effective,
       validation,
       cacheKey,
       artifacts,
@@ -225,12 +244,87 @@ export async function prepareExecutionImage(
   return {
     status: "needs-approval",
     evidence,
-    generated: image,
+    generated: effective,
     validation,
     cacheKey,
     artifacts,
     reason:
       "Operator approval required for first build, changed profile, or generated Dockerfile edits.",
+  };
+}
+
+/**
+ * Persist an operator-edited Dockerfile under runs/<id>/execution-image/.
+ * Rehashes, revalidates, updates profile metadata when present, and clears
+ * prior approval + digest so the next build requires fresh approval.
+ */
+export async function saveExecutionDockerfile(input: {
+  stateRoot: string;
+  runId: string;
+  dockerfile: string;
+  /** Exact allowlisted image refs used for FROM validation (worker + base). */
+  allowlist: readonly string[];
+}): Promise<{
+  dockerfileHash: string;
+  validation: DockerfileValidationReport;
+  clearedApproval: boolean;
+}> {
+  const artifacts = executionImageArtifactPaths(input.stateRoot, input.runId);
+  const existing = await readTextIfExists(artifacts.dockerfilePath);
+  if (existing == null) {
+    throw new HarnessFailure(
+      "No generated execution Dockerfile to edit. Wait for Docker setup to prepare execution-image artifacts first.",
+      "execution",
+      false,
+    );
+  }
+
+  const dockerfile = normalizeDockerfileText(input.dockerfile);
+  if (!dockerfile.trim()) {
+    throw new HarnessFailure("Dockerfile cannot be empty.", "execution", false);
+  }
+
+  const dockerfileHash = createHash("sha256").update(dockerfile).digest("hex");
+  const validation = validateExecutionDockerfile(dockerfile, {
+    allowlist: input.allowlist,
+  });
+
+  const priorHash = (await readTextIfExists(artifacts.dockerfileHashPath))?.trim();
+  const priorApproval = await readJsonIfExists<ExecutionImageApprovalRecord>(artifacts.approvalPath);
+  const priorDigest = await readTextIfExists(artifacts.digestPath);
+
+  await mkdir(artifacts.directory, { recursive: true });
+  await writeFile(artifacts.dockerfilePath, dockerfile, "utf8");
+  await writeFile(artifacts.dockerfileHashPath, `${dockerfileHash}\n`, "utf8");
+  await writeJson(artifacts.validationPath, validation);
+
+  const profile = await readJsonIfExists<Record<string, unknown>>(artifacts.profilePath);
+  if (profile) {
+    await writeJson(artifacts.profilePath, {
+      ...profile,
+      dockerfileHash,
+      operatorEdited: true,
+      operatorEditedAt: new Date().toISOString(),
+    });
+  }
+
+  // Saving always invalidates approval/digest — operator must re-approve the new text.
+  const hadApprovalOrDigest = Boolean(priorApproval || priorDigest);
+  await unlinkIfExists(artifacts.approvalPath);
+  await unlinkIfExists(artifacts.digestPath);
+
+  if (!validation.ok) {
+    throw new HarnessFailure(
+      `Dockerfile failed validation: ${validation.issues.map((issue) => issue.message).join("; ")}`,
+      "execution",
+      false,
+    );
+  }
+
+  return {
+    dockerfileHash,
+    validation,
+    clearedApproval: hadApprovalOrDigest || Boolean(priorHash && priorHash !== dockerfileHash),
   };
 }
 
@@ -327,9 +421,11 @@ export async function buildApprovedExecutionImage(input: {
   }
 
   const inspected = await input.docker.inspectImage(input.tag);
+  // Prefer local image Id for probe/run (always addressable). RepoDigests may be
+  // empty for never-pushed builds or point at a registry digest that is not local.
   const imageDigest =
-    inspected?.digest ??
     inspected?.id ??
+    inspected?.digest ??
     (() => {
       throw new HarnessFailure(
         `Build succeeded but image ${input.tag} could not be inspected for a digest.`,
@@ -357,33 +453,42 @@ export async function buildApprovedExecutionImage(input: {
   // Fail-closed: accepting a digest requires a successful sandbox isolation probe
   // when sandboxRequired (default). Unsupported/failed probes reject the digest.
   if (input.skipIsolationProbe !== true) {
-    const { ensureSandboxIsolationProbe, assertSandboxIsolationProbePassed } = await import(
-      "./sandbox-isolation-probe.js"
-    );
-    const { HarnessConfigSchema } = await import("../config/schema.js");
-    const dockerPolicy =
-      input.dockerPolicy ?? HarnessConfigSchema.parse({}).execution.docker;
-    const probeDir = path.join(artifacts.directory, "isolation-probe-run-state");
-    const report = await ensureSandboxIsolationProbe({
-      imageDigest,
-      docker: input.docker,
-      dockerPolicy,
-      projectStateRoot: input.projectStateRoot,
-      probeRunStateHostPath: probeDir,
-      executor: input.isolationProbeExecutor,
-      signal: input.signal,
-    });
-    assertSandboxIsolationProbePassed(report, imageDigest);
-    // Durable stamp under the run directory (mounted at /run-state) so the worker
-    // can advertise canRestrictWritableWorkspace without host project cache access.
-    const runDir = path.dirname(artifacts.directory);
-    await writeJson(path.join(runDir, "sandbox-isolation-probe.json"), {
-      ok: report.ok,
-      unsupported: report.unsupported,
-      imageDigest: report.imageDigest,
-      policyVersion: report.policyVersion,
-      probedAt: report.probedAt,
-    });
+    try {
+      const { ensureSandboxIsolationProbe, assertSandboxIsolationProbePassed } = await import(
+        "./sandbox-isolation-probe.js"
+      );
+      const { HarnessConfigSchema } = await import("../config/schema.js");
+      const dockerPolicy =
+        input.dockerPolicy ?? HarnessConfigSchema.parse({}).execution.docker;
+      const probeDir = path.join(artifacts.directory, "isolation-probe-run-state");
+      const report = await ensureSandboxIsolationProbe({
+        imageDigest,
+        docker: input.docker,
+        dockerPolicy,
+        projectStateRoot: input.projectStateRoot,
+        probeRunStateHostPath: probeDir,
+        executor: input.isolationProbeExecutor,
+        signal: input.signal,
+      });
+      assertSandboxIsolationProbePassed(report, imageDigest);
+      // Durable stamp under the run directory (mounted at /run-state) so the worker
+      // can advertise canRestrictWritableWorkspace without host project cache access.
+      const runDir = path.dirname(artifacts.directory);
+      await writeJson(path.join(runDir, "sandbox-isolation-probe.json"), {
+        ok: report.ok,
+        unsupported: report.unsupported,
+        imageDigest: report.imageDigest,
+        policyVersion: report.policyVersion,
+        probedAt: report.probedAt,
+      });
+    } catch (error) {
+      // Do not leave a digest that the UI treats as "built" when the probe rejected it.
+      await unlinkIfExists(artifacts.digestPath);
+      const clearedApproval: ExecutionImageApprovalRecord = { ...approval };
+      delete clearedApproval.imageDigest;
+      await writeJson(artifacts.approvalPath, clearedApproval);
+      throw error;
+    }
   }
 
   return { imageDigest, buildLog };
@@ -572,8 +677,11 @@ async function persistGeneratedArtifacts(
   evidence: ExecutionImageEvidence,
   image: GeneratedExecutionImage,
   validation: DockerfileValidationReport,
+  options: { overwriteDockerfile?: boolean } = {},
 ): Promise<void> {
-  await writeFile(artifacts.dockerfilePath, image.dockerfile, "utf8");
+  if (options.overwriteDockerfile !== false) {
+    await writeFile(artifacts.dockerfilePath, image.dockerfile, "utf8");
+  }
   await writeFile(artifacts.dockerignorePath, image.dockerignore, "utf8");
   await writeFile(artifacts.profileHashPath, `${image.profileHash}\n`, "utf8");
   await writeFile(artifacts.dockerfileHashPath, `${image.dockerfileHash}\n`, "utf8");
@@ -590,6 +698,29 @@ async function persistGeneratedArtifacts(
     evidence,
   });
   await writeJson(artifacts.validationPath, validation);
+}
+
+function normalizeDockerfileText(raw: string): string {
+  const normalized = String(raw ?? "").replace(/\r\n/g, "\n");
+  return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
+}
+
+async function readTextIfExists(filePath: string): Promise<string | undefined> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function unlinkIfExists(filePath: string): Promise<void> {
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
 }
 
 export async function loadProjectImageCache(

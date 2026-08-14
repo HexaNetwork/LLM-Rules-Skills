@@ -154,6 +154,36 @@ describe("sandbox isolation probe gating", () => {
     expect(report.ok).toBe(false);
     expect(report.unsupported).toBe(true);
     expect(() => assertSandboxIsolationProbePassed(report, DIGEST)).toThrow(HarnessFailure);
+    // Disposable ah-probe-* volume must not linger after the probe.
+    expect([...docker.volumes.keys()].filter((name) => name.startsWith("ah-probe-"))).toEqual([]);
+    expect(docker.calls.some((call) => call.args[0] === "volume" && call.args[1] === "rm")).toBe(
+      true,
+    );
+  });
+
+  it("pruneSandboxIsolationProbeVolumes removes leftover ah-probe volumes only", async () => {
+    const docker = createFakeDockerClient({ healthy: true });
+    docker.volumes.set("ah-probe-leftover1", { name: "ah-probe-leftover1", driver: "local" });
+    docker.volumes.set("ah-probe-leftover2", { name: "ah-probe-leftover2", driver: "local" });
+    docker.volumes.set("ah-ws-project-run-1", { name: "ah-ws-project-run-1", driver: "local" });
+
+    const { pruneSandboxIsolationProbeVolumes, reconcileOrphanContainers } = await import(
+      "../../src/application/index.js"
+    );
+    const pruned = await pruneSandboxIsolationProbeVolumes(docker);
+    expect(pruned.found.sort()).toEqual(["ah-probe-leftover1", "ah-probe-leftover2"]);
+    expect(pruned.removed.sort()).toEqual(["ah-probe-leftover1", "ah-probe-leftover2"]);
+    expect(docker.volumes.has("ah-ws-project-run-1")).toBe(true);
+    expect(docker.volumes.has("ah-probe-leftover1")).toBe(false);
+
+    docker.volumes.set("ah-probe-again", { name: "ah-probe-again", driver: "local" });
+    const report = await reconcileOrphanContainers({
+      docker,
+      knownRuns: [],
+      apply: false,
+    });
+    expect(report.probeVolumes.removed).toEqual(["ah-probe-again"]);
+    expect(docker.volumes.has("ah-probe-again")).toBe(false);
   });
 
   it("evaluateSandboxIsolationSelfCheck requires all denials", () => {

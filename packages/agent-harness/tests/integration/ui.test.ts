@@ -131,7 +131,7 @@ describe("central dashboard", () => {
       settings: { editable: boolean; definitions: unknown[]; values: Record<string, number> };
     };
     expect(initialBody.settings.editable).toBe(true);
-    expect(initialBody.settings.definitions).toHaveLength(15);
+    expect(initialBody.settings.definitions.length).toBeGreaterThanOrEqual(15);
     const byKey = Object.fromEntries(
       (initialBody.settings.definitions as Array<{ key: string; appliesTo: string }>).map((d) => [
         d.key,

@@ -1,5 +1,4 @@
 import { CONFIG_VERSION, configurationHash, configurationPolicyDiff } from "../config/schema.js";
-import { loadRunWorkspace } from "../config/io.js";
 import { normalizeFrozenRunConfig } from "../config/migrations.js";
 import { isTerminalPhase, type RunState } from "../domain.js";
 import { classifyFailure, HarnessFailure, RunCancelledError } from "../errors.js";
@@ -294,7 +293,7 @@ export class RunAdvancer {
    * Missing/moved worktrees fail with a retriable workspace error (recorded as blocked).
    */
   async ensureWorkspaceBound(runId: string): Promise<void> {
-    const workspace = await loadRunWorkspace(this.ctx.config, runId);
+    const workspace = await this.ctx.loadWorkspace(runId);
     this.ctx.bindWorkspace(workspace);
     if (workspace.kind !== "git-worktree") return;
     await this.ctx.workspaceProvisioner.open(workspace);

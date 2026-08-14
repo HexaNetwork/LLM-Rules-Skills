@@ -33,6 +33,8 @@ export type HardenedContainerSpec = {
   noNewPrivileges: true;
   limits: ContainerResourceLimits;
   tmpfs: ReadonlyArray<{ path: string; options: string }>;
+  /** Non-secret environment variables (`KEY=VALUE`). Never include CURSOR_API_KEY. */
+  env?: ReadonlyArray<string>;
   mounts: ReadonlyArray<ContainerMount>;
   publishLoopback?: { hostPort: number; containerPort: number };
 };
@@ -214,7 +216,13 @@ export function buildHardenedContainerSpec(input: {
       memoryMb: input.dockerPolicy.limits.memoryMb,
       pidsLimit: input.dockerPolicy.limits.pidsLimit,
     },
-    tmpfs: [{ path: "/tmp", options: "rw,noexec,nosuid,size=64m" }],
+    tmpfs: [
+      { path: "/tmp", options: "rw,noexec,nosuid,size=64m" },
+      // Cursor SDK writes under $HOME/.cursor; rootfs is read-only.
+      // uid/gid must match the non-root worker user or mkdir fails with EACCES.
+      { path: "/home/harness", options: "rw,nosuid,size=512m,uid=10001,gid=10001,mode=755" },
+    ],
+    env: ["HOME=/home/harness"],
     mounts: [
       {
         kind: "volume",
@@ -352,6 +360,9 @@ export function hardenedSpecToRunArgv(
   }
   for (const tmp of spec.tmpfs) {
     args.push("--tmpfs", `${tmp.path}:${tmp.options}`);
+  }
+  for (const entry of spec.env ?? []) {
+    args.push("--env", entry);
   }
   for (const mount of spec.mounts) {
     if (mount.kind === "volume") {

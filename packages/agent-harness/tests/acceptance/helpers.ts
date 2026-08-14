@@ -83,6 +83,7 @@ export async function writeAcceptanceConfig(
     git: {
       enabled: false,
       ...(overrides.git ?? {})},
+    ...(overrides.execution ? { execution: overrides.execution } : {}),
     tracker: { kind: "local" },
     knowledge: {
       sources: ["README.md", "docs"],

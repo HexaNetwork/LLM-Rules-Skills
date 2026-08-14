@@ -36,10 +36,14 @@ export async function openRunHarness(
   dependencies: HarnessDependencies,
   options: OpenRunHarnessOptions = {},
 ): Promise<OpenedRunHarness> {
-  const config = await loadRunConfig(projectConfig, runId);
+  // Prefer the caller's store run directory so Docker workers / external homes
+  // still resolve artifacts when projectConfig.stateDirectory is a host path.
+  const runDirectory = dependencies.store?.runDirectory(runId);
+  const artifactOptions = runDirectory ? { runDirectory } : undefined;
+  const config = await loadRunConfig(projectConfig, runId, artifactOptions);
   let workspace: RunWorkspace | undefined;
   try {
-    workspace = await loadRunWorkspace(projectConfig, runId);
+    workspace = await loadRunWorkspace(projectConfig, runId, artifactOptions);
   } catch (error) {
     const missing =
       error instanceof HarnessFailure && /workspace metadata is missing/i.test(error.message);

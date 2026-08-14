@@ -149,6 +149,15 @@ export function createFakeDockerClient(
         volumes.set(name, { name, driver: "local" });
         return { exitCode: 0, stdout: name, stderr: "", timedOut: false };
       }
+      if (head === "volume" && args[1] === "ls") {
+        const names = [...volumes.keys()].sort();
+        return {
+          exitCode: 0,
+          stdout: `${names.join("\n")}${names.length ? "\n" : ""}`,
+          stderr: "",
+          timedOut: false,
+        };
+      }
       if (head === "inspect") {
         const name = args[1] ?? "";
         const container = containers.get(name);

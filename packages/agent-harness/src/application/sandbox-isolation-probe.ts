@@ -16,6 +16,66 @@ import { WORKER_RUN_STATE_PATH, WORKER_WORKSPACE_PATH } from "./paths.js";
 /** Bump when probe semantics or required checks change (invalidates cache). */
 export const SANDBOX_ISOLATION_PROBE_POLICY_VERSION = 1 as const;
 
+/** Disposable isolation-probe volumes; never hold durable run work. */
+export const SANDBOX_ISOLATION_PROBE_VOLUME_PREFIX = "ah-probe-" as const;
+
+export function isSandboxIsolationProbeVolumeName(name: string): boolean {
+  return name.startsWith(SANDBOX_ISOLATION_PROBE_VOLUME_PREFIX);
+}
+
+export function defaultSandboxIsolationProbeVolumeName(imageDigest: string): string {
+  return `${SANDBOX_ISOLATION_PROBE_VOLUME_PREFIX}${createHash("sha256")
+    .update(imageDigest)
+    .digest("hex")
+    .slice(0, 12)}`;
+}
+
+/** Best-effort removal of a disposable probe volume (ignores missing / in-use). */
+export async function removeSandboxIsolationProbeVolume(
+  docker: DockerClient,
+  volumeName: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!isSandboxIsolationProbeVolumeName(volumeName)) return false;
+  const result = await docker.exec(["volume", "rm", "-f", volumeName], { signal });
+  return result.exitCode === 0;
+}
+
+export type PruneSandboxIsolationProbeVolumesReport = {
+  found: string[];
+  removed: string[];
+};
+
+/**
+ * List and optionally remove leftover `ah-probe-*` volumes.
+ * Safe to run anytime: these volumes are probe-only and never retain run work.
+ */
+export async function pruneSandboxIsolationProbeVolumes(
+  docker: DockerClient,
+  options: { apply?: boolean; signal?: AbortSignal } = {},
+): Promise<PruneSandboxIsolationProbeVolumesReport> {
+  const apply = options.apply !== false;
+  const listed = await docker.exec(["volume", "ls", "--format", "{{.Name}}"], {
+    signal: options.signal,
+  });
+  const found =
+    listed.exitCode === 0
+      ? listed.stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((name) => name.length > 0 && isSandboxIsolationProbeVolumeName(name))
+      : [];
+  const removed: string[] = [];
+  if (apply) {
+    for (const name of found) {
+      if (await removeSandboxIsolationProbeVolume(docker, name, options.signal)) {
+        removed.push(name);
+      }
+    }
+  }
+  return { found, removed };
+}
+
 export type SandboxIsolationCheckId =
   | "mount-topology"
   | "resource-flags"
@@ -210,8 +270,7 @@ export async function ensureSandboxIsolationProbe(input: {
     dockerPolicy: input.dockerPolicy,
     probeRunStateHostPath: input.probeRunStateHostPath,
     workspaceVolumeName:
-      input.workspaceVolumeName ??
-      `ah-probe-${createHash("sha256").update(imageDigest).digest("hex").slice(0, 12)}`,
+      input.workspaceVolumeName ?? defaultSandboxIsolationProbeVolumeName(imageDigest),
     signal: input.signal,
   });
 
@@ -249,8 +308,31 @@ async function persistProbe(
  *
  * Full Cursor SDK sandbox verification is preferred when CURSOR_API_KEY is set
  * and `executor` is overridden by the SDK probe helper.
+ *
+ * Always removes the disposable `ah-probe-*` workspace volume afterward.
  */
 export async function defaultSandboxIsolationProbeExecutor(input: {
+  imageDigest: string;
+  docker: DockerClient;
+  dockerPolicy: DockerExecutionPolicy;
+  probeRunStateHostPath: string;
+  workspaceVolumeName: string;
+  signal?: AbortSignal;
+}): Promise<SandboxIsolationProbeReport> {
+  try {
+    return await runDefaultSandboxIsolationProbe(input);
+  } finally {
+    if (isSandboxIsolationProbeVolumeName(input.workspaceVolumeName)) {
+      await removeSandboxIsolationProbeVolume(
+        input.docker,
+        input.workspaceVolumeName,
+        input.signal,
+      ).catch(() => undefined);
+    }
+  }
+}
+
+async function runDefaultSandboxIsolationProbe(input: {
   imageDigest: string;
   docker: DockerClient;
   dockerPolicy: DockerExecutionPolicy;

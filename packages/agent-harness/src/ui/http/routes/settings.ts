@@ -2,6 +2,7 @@ import path from "node:path";
 import { readdir, realpath } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { writeProjectSettings } from "../../../config/io.js";
+import { loadExternalProjectConfig } from "../../../application/external-config.js";
 import type { HarnessConfig } from "../../../config/schema.js";
 import type { UiAppContext } from "../context.js";
 import {
@@ -697,9 +698,38 @@ export async function handleSettingsRoutes(
           }
         : {}),
     });
-    ctx.setProjectConfig(updated.config);
+    // External project YAML keeps repositoryRoot/stateDirectory as "."; loadConfig
+    // resolves those relative to the config dir and wipes stamped control/state roots.
+    const previous = ctx.getProjectConfig();
+    let nextConfig: HarnessConfig = updated.config;
+    try {
+      const reloaded = await loadExternalProjectConfig({
+        repository: previous.repositoryRoot,
+      });
+      nextConfig = reloaded.config;
+    } catch {
+      nextConfig = {
+        ...updated.config,
+        repositoryRoot: previous.repositoryRoot,
+        stateDirectory: previous.stateDirectory,
+        worktreeRoot: previous.worktreeRoot ?? updated.config.worktreeRoot,
+        knowledge: {
+          ...updated.config.knowledge,
+          guidance: {
+            ...updated.config.knowledge.guidance,
+            projectRoot:
+              previous.knowledge.guidance.projectRoot ||
+              updated.config.knowledge.guidance.projectRoot,
+            sharedRoot:
+              previous.knowledge.guidance.sharedRoot ||
+              updated.config.knowledge.guidance.sharedRoot,
+          },
+        },
+      };
+    }
+    ctx.setProjectConfig(nextConfig);
     json(response, 200, {
-      settings: projectSettings(updated.config, ctx.configPath),
+      settings: projectSettings(nextConfig, ctx.configPath),
     });
     return true;
   }

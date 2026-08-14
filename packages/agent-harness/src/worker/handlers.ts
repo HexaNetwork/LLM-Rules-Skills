@@ -36,7 +36,10 @@ export async function dispatchWorkerAction(
     case "status":
       return statusResult(ctx);
     case "advance":
-      return summarizeState(await ctx.engine.advance(ctx.runId));
+      return summarizeState(await advanceFromNewIfNeeded(ctx));
+    case "initial_setup":
+      // Alias for hosts/tests that prefer an explicit name; same as advance-from-new.
+      return summarizeState(await runWorkerInitialSetup(ctx));
     case "cancel": {
       const result = await ctx.engine.cancel(ctx.runId);
       return cancelResult(result);
@@ -53,7 +56,7 @@ export async function dispatchWorkerAction(
         maxRunCostUsd,
       });
       if (resumed.phase === "new") {
-        return summarizeState(await ctx.engine.advance(ctx.runId));
+        return summarizeState(await runWorkerInitialSetup(ctx));
       }
       return summarizeState(await ctx.engine.advance(ctx.runId));
     }
@@ -197,6 +200,28 @@ function cancelResult(result: CancelResult): WorkerCancelResult {
     pending: result.pending,
     phase: result.state.phase,
   };
+}
+
+async function advanceFromNewIfNeeded(ctx: WorkerHandlerContext): Promise<RunState> {
+  const state = await ctx.engine.status(ctx.runId);
+  if (state.phase === "new") {
+    return runWorkerInitialSetup(ctx);
+  }
+  return ctx.engine.advance(ctx.runId);
+}
+
+async function runWorkerInitialSetup(ctx: WorkerHandlerContext): Promise<RunState> {
+  const { runInitialSetupThenAdvance } = await import("../application/run-setup.js");
+  await runInitialSetupThenAdvance({
+    runId: ctx.runId,
+    config: ctx.engine.config,
+    store: ctx.engine.store,
+    paths: ctx.engine.paths,
+    git: ctx.engine.git,
+    knowledge: ctx.engine.knowledge,
+    advance: () => ctx.engine.advance(ctx.runId),
+  });
+  return ctx.engine.status(ctx.runId);
 }
 
 function summarizeState(state: RunState): { runId: string; phase: string; revision: number } {

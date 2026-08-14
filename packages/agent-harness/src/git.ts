@@ -6,7 +6,7 @@ import {
   relative as pathRelative,
   resolve as pathResolve,
 } from "node:path";
-import { resolveHarnessPaths, type HarnessPaths } from "./application/paths.js";
+import { resolveHarnessPaths, WORKER_WORKSPACE_PATH, type HarnessPaths } from "./application/paths.js";
 import type { HarnessConfig } from "./config/schema.js";
 import type { MessageOutput } from "./domain.js";
 import { buildWorkspaceEvidence, type WorkspaceEvidence } from "./domain/workspace.js";
@@ -572,7 +572,24 @@ function runProgram(
     child.stderr.on("data", (chunk: Buffer) => {
       stderr = `${stderr}${chunk.toString("utf8")}`.slice(-200_000);
     });
-    child.once("error", reject);
+    child.once("error", (error) => {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as NodeJS.ErrnoException).code === "ENOENT" &&
+        cwd === WORKER_WORKSPACE_PATH
+      ) {
+        reject(
+          new Error(
+            `git ${args[0] ?? ""} failed to start: host control plane cannot use cwd ${WORKER_WORKSPACE_PATH}. ` +
+              "Docker runs must perform git/repository setup inside the worker container.",
+          ),
+        );
+        return;
+      }
+      reject(error);
+    });
     const timer = setTimeout(() => child.kill("SIGKILL"), 10 * 60 * 1000);
     child.once("close", (code) => {
       clearTimeout(timer);

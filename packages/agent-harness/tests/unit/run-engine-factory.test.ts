@@ -91,4 +91,81 @@ describe("openRunHarness", () => {
     expect(opened.engine).toBeDefined();
     expect(opened.workspace.controlRoot).toBeTruthy();
   });
+
+  it("loads workspace via store.runDirectory when projectConfig stateDirectory is wrong", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ah-orf-store-"));
+    const stateRoot = path.join(root, "state");
+    const runId = "run-store-path";
+    const runDir = path.join(stateRoot, "runs", runId);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(path.join(root, "package.json"), '{"name":"demo"}\n', "utf8");
+
+    const realConfig = HarnessConfigSchema.parse({
+      repositoryRoot: root,
+      stateDirectory: stateRoot,
+      git: { enabled: true, baseBranch: "main" },
+      execution: { runtime: "docker" },
+      knowledge: {
+        sources: [{ path: "README.md" }],
+        repositoryIntelligence: { enabled: false },
+        guidance: { enabled: false, maxResults: 0, maxCharacters: 1 },
+      },
+    });
+    const wrongProjectConfig = HarnessConfigSchema.parse({
+      ...realConfig,
+      // Hybrid stamp failure: control root correct, stateDirectory relative → repo-local.
+      stateDirectory: ".",
+    });
+
+    await writeFile(
+      path.join(runDir, "config.json"),
+      `${JSON.stringify({ ...realConfig, configVersion: CONFIG_VERSION }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(runDir, "state.json"),
+      `${JSON.stringify(
+        createRunState(runId, "idea", new Date().toISOString(), configurationHash(realConfig), CONFIG_VERSION),
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(runDir, "workspace.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          kind: "docker-clone",
+          controlRoot: root.replaceAll("\\", "/"),
+          containerName: "ah-project-run-store-path",
+          workspaceVolumeName: "ah-ws-project-run-store-path",
+          workspacePath: "/workspace",
+          imageDigest: "sha256:abc",
+          baseSha: "a".repeat(40),
+          seedBundleHash: "sha256:bundle",
+          generation: 0,
+          baseBranch: "main",
+          createdAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const { RunStore } = await import("../../src/store.js");
+    const store = new RunStore(realConfig, stateRoot);
+
+    await expect(
+      openRunHarness(
+        wrongProjectConfig,
+        runId,
+        { backend: createFakeBackend({}), store },
+        { validateWorktree: false },
+      ),
+    ).resolves.toMatchObject({
+      workspace: { kind: "docker-clone" },
+    });
+  });
 });

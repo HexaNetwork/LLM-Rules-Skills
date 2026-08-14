@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { CONFIG_VERSION, configurationHash } from "../config/schema.js";
-import { loadRunWorkspace, writeRunWorkspace } from "../config/io.js";
 import { createRunState, type RunState } from "../domain.js";
 import { clearBlock } from "../domain/policies.js";
 import { HarnessFailure } from "../errors.js";
@@ -68,7 +67,7 @@ export class RunLifecycleService {
           controlRoot: this.ctx.paths.controlRoot,
           createdAt: new Date().toISOString(),
         };
-        await writeRunWorkspace(this.ctx.config, runId, workspace);
+        await this.ctx.writeWorkspace(runId, workspace);
         this.ctx.bindWorkspace(workspace);
       }
       if (
@@ -86,9 +85,13 @@ export class RunLifecycleService {
         }
       }
       if (refreshKnowledge) {
-        await this.ctx.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>
-          this.ctx.knowledge.refresh(),
-        );
+        // Host cannot index documents under the worker constant `/workspace`.
+        // Docker initial setup refreshes knowledge inside the worker against the clone.
+        if (this.ctx.workspace.kind !== "docker-clone") {
+          await this.ctx.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>
+            this.ctx.knowledge.refresh(),
+          );
+        }
       }
     } catch (error) {
       state = await recordBlockedFromNew(this.ctx.store, state, error);
@@ -121,7 +124,7 @@ export class RunLifecycleService {
           controlRoot: this.ctx.paths.controlRoot,
           createdAt: new Date().toISOString(),
         };
-        await writeRunWorkspace(this.ctx.config, runId, workspace);
+        await this.ctx.writeWorkspace(runId, workspace);
         this.ctx.bindWorkspace(workspace);
       } else {
         state = await this.prepareGitWorkspace(state);
@@ -159,7 +162,7 @@ export class RunLifecycleService {
 
   private async hasRunWorkspace(runId: string): Promise<boolean> {
     try {
-      await loadRunWorkspace(this.ctx.config, runId);
+      await this.ctx.loadWorkspace(runId);
       return true;
     } catch (error) {
       if (error instanceof HarnessFailure && /workspace metadata is missing/i.test(error.message)) {
@@ -179,7 +182,7 @@ export class RunLifecycleService {
         runId: state.runId,
         baseBranch: this.ctx.config.git.baseBranch,
       });
-      await writeRunWorkspace(this.ctx.config, state.runId, workspace);
+      await this.ctx.writeWorkspace(state.runId, workspace);
       this.ctx.bindWorkspace(workspace);
     } catch (error) {
       // LocalWorktreeProvisioner/WorktreeManager.create already reconciles a just-registered clean worktree.

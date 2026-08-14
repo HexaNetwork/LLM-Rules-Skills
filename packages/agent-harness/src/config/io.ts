@@ -1,6 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { access, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import yaml from "js-yaml";
 import { resolveHarnessPaths } from "../application/paths.js";
 import {
@@ -227,17 +227,61 @@ export async function writeProjectSettings(
   });
 }
 
+export type RunArtifactPathOptions = {
+  /**
+   * Absolute path to the run directory. Worker mode passes `/run-state` (or the
+   * host path to that same directory) so artifacts resolve without the frozen
+   * host `stateDirectory/.../runs/<id>` layout.
+   */
+  runDirectory?: string;
+};
+
+/**
+ * Resolve a file under a run directory.
+ * Prefer `options.runDirectory` (worker / store). Otherwise try the nested
+ * `stateRoot/runs/<id>/` layout, then the flat worker layout where `stateRoot`
+ * itself is the run directory (`stateRoot/<file>`).
+ */
+export async function resolveRunArtifactPath(
+  projectConfig: HarnessConfig,
+  runId: string,
+  fileName: string,
+  options?: RunArtifactPathOptions,
+): Promise<string> {
+  if (options?.runDirectory) {
+    return path.join(options.runDirectory, fileName);
+  }
+  const { stateRoot } = resolveHarnessPaths(projectConfig);
+  const nested = path.join(stateRoot, "runs", runId, fileName);
+  if (await pathExists(nested)) return nested;
+  const flat = path.join(stateRoot, fileName);
+  if (await pathExists(flat)) return flat;
+  return nested;
+}
+
 export async function loadRunConfig(
   _projectConfig: HarnessConfig,
   runId: string,
+  options?: RunArtifactPathOptions,
 ): Promise<HarnessConfig> {
-  const { stateRoot } = resolveHarnessPaths(_projectConfig);
-  const snapshot = path.join(stateRoot, "runs", runId, "config.json");
+  const snapshot = await resolveRunArtifactPath(
+    _projectConfig,
+    runId,
+    "config.json",
+    options,
+  );
   const raw: unknown = JSON.parse(await readFile(snapshot, "utf8"));
   return normalizeFrozenRunConfig(raw);
 }
 
-export function runWorkspacePath(projectConfig: HarnessConfig, runId: string): string {
+export function runWorkspacePath(
+  projectConfig: HarnessConfig,
+  runId: string,
+  options?: RunArtifactPathOptions,
+): string {
+  if (options?.runDirectory) {
+    return path.join(options.runDirectory, "workspace.json");
+  }
   const { stateRoot } = resolveHarnessPaths(projectConfig);
   return path.join(stateRoot, "runs", runId, "workspace.json");
 }
@@ -250,9 +294,15 @@ export function runWorkspacePath(projectConfig: HarnessConfig, runId: string): s
 export async function loadRunWorkspace(
   projectConfig: HarnessConfig,
   runId: string,
+  options?: RunArtifactPathOptions,
 ): Promise<RunWorkspace> {
   const { controlRoot } = resolveHarnessPaths(projectConfig);
-  const snapshot = runWorkspacePath(projectConfig, runId);
+  const snapshot = await resolveRunArtifactPath(
+    projectConfig,
+    runId,
+    "workspace.json",
+    options,
+  );
   try {
     const raw: unknown = JSON.parse(await readFile(snapshot, "utf8"));
     return migrateRunWorkspace(raw, { controlRoot });
@@ -279,9 +329,45 @@ export async function writeRunWorkspace(
   projectConfig: HarnessConfig,
   runId: string,
   workspace: RunWorkspace,
+  options?: RunArtifactPathOptions,
 ): Promise<void> {
-  const snapshot = runWorkspacePath(projectConfig, runId);
+  const snapshot = options?.runDirectory
+    ? path.join(options.runDirectory, "workspace.json")
+    : await resolveRunArtifactWritePath(projectConfig, runId, "workspace.json");
   await writeFile(snapshot, `${JSON.stringify(workspace, null, 2)}\n`, "utf8");
+}
+
+/**
+ * Like resolveRunArtifactPath, but when neither nested nor flat file exists yet,
+ * prefer flat layout when `stateRoot` already looks like a single-run mount
+ * (has state.json or config.json at the root — worker `/run-state`).
+ */
+async function resolveRunArtifactWritePath(
+  projectConfig: HarnessConfig,
+  runId: string,
+  fileName: string,
+): Promise<string> {
+  const { stateRoot } = resolveHarnessPaths(projectConfig);
+  const nested = path.join(stateRoot, "runs", runId, fileName);
+  if (await pathExists(nested)) return nested;
+  const flat = path.join(stateRoot, fileName);
+  if (await pathExists(flat)) return flat;
+  if (
+    (await pathExists(path.join(stateRoot, "state.json"))) ||
+    (await pathExists(path.join(stateRoot, "config.json")))
+  ) {
+    return flat;
+  }
+  return nested;
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Host path for restartable execution.json (writers land with the Docker runtime slice). */

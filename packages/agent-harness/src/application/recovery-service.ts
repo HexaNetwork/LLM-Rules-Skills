@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { InvokeInput } from "../infrastructure/agents/types.js";
-import { loadRunWorkspace, writeRunWorkspace } from "../config/io.js";
+import type { DockerCloneWorkspace } from "../domain/workspace.js";
 import { normalizeFrozenRunConfig } from "../config/migrations.js";
 import { ProjectSettingsPatchSchema } from "../config/schema.js";
 import type { PreflightCommitOrder } from "../config/schema.js";
@@ -168,7 +168,7 @@ export class RecoveryService {
 
     // Docker: abort work, stop/remove the worker container, retain volume + unpublished commits.
     try {
-      const workspace = await loadRunWorkspace(this.ctx.config, state.runId);
+      const workspace = await this.ctx.loadWorkspace(state.runId);
       if (workspace.kind === "docker-clone") {
         await stopDockerWorkerSession({
           projectConfig: this.ctx.config,
@@ -735,7 +735,7 @@ export class RecoveryService {
   ): Promise<CleanupResult> {
     return this.ctx.withMutatingRunLock(runId, "cleanup", async () => {
       const state = await this.ctx.store.load(runId);
-      const workspace = await loadRunWorkspace(this.ctx.config, runId);
+      const workspace = await this.ctx.loadWorkspace(runId);
       this.ctx.bindWorkspace(workspace);
 
       if (workspace.kind === "docker-clone") {
@@ -786,7 +786,7 @@ export class RecoveryService {
         removedAt,
         branchName: retainedBranch ?? workspace.branchName,
       };
-      await writeRunWorkspace(this.ctx.config, runId, nextWorkspace);
+      await this.ctx.writeWorkspace(runId, nextWorkspace);
       this.ctx.bindWorkspace(nextWorkspace);
 
       const nextState = await this.ctx.store.record(
@@ -810,7 +810,7 @@ export class RecoveryService {
 
   private async cleanupDockerClone(
     state: RunState,
-    workspace: Extract<Awaited<ReturnType<typeof loadRunWorkspace>>, { kind: "docker-clone" }>,
+    workspace: DockerCloneWorkspace,
     options?: { discard?: boolean },
   ): Promise<CleanupResult> {
     const runId = state.runId;
@@ -878,7 +878,7 @@ export class RecoveryService {
       removedAt,
       branchName: retainedBranch ?? workspace.branchName,
     };
-    await writeRunWorkspace(this.ctx.config, runId, nextWorkspace);
+    await this.ctx.writeWorkspace(runId, nextWorkspace);
     this.ctx.bindWorkspace(nextWorkspace);
 
     if (execution) {

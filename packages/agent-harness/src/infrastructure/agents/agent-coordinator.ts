@@ -411,10 +411,11 @@ export class AgentCoordinator {
                 retainProviderSession: options.retainProviderSession || retainForRepair,
                 mode: options.mode,
                 allowTools: options.allowTools,
+                // Docker already isolates the worker; Cursor's nested OS sandbox is
+                // unsupported inside containers and fails agent startup.
                 sandboxEnabled:
                   this.config.execution?.runtime === "docker"
-                    ? this.config.execution.docker.sandboxRequired !== false ||
-                      this.config.agent.sandbox
+                    ? false
                     : this.config.agent.sandbox,
                 cwd: this.workspaceRoot,
                 signal,

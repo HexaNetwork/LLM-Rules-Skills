@@ -16,20 +16,29 @@ import {
 import { resolveHarnessHome, HARNESS_HOME_ENV } from "../application/harness-home.js";
 import { ProjectRegistry } from "../application/project-registry.js";
 import { formatBytes, reportProjectStorage } from "../application/storage-report.js";
-import { openRunHarness } from "../application/run-engine-factory.js";
+import {
+  openRunHarness,
+  type OpenRunHarnessOptions,
+} from "../application/run-engine-factory.js";
 import { HarnessEngine } from "../application/harness-engine.js";
 import { GitService } from "../git.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { startUiServer, type UiServer } from "../ui/server.js";
+import { createDockerClient } from "../infrastructure/container/docker-client.js";
+import type { DockerClient } from "../infrastructure/container/types.js";
+import { continueDockerRunAfterWorkspaceReady } from "../application/docker-initial-setup.js";
+import { resolveRunBaseBranch } from "../application/run-base-branch.js";
 
 export type CliDependencies = {
   createBackend: (apiKey?: string) => AgentBackend;
+  createDockerClient: () => DockerClient;
   startUiServer: (options: Parameters<typeof startUiServer>[0]) => Promise<UiServer>;
 };
 
 export function productionCliDependencies(): CliDependencies {
   return {
     createBackend: (apiKey) => createCursorBackend(apiKey),
+    createDockerClient,
     startUiServer,
   };
 }
@@ -303,6 +312,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         );
         const engine = new HarnessEngine(config, {
           backend: dependencies.createBackend(),
+          docker: dependencies.createDockerClient(),
           ...(resolved.lookup
             ? {
                 projectContext: {
@@ -322,7 +332,19 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           ? await readFile(path.resolve(options.idea.slice(1)), "utf8")
           : options.idea;
         let state = await engine.start(idea, options.runId ?? randomUUID());
-        if (options.advance) state = await engine.advance(state.runId);
+        if (options.advance && state.phase !== "blocked") {
+          if ((config.execution?.runtime ?? "local") === "docker") {
+            await continueDockerRunAfterWorkspaceReady({
+              projectConfig: config,
+              runId: state.runId,
+              docker: dependencies.createDockerClient(),
+              runDirectory: engine.store.runDirectory(state.runId),
+            });
+            state = await engine.status(state.runId);
+          } else {
+            state = await engine.advance(state.runId);
+          }
+        }
         printState(state);
       },
     );
@@ -332,9 +354,30 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .description("Advance a run from its persisted artifacts")
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
-    .action(async (options: { runId: string; config?: string }) => {
-      const engine = await openRunEngine(options.config, options.runId, dependencies.createBackend);
-      const state = await engine.advance(options.runId);
+    .option("--project <project-key>", "external project key")
+    .option("--repository <path>", "registered repository path")
+    .option("--home <path>", "harness home override")
+    .action(async (options: RunCommandOptions) => {
+      const opened = await openResolvedRunHarness(
+        options,
+        dependencies,
+        { allowMissingWorkspace: true },
+      );
+      let state = await opened.engine.status(options.runId);
+      if ((opened.config.execution?.runtime ?? "local") === "docker") {
+        if (state.phase === "new" || (state.phase === "blocked" && state.blockedFrom === "new")) {
+          state = await opened.engine.ensureDockerWorkspaceReady(options.runId);
+        }
+        await continueDockerRunAfterWorkspaceReady({
+          projectConfig: opened.projectConfig,
+          runId: options.runId,
+          docker: opened.docker,
+          runDirectory: opened.engine.store.runDirectory(options.runId),
+        });
+        state = await opened.engine.status(options.runId);
+      } else {
+        state = await opened.engine.advance(options.runId);
+      }
       printState(state);
     });
 
@@ -535,6 +578,9 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .description("Explicitly retry a bounded step after inspecting a blocked run")
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
+    .option("--project <project-key>", "external project key")
+    .option("--repository <path>", "registered repository path")
+    .option("--home <path>", "harness home override")
     .option("--force", "retry even when blockedRetriable is false", false)
     .option(
       "--max-run-tokens <n>",
@@ -558,13 +604,21 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .action(async (options: {
       runId: string;
       config?: string;
+      project?: string;
+      repository?: string;
+      home?: string;
       force: boolean;
       maxRunTokens?: number;
       maxRunCostUsd?: number;
       commitDirty?: string | boolean;
       acceptTree: boolean;
     }) => {
-      const engine = await openRunEngine(options.config, options.runId, dependencies.createBackend);
+      const opened = await openResolvedRunHarness(
+        options,
+        dependencies,
+        { allowMissingWorkspace: true },
+      );
+      const engine = opened.engine;
       if (options.maxRunTokens != null && (!Number.isFinite(options.maxRunTokens) || options.maxRunTokens < 0)) {
         throw new Error("--max-run-tokens must be a non-negative number");
       }
@@ -588,7 +642,22 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           maxRunCostUsd: options.maxRunCostUsd,
         });
       }
-      printState(await engine.advance(options.runId));
+      let state = await engine.status(options.runId);
+      if ((opened.config.execution?.runtime ?? "local") === "docker") {
+        if (state.phase === "new") {
+          state = await engine.ensureDockerWorkspaceReady(options.runId);
+        }
+        await continueDockerRunAfterWorkspaceReady({
+          projectConfig: opened.projectConfig,
+          runId: options.runId,
+          docker: opened.docker,
+          runDirectory: engine.store.runDirectory(options.runId),
+        });
+        state = await engine.status(options.runId);
+      } else {
+        state = await engine.advance(options.runId);
+      }
+      printState(state);
     });
 
   program
@@ -596,14 +665,20 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .description("Show persisted run state")
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
+    .option("--project <project-key>", "external project key")
+    .option("--repository <path>", "registered repository path")
+    .option("--home <path>", "harness home override")
     .option("--json", "print the full state", false)
-    .action(async (options: { runId: string; config?: string; json: boolean }) => {
-      const engine = await openRunEngine(
-        options.config,
-        options.runId,
-        () => dependencies.createBackend("unused"),
-        { validateWorktree: false },
+    .action(async (options: RunCommandOptions & { json: boolean }) => {
+      const opened = await openResolvedRunHarness(
+        options,
+        {
+          ...dependencies,
+          createBackend: () => dependencies.createBackend("unused"),
+        },
+        { validateWorktree: false, allowMissingWorkspace: true },
       );
+      const engine = opened.engine;
       const state = await engine.status(options.runId);
       if (options.json) {
         const usage = await aggregateSessionUsage(engine, options.runId);
@@ -1122,8 +1197,11 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .description("Approve the generated execution Dockerfile for a run (non-interactive)")
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
-    .action(async (options: { runId: string; config?: string }) => {
-      const { config } = await loadConfig(options.config);
+    .option("--project <project-key>", "external project key")
+    .option("--repository <path>", "registered repository path")
+    .option("--home <path>", "harness home override")
+    .action(async (options: RunCommandOptions) => {
+      const { config } = await resolvedProjectConfig(options);
       const runConfig = await loadRunConfig(config, options.runId);
       const { resolveHarnessPaths } = await import("../application/paths.js");
       const {
@@ -1158,8 +1236,11 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .description("Build an approved execution image (retry after failure)")
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
-    .action(async (options: { runId: string; config?: string }) => {
-      const { config } = await loadConfig(options.config);
+    .option("--project <project-key>", "external project key")
+    .option("--repository <path>", "registered repository path")
+    .option("--home <path>", "harness home override")
+    .action(async (options: RunCommandOptions) => {
+      const { config } = await resolvedProjectConfig(options);
       const runConfig = await loadRunConfig(config, options.runId);
       const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
       const { resolveHarnessPaths } = await import("../application/paths.js");
@@ -1184,8 +1265,11 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .description("Approve the generated Dockerfile and build it (writes image.digest)")
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
-    .action(async (options: { runId: string; config?: string }) => {
-      const { config } = await loadConfig(options.config);
+    .option("--project <project-key>", "external project key")
+    .option("--repository <path>", "registered repository path")
+    .option("--home <path>", "harness home override")
+    .action(async (options: RunCommandOptions) => {
+      const { config } = await resolvedProjectConfig(options);
       const runConfig = await loadRunConfig(config, options.runId);
       const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
       const { resolveHarnessPaths } = await import("../application/paths.js");
@@ -1246,9 +1330,11 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
 
   execution
     .command("reconcile-orphans")
-    .description("Inspect harness-labeled containers; optionally remove conservative orphans")
+    .description(
+      "Inspect harness-labeled containers; prune disposable ah-probe volumes; optionally remove orphan containers",
+    )
     .option("--config <path>", "config path")
-    .option("--apply", "remove containers that pass age/state checks (never volumes)", false)
+    .option("--apply", "remove containers that pass age/state checks (never workspace volumes)", false)
     .option("--json", "print JSON", false)
     .action(async (options: { config?: string; apply: boolean; json: boolean }) => {
       const { config } = await loadConfig(options.config);
@@ -1286,7 +1372,10 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         console.log(JSON.stringify(report, null, 2));
         return;
       }
-      console.log(`Inspected ${report.inspected} managed container(s); removed ${report.removed.length}.`);
+      console.log(
+        `Inspected ${report.inspected} managed container(s); removed ${report.removed.length}. ` +
+          `Probe volumes: found ${report.probeVolumes.found.length}, removed ${report.probeVolumes.removed.length}.`,
+      );
       for (const candidate of report.candidates) {
         console.log(
           `- ${candidate.name}: ${candidate.decision.action} (${candidate.decision.reason})`,
@@ -1707,17 +1796,57 @@ async function applyRunOverrides(
     if (rag !== "on" && rag !== "off") throw new Error("--rag must be 'on' or 'off'");
     next = { ...next, workflow: { ...next.workflow, rag: rag === "on" } };
   }
-  if (baseBranch != null) {
-    if (!next.git.enabled) {
-      throw new Error("--base-branch cannot be set when git is disabled");
-    }
-    const branches = await new GitService(next).listLocalBranches();
-    if (!branches.includes(baseBranch)) {
-      throw new Error(`Unknown local branch: ${baseBranch}`);
-    }
-    next = { ...next, git: { ...next.git, baseBranch } };
+  if (next.git.enabled || baseBranch != null) {
+    const resolvedBaseBranch = await resolveRunBaseBranch(next, baseBranch);
+    next = { ...next, git: { ...next.git, baseBranch: resolvedBaseBranch } };
   }
   return next;
+}
+
+type RunCommandOptions = {
+  runId: string;
+  config?: string;
+  project?: string;
+  repository?: string;
+  home?: string;
+};
+
+async function openResolvedRunHarness(
+  options: RunCommandOptions,
+  dependencies: CliDependencies,
+  openOptions: OpenRunHarnessOptions = {},
+) {
+  const resolved = await resolvedProjectConfig(options);
+  const docker = dependencies.createDockerClient();
+  const opened = await openRunHarness(
+    resolved.config,
+    options.runId,
+    {
+      backend: dependencies.createBackend(),
+      docker,
+      ...(resolved.lookup
+        ? {
+            projectContext: {
+              home: resolved.lookup.home,
+              paths: resolved.lookup.paths,
+            },
+            paths: {
+              controlRoot: resolved.lookup.paths.controlRoot,
+              stateRoot: resolved.lookup.paths.projectStateRoot,
+              workspaceRoot: resolved.lookup.paths.controlRoot,
+              worktreeRoot: resolved.lookup.paths.worktreeRoot,
+            },
+          }
+        : {}),
+    },
+    openOptions,
+  );
+  return {
+    ...opened,
+    projectConfig: resolved.config,
+    projectKey: resolved.lookup?.registration.projectKey,
+    docker,
+  };
 }
 
 async function runConfig(configPath: string | undefined, runId: string): Promise<HarnessConfig> {
@@ -1729,7 +1858,7 @@ async function openRunEngine(
   configPath: string | undefined,
   runId: string,
   createBackend: CliDependencies["createBackend"],
-  options?: { validateWorktree?: boolean },
+  options?: OpenRunHarnessOptions,
 ): Promise<HarnessEngine> {
   const { config } = await loadConfig(configPath);
   const opened = await openRunHarness(

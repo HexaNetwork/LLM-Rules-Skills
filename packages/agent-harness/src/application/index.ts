@@ -154,11 +154,17 @@ export {
   evaluateSandboxIsolationSelfCheck,
   defaultSandboxIsolationProbeExecutor,
   projectSandboxIsolationProbeCachePath,
+  isSandboxIsolationProbeVolumeName,
+  defaultSandboxIsolationProbeVolumeName,
+  removeSandboxIsolationProbeVolume,
+  pruneSandboxIsolationProbeVolumes,
+  SANDBOX_ISOLATION_PROBE_VOLUME_PREFIX,
   type SandboxIsolationProbeReport,
   type SandboxIsolationProbeExecutor,
   type SandboxIsolationProbeCache,
   type SandboxIsolationCheck,
   type SandboxIsolationCheckId,
+  type PruneSandboxIsolationProbeVolumesReport,
 } from "./sandbox-isolation-probe.js";
 export {
   RunCancellationRegistry,
@@ -212,6 +218,7 @@ export {
   mapHostActionToWorkerRpc,
   type DockerMutationProxy,
 } from "./docker-run-proxy.js";
+export { continueDockerRunAfterWorkspaceReady } from "./docker-initial-setup.js";
 export { resolveRunBaseBranch, type BranchInspector } from "./run-base-branch.js";
 export {
   RUN_STATE_PORT_VERSION,

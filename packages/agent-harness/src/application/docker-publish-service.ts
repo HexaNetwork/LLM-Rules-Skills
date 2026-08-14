@@ -179,7 +179,9 @@ export async function completeDockerHostPublish(input: {
   }
 
   let state = await store.load(runId);
-  const workspace = await loadRunWorkspace(projectConfig, runId);
+  const workspace = await loadRunWorkspace(projectConfig, runId, {
+    runDirectory: store.runDirectory(runId),
+  });
   const baseSha = workspace.baseSha;
   if (!baseSha) {
     throw new HarnessFailure("Docker publish requires frozen baseSha", "execution", false);
@@ -285,10 +287,15 @@ export async function completeDockerHostPublish(input: {
         });
       }
 
-      await writeRunWorkspace(projectConfig, runId, {
-        ...workspace,
-        branchName: imported.deliveryBranch,
-      });
+      await writeRunWorkspace(
+        projectConfig,
+        runId,
+        {
+          ...workspace,
+          branchName: imported.deliveryBranch,
+        },
+        { runDirectory: store.runDirectory(runId) },
+      );
     } else if (!state.branchName && importState.deliveryBranch) {
       state = { ...state, branchName: importState.deliveryBranch };
     }

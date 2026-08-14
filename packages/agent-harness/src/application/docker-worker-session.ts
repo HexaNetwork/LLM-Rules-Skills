@@ -48,6 +48,8 @@ export type EnsureDockerWorkerSessionOptions = {
   /** Image reference/tag to run when starting a new container. */
   image?: string;
   workspaceVolumeName?: string;
+  /** Stable name already recorded in workspace.json. */
+  containerName?: string;
   projectKey?: string;
   /** When true, create/start a container if none is healthy (requires image). */
   startIfMissing?: boolean;
@@ -111,6 +113,7 @@ export async function ensureDockerWorkerSession(
 
   const containerName =
     execution.containerName ??
+    options.containerName ??
     defaultContainerName(options.projectKey ?? "project", options.runId);
 
   let hostPort = execution.hostPort;
@@ -227,6 +230,7 @@ export function workerRpcActionForHostAction(action: string): string | undefined
     continue: "advance",
     resume: "advance",
     advance: "advance",
+    initial_setup: "initial_setup",
     cancel: "cancel",
     retry: "retry",
     answer: "answer",

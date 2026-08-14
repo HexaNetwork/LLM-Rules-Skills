@@ -695,7 +695,7 @@ describe("durable idea-to-feature workflow", () => {
     }
   });
 
-  it("prepares repository intelligence on start and blocks with a readable failure", async () => {
+  it("tolerates an unavailable repository intelligence executable on start", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       knowledge: {
@@ -725,8 +725,8 @@ describe("durable idea-to-feature workflow", () => {
       backend: createFakeBackend({}),
       repositoryIntelligenceRunner: runner});
     const state = await engine.start("Needs graph");
-    expect(state.phase).toBe("blocked");
-    expect(state.failure).toMatch(/CodeGraph|@colbymchenry\/codegraph|repository intelligence/i);
+    expect(state.phase).toBe("new");
+    expect(state.failure).toBeUndefined();
   });
 
 

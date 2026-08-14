@@ -1,6 +1,10 @@
 import type { DockerClient, DockerContainerInspect } from "../infrastructure/container/types.js";
 import { HARNESS_CONTAINER_LABEL_PREFIX } from "../infrastructure/container/container-spec.js";
 import { harnessManagedContainerFilter } from "./docker-worker-session.js";
+import {
+  pruneSandboxIsolationProbeVolumes,
+  type PruneSandboxIsolationProbeVolumesReport,
+} from "./sandbox-isolation-probe.js";
 
 export type ManagedContainerSummary = {
   id: string;
@@ -54,12 +58,19 @@ export type ReconcileOrphanContainersOptions = {
    * Default false (report only).
    */
   apply?: boolean;
+  /**
+   * Always safe: `ah-probe-*` volumes never hold durable run work.
+   * Defaults to true even when `apply` is false for containers.
+   */
+  pruneProbeVolumes?: boolean;
 };
 
 export type OrphanReconcileReport = {
   inspected: number;
   candidates: OrphanReconcileCandidate[];
   removed: string[];
+  /** Disposable sandbox isolation probe volumes found/removed. */
+  probeVolumes: PruneSandboxIsolationProbeVolumesReport;
 };
 
 const DEFAULT_MIN_AGE_MS = 24 * 60 * 60 * 1000;
@@ -67,6 +78,7 @@ const DEFAULT_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 /**
  * Inspect harness-labeled containers and decide conservative orphan actions.
  * Never removes workspace volumes — unpublished commits may live there.
+ * Always eligible to prune disposable `ah-probe-*` isolation volumes.
  */
 export async function reconcileOrphanContainers(
   options: ReconcileOrphanContainersOptions,
@@ -99,7 +111,15 @@ export async function reconcileOrphanContainers(
     }
   }
 
-  return { inspected: managed.length, candidates, removed };
+  const probeVolumes =
+    options.pruneProbeVolumes === false
+      ? { found: [], removed: [] }
+      : await pruneSandboxIsolationProbeVolumes(options.docker, {
+          // Probe volumes are disposable — prune even when container reconcile is report-only.
+          apply: true,
+        });
+
+  return { inspected: managed.length, candidates, removed, probeVolumes };
 }
 
 export function decideOrphanAction(

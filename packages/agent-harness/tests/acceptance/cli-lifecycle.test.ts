@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createScriptedBackend } from "../testkit/scripted-backend.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
+import { createFakeDockerClient } from "../../src/infrastructure/container/fake-docker-client.js";
 import {
   ACCEPTANCE_GRILL_QUESTION,
   ACCEPTANCE_REFLECT,
@@ -294,7 +295,7 @@ describe("CLI acceptance lifecycle", () => {
         deps,
       );
       expect(cleaned.code).toBe(0);
-      expect(cleaned.stdout.join("\n")).toMatch(/Removed worktree|Cleanup no-op/i);
+      expect(cleaned.stdout.join("\n")).toMatch(/Removed (?:worktree|workspace)|Cleanup no-op/i);
 
       // Inspect remaining locks after cleanup (repository lock is no longer a product surface).
       const unlocked = await runCli(
@@ -310,6 +311,75 @@ describe("CLI acceptance lifecycle", () => {
       );
       expect(unlockedRemove.code).toBe(0);
     });
+  });
+
+  it("uses the current branch and reports the Docker approval gate without workspace metadata", async () => {
+    fixture = await createProjectFixture({
+      config: {
+        git: { enabled: true, baseBranch: "main" },
+        knowledge: {
+          repositoryIntelligence: { enabled: false },
+          guidance: { enabled: false },
+        },
+      },
+    });
+    await fixture.write("package.json", '{"name":"docker-fixture"}\n');
+    await fixture.initGit({ branch: "season-custom" });
+
+    const worker =
+      "agent-harness-worker:test@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const nodeBase =
+      "node:22-bookworm@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const configPath = await writeAcceptanceConfig(fixture, {
+      git: { enabled: true, baseBranch: "main" },
+      execution: {
+        runtime: "docker",
+        docker: {
+          workerImageDigest: worker,
+          approvedBaseImages: [nodeBase],
+          sandboxRequired: false,
+        },
+      },
+    });
+    const docker = createFakeDockerClient({ healthy: true });
+    docker.images.set(worker, {
+      id: `sha256:${"a".repeat(64)}`,
+      digest: `sha256:${"a".repeat(64)}`,
+      repoTags: ["agent-harness-worker:test"],
+    });
+    docker.images.set(nodeBase, {
+      id: `sha256:${"b".repeat(64)}`,
+      digest: `sha256:${"b".repeat(64)}`,
+      repoTags: ["node:22-bookworm"],
+    });
+
+    const runId = "docker-approval-project-agnostic";
+    const deps = {
+      createDockerClient: () => docker,
+      createBackend: () => createScriptedBackend([]).backend,
+    };
+    const started = await runCli(
+      ["start", "--idea", "Exercise Docker setup", "--config", configPath, "--run-id", runId],
+      deps,
+    );
+    expect(started.code, started.error instanceof Error ? started.error.message : String(started.error)).toBe(0);
+    expect(started.stdout.join("\n")).toMatch(/blocked|approval/i);
+    expect(started.stdout.join("\n")).not.toMatch(/workspace metadata is missing/i);
+
+    const status = await runCli(
+      ["status", "--run-id", runId, "--config", configPath, "--json"],
+      deps,
+    );
+    expect(status.code).toBe(0);
+    expect(JSON.parse(status.stdout.join("\n"))).toMatchObject({
+      phase: "blocked",
+      blockedFrom: "new",
+    });
+
+    const frozen = JSON.parse(
+      await readFile(path.join(fixture.root, ".agent-harness", "runs", runId, "config.json"), "utf8"),
+    ) as { git: { baseBranch: string } };
+    expect(frozen.git.baseBranch).toBe("season-custom");
   });
 
 });

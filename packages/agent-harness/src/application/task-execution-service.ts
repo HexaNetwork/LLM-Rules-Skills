@@ -1,4 +1,3 @@
-import { writeRunWorkspace } from "../config/io.js";
 import {
   MessageOutputSchema,
   REVIEW_EXPECTED_OUTPUT,
@@ -493,7 +492,7 @@ export class TaskExecutionService {
       ...this.ctx.workspace,
       branchName: ensured.branchName,
     };
-    await writeRunWorkspace(this.ctx.config, state.runId, workspace);
+    await this.ctx.writeWorkspace(state.runId, workspace);
     this.ctx.bindWorkspace(workspace);
 
     let next: RunState = { ...state, branchName: ensured.branchName };

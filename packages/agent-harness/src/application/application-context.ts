@@ -2,7 +2,7 @@ import { access, unlink, writeFile } from "node:fs/promises";
 import { hostname as localHostname } from "node:os";
 import path from "node:path";
 import type { AgentCoordinator } from "../infrastructure/agents/agent-coordinator.js";
-import { loadRunWorkspace } from "../config/io.js";
+import { loadRunWorkspace, writeRunWorkspace } from "../config/io.js";
 import type { HarnessConfig } from "../config/schema.js";
 import type { BuildTask, RunState } from "../domain.js";
 import { HarnessFailure } from "../errors.js";
@@ -109,9 +109,23 @@ export class ApplicationContext {
     action: string,
     work: () => Promise<T>,
   ): Promise<T> {
-    const workspace = await loadRunWorkspace(this.config, runId);
+    const workspace = await this.loadWorkspace(runId);
     this.bindWorkspace(workspace);
     return this.store.withLock(runId, work);
+  }
+
+  /** Load workspace.json via the store run directory (host or worker /run-state). */
+  loadWorkspace(runId: string): Promise<RunWorkspace> {
+    return loadRunWorkspace(this.config, runId, {
+      runDirectory: this.store.runDirectory(runId),
+    });
+  }
+
+  /** Persist workspace.json via the store run directory (host or worker /run-state). */
+  writeWorkspace(runId: string, workspace: RunWorkspace): Promise<void> {
+    return writeRunWorkspace(this.config, runId, workspace, {
+      runDirectory: this.store.runDirectory(runId),
+    });
   }
 
   /** Serialize shared knowledge-index refreshes across runs. */

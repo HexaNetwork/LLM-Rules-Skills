@@ -142,7 +142,13 @@ async function loadWorkerConfig(runStatePath: string): Promise<HarnessConfig> {
   const raw: unknown = JSON.parse(
     await readFile(path.join(runStatePath, "config.json"), "utf8"),
   );
-  return normalizeFrozenRunConfig(raw);
+  const config = normalizeFrozenRunConfig(raw);
+  // Frozen snapshots keep the host project stateDirectory (often a Windows path).
+  // Inside the container that path does not exist; the run is mounted at runStatePath.
+  return {
+    ...config,
+    stateDirectory: runStatePath,
+  };
 }
 
 async function loadWorkerWorkspace(runStatePath: string, config: HarnessConfig) {

@@ -52,6 +52,7 @@ export const WORKER_RPC_ACTIONS = [
   "health",
   "status",
   "advance",
+  "initial_setup",
   "cancel",
   "retry",
   "answer",

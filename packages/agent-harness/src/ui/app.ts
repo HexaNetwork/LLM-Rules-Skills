@@ -71,6 +71,7 @@ export function renderDashboard(): string {
     .dot { width:7px; height:7px; border-radius:50%; flex:none; background:var(--faint); }
     .dot.completed { background:var(--lime); box-shadow:0 0 10px rgba(199,243,107,.4); }
     .dot.blocked { background:var(--red); }
+    .dot.waiting { background:var(--orange); }
     .dot.awaiting_input { background:var(--orange); }
     .dot.running, .dot.queued { background:var(--blue); animation:pulse 1.5s infinite; }
     @keyframes pulse { 50% { opacity:.35; } }
@@ -223,6 +224,9 @@ export function renderDashboard(): string {
     .alert > .btn, .alert > .alert-actions { flex:0 0 auto; }
     .alert-actions { display:grid; gap:10px; align-content:start; }
     .alert details, .alert pre { min-width:0; max-width:100%; }
+    .dockerfile-preview { margin-top:0; max-height:min(48vh,520px); border:1px solid var(--line-soft); border-radius:12px; background:#0b0e11; }
+    .execution-image-preview .dockerfile-preview { max-height:min(36vh,360px); }
+    .dockerfile-editor { width:100%; min-height:min(48vh,520px); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.45; border:1px solid var(--line); border-radius:12px; color:var(--text); background:#0b0e11; padding:12px 14px; resize:vertical; }
     .alert strong { color:#ffb3b3; }
     .alert.warning { border-color:rgba(255,176,96,.35); background:rgba(255,176,96,.08); }
     .alert.warning strong { color:#ffd4a8; }

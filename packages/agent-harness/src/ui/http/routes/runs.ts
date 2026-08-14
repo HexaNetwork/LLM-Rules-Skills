@@ -13,6 +13,7 @@ import {
 import { isDockerExecutionRuntime } from "../../../application/docker-worker-session.js";
 import { completeDockerHostPublish } from "../../../application/docker-publish-service.js";
 import { HighLevelPlanSchema, VerificationSettingsPatchSchema } from "../../../domain.js";
+import { HarnessFailure } from "../../../errors.js";
 import { GitService, pathToIgnoredArtifactGlob } from "../../../git.js";
 import type { UiAppContext } from "../context.js";
 import {
@@ -41,6 +42,62 @@ import {
   summarizeRun,
 } from "../run-reads.js";
 import { PREFLIGHT_COMMIT_ORDER_VALUES, projectSettings } from "./settings.js";
+
+type DockerImageAllowlistConfig = {
+  execution?: {
+    docker?: {
+      workerImageDigest?: string;
+      approvedBaseImages?: readonly string[];
+    };
+  };
+};
+
+/**
+ * Dockerfile edits may intentionally adopt a newly prepared project worker while
+ * the run/profile still records the previous digest. All three sources are
+ * operator-controlled exact refs, so retain their union instead of letting a
+ * stale profile replace current policy.
+ */
+export function executionDockerfileSaveAllowlist(input: {
+  runConfig: DockerImageAllowlistConfig;
+  projectConfig: DockerImageAllowlistConfig;
+  profile?: { workerImage?: string; baseImage?: string };
+}): string[] {
+  return [
+    input.runConfig.execution?.docker?.workerImageDigest,
+    ...(input.runConfig.execution?.docker?.approvedBaseImages ?? []),
+    input.projectConfig.execution?.docker?.workerImageDigest,
+    ...(input.projectConfig.execution?.docker?.approvedBaseImages ?? []),
+    input.profile?.workerImage,
+    input.profile?.baseImage,
+  ].filter(
+    (value, index, values): value is string =>
+      typeof value === "string" && value.length > 0 && values.indexOf(value) === index,
+  );
+}
+
+/** Host-only image gate actions — no worker/container yet (workspace.json may be absent). */
+const HOST_EXECUTION_IMAGE_ACTIONS = new Set([
+  "save_execution_dockerfile",
+  "approve_execution_image",
+  "build_execution_image",
+  "approve_and_build_execution_image",
+]);
+
+async function isRunWorkspaceMissing(
+  projectConfig: ReturnType<UiAppContext["getProjectConfig"]>,
+  runId: string,
+): Promise<boolean> {
+  try {
+    await loadRunWorkspace(projectConfig, runId);
+    return false;
+  } catch (error) {
+    if (error instanceof HarnessFailure && /workspace metadata is missing/i.test(error.message)) {
+      return true;
+    }
+    throw error;
+  }
+}
 
 async function resolveBaseBranchOverride(
   projectConfig: ReturnType<UiAppContext["getProjectConfig"]>,
@@ -338,11 +395,17 @@ export async function handleRunsRoutes(
       action !== "cancel" &&
       action !== "note" &&
       action !== "stop" &&
+      action !== "save_execution_dockerfile" &&
+      action !== "approve_execution_image" &&
+      action !== "build_execution_image" &&
+      action !== "approve_and_build_execution_image" &&
       !applyFixIsConfigOnly &&
       !ctx.agentReadiness.ready
     ) {
       throw new HttpError(503, ctx.agentReadiness.message ?? "The configured agent backend is unavailable");
     }
+    const workspaceMissing = await isRunWorkspaceMissing(projectConfig, runId);
+    const hostExecutionImageAction = HOST_EXECUTION_IMAGE_ACTIONS.has(action);
     const opened = await openRunHarness(
       projectConfig,
       runId,
@@ -357,7 +420,10 @@ export async function handleRunsRoutes(
           action !== "cancel" &&
           action !== "note" &&
           action !== "stop" &&
-          action !== "generate_analysis_prompt",
+          action !== "generate_analysis_prompt" &&
+          !hostExecutionImageAction,
+        // Docker runs pause for image approval before workspace.json exists.
+        allowMissingWorkspace: workspaceMissing || hostExecutionImageAction,
       },
     );
     // Analysis generation is tool-free and must remain available after a completed
@@ -371,8 +437,11 @@ export async function handleRunsRoutes(
           })
         : opened.engine;
 
+    // No worker/container until Approve & build creates the Docker clone.
+    const skipDockerProxy =
+      action === "generate_analysis_prompt" || hostExecutionImageAction || workspaceMissing;
     const dockerProxy =
-      isDockerExecutionRuntime(opened.config) && action !== "generate_analysis_prompt"
+      isDockerExecutionRuntime(opened.config) && !skipDockerProxy
         ? await resolveDockerMutationProxy({
             projectConfig,
             runConfig: opened.config,
@@ -573,6 +642,49 @@ export async function handleRunsRoutes(
           image: workspace.imageDigest,
           workspaceVolumeName: workspace.workspaceVolumeName,
           startIfMissing: true,
+        });
+      });
+    } else if (action === "save_execution_dockerfile") {
+      ctx.jobs.enqueue(runId, action, async () => {
+        ctx.jobs.setDetail(runId, "Saving execution Dockerfile");
+        const dockerfile =
+          typeof body.dockerfile === "string"
+            ? body.dockerfile
+            : typeof (body as { content?: unknown }).content === "string"
+              ? (body as { content: string }).content
+              : "";
+        if (!dockerfile.trim()) {
+          throw new HttpError(400, "dockerfile text is required");
+        }
+        const paths = (await import("../../../application/paths.js")).resolveHarnessPaths(
+          ctx.getProjectConfig(),
+        );
+        const runConfig = await loadRunConfig(ctx.getProjectConfig(), runId);
+        const {
+          saveExecutionDockerfile,
+          executionImageArtifactPaths,
+        } = await import("../../../application/execution-image-service.js");
+        const { readFile } = await import("node:fs/promises");
+        const artifacts = executionImageArtifactPaths(paths.stateRoot, runId);
+        let profile: { workerImage?: string; baseImage?: string } | undefined;
+        try {
+          profile = JSON.parse(await readFile(artifacts.profilePath, "utf8")) as {
+            workerImage?: string;
+            baseImage?: string;
+          };
+        } catch {
+          /* config allowlists remain authoritative */
+        }
+        const allowlist = executionDockerfileSaveAllowlist({
+          runConfig,
+          projectConfig: ctx.getProjectConfig(),
+          profile,
+        });
+        await saveExecutionDockerfile({
+          stateRoot: paths.stateRoot,
+          runId,
+          dockerfile,
+          allowlist,
         });
       });
     } else if (action === "approve_execution_image") {

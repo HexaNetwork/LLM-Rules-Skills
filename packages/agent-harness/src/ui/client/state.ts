@@ -172,7 +172,9 @@ export const stateScript = `  (function () {
     }
     function editorIsActive() {
       var active = document.activeElement;
-      return Boolean(active && active.matches && active.matches("textarea,input,select") && active.closest("form"));
+      if (!active || !active.matches) return false;
+      if (active.id === "executionDockerfileEditor") return true;
+      return Boolean(active.matches("textarea,input,select") && active.closest("form"));
     }
     // A batch card can be half-filled with NO control focused; a silent poll
     // must not clobber that progress.

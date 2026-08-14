@@ -1,6 +1,27 @@
 import { describe, expect, it } from "vitest";
+import { executionDockerfileSaveAllowlist } from "../../src/ui/http/routes/runs.js";
 
 import { renderDashboard } from "../../src/ui/app.js";
+
+describe("execution Dockerfile save policy", () => {
+  it("accepts a current project worker when the frozen run and profile use an older digest", () => {
+    const oldWorker = `agent-harness-worker:local@sha256:${"a".repeat(64)}`;
+    const currentWorker = `agent-harness-worker:local@sha256:${"b".repeat(64)}`;
+    const base = `eclipse-temurin:21-jdk-jammy@sha256:${"c".repeat(64)}`;
+
+    expect(
+      executionDockerfileSaveAllowlist({
+        runConfig: {
+          execution: { docker: { workerImageDigest: oldWorker, approvedBaseImages: [base] } },
+        },
+        projectConfig: {
+          execution: { docker: { workerImageDigest: currentWorker, approvedBaseImages: [base] } },
+        },
+        profile: { workerImage: oldWorker, baseImage: base },
+      }),
+    ).toEqual([oldWorker, base, currentWorker]);
+  });
+});
 
 describe("dashboard document", () => {
   it("emits valid browser JavaScript", () => {
@@ -53,6 +74,16 @@ describe("dashboard document", () => {
     expect(html).toContain('sessionStorage.setItem("harnessToken", token)');
     expect(html).toContain('history.replaceState(null, "", location.pathname)');
     expect(html).toContain('"X-Harness-Token":token');
+  });
+
+  it("exposes execution-image review surfaces on runs", () => {
+    const html = renderDashboard();
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    expect(script).toContain('id: "execution-image"');
+    expect(script).toContain("renderExecutionImageTab");
+    expect(script).toContain("renderExecutionImagePreview");
+    expect(script).toContain("Generated Dockerfile");
+    expect(html).toContain("dockerfile-preview");
   });
 
   it("contains the centralized workflow surfaces", () => {
@@ -661,11 +692,24 @@ describe("dashboard document", () => {
 
   it("marks blocked or failed runs with a red warning indicator in the sidebar", () => {
     const html = renderDashboard();
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
 
     expect(html).toContain('class="run-warn"');
-    expect(html).toContain('phase === "blocked" || phase === "failed"');
+    expect(script).toContain("isExecutionImageApprovalFailure");
+    // Execution-image approval is a setup step — no red "!".
+    expect(script).toContain("phase === \"failed\" || (phase === \"blocked\" && !imageGate)");
+    expect(script).toContain("awaiting image");
     expect(html).toMatch(/\.run-warn\s*\{[^}]*color:var\(--red\)/);
     expect(html).toMatch(/\.run-title > span\s*\{[^}]*text-overflow:ellipsis/);
+    expect(html).toMatch(/\.dot\.waiting\s*\{[^}]*background:var\(--orange\)/);
+  });
+
+  it("renders execution-image approval as a warning gate, not a failure alert", () => {
+    const html = renderDashboard();
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+
+    expect(script).toContain('isExecutionImageGate ? " warning" : ""');
+    expect(script).toContain("This is an operator gate, not an agent repair");
   });
 
   it("keeps long unbroken tokens inside activity context rows (no horizontal spill)", () => {

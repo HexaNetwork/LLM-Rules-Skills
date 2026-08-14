@@ -10,6 +10,7 @@ import {
 } from "../infrastructure/container/container-spec.js";
 import type { DockerExecutionPolicy } from "../config/schema.js";
 import { WORKER_RPC_SECRET_RELATIVE_PATH } from "../worker/protocol.js";
+import { WORKER_ISOLATION_SELF_CHECK_PATH } from "./execution-image-generator.js";
 import { WORKER_RUN_STATE_PATH, WORKER_WORKSPACE_PATH } from "./paths.js";
 
 /** Bump when probe semantics or required checks change (invalidates cache). */
@@ -290,7 +291,15 @@ export async function defaultSandboxIsolationProbeExecutor(input: {
     runStateHostPath: input.probeRunStateHostPath,
   });
   const argv = hardenedSpecToRunArgv(spec, {
-    command: ["sandbox-isolation-self-check"],
+    entrypoint: [WORKER_ISOLATION_SELF_CHECK_PATH],
+    command: [
+      "--workspace",
+      WORKER_WORKSPACE_PATH,
+      "--run-state",
+      WORKER_RUN_STATE_PATH,
+      "--rpc-secret",
+      `${WORKER_RUN_STATE_PATH}/${WORKER_RPC_SECRET_RELATIVE_PATH}`,
+    ],
   });
   const hasResources =
     argv.includes("--cpus") &&
@@ -341,8 +350,9 @@ export async function defaultSandboxIsolationProbeExecutor(input: {
     "utf8",
   );
 
-  // Run a one-shot container that exercises write-under-/workspace and
-  // simulated sandbox denials for /run-state (harness self-check script).
+  // Override the image ENTRYPOINT (long-lived worker) with the self-check wrapper.
+  // Do not pass `agent-harness sandbox-isolation-self-check` as CMD — that becomes
+  // args to `/opt/agent-harness/worker`, which always prefixes `cli.js worker`.
   const runArgv = [
     "run",
     "--rm",
@@ -369,9 +379,9 @@ export async function defaultSandboxIsolationProbeExecutor(input: {
     `type=volume,source=${input.workspaceVolumeName},target=${WORKER_WORKSPACE_PATH}`,
     "--mount",
     `type=bind,source=${input.probeRunStateHostPath},target=${WORKER_RUN_STATE_PATH}`,
+    "--entrypoint",
+    WORKER_ISOLATION_SELF_CHECK_PATH,
     input.imageDigest,
-    "agent-harness",
-    "sandbox-isolation-self-check",
     "--workspace",
     WORKER_WORKSPACE_PATH,
     "--run-state",
@@ -386,12 +396,15 @@ export async function defaultSandboxIsolationProbeExecutor(input: {
   });
 
   if (result.exitCode !== 0) {
-    const missingImage = /unable to find image|not found|No such image/i.test(
-      `${result.stderr}\n${result.stdout}`,
-    );
-    const missingCmd = /sandbox-isolation-self-check|unknown command|not found/i.test(
-      `${result.stderr}\n${result.stdout}`,
-    );
+    const combined = `${result.stderr}\n${result.stdout}`;
+    // Keep missingImage narrow — bare "not found" also matches exec/path failures.
+    const missingImage =
+      /unable to find image|No such image|pull access denied/i.test(combined) &&
+      !/executable file not found|no such file or directory/i.test(combined);
+    const missingCmd =
+      /sandbox-isolation-self-check|unknown command|executable file not found|no such file or directory/i.test(
+        combined,
+      );
     if (missingImage || missingCmd) {
       // Fall back to structural-only evaluation when the image cannot execute the
       // self-check (common in unit fakes). Structural checks must still pass.

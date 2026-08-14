@@ -6,6 +6,9 @@ import {
   WORKER_WORKSPACE_PATH,
   type HarnessPaths,
 } from "../application/paths.js";
+import {
+  WORKER_IMAGE_CLI_PATH,
+} from "../application/execution-image-generator.js";
 import { defaultContainerName } from "../application/docker-worker-session.js";
 import type { HarnessConfig } from "../config/schema.js";
 import {
@@ -353,8 +356,9 @@ export class DockerCloneProvisioner implements WorkspaceProvisioner {
       `type=volume,source=${input.workspaceVolumeName},target=${WORKER_WORKSPACE_PATH}`,
       "--mount",
       `type=bind,source=${input.seedBundleHostPath},target=/seed.bundle,readonly`,
+      "--entrypoint",
+      WORKER_IMAGE_CLI_PATH,
       input.imageDigest,
-      "agent-harness",
       "workspace-init",
       "--workspace",
       WORKER_WORKSPACE_PATH,
@@ -435,8 +439,9 @@ export class DockerCloneProvisioner implements WorkspaceProvisioner {
       "none",
       "--mount",
       `type=volume,source=${workspace.workspaceVolumeName},target=${WORKER_WORKSPACE_PATH}`,
+      "--entrypoint",
+      WORKER_IMAGE_CLI_PATH,
       workspace.imageDigest,
-      "agent-harness",
       "workspace-probe",
       "--workspace",
       WORKER_WORKSPACE_PATH,

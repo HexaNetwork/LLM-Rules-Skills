@@ -132,6 +132,52 @@ describe("seed bundle transport", () => {
 });
 
 describe("DockerCloneProvisioner lifecycle (fake Docker)", () => {
+  it("overrides the worker entrypoint for one-shot seed initialization", async () => {
+    const fixture = await createProjectFixture({
+      config: {
+        execution: {
+          runtime: "docker",
+          docker: { sandboxRequired: false },
+        },
+      },
+    });
+    await fixture.initGit({ branch: "main" });
+    const docker = createFakeDockerClient({ healthy: true });
+    const provisioner = new DockerCloneProvisioner({
+      config: fixture.config,
+      paths: {
+        controlRoot: fixture.root,
+        stateRoot: path.join(fixture.root, ".agent-harness"),
+        workspaceRoot: fixture.root,
+        worktreeRoot: path.join(fixture.root, ".agent-harness", "worktrees"),
+      },
+      store: {
+        withWorkspaceAdminLock: async <T>(_h: unknown, work: () => Promise<T>) => work(),
+      } as never,
+      docker,
+      projectKey: "demo",
+      resolveImageDigest: async () => `sha256:${"d".repeat(64)}`,
+    });
+
+    await provisioner.create({ runId: "run-init-entrypoint", baseBranch: "main" });
+
+    const init = docker.calls.find(
+      (call) => call.args[0] === "run" && call.args.includes("workspace-init"),
+    );
+    expect(init?.args).toEqual(
+      expect.arrayContaining([
+        "--entrypoint",
+        "/opt/agent-harness/cli",
+        `sha256:${"d".repeat(64)}`,
+        "workspace-init",
+        "--workspace",
+        "/workspace",
+      ]),
+    );
+    expect(init?.args).not.toContain("agent-harness");
+    await fixture.cleanup();
+  });
+
   it("provisions a host-materialized clone at exact baseSha and reopens", async () => {
     const fixture = await createProjectFixture({
       config: {
@@ -303,6 +349,12 @@ describe("Docker path model + architecture guards", () => {
     expect(
       prohibitedAgentPathAccess({ path: "/run-state/config.json" }, WORKER_WORKSPACE_PATH),
     ).toBe("run-state");
+    expect(
+      prohibitedAgentPathAccess({ path: "/etc/passwd" }, WORKER_WORKSPACE_PATH),
+    ).toBe("outside-workspace");
+    expect(
+      prohibitedAgentPathAccess({ path: "/workspace/src/main.ts" }, WORKER_WORKSPACE_PATH),
+    ).toBeUndefined();
   });
 
   it("never passes CURSOR_API_KEY into project command environments", () => {

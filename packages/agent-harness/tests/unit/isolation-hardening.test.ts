@@ -216,6 +216,86 @@ describe("capability advertising after probe", () => {
     expect(result.ok).toBe(false);
     expect(result.issues.join(" ")).toMatch(/sandbox isolation probe/i);
   });
+
+  it("default probe overrides worker ENTRYPOINT with self-check path", async () => {
+    const {
+      defaultSandboxIsolationProbeExecutor,
+      WORKER_ISOLATION_SELF_CHECK_PATH,
+    } = await import("../../src/application/index.js");
+    const probeDir = await mkdtemp(path.join(tmpdir(), "ah-probe-rs-"));
+    const docker = createFakeDockerClient({
+      scripted: [
+        {
+          match: /^run /,
+          result: {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              workspaceWrite: true,
+              runStateReadDenied: true,
+              runStateWriteDenied: true,
+              rpcSecretReadDenied: true,
+              outsideWorkspaceDenied: true,
+            }),
+            stderr: "",
+            timedOut: false,
+          },
+        },
+      ],
+    });
+    const config = HarnessConfigSchema.parse({
+      execution: { runtime: "docker", docker: { sandboxRequired: true } },
+    });
+    const report = await defaultSandboxIsolationProbeExecutor({
+      imageDigest: DIGEST,
+      docker,
+      dockerPolicy: config.execution.docker,
+      probeRunStateHostPath: probeDir,
+      workspaceVolumeName: "ah-probe-vol",
+    });
+    expect(report.ok).toBe(true);
+    const runCall = docker.calls.find((call) => call.args[0] === "run");
+    expect(runCall?.args).toEqual(
+      expect.arrayContaining(["--entrypoint", WORKER_ISOLATION_SELF_CHECK_PATH, DIGEST]),
+    );
+    expect(runCall?.args).not.toContain("agent-harness");
+    const entryIdx = runCall?.args.indexOf("--entrypoint") ?? -1;
+    expect(runCall?.args[entryIdx + 1]).toBe(WORKER_ISOLATION_SELF_CHECK_PATH);
+  });
+
+  it("classifies executable-not-found as missing self-check, not missing image", async () => {
+    const { defaultSandboxIsolationProbeExecutor } = await import(
+      "../../src/application/index.js"
+    );
+    const probeDir = await mkdtemp(path.join(tmpdir(), "ah-probe-miss-"));
+    const docker = createFakeDockerClient({
+      scripted: [
+        {
+          match: /^run /,
+          result: {
+            exitCode: 127,
+            stdout: "",
+            stderr:
+              'exec: "/opt/agent-harness/sandbox-isolation-self-check": executable file not found in $PATH',
+            timedOut: false,
+          },
+        },
+      ],
+    });
+    const config = HarnessConfigSchema.parse({
+      execution: { runtime: "docker", docker: { sandboxRequired: true } },
+    });
+    const report = await defaultSandboxIsolationProbeExecutor({
+      imageDigest: DIGEST,
+      docker,
+      dockerPolicy: config.execution.docker,
+      probeRunStateHostPath: probeDir,
+      workspaceVolumeName: "ah-probe-vol",
+    });
+    expect(report.ok).toBe(false);
+    expect(report.unsupported).toBe(true);
+    expect(report.reason).toMatch(/lacks sandbox-isolation-self-check/);
+    expect(report.reason).not.toMatch(/not available to run self-check/);
+  });
 });
 
 describe("secret and mount/resource hardening (unit)", () => {
@@ -238,11 +318,13 @@ describe("secret and mount/resource hardening (unit)", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ah-key-"));
     const secretPath = path.join(dir, "execution-secrets", "cursor-api-key");
     await writeCursorApiKeySecretFile(secretPath, "file-key-value-abc");
+    await writeCursorApiKeySecretFile(secretPath, "file-key-value-abc");
+    await writeCursorApiKeySecretFile(secretPath, "rotated-file-key-value-xyz");
     const resolved = await resolveWorkerCursorApiKey({
       secretFilePath: secretPath,
       env: { CURSOR_API_KEY: "env-key-should-not-win" },
     });
-    expect(resolved).toBe("file-key-value-abc");
+    expect(resolved).toBe("rotated-file-key-value-xyz");
     expect(argvLeaksCursorApiKey(["run", "-e", "CURSOR_API_KEY=x", "img"])).toBe(true);
     expect(argvLeaksCursorApiKey(["run", "--name", "c", "img"])).toBe(false);
   });

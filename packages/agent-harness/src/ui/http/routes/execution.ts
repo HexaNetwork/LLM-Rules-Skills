@@ -28,7 +28,7 @@ export async function handleExecutionRoutes(
             repositoryRoot: paths.controlRoot,
             projectStateRoot: paths.stateRoot,
             collectEvidence: true,
-            probeDocker: (projectConfig.execution?.runtime ?? "local") === "docker",
+            probeDocker: true,
             includePortBinding: false,
           });
     json(response, 200, { execution: status });

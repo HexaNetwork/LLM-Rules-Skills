@@ -42,6 +42,7 @@ type EnumSettingDefinition = SettingDefinitionBase & {
 type StringSettingDefinition = SettingDefinitionBase & {
   type: "string";
   maximum: number;
+  optional?: boolean;
 };
 type StringListSettingDefinition = SettingDefinitionBase & {
   type: "string-list";
@@ -121,6 +122,7 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
       "Optional repository-owned command containing {filter}; tasks provide only the filter value.",
     type: "string",
     maximum: 10_000,
+    optional: true,
     appliesTo: "new_runs",
   },
   {
@@ -211,59 +213,14 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     appliesTo: "new_runs",
   },
   {
-    key: "execution.runtime",
-    category: "Execution runtime",
-    label: "Execution runtime",
-    description:
-      "Where new runs execute agents and commands. local = linked worktree (default). docker = isolated container clone. Frozen per run; never switch an in-progress run.",
-    type: "enum",
-    options: [
-      { value: "local", label: "Local worktree (default)" },
-      { value: "docker", label: "Docker (opt-in)" },
-    ],
-    appliesTo: "new_runs",
-  },
-  {
-    key: "execution.docker.generatedImagesEnabled",
-    category: "Execution runtime",
-    label: "Generated project images",
-    description:
-      "Allow generating a reviewed Dockerfile from stack evidence before Docker runs. Required for docker runtime.",
-    type: "boolean",
-    appliesTo: "new_runs",
-  },
-  {
-    key: "execution.docker.approvedBaseImages",
-    category: "Execution runtime",
-    label: "Approved base images",
-    description:
-      "Digest-pinned toolchain bases (one name@sha256:… per line). Prefer the shared harness-home catalog (`execution approve-base --all`); project entries overlay by family.",
-    type: "string-list",
-    maximumItems: 32,
-    maximumItemLength: 512,
-    appliesTo: "new_runs",
-  },
-  {
     key: "execution.docker.workerImageDigest",
     category: "Execution runtime",
     label: "Worker image digest",
     description:
-      "Digest-pinned maintained harness worker image (name@sha256:…). Copied into generated project images.",
+      "Digest-pinned maintained harness worker/toolchain image (name@sha256:…). Reused across runs.",
     type: "string",
     maximum: 512,
-    appliesTo: "new_runs",
-  },
-  {
-    key: "execution.docker.buildPullPolicy",
-    category: "Execution runtime",
-    label: "Image build/pull policy",
-    description: "When to pull/rebuild execution images for new Docker runs.",
-    type: "enum",
-    options: [
-      { value: "if-missing", label: "If missing (default)" },
-      { value: "always", label: "Always" },
-      { value: "never", label: "Never (local cache only)" },
-    ],
+    optional: true,
     appliesTo: "new_runs",
   },
   {
@@ -315,7 +272,7 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     category: "Execution runtime",
     label: "Require sandbox isolation probe",
     description:
-      "Fail closed until the Cursor Linux sandbox probe proves /workspace write and /run-state deny for the image digest.",
+      "Fail closed until the sandbox probe proves /workspace write, host-state absence, and denial of an existing /run/secrets probe file.",
     type: "boolean",
     appliesTo: "new_runs",
   },
@@ -363,12 +320,7 @@ export function projectSettings(config: HarnessConfig, configPath?: string): Rec
         config.knowledge.repositoryIntelligence.providers.codegraph.command,
       "knowledge.repositoryIntelligence.routes.search":
         config.knowledge.repositoryIntelligence.routes.search,
-      "execution.runtime": config.execution?.runtime ?? "local",
-      "execution.docker.generatedImagesEnabled":
-        config.execution?.docker?.generatedImagesEnabled ?? true,
-      "execution.docker.approvedBaseImages": config.execution?.docker?.approvedBaseImages ?? [],
       "execution.docker.workerImageDigest": config.execution?.docker?.workerImageDigest ?? "",
-      "execution.docker.buildPullPolicy": config.execution?.docker?.buildPullPolicy ?? "if-missing",
       "execution.docker.network.runtime": config.execution?.docker?.network?.runtime ?? "bridge",
       "execution.docker.limits.cpus": Math.max(
         1,
@@ -565,32 +517,10 @@ export async function handleSettingsRoutes(
     if (searchRoute == null) {
       throw new HttpError(400, "knowledge.repositoryIntelligence.routes.search is required");
     }
-    const executionRuntime = optionalEnum(
-      values["execution.runtime"],
-      "execution.runtime",
-      ["local", "docker"] as const,
-    );
-    const generatedImagesEnabled = optionalBoolean(
-      values["execution.docker.generatedImagesEnabled"],
-      "execution.docker.generatedImagesEnabled",
-    );
-    const approvedBaseImages = optionalStringArray(
-      values["execution.docker.approvedBaseImages"],
-      "execution.docker.approvedBaseImages",
-      512,
-    );
-    if (approvedBaseImages && approvedBaseImages.length > 32) {
-      throw new HttpError(400, "execution.docker.approvedBaseImages may contain at most 32 images");
-    }
     const workerImageDigest = optionalString(
       values["execution.docker.workerImageDigest"],
       "execution.docker.workerImageDigest",
       512,
-    );
-    const buildPullPolicy = optionalEnum(
-      values["execution.docker.buildPullPolicy"],
-      "execution.docker.buildPullPolicy",
-      ["if-missing", "always", "never"] as const,
     );
     const networkRuntime = optionalEnum(
       values["execution.docker.network.runtime"],
@@ -662,11 +592,7 @@ export async function handleSettingsRoutes(
           },
         },
       },
-      ...(executionRuntime != null ||
-      generatedImagesEnabled != null ||
-      approvedBaseImages != null ||
-      workerImageDigest != null ||
-      buildPullPolicy != null ||
+      ...(workerImageDigest != null ||
       networkRuntime != null ||
       limitCpus != null ||
       limitMemoryMb != null ||
@@ -674,14 +600,10 @@ export async function handleSettingsRoutes(
       sandboxRequired != null
         ? {
             execution: {
-              ...(executionRuntime != null ? { runtime: executionRuntime } : {}),
               docker: {
-                ...(generatedImagesEnabled != null ? { generatedImagesEnabled } : {}),
-                ...(approvedBaseImages != null ? { approvedBaseImages } : {}),
                 ...(workerImageDigest != null
                   ? { workerImageDigest: workerImageDigest || undefined }
                   : {}),
-                ...(buildPullPolicy != null ? { buildPullPolicy } : {}),
                 ...(networkRuntime != null ? { network: { runtime: networkRuntime } } : {}),
                 ...(limitCpus != null || limitMemoryMb != null || limitPids != null
                   ? {

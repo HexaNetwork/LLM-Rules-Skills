@@ -39,8 +39,7 @@ export type ConfigTransitionFault =
 
 export type RunStoreOptions = {
   /**
-   * Worker mode: `root` is the single run directory (mounted at /run-state).
-   * `runDirectory(runId)` returns `root` when `runId` matches.
+   * Optional single-run binding for focused host-side tools and tests.
    */
   singleRunId?: string;
 };

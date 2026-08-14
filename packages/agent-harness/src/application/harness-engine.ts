@@ -20,7 +20,7 @@ import { RunAnalysisService } from "./run-analysis-service.js";
  * Application composition root: wires services and forwards the public run API.
  * Prefer openRunHarness() when reopening an existing run.
  */
-export class HarnessEngine {
+export class WorkerHarnessRuntime {
   private readonly ctx: ApplicationContext;
   readonly store;
   readonly knowledge;
@@ -91,13 +91,24 @@ export class HarnessEngine {
     return this.lifecycle.start(idea, runId, refreshKnowledge, prepareRepositoryIntelligence);
   }
 
+  createRun(idea: string, runId?: string): Promise<RunState> {
+    return this.lifecycle.create(idea, runId);
+  }
+
+  prepareRun(
+    runId: string,
+    refreshKnowledge?: boolean,
+    prepareRepositoryIntelligence?: boolean,
+  ): Promise<RunState> {
+    return this.lifecycle.prepare(runId, refreshKnowledge, prepareRepositoryIntelligence);
+  }
+
   status(runId: string): Promise<RunState> {
     return this.lifecycle.status(runId);
   }
 
   /**
-   * After Approve & build (or cached digest reuse): stamp image.digest and create
-   * the Docker clone when workspace.json is still missing.
+   * Ensure the maintained image and Docker clone are ready.
    */
   ensureDockerWorkspaceReady(runId: string): Promise<RunState> {
     return this.lifecycle.ensureDockerWorkspaceReady(runId);
@@ -250,3 +261,9 @@ export class HarnessEngine {
     return this.execution.setIgnoredArtifactPatterns(runId, patterns);
   }
 }
+
+/**
+ * Temporary compatibility facade for tests and non-production callers.
+ * Production worker composition instantiates WorkerHarnessRuntime from Cordis.
+ */
+export class HarnessEngine extends WorkerHarnessRuntime {}

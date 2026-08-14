@@ -27,7 +27,7 @@ export const renderSettingsScript = `    function renderSettings(settings) {
             input = '<textarea id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="string-list" rows="6" maxlength="' + attr(definition.maximumItems * (definition.maximumItemLength + 1)) + '"' + (settings.editable ? '' : ' disabled') + '>' + esc(lines) + '</textarea>' +
               (definition.key === 'workflow.testPathPatterns' ? '<div style="margin-top:8px"><button type="button" class="btn small" data-open-test-folder-picker="true"' + (settings.editable ? '' : ' disabled') + '>Select repository folder…</button></div><div id="testFolderPicker" class="folder-picker" hidden></div>' : '');
           } else if (definition.type === "string") {
-            input = '<input id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="string" type="text" value="' + attr(values[definition.key] || '') + '" maxlength="' + attr(definition.maximum) + '" required' + (settings.editable ? '' : ' disabled') + '>';
+            input = '<input id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="string" type="text" value="' + attr(values[definition.key] || '') + '" maxlength="' + attr(definition.maximum) + '"' + (definition.optional ? '' : ' required') + (settings.editable ? '' : ' disabled') + '>';
           } else {
             input = '<input id="' + attr(id) + '" data-setting-key="' + attr(definition.key) + '" data-setting-type="integer" type="number" value="' + attr(values[definition.key]) + '" min="' + attr(definition.minimum) + '" max="' + attr(definition.maximum) + '" step="1" required' + (settings.editable ? '' : ' disabled') + '>';
           }

@@ -392,7 +392,7 @@ _docker_ready() {
 if _docker_ready; then
   printf '  %s✓ docker info succeeded%s\n' "$GREEN" "$RESET"
   DOCKER_DAEMON_READY=1
-  if confirm "Build/pull and probe the maintained worker image later in this wizard? (opt-in Docker)"; then
+  if confirm "Rebuild and probe the maintained worker image later in this wizard? (opt-in Docker)"; then
     DOCKER_PROBE_OPT_IN=1
     note "Will run after package build + project registration: agent-harness execution prepare-worker"
   else
@@ -558,20 +558,29 @@ elif ! _docker_ready; then
   note "Fix docker info / Linux containers, then re-run: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\""
   exit 1
 else
-  say "Probing Docker and building/pulling the maintained worker image via the harness CLI."
+  say "Probing Docker and rebuilding the maintained worker image from this installation."
   note "Package root: $PACKAGE_ROOT"
-  if ! node "$CLI" execution prepare-worker --repository "$PROJECT_PATH" --package-root "$PACKAGE_ROOT" --json; then
+  ENABLE_DOCKER_RUNTIME=0
+  PREPARE_WORKER_ARGS=(
+    "$CLI"
+    execution
+    prepare-worker
+    --repository "$PROJECT_PATH"
+    --package-root "$PACKAGE_ROOT"
+    --force-rebuild
+    --json
+  )
+  if confirm "Use the rebuilt Docker worker for new runs in this project?"; then
+    ENABLE_DOCKER_RUNTIME=1
+    PREPARE_WORKER_ARGS+=(--write-settings --enable-runtime)
+  fi
+  if ! node "${PREPARE_WORKER_ARGS[@]}"; then
     warn "execution prepare-worker failed. Docker setup did not succeed."
-    note "Fix Docker / rebuild, then re-run: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\" --package-root \"$PACKAGE_ROOT\""
+    note "Fix Docker / rebuild, then re-run: agent-harness execution prepare-worker --repository \"$PROJECT_PATH\" --package-root \"$PACKAGE_ROOT\" --force-rebuild"
     exit 1
   fi
-  printf '  %s✓ worker image prepare succeeded%s\n' "$GREEN" "$RESET"
-  note "Default runtime is still local. Add digest-pinned approvedBaseImages before Docker runs are ready."
-  if confirm "Pin worker digest and set execution.runtime=docker for this project?"; then
-    if ! node "$CLI" execution prepare-worker --repository "$PROJECT_PATH" --package-root "$PACKAGE_ROOT" --write-settings --enable-runtime --json; then
-      warn "Failed to write Docker project settings."
-      exit 1
-    fi
+  printf '  %s✓ worker image rebuild succeeded%s\n' "$GREEN" "$RESET"
+  if [[ "$ENABLE_DOCKER_RUNTIME" -eq 1 ]]; then
     printf '  %s✓ project settings: execution.runtime=docker + workerImageDigest pinned%s\n' "$GREEN" "$RESET"
     note "Confirm readiness: agent-harness execution status --repository \"$PROJECT_PATH\""
     note "Still required: pin at least one approved base image (Settings → Execution runtime)."

@@ -39,6 +39,15 @@ import {
   type IssuedWorkerStateCredential,
 } from "../application/worker-state-credentials.js";
 import { RUN_STATE_API_PREFIX } from "../worker/state-protocol.js";
+import { continueDockerRunAfterWorkspaceReady } from "../application/docker-initial-setup.js";
+import { stopDockerWorkerSession } from "../application/docker-worker-session.js";
+import { completeDockerHostPublish } from "../application/docker-publish-service.js";
+import { loadRunConfig } from "../config/io.js";
+import { bootProfile } from "../vnext/boot/boot-profile.js";
+import { createHostProfile } from "../vnext/profiles/index.js";
+import { createDockerRuntimeService } from "../vnext/plugins/docker-runtime.js";
+import type { HostRunLifecycleService } from "../vnext/plugins/host-run-lifecycle.js";
+import type { DockerClient } from "../infrastructure/container/types.js";
 
 export type { UiJob } from "./run-job-service.js";
 export { parseAnswerBody } from "./http/request.js";
@@ -50,14 +59,20 @@ export type UiServerOptions = {
   port?: number;
   token?: string;
   openBrowser?: boolean;
+  /** Mount dashboard/API adapters. False leaves only health + worker state RPC. */
+  dashboard?: boolean;
   repositoryIntelligenceRunner?: ExecutableRunner;
+  docker?: DockerClient;
 };
 
 export type UiServer = {
   origin: string;
+  /** Container-reachable origin for worker state RPC. */
+  workerStateEndpoint: string;
   url: string;
   token: string;
   port: number;
+  runLifecycle: HostRunLifecycleService;
   /**
    * Mint a per-run worker state credential (plan Phase 3). Actual delivery to
    * the worker (bootstrap secret) is wired in a later slice.
@@ -71,6 +86,7 @@ export type UiServer = {
 
 export async function startUiServer(options: UiServerOptions): Promise<UiServer> {
   const host = "127.0.0.1";
+  const listenHost = "0.0.0.0";
   const token = options.token ?? randomBytes(24).toString("hex");
   let projectConfig = options.config;
   const paths = resolveHarnessPaths(projectConfig);
@@ -92,7 +108,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
   );
   const agentReadiness = options.backend.readiness?.() ?? { ready: true };
   const jobs = new RunJobService();
-  const docker = createDockerClient();
+  const docker = options.docker ?? createDockerClient();
   await store.initialize();
 
   // Conservative orphan pass at startup (report-only; never removes volumes).
@@ -114,9 +130,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         // skip
       }
     }
-    if (knownRuns.length > 0 || (projectConfig.execution?.runtime ?? "local") === "docker") {
-      await reconcileOrphanContainers({ docker, knownRuns, apply: false });
-    }
+    await reconcileOrphanContainers({ docker, knownRuns, apply: false });
   } catch {
     // Orphan inspect failures must not block the dashboard.
   }
@@ -155,8 +169,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
       repositoryRoot: paths.controlRoot,
       projectStateRoot: paths.stateRoot,
       collectEvidence: true,
-      // Avoid slow/failing daemon probes when runtime is local.
-      probeDocker: (projectConfig.execution?.runtime ?? "local") === "docker",
+      probeDocker: true,
       // Bootstrap polls must not spawn alpine every ~2s; force=true still runs the bind probe.
       includePortBinding: force,
     }).then((status) => {
@@ -171,6 +184,66 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
     return probe;
   };
 
+  let containerStateEndpoint = "";
+  const workerStateCredentials = new WorkerStateCredentialIssuer(
+    path.join(paths.stateRoot, "worker-credentials"),
+  );
+  const runStatePort = new FilesystemRunStatePort(store);
+  const hostProfile = await bootProfile(
+    createHostProfile(
+      {
+        runState: runStatePort,
+        runArtifacts: store,
+        containerRuntime: createDockerRuntimeService(docker),
+        workspaceSource: {},
+        environment: {},
+        workerControl: {},
+        credentials: workerStateCredentials,
+        publisher: {},
+        webServer: {},
+      },
+      undefined,
+      {
+        store,
+        runtimeDependencies: {
+          backend: options.backend,
+          store,
+          docker,
+          paths,
+          repositoryIntelligenceRunner,
+        },
+        loadRunConfig: (runId) =>
+          loadRunConfig(projectConfig, runId, { runDirectory: store.runDirectory(runId) }),
+        startWorker: ({ config, runId, onProgress }) =>
+          continueDockerRunAfterWorkspaceReady({
+            projectConfig: config,
+            runId,
+            docker,
+            runDirectory: store.runDirectory(runId),
+            stateServiceEndpoint: containerStateEndpoint,
+            issueStateCredential: (credentialRunId, issueOptions) =>
+              workerStateCredentials.issue(credentialRunId, issueOptions),
+            onProgress,
+          }),
+        stopWorker: async ({ config, runId }) => {
+          await stopDockerWorkerSession({
+            projectConfig: config,
+            runId,
+            docker,
+          });
+        },
+        publishRun: ({ config, runId }) =>
+          completeDockerHostPublish({
+            projectConfig,
+            runConfig: config,
+            runId,
+            store,
+          }),
+        onProgress: (runId, message) => jobs.setDetail(runId, message),
+      },
+    ),
+  );
+  const runLifecycle = hostProfile.ctx.runLifecycle as HostRunLifecycleService;
   const ctx: UiAppContext = {
     getProjectConfig: () => projectConfig,
     setProjectConfig: (config) => {
@@ -184,19 +257,22 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
     configPath: options.configPath,
     agentReadiness,
     jobs,
+    runLifecycle,
     repositoryIntelligenceRunner,
     docker,
     getExecutionStatus: loadExecutionStatus,
+    workerState: {
+      endpoint: () => containerStateEndpoint,
+      issueCredential: (runId, issueOptions) =>
+        workerStateCredentials.issue(runId, issueOptions),
+    },
   };
 
   // Worker-facing state API (ADR 0016, plan Phase 3): separate prefix,
   // per-run credentials stored outside the run directory, independent
   // protocol version, and its own response envelope.
-  const workerStateCredentials = new WorkerStateCredentialIssuer(
-    path.join(paths.stateRoot, "worker-credentials"),
-  );
   const workerStateApi: WorkerStateApiContext = {
-    port: new FilesystemRunStatePort(store),
+    port: runStatePort,
     credentials: workerStateCredentials,
     getProjectConfig: () => projectConfig,
     store,
@@ -214,6 +290,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
       if (url.pathname.startsWith(`${RUN_STATE_API_PREFIX}/`)) {
         await handleWorkerStateRoutes(request, response, url, workerStateApi);
         return;
+      }
+      if (options.dashboard === false) {
+        throw new HttpError(404, "Not found");
       }
       // Serve the HTML shell without a query token so browser refresh still works
       // after the client strips ?token= from the address bar into sessionStorage.
@@ -262,25 +341,34 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
       }
       reject(error);
     });
-    server.listen(port, host, () => resolve());
+    server.listen(port, listenHost, () => resolve());
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Dashboard did not bind a TCP port");
   const origin = `http://${host}:${address.port}`;
+  containerStateEndpoint = `http://host.docker.internal:${address.port}`;
+  void runLifecycle.recover().catch(() => {
+    // Individual runs persist lifecycle failure details. Recovery must not
+    // make the control server unavailable for operator remediation.
+  });
   const dashboardUrl = `${origin}/?token=${encodeURIComponent(token)}`;
-  if (options.openBrowser) openDashboard(dashboardUrl);
+  if (options.openBrowser && options.dashboard !== false) openDashboard(dashboardUrl);
 
   return {
     origin,
+    workerStateEndpoint: containerStateEndpoint,
     url: dashboardUrl,
     token,
     port: address.port,
+    runLifecycle,
     issueWorkerStateCredential: (runId, issueOptions) =>
       workerStateCredentials.issue(runId, issueOptions),
-    close: () =>
-      new Promise<void>((resolve, reject) => {
+    async close() {
+      await hostProfile.dispose();
+      await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
-      }),
+      });
+    },
   };
 }
 

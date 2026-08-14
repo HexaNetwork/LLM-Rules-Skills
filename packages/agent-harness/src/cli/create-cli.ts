@@ -20,14 +20,17 @@ import {
   openRunHarness,
   type OpenRunHarnessOptions,
 } from "../application/run-engine-factory.js";
-import { HarnessEngine } from "../application/harness-engine.js";
+import type { WorkerHarnessRuntime } from "../application/harness-engine.js";
 import { GitService } from "../git.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { startUiServer, type UiServer } from "../ui/server.js";
 import { createDockerClient } from "../infrastructure/container/docker-client.js";
 import type { DockerClient } from "../infrastructure/container/types.js";
-import { continueDockerRunAfterWorkspaceReady } from "../application/docker-initial-setup.js";
+import type { RunState } from "../domain.js";
 import { resolveRunBaseBranch } from "../application/run-base-branch.js";
+import type { OperatorRunRepository } from "../application/run-repository.js";
+import { dumpProfileConfig } from "../vnext/boot/boot-profile.js";
+import { profileForDump } from "../vnext/profiles/index.js";
 
 export type CliDependencies = {
   createBackend: (apiKey?: string) => AgentBackend;
@@ -51,6 +54,18 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     // Let callers (main / acceptance tests) observe parse errors instead of
     // process.exit, which would tear down the Vitest worker mid-suite.
     .exitOverride();
+
+  const vnext = program
+    .command("vnext")
+    .description("Inspect the Cordis-composed Docker-only runtime");
+
+  vnext
+    .command("dump-config")
+    .description("Render and validate a resolved vNext plugin profile without starting Docker")
+    .option("--profile <name>", "host, worker, or deterministic-test", "host")
+    .action((options: { profile: string }) => {
+      console.log(dumpProfileConfig(profileForDump(options.profile)));
+    });
 
   program
     .command("init")
@@ -310,41 +325,19 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           options.baseBranch,
           options.rag,
         );
-        const engine = new HarnessEngine(config, {
-          backend: dependencies.createBackend(),
-          docker: dependencies.createDockerClient(),
-          ...(resolved.lookup
-            ? {
-                projectContext: {
-                  home: resolved.lookup.home,
-                  paths: resolved.lookup.paths,
-                },
-                paths: {
-                  controlRoot: resolved.lookup.paths.controlRoot,
-                  stateRoot: resolved.lookup.paths.projectStateRoot,
-                  workspaceRoot: resolved.lookup.paths.controlRoot,
-                  worktreeRoot: resolved.lookup.paths.worktreeRoot,
-                },
-              }
-            : {}),
-        });
         const idea = options.idea.startsWith("@")
           ? await readFile(path.resolve(options.idea.slice(1)), "utf8")
           : options.idea;
-        let state = await engine.start(idea, options.runId ?? randomUUID());
-        if (options.advance && state.phase !== "blocked") {
-          if ((config.execution?.runtime ?? "local") === "docker") {
-            await continueDockerRunAfterWorkspaceReady({
-              projectConfig: config,
-              runId: state.runId,
-              docker: dependencies.createDockerClient(),
-              runDirectory: engine.store.runDirectory(state.runId),
-            });
-            state = await engine.status(state.runId);
-          } else {
-            state = await engine.advance(state.runId);
-          }
-        }
+        let state!: RunState;
+        await withCliControlServer(config, resolved.path, dependencies, async (control) => {
+          state = await control.runLifecycle.createRun(
+            config,
+            idea,
+            options.runId ?? randomUUID(),
+          );
+          if (options.advance) await control.runLifecycle.enqueue(state.runId);
+          state = await control.runLifecycle.productState(state.runId);
+        });
         printState(state);
       },
     );
@@ -358,26 +351,12 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .option("--repository <path>", "registered repository path")
     .option("--home <path>", "harness home override")
     .action(async (options: RunCommandOptions) => {
-      const opened = await openResolvedRunHarness(
-        options,
-        dependencies,
-        { allowMissingWorkspace: true },
-      );
-      let state = await opened.engine.status(options.runId);
-      if ((opened.config.execution?.runtime ?? "local") === "docker") {
-        if (state.phase === "new" || (state.phase === "blocked" && state.blockedFrom === "new")) {
-          state = await opened.engine.ensureDockerWorkspaceReady(options.runId);
-        }
-        await continueDockerRunAfterWorkspaceReady({
-          projectConfig: opened.projectConfig,
-          runId: options.runId,
-          docker: opened.docker,
-          runDirectory: opened.engine.store.runDirectory(options.runId),
-        });
-        state = await opened.engine.status(options.runId);
-      } else {
-        state = await opened.engine.advance(options.runId);
-      }
+      const resolved = await resolvedProjectConfig(options);
+      let state!: RunState;
+      await withCliControlServer(resolved.config, resolved.path, dependencies, async (control) => {
+        await control.runLifecycle.enqueue(options.runId);
+        state = await control.runLifecycle.productState(options.runId);
+      });
       printState(state);
     });
 
@@ -642,21 +621,17 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           maxRunCostUsd: options.maxRunCostUsd,
         });
       }
-      let state = await engine.status(options.runId);
-      if ((opened.config.execution?.runtime ?? "local") === "docker") {
-        if (state.phase === "new") {
-          state = await engine.ensureDockerWorkspaceReady(options.runId);
-        }
-        await continueDockerRunAfterWorkspaceReady({
-          projectConfig: opened.projectConfig,
-          runId: options.runId,
-          docker: opened.docker,
-          runDirectory: engine.store.runDirectory(options.runId),
-        });
-        state = await engine.status(options.runId);
-      } else {
-        state = await engine.advance(options.runId);
-      }
+      const resolved = await resolvedProjectConfig(options);
+      let state!: RunState;
+      await withCliControlServer(
+        opened.projectConfig,
+        resolved.path,
+        dependencies,
+        async (control) => {
+          await control.runLifecycle.enqueue(options.runId);
+          state = await control.runLifecycle.productState(options.runId);
+        },
+      );
       printState(state);
     });
 
@@ -797,11 +772,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       "pin workerImageDigest into the project settings file after a successful prepare",
       false,
     )
-    .option(
-      "--enable-runtime",
-      "with --write-settings, also set execution.runtime=docker (default remains local)",
-      false,
-    )
     .option("--json", "print JSON", false)
     .action(
       async (options: {
@@ -812,7 +782,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         packageRoot?: string;
         forceRebuild: boolean;
         writeSettings: boolean;
-        enableRuntime: boolean;
         json: boolean;
       }) => {
         const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
@@ -851,7 +820,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           await writeWorkerImageProjectSettings({
             configPath,
             workerImageDigest: prepared.workerImageDigest,
-            enableDockerRuntime: options.enableRuntime,
           });
           settingsWritten = true;
           // External project files are sparse overrides. Reload them through the
@@ -863,19 +831,16 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           config = reloaded.config;
         }
 
-        const statusConfig =
-          options.enableRuntime && settingsWritten
-            ? config
-            : {
-                ...config,
-                execution: {
-                  ...config.execution,
-                  docker: {
-                    ...config.execution.docker,
-                    workerImageDigest: prepared.workerImageDigest,
-                  },
-                },
-              };
+        const statusConfig = {
+          ...config,
+          execution: {
+            ...config.execution,
+            docker: {
+              ...config.execution.docker,
+              workerImageDigest: prepared.workerImageDigest,
+            },
+          },
+        };
 
         const status = await evaluateExecutionRuntimeStatus({
           config: statusConfig,
@@ -899,7 +864,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
             })),
           },
           settingsWritten,
-          enableRuntime: Boolean(options.enableRuntime && settingsWritten),
           configPath,
           status: {
             runtime: status.runtime,
@@ -916,9 +880,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           );
           console.log(`Docker ready=${prepared.readiness.ready}`);
           if (settingsWritten) {
-            console.log(
-              `Wrote project settings${options.enableRuntime ? " (execution.runtime=docker)" : " (worker digest only)"}: ${configPath}`,
-            );
+            console.log(`Wrote project settings: ${configPath}`);
           }
           console.log(`Execution status ready=${status.ready} (runtime=${status.runtime})`);
           for (const blocker of status.blockers) {
@@ -929,219 +891,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
 
         if (!prepared.readiness.ready) {
           process.exitCode = 1;
-        }
-      },
-    );
-
-  execution
-    .command("approve-base")
-    .description(
-      "Pull/pin known toolchain base images into the shared harness-home approvedBaseImages catalog (project-agnostic)",
-    )
-    .option("--repository <path>", "optional: detect one stack from a registered project")
-    .option("--config <path>", "optional project config path (writes there instead of harness home)")
-    .option("--home <path>", "harness home root (default: platform AGENT_HARNESS_HOME)")
-    .option(
-      "--image <ref>",
-      "override pull reference when approving a single stack",
-    )
-    .option(
-      "--stack <id>",
-      "approve one stack family (node|python|go|rust|jvm)",
-    )
-    .option(
-      "--all",
-      "approve every known stack family into the shared catalog (default when no --stack/--repository)",
-      false,
-    )
-    .option("--force-pull", "pull even when the image already exists locally", false)
-    .option(
-      "--write-settings",
-      "persist approvedBaseImages (harness-home config.yaml by default)",
-      false,
-    )
-    .option(
-      "--project-settings",
-      "with --write-settings, write the project config instead of harness-home (not recommended)",
-      false,
-    )
-    .option("--json", "print JSON", false)
-    .action(
-      async (options: {
-        repository?: string;
-        config?: string;
-        home?: string;
-        image?: string;
-        stack?: string;
-        all: boolean;
-        forcePull: boolean;
-        writeSettings: boolean;
-        projectSettings: boolean;
-        json: boolean;
-      }) => {
-        const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
-        const {
-          approveStackBaseImage,
-          approveKnownStackBaseImages,
-          writeApprovedBaseImagesSettings,
-          harnessHomeConfigPath,
-        } = await import("../application/approve-base-image.js");
-        const { evaluateExecutionRuntimeStatus } = await import(
-          "../application/execution-runtime-status.js"
-        );
-        const { KNOWN_STACK_BASE_FAMILIES } = await import(
-          "../application/execution-image-generator.js"
-        );
-        const { resolveHarnessHome } = await import("../application/harness-home.js");
-        const { access } = await import("node:fs/promises");
-
-        const home = resolveHarnessHome({ homeRoot: options.home });
-        const homeConfigPath = harnessHomeConfigPath(home);
-        try {
-          await access(homeConfigPath);
-        } catch {
-          await writeFile(homeConfigPath, defaultConfigYaml(), "utf8");
-        }
-
-        const stackOption = options.stack?.trim();
-        if (stackOption && !(stackOption in KNOWN_STACK_BASE_FAMILIES)) {
-          throw new Error(
-            `Unknown --stack ${stackOption}. Expected one of: ${Object.keys(KNOWN_STACK_BASE_FAMILIES).join(", ")}`,
-          );
-        }
-
-        const wantsAll =
-          options.all ||
-          (!stackOption && !options.repository?.trim() && !options.image?.trim());
-
-        let existingApprovedBaseImages: string[] = [];
-        let projectConfig: HarnessConfig | undefined;
-        let projectConfigPath: string | undefined;
-        if (options.config || options.repository) {
-          const loaded = await resolvedProjectConfig({
-            config: options.config,
-            repository: options.repository,
-            home: options.home,
-          });
-          projectConfig = loaded.config;
-          projectConfigPath = loaded.path;
-          existingApprovedBaseImages = loaded.config.execution?.docker?.approvedBaseImages ?? [];
-        } else {
-          const homeLoaded = await loadConfig(homeConfigPath);
-          existingApprovedBaseImages =
-            homeLoaded.config.execution?.docker?.approvedBaseImages ?? [];
-        }
-
-        const docker = createDockerClient();
-        let approvedBaseImages: string[];
-        let bases: Array<{
-          stack: string;
-          family: string;
-          baseImageDigest: string;
-          source: string;
-        }>;
-
-        if (wantsAll) {
-          const approved = await approveKnownStackBaseImages({
-            docker,
-            existingApprovedBaseImages,
-            reuseLocal: !options.forcePull,
-          });
-          approvedBaseImages = approved.approvedBaseImages;
-          bases = approved.bases;
-        } else {
-          const approved = await approveStackBaseImage({
-            docker,
-            repositoryRoot: projectConfig?.repositoryRoot,
-            existingApprovedBaseImages,
-            image: options.image?.trim() || undefined,
-            stack: stackOption as keyof typeof KNOWN_STACK_BASE_FAMILIES | undefined,
-            reuseLocal: !options.forcePull,
-          });
-          approvedBaseImages = approved.approvedBaseImages;
-          bases = [approved];
-        }
-
-        const writeToProject = Boolean(options.projectSettings && projectConfigPath);
-        const settingsPath = writeToProject ? projectConfigPath! : homeConfigPath;
-
-        let settingsWritten = false;
-        if (options.writeSettings) {
-          await writeApprovedBaseImagesSettings({
-            configPath: settingsPath,
-            approvedBaseImages,
-          });
-          settingsWritten = true;
-        }
-
-        let statusConfig: HarnessConfig;
-        if (projectConfig) {
-          statusConfig = {
-            ...projectConfig,
-            execution: {
-              ...projectConfig.execution,
-              docker: {
-                ...projectConfig.execution.docker,
-                approvedBaseImages,
-              },
-            },
-          };
-        } else {
-          const homeLoaded = await loadConfig(homeConfigPath);
-          statusConfig = {
-            ...homeLoaded.config,
-            execution: {
-              ...homeLoaded.config.execution,
-              docker: {
-                ...homeLoaded.config.execution.docker,
-                approvedBaseImages,
-              },
-            },
-          };
-        }
-
-        const status = await evaluateExecutionRuntimeStatus({
-          config: statusConfig,
-          docker,
-          repositoryRoot: statusConfig.repositoryRoot,
-          projectStateRoot: statusConfig.stateDirectory,
-          collectEvidence: Boolean(projectConfig),
-          probeDocker: true,
-          includePortBinding: false,
-        });
-
-        const payload = {
-          scope: writeToProject ? "project" : "harness-home",
-          bases,
-          approvedBaseImages,
-          settingsWritten,
-          configPath: settingsPath,
-          status: {
-            runtime: status.runtime,
-            ready: status.ready,
-            blockers: status.blockers,
-          },
-        };
-
-        if (options.json) {
-          console.log(JSON.stringify(payload, null, 2));
-        } else {
-          console.log(
-            `Approved ${bases.length} base image(s) for shared catalog (${payload.scope}):`,
-          );
-          for (const base of bases) {
-            console.log(`- ${base.stack}: ${base.baseImageDigest} (${base.source})`);
-          }
-          if (settingsWritten) {
-            console.log(`Wrote approvedBaseImages to ${settingsPath}`);
-          } else {
-            console.log("Dry run only — re-run with --write-settings to persist.");
-          }
-          console.log(`Execution status ready=${status.ready} (runtime=${status.runtime})`);
-          for (const blocker of status.blockers) {
-            console.log(`- ${blocker.code}: ${blocker.message}`);
-            if (blocker.remediation) console.log(`  remediation: ${blocker.remediation}`);
-          }
         }
       },
     );
@@ -1190,105 +939,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         workerHealth,
       });
       console.log(JSON.stringify(diagnostics, null, 2));
-    });
-
-  execution
-    .command("approve-image")
-    .description("Approve the generated execution Dockerfile for a run (non-interactive)")
-    .requiredOption("--run-id <id>", "run id")
-    .option("--config <path>", "config path")
-    .option("--project <project-key>", "external project key")
-    .option("--repository <path>", "registered repository path")
-    .option("--home <path>", "harness home override")
-    .action(async (options: RunCommandOptions) => {
-      const { config } = await resolvedProjectConfig(options);
-      const runConfig = await loadRunConfig(config, options.runId);
-      const { resolveHarnessPaths } = await import("../application/paths.js");
-      const {
-        prepareExecutionImage,
-        approveExecutionImage,
-      } = await import("../application/execution-image-service.js");
-      const paths = resolveHarnessPaths(config);
-      const prepared = await prepareExecutionImage({
-        config: runConfig,
-        stateRoot: paths.stateRoot,
-        runId: options.runId,
-        projectStateRoot: paths.stateRoot,
-      });
-      if (prepared.status === "blocked") {
-        throw new Error(prepared.reason ?? "Execution image blocked");
-      }
-      if (!("generated" in prepared) || !prepared.generated) {
-        throw new Error("No generated image to approve");
-      }
-      const record = await approveExecutionImage({
-        stateRoot: paths.stateRoot,
-        runId: options.runId,
-        projectStateRoot: paths.stateRoot,
-        generated: prepared.generated,
-        cacheKey: prepared.cacheKey,
-      });
-      console.log(JSON.stringify(record, null, 2));
-    });
-
-  execution
-    .command("build-image")
-    .description("Build an approved execution image (retry after failure)")
-    .requiredOption("--run-id <id>", "run id")
-    .option("--config <path>", "config path")
-    .option("--project <project-key>", "external project key")
-    .option("--repository <path>", "registered repository path")
-    .option("--home <path>", "harness home override")
-    .action(async (options: RunCommandOptions) => {
-      const { config } = await resolvedProjectConfig(options);
-      const runConfig = await loadRunConfig(config, options.runId);
-      const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
-      const { resolveHarnessPaths } = await import("../application/paths.js");
-      const { buildApprovedExecutionImage } = await import(
-        "../application/execution-image-service.js"
-      );
-      const paths = resolveHarnessPaths(config);
-      const result = await buildApprovedExecutionImage({
-        stateRoot: paths.stateRoot,
-        runId: options.runId,
-        projectStateRoot: paths.stateRoot,
-        docker: createDockerClient(),
-        tag: `agent-harness-run-${options.runId}`.toLowerCase().slice(0, 128),
-        timeoutMs: runConfig.execution?.docker?.buildTimeoutMs,
-        dockerPolicy: runConfig.execution?.docker,
-      });
-      console.log(JSON.stringify({ imageDigest: result.imageDigest }, null, 2));
-    });
-
-  execution
-    .command("approve-and-build-image")
-    .description("Approve the generated Dockerfile and build it (writes image.digest)")
-    .requiredOption("--run-id <id>", "run id")
-    .option("--config <path>", "config path")
-    .option("--project <project-key>", "external project key")
-    .option("--repository <path>", "registered repository path")
-    .option("--home <path>", "harness home override")
-    .action(async (options: RunCommandOptions) => {
-      const { config } = await resolvedProjectConfig(options);
-      const runConfig = await loadRunConfig(config, options.runId);
-      const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
-      const { resolveHarnessPaths } = await import("../application/paths.js");
-      const { approveAndBuildExecutionImage } = await import(
-        "../application/execution-image-service.js"
-      );
-      const paths = resolveHarnessPaths(config);
-      const result = await approveAndBuildExecutionImage({
-        config: runConfig,
-        stateRoot: paths.stateRoot,
-        runId: options.runId,
-        projectStateRoot: paths.stateRoot,
-        repositoryRoot: paths.controlRoot,
-        docker: createDockerClient(),
-        tag: `agent-harness-run-${options.runId}`.toLowerCase().slice(0, 128),
-        timeoutMs: runConfig.execution?.docker?.buildTimeoutMs,
-        dockerPolicy: runConfig.execution?.docker,
-      });
-      console.log(JSON.stringify({ imageDigest: result.imageDigest }, null, 2));
     });
 
   execution
@@ -1400,7 +1050,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         () => dependencies.createBackend("unused"),
         { validateWorktree: false },
       );
-      const store = engine.store;
+      const store = engine.store as OperatorRunRepository;
       const runLock = await store.inspectRunLock(options.runId);
       const workspaceAdminLock = await store.inspectWorkspaceAdminLock();
       const sharedIndexLock = await store.inspectSharedIndexLock();
@@ -1586,19 +1236,16 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
   // Hidden: fail-closed sandbox isolation self-check inside a disposable probe container.
   program
     .command("sandbox-isolation-self-check", { hidden: true })
-    .description("Prove workspace write + sandbox deny of /run-state (internal)")
+    .description("Prove workspace write + absence of host state mounts (internal)")
     .requiredOption("--workspace <path>", "writable workspace root", "/workspace")
-    .requiredOption("--run-state <path>", "run-state mount", "/run-state")
-    .requiredOption("--rpc-secret <path>", "RPC secret path under run-state")
+    .requiredOption("--run-state <path>", "host-state path that must be absent", "/host-state")
+    .requiredOption("--rpc-secret <path>", "bootstrap secret path that must be unreadable")
     .action(
       async (options: { workspace: string; runState: string; rpcSecret: string }) => {
         const { access, readFile, writeFile } = await import("node:fs/promises");
         const pathMod = await import("node:path");
         const { evaluateSandboxIsolationSelfCheck } = await import(
           "../application/sandbox-isolation-probe.js"
-        );
-        const { prohibitedAgentPathAccess } = await import(
-          "../infrastructure/agents/step-utils.js"
         );
 
         let workspaceWrite = false;
@@ -1613,8 +1260,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           workspaceWrite = false;
         }
 
-        // Unsandboxed visibility of /run-state proves the mount exists; Cursor
-        // sandbox + prohibitedAgentPathAccess must still deny agent tools.
+        // Host state must not exist even for the unsandboxed worker process.
         let mountVisibleToUnsandboxed = false;
         try {
           await access(options.runState);
@@ -1623,19 +1269,8 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           mountVisibleToUnsandboxed = false;
         }
 
-        const policyDeniesRunStateRead =
-          prohibitedAgentPathAccess({ path: options.runState }, options.workspace) != null ||
-          prohibitedAgentPathAccess(
-            { path: pathMod.join(options.runState, "probe-marker.txt") },
-            options.workspace,
-          ) != null;
-        const policyDeniesRpcSecret =
-          prohibitedAgentPathAccess({ path: options.rpcSecret }, options.workspace) != null;
-        const policyDeniesOutside =
-          prohibitedAgentPathAccess({ path: "/etc/passwd" }, options.workspace) != null;
-
-        // Attempt real FS write to run-state (unsandboxed process may succeed);
-        // report denial based on sandbox policy, not unsandboxed FS.
+        // Attempt a real write; an absent host-state path must not be creatable
+        // under the read-only container root.
         let unsandboxedWroteRunState = false;
         try {
           await writeFile(
@@ -1648,6 +1283,13 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           unsandboxedWroteRunState = false;
         }
 
+        let secretPresent = false;
+        try {
+          await access(options.rpcSecret);
+          secretPresent = true;
+        } catch {
+          secretPresent = false;
+        }
         let unsandboxedReadSecret = false;
         try {
           await readFile(options.rpcSecret, "utf8");
@@ -1658,18 +1300,19 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
 
         const evaluated = evaluateSandboxIsolationSelfCheck({
           workspaceWritable: workspaceWrite,
-          // Fail closed: agent sandbox policy must deny these even if the
-          // unsandboxed worker process can see the mount.
-          canReadRunState: !policyDeniesRunStateRead,
-          canWriteRunState: !policyDeniesRunStateRead,
-          canReadRpcSecret: !policyDeniesRpcSecret,
-          canAccessOutsideWorkspace: !policyDeniesOutside,
+          canReadRunState: mountVisibleToUnsandboxed,
+          canWriteRunState: unsandboxedWroteRunState,
+          secretPresent,
+          canReadRpcSecret: unsandboxedReadSecret,
+          // Provider sandbox behavior is verified separately by the Cursor probe.
+          canAccessOutsideWorkspace: false,
         });
 
         const payload = {
           ...evaluated,
           mountVisibleToUnsandboxed,
           unsandboxedWroteRunState,
+          secretPresent,
           unsandboxedReadSecret,
           note:
             "Filesystem isolation ≠ exfiltration-proof networking; Cursor sandboxEnabled is required at agent runtime.",
@@ -1685,17 +1328,29 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .command("worker", { hidden: true })
     .description("Run the per-run Docker worker RPC server (internal)")
     .requiredOption("--run-id <id>", "run id")
+    .requiredOption("--worker-instance-id <id>", "worker instance id")
+    .requiredOption("--state-endpoint <url>", "host state-service endpoint")
     .option("--listen <host:port>", "bind address", "0.0.0.0:8787")
     .option("--secret-file <path>", "read-only RPC token file")
-    .option("--run-state <path>", "mounted run-state directory", "/run-state")
+    .option("--state-credential-file <path>", "read-only state credential file")
+    .option("--cursor-secret-file <path>", "read-only Cursor credential file")
     .option("--fake-backend", "use FakeBackend (tests/dev)", false)
+    .option(
+      "--deterministic-test-profile",
+      "use deterministic vNext provider (acceptance only)",
+      false,
+    )
     .action(
       async (options: {
         runId: string;
+        workerInstanceId: string;
+        stateEndpoint: string;
         listen: string;
         secretFile?: string;
-        runState: string;
+        stateCredentialFile?: string;
+        cursorSecretFile?: string;
         fakeBackend: boolean;
+        deterministicTestProfile: boolean;
       }) => {
         const { runWorker } = await import("../worker/run-worker.js");
         const listen = options.listen.trim();
@@ -1708,11 +1363,15 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         }
         const worker = await runWorker({
           runId: options.runId,
+          workerInstanceId: options.workerInstanceId,
+          stateEndpoint: options.stateEndpoint,
           host,
           port,
           secretFile: options.secretFile,
-          runStatePath: options.runState,
+          stateCredentialFile: options.stateCredentialFile,
+          cursorSecretFile: options.cursorSecretFile,
           fakeBackend: options.fakeBackend,
+          deterministicTestProfile: options.deterministicTestProfile,
         });
         const shutdown = async () => {
           await worker.close();
@@ -1784,6 +1443,28 @@ async function resolvedProjectConfig(options: {
     path: loaded.path,
     lookup: loaded.lookup,
   };
+}
+
+async function withCliControlServer<T>(
+  config: HarnessConfig,
+  configPath: string,
+  dependencies: CliDependencies,
+  work: (server: UiServer) => Promise<T>,
+): Promise<T> {
+  const server = await dependencies.startUiServer({
+    config,
+    configPath,
+    backend: dependencies.createBackend(),
+    docker: dependencies.createDockerClient(),
+    port: 0,
+    openBrowser: false,
+    dashboard: false,
+  });
+  try {
+    return await work(server);
+  } finally {
+    await server.close();
+  }
 }
 
 async function applyRunOverrides(
@@ -1859,7 +1540,7 @@ async function openRunEngine(
   runId: string,
   createBackend: CliDependencies["createBackend"],
   options?: OpenRunHarnessOptions,
-): Promise<HarnessEngine> {
+): Promise<WorkerHarnessRuntime> {
   const { config } = await loadConfig(configPath);
   const opened = await openRunHarness(
     config,
@@ -1871,7 +1552,7 @@ async function openRunEngine(
 }
 
 async function aggregateSessionUsage(
-  engine: HarnessEngine,
+  engine: WorkerHarnessRuntime,
   runId: string,
 ): Promise<{
   inputTokens: number;
@@ -1935,7 +1616,7 @@ function printLockRemoval(
   }
 }
 
-function printState(state: Awaited<ReturnType<HarnessEngine["status"]>>): void {
+function printState(state: Awaited<ReturnType<WorkerHarnessRuntime["status"]>>): void {
   console.log(`Run ${state.runId}: ${state.phase}`);
   console.log(`Artifacts: ${state.runId}/state.json (under the configured state directory)`);
   if (state.phase === "awaiting_input" && state.grillReady) {

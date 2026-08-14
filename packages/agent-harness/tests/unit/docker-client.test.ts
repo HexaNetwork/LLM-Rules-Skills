@@ -24,9 +24,6 @@ import path from "node:path";
 
 const WORKER =
   "ghcr.io/example/worker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const NODE_BASE =
-  "node:22-bookworm@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-
 describe("fake DockerClient argv behavior", () => {
   it("records argv arrays and never requires a real daemon", async () => {
     const client = createFakeDockerClient({ healthy: true });
@@ -112,7 +109,9 @@ describe("hardened container spec and mount deny rules", () => {
       harnessVersion: "0.3.2",
       dockerPolicy: config.execution.docker,
       workspaceVolumeName: "ah-ws-run-1",
-      runStateHostPath: "/home/x/.agent-harness/projects/proj/runs/run-1",
+      secretMounts: [
+        { source: "/host/bootstrap/rpc.token", target: "/run/secrets/agent-harness-worker-rpc" },
+      ],
       publishHostPort: 4123,
     });
     expect(spec.readOnlyRootfs).toBe(true);
@@ -121,6 +120,9 @@ describe("hardened container spec and mount deny rules", () => {
     expect(spec.user).toBe("10001:10001");
     expect(spec.network).toBe("bridge");
     expect(spec.mounts).toHaveLength(2);
+    expect(spec.mounts).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: "/run-state" })]),
+    );
 
     const argv = hardenedSpecToRunArgv(spec);
     expect(argv).toEqual(
@@ -167,9 +169,8 @@ describe("hardened container spec and mount deny rules", () => {
       denyMountOrFlag({
         mounts: [
           { kind: "volume", source: "ws", target: "/workspace" },
-          { kind: "bind", source: "/current-run", target: "/run-state" },
+          { kind: "bind", source: "/secret/rpc", target: "/run/secrets/worker-rpc", readOnly: true },
         ],
-        allowedBindSources: new Set(["/current-run"]),
       }).allowed,
     ).toBe(true);
   });
@@ -197,19 +198,12 @@ describe("probeDockerReadiness", () => {
 });
 
 describe("execution runtime status gate", () => {
-  it("marks local runtime ready without Docker probes", async () => {
-    const config = HarnessConfigSchema.parse({ execution: { runtime: "local" } });
-    const status = await evaluateExecutionRuntimeStatus({ config, probeDocker: false });
-    expect(status.ready).toBe(true);
-    expect(status.runtime).toBe("local");
-  });
-
-  it("blocks docker mode when worker/base images are missing", async () => {
+  it("blocks Docker-only mode when the maintained worker image is missing", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ah-rt-"));
     await writeFile(path.join(root, "package.json"), '{"name":"demo"}\n', "utf8");
     const config = HarnessConfigSchema.parse({
       repositoryRoot: root,
-      execution: { runtime: "docker", docker: { approvedBaseImages: [] } },
+      execution: { docker: {} },
     });
     const client = createFakeDockerClient({ healthy: true });
     const status = await evaluateExecutionRuntimeStatus({
@@ -220,30 +214,28 @@ describe("execution runtime status gate", () => {
     });
     expect(status.ready).toBe(false);
     expect(status.blockers.some((b) => b.code === "worker-image-missing")).toBe(true);
-    expect(status.blockers.some((b) => b.code === "base-images-empty")).toBe(true);
   });
 
-  it("is ready when docker is healthy and a single stack can generate", async () => {
+  it("is ready when Docker is healthy and the maintained image is available", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ah-rt-ok-"));
     await mkdir(root, { recursive: true });
     await writeFile(path.join(root, "package.json"), '{"name":"demo"}\n', "utf8");
     const config = HarnessConfigSchema.parse({
       repositoryRoot: root,
       execution: {
-        runtime: "docker",
         docker: {
           workerImageDigest: WORKER,
-          approvedBaseImages: [NODE_BASE],
         },
       },
     });
     const client = createFakeDockerClient({ healthy: true, osType: "linux" });
+    client.images.set(WORKER, { id: WORKER, digest: WORKER, repoTags: [] });
     const status = await evaluateExecutionRuntimeStatus({
       config,
       docker: client,
       repositoryRoot: root,
     });
     expect(status.ready).toBe(true);
-    expect(status.image?.canGenerate).toBe(true);
+    expect(status.image?.available).toBe(true);
   });
 });

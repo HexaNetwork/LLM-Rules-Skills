@@ -67,7 +67,7 @@ function classifyByMessage(message: string): { kind: FailureKind; retriable: boo
     return { kind: "config", retriable: false };
   }
   if (
-    /Docker execution|execution image|execution\.docker|Docker daemon|Linux containers|approvedBaseImages|workerImageDigest|execution-image|Approve and build/i.test(
+    /Docker execution|execution\.docker|Docker daemon|Linux containers|workerImageDigest|maintained worker image/i.test(
       message,
     )
   ) {

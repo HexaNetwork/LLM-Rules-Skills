@@ -6,6 +6,7 @@ import type { RunStore } from "../../store.js";
 import type { RunJobService } from "../run-job-service.js";
 import type { DockerClient } from "../../infrastructure/container/types.js";
 import type { ExecutionRuntimeStatus } from "../../application/execution-runtime-status.js";
+import type { HostRunLifecycleService } from "../../vnext/plugins/host-run-lifecycle.js";
 
 export type UiAppContext = {
   getProjectConfig(): HarnessConfig;
@@ -16,6 +17,7 @@ export type UiAppContext = {
   configPath?: string;
   agentReadiness: { ready: boolean; message?: string };
   jobs: RunJobService;
+  runLifecycle: HostRunLifecycleService;
   repositoryIntelligenceRunner?: ExecutableRunner;
   /** Optional argv Docker client for execution readiness probes. */
   docker?: DockerClient;
@@ -26,4 +28,8 @@ export type UiAppContext = {
   getExecutionStatus?: (options?: {
     force?: boolean;
   }) => Promise<ExecutionRuntimeStatus>;
+  workerState: {
+    endpoint(): string;
+    issueCredential(runId: string, options: { workerInstanceId: string }): Promise<{ token: string }>;
+  };
 };

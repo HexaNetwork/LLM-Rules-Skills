@@ -127,3 +127,43 @@ describe("architecture: package source inventory", () => {
     expect(applicationEntries).toContain("paths.ts");
   });
 });
+
+describe("architecture: Cordis production ownership", () => {
+  it("keeps CLI start and POST /api/runs as lifecycle-only adapters", async () => {
+    const cli = await readSrc("cli/create-cli.ts");
+    const cliStart = cli.slice(
+      cli.indexOf('.command("start")'),
+      cli.indexOf('.command("continue")'),
+    );
+    expect(cliStart).toContain("control.runLifecycle.createRun");
+    expect(cliStart).toContain("control.runLifecycle.enqueue");
+    expect(cliStart).not.toContain("new HarnessEngine");
+    expect(cliStart).not.toContain("continueDockerRunAfterWorkspaceReady");
+    const cliContinue = cli.slice(
+      cli.indexOf('.command("continue")'),
+      cli.indexOf('.command("retry")'),
+    );
+    expect(cliContinue).toContain("control.runLifecycle.enqueue");
+    expect(cliContinue).not.toContain("continueDockerRunAfterWorkspaceReady");
+
+    const routes = await readSrc("ui/http/routes/runs.ts");
+    const createRoute = routes.slice(
+      routes.indexOf('request.method === "POST" && url.pathname === "/api/runs"'),
+      routes.indexOf("const runMatch"),
+    );
+    expect(createRoute).toContain("ctx.runLifecycle.createRun");
+    expect(createRoute).toContain("ctx.runLifecycle.enqueue");
+    expect(createRoute).not.toContain("new HarnessEngine");
+    expect(createRoute).not.toContain("continueDockerRunAfterWorkspaceReady");
+    expect(routes).not.toContain("continueDockerRunAfterWorkspaceReady");
+    expect(routes).not.toContain("ensureDockerWorkspaceReady");
+  });
+
+  it("keeps HarnessEngine as a facade outside Cordis worker composition", async () => {
+    const engine = await readSrc("application/harness-engine.ts");
+    const worker = await readSrc("vnext/plugins/worker-runtime.ts");
+    expect(engine).toContain("export class HarnessEngine extends WorkerHarnessRuntime {}");
+    expect(worker).toContain("new WorkerHarnessRuntime");
+    expect(worker).not.toContain("new HarnessEngine");
+  });
+});

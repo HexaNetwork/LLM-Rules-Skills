@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import type { HarnessConfig } from "../config/schema.js";
 import type { DockerClient } from "../infrastructure/container/types.js";
@@ -25,6 +26,9 @@ import {
   WORKER_RPC_CONTAINER_PORT,
   WORKER_RPC_PROTOCOL_VERSION,
   WORKER_RPC_SECRET_RELATIVE_PATH,
+  WORKER_RPC_SECRET_CONTAINER_PATH,
+  WORKER_STATE_CREDENTIAL_CONTAINER_PATH,
+  CURSOR_API_KEY_SECRET_CONTAINER_PATH,
 } from "../worker/protocol.js";
 import {
   createPendingDockerExecutionState,
@@ -33,6 +37,7 @@ import {
   writeRunExecutionState,
 } from "./execution-state-io.js";
 import type { RunExecutionState } from "../domain/run-execution.js";
+import { resolveHarnessPaths } from "./paths.js";
 
 export type DockerWorkerSession = {
   execution: RunExecutionState;
@@ -53,6 +58,15 @@ export type EnsureDockerWorkerSessionOptions = {
   projectKey?: string;
   /** When true, create/start a container if none is healthy (requires image). */
   startIfMissing?: boolean;
+  /** Host state API origin as seen by the worker container. */
+  stateServiceEndpoint?: string;
+  /** Mint the plaintext token once for a new worker incarnation. */
+  issueStateCredential?: (
+    runId: string,
+    options: { workerInstanceId: string },
+  ) => Promise<{ token: string }>;
+  /** Select the deterministic vNext provider; accepted only by test callers. */
+  deterministicTestProfile?: boolean;
 };
 
 /** Bound the normal docker-run-to-listen race without hiding durable failures. */
@@ -92,9 +106,17 @@ export async function ensureDockerWorkerSession(
     (await loadRunExecutionState(options.projectConfig, options.runId)) ??
     createPendingDockerExecutionState();
 
-  const secretRelative =
-    execution.rpcSecretRelativePath ?? WORKER_RPC_SECRET_RELATIVE_PATH;
-  const secretFilePath = path.join(runDir, secretRelative);
+  const secretRelative = execution.rpcSecretRelativePath ?? WORKER_RPC_SECRET_RELATIVE_PATH;
+  const workerInstanceId = execution.workerInstanceId ?? randomUUID();
+  const bootstrapDirectory = path.join(
+    resolveHarnessPaths(options.projectConfig).stateRoot,
+    "worker-bootstrap",
+    options.runId,
+    workerInstanceId,
+  );
+  const secretFilePath = path.join(bootstrapDirectory, "worker-rpc.token");
+  const stateCredentialFilePath = path.join(bootstrapDirectory, "state-credential.token");
+  const cursorSecretFilePath = path.join(bootstrapDirectory, "cursor-api-key.token");
 
   let token: string;
   try {
@@ -134,11 +156,31 @@ export async function ensureDockerWorkerSession(
         false,
       );
     }
-    // Materialize Cursor API key as a run-state secret file (not container env).
-    const hostApiKey = process.env.CURSOR_API_KEY?.trim();
+    if (!options.stateServiceEndpoint || !options.issueStateCredential) {
+      throw new HarnessFailure(
+        "Cannot start Docker worker without the host state-service endpoint and credential issuer",
+        "execution",
+        false,
+      );
+    }
+    const issuedStateCredential = await options.issueStateCredential(options.runId, {
+      workerInstanceId,
+    });
+    await writeWorkerRpcTokenFile(stateCredentialFilePath, issuedStateCredential.token);
+    // Materialize Cursor API key as a narrowly mounted read-only bootstrap secret.
+    const configuredHostApiKey = process.env.CURSOR_API_KEY?.trim();
+    if (configuredHostApiKey && options.deterministicTestProfile !== true) {
+      throw new HarnessFailure(
+        "Cursor Docker workers are release-blocked: mounted /run/secrets credentials are disabled until the real Cursor tool and delegated-task isolation probe passes.",
+        "execution",
+        false,
+      );
+    }
+    const hostApiKey =
+      options.deterministicTestProfile === true ? undefined : configuredHostApiKey;
     if (hostApiKey) {
       await writeCursorApiKeySecretFile(
-        path.join(runDir, CURSOR_API_KEY_SECRET_RELATIVE_PATH),
+        cursorSecretFilePath,
         hostApiKey,
       );
     }
@@ -148,12 +190,18 @@ export async function ensureDockerWorkerSession(
       projectConfig: options.projectConfig,
       runId: options.runId,
       runDir,
+      workerInstanceId,
+      stateServiceEndpoint: options.stateServiceEndpoint,
+      rpcSecretFilePath: secretFilePath,
+      stateCredentialFilePath,
+      cursorSecretFilePath: hostApiKey ? cursorSecretFilePath : undefined,
       containerName,
       image: options.image,
       workspaceVolumeName: options.workspaceVolumeName,
       projectKey: options.projectKey ?? "project",
       hostPort,
       containerPort: execution.containerPort ?? WORKER_RPC_CONTAINER_PORT,
+      deterministicTestProfile: options.deterministicTestProfile,
     });
     containerId = started.containerId;
   } else {
@@ -189,6 +237,7 @@ export async function ensureDockerWorkerSession(
       containerId,
       hostPort,
       rpcSecretRelativePath: secretRelative,
+      workerInstanceId,
       rpcTokenFingerprint: workerRpcTokenFingerprint(token),
       rpcProtocolVersion: WORKER_RPC_PROTOCOL_VERSION,
       workerHarnessVersion: HARNESS_PACKAGE_VERSION,
@@ -210,6 +259,7 @@ export async function ensureDockerWorkerSession(
     containerId,
     hostPort,
     rpcSecretRelativePath: secretRelative,
+    workerInstanceId,
     rpcTokenFingerprint: workerRpcTokenFingerprint(token),
     rpcProtocolVersion: WORKER_RPC_PROTOCOL_VERSION,
     workerHarnessVersion: HARNESS_PACKAGE_VERSION,
@@ -252,10 +302,6 @@ export function workerRpcActionForHostAction(action: string): string | undefined
   return map[action];
 }
 
-export function isDockerExecutionRuntime(config: HarnessConfig): boolean {
-  return (config.execution?.runtime ?? "local") === "docker";
-}
-
 export function defaultContainerName(projectKey: string, runId: string): string {
   const safeProject = projectKey.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 40);
   const safeRun = runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 40);
@@ -267,12 +313,18 @@ async function startWorkerContainer(input: {
   projectConfig: HarnessConfig;
   runId: string;
   runDir: string;
+  workerInstanceId: string;
+  stateServiceEndpoint: string;
+  rpcSecretFilePath: string;
+  stateCredentialFilePath: string;
+  cursorSecretFilePath?: string;
   containerName: string;
   image: string;
   workspaceVolumeName: string;
   projectKey: string;
   hostPort: number;
   containerPort: number;
+  deterministicTestProfile?: boolean;
 }): Promise<{ containerId: string }> {
   const dockerPolicy = input.projectConfig.execution?.docker;
   if (!dockerPolicy) {
@@ -286,7 +338,13 @@ async function startWorkerContainer(input: {
     harnessVersion: HARNESS_PACKAGE_VERSION,
     dockerPolicy,
     workspaceVolumeName: input.workspaceVolumeName,
-    runStateHostPath: input.runDir,
+    secretMounts: [
+      { source: input.rpcSecretFilePath, target: WORKER_RPC_SECRET_CONTAINER_PATH },
+      { source: input.stateCredentialFilePath, target: WORKER_STATE_CREDENTIAL_CONTAINER_PATH },
+      ...(input.cursorSecretFilePath
+        ? [{ source: input.cursorSecretFilePath, target: CURSOR_API_KEY_SECRET_CONTAINER_PATH }]
+        : []),
+    ],
     publishHostPort: input.hostPort,
     workerPort: input.containerPort,
   });
@@ -294,10 +352,13 @@ async function startWorkerContainer(input: {
     command: [
       "--run-id",
       input.runId,
+      "--worker-instance-id",
+      input.workerInstanceId,
+      "--state-endpoint",
+      input.stateServiceEndpoint,
       "--listen",
       `0.0.0.0:${input.containerPort}`,
-      "--secret-file",
-      `/run-state/${WORKER_RPC_SECRET_RELATIVE_PATH}`,
+      ...(input.deterministicTestProfile ? ["--deterministic-test-profile"] : []),
     ],
   });
   if (argvLeaksCursorApiKey(argv)) {

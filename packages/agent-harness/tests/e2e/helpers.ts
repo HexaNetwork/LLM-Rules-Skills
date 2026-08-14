@@ -54,6 +54,20 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
           answer: "Casual",
           summary: "Use a casual greeting"}]}},
   {
+    role: "project-profiler",
+    output: {
+      summary: "Keep the deterministic verification command",
+      configPatch: {
+        commands: {
+          verification: [
+            { id: "test", command: 'node -e "process.exit(0)"', timeoutMs: 600_000 },
+          ],
+        },
+        workflow: { testPathPatterns: ["tests/**"] },
+      },
+    },
+  },
+  {
     role: "planner",
     output: {
       summary: "One high-level plan",
@@ -76,6 +90,23 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
       outOfScope: ["Localization"],
       furtherNotes: ""}},
   {
+    role: "scenario-planner",
+    output: {
+      summary: "Greeting scenarios",
+      scenarios: [
+        {
+          id: "greet-happy",
+          title: "Casual greeting happy path",
+          kind: "happy-path",
+          intent: "Users receive a casual greeting",
+          given: "The greeting feature is available",
+          when: "A user requests a greeting",
+          then: "The response is casual",
+        },
+      ],
+    },
+  },
+  {
     role: "issue-slicer",
     output: {
       summary: "One task",
@@ -85,13 +116,24 @@ export const HAPPY_PATH_STEPS: ScriptedStep[] = [
           title: "Ship greeting",
           description: "Render the casual greeting.",
           acceptanceCriteria: ["Greeting is casual"],
-          blockedBy: []}]}},
+          blockedBy: [],
+          scenarioIds: ["greet-happy"]}],
+      proposedInstalls: []}},
   {
     role: "implementer",
     output: { summary: "Built", changedFiles: ["src/greet.ts"] }},
   {
     role: "task-reviewer",
     output: { approved: true, summary: "Looks good", findings: [] }},
+  {
+    role: "scenario-writer",
+    output: {
+      status: "implemented",
+      summary: "Scenario tests written",
+      testPaths: ["tests/greet.test.ts"],
+      changedFiles: ["tests/greet.test.ts"],
+    },
+  },
   {
     role: "reviewer",
     output: { approved: true, summary: "Looks good", findings: [] }}];

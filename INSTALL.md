@@ -28,7 +28,7 @@ Manual steps below match the same flow.
 - **npm** (comes with Node)
 - **Cursor API key** for real agent runs (`CURSOR_API_KEY`)
 - **Windows only:** **WSL2** for Cursor agent OS sandbox — the Windows install wizard checks this and can run `wsl --install`. Full sandbox still requires running the harness under Linux/WSL (not native `node.exe`).
-- **Optional:** **Docker** for the opt-in `execution.runtime: docker` mode (Linux containers). The install wizard detects `docker info`, Linux container mode, and daemon permissions; if Desktop is installed but stopped it may ask to start it and wait for the daemon. When you opt in it runs `execution prepare-worker` after build (real pull/build + readiness probe). It does **not** silently install Docker Desktop. Local worktree mode remains the default unless you confirm enabling Docker for the registered project.
+- **Docker** (required; Linux containers). The install wizard detects `docker info`, Linux container mode, and daemon permissions; if Desktop is installed but stopped it may ask to start it and wait for the daemon. It prepares the maintained worker image after the package build. It does **not** silently install Docker Desktop.
 - Optional: **Ollama** for local embeddings; **GitNexus** (`npm install -g gitnexus`, PolyForm Noncommercial — see below); **CodeGraph** (`npm install -g @colbymchenry/codegraph`)
 
 ## 1. Install Node (if needed)
@@ -226,24 +226,19 @@ On Windows, global npm binaries often land in `%AppData%\Roaming\npm` — add th
 
 Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`setup-local-embeddings.ps1` / `.sh`). Enable embeddings in the harness-home project config when ready.
 
-## 7. Optional: Docker execution runtime
+## 7. Docker runtime
 
-Docker mode (`execution.runtime: docker`) is **opt-in** and frozen into each new run. Local linked worktrees remain the default; there is no mid-run migration from worktree → Docker.
+Docker is the only production execution runtime. Local linked worktrees and generated per-run images are retired; old active runs must be finished, exported, or discarded before cutover.
 
 1. Install Docker yourself (Docker Desktop on Windows with **WSL2 + Linux containers**, or a Linux/macOS daemon with permission to run `docker info`). The install wizard never silently installs Docker Desktop; on Windows it may offer to **start** Desktop if the CLI is present but the daemon is down.
 2. Run the install wizard’s Docker stage:
-   - Early stage detects `docker info` / Linux containers (optionally starting Desktop) and asks whether to prepare the worker image later.
-   - After package build + `project add`, opted-in installs run `agent-harness execution prepare-worker` (real Docker readiness probe + local worker image build, or pull when `workerImageDigest` / `--image` is already set).
-   - Fail-closed: if you opted in and prepare fails, the wizard exits with an actionable message (not a silent skip).
-   - Optionally confirm pinning `workerImageDigest` and setting `execution.runtime: docker` for that project only. Default remains `local` unless you confirm.
-3. Or later: dashboard **Settings → Execution runtime**, or `agent-harness execution prepare-worker --repository <path> [--write-settings] [--enable-runtime]`.
-4. Pin at least one approved base image (`name@sha256:…`). Worker prepare alone does not make Docker runs ready.
-5. Check readiness: `agent-harness execution status --repository <path>` or `GET /api/execution/status`.
-6. New Docker runs generate a Dockerfile for operator review, then build + fail-closed sandbox probe before agents run.
-7. Expect disk/CPU/memory cost for images and named volumes. Bridge networking is filesystem isolation, **not** egress-proof. Prune unused images/volumes when needed.
-8. Revert new runs to local: set `execution.runtime` back to `local` in project settings.
+   - Early stage detects `docker info` / Linux containers (optionally starting Desktop).
+   - After package build + `project add`, installs run `agent-harness execution prepare-worker --force-rebuild --write-settings`.
+   - Fail-closed: image preparation or isolation-probe failure stops installation with an actionable message.
+3. Check readiness: `agent-harness execution status --repository <path>` or `GET /api/execution/status`.
+4. Expect disk/CPU/memory cost for the shared image and named volumes. Bridge networking is filesystem isolation, **not** egress-proof.
 
-Launch scripts (`launch-agent-harness.*`) start the dashboard for the project’s configured runtime. On Windows, when `execution.runtime` is `docker` and the daemon is down, the PowerShell launcher auto-starts Docker Desktop (if installed) and waits briefly — it still does not install Docker.
+Launch scripts start Docker Desktop on Windows when installed but stopped, wait briefly for Linux-container readiness, and then start the host control process.
 
 ## Troubleshooting
 

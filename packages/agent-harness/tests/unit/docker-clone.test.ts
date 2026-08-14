@@ -18,7 +18,6 @@ import { DockerCloneProvisioner } from "../../src/workspace/docker-clone-provisi
 import { createFakeDockerClient } from "../../src/infrastructure/container/fake-docker-client.js";
 import { HarnessConfigSchema } from "../../src/config/schema.js";
 import {
-  WORKER_RUN_STATE_PATH,
   WORKER_WORKSPACE_PATH,
   resolveExecutionWorkspaceRoot,
 } from "../../src/application/paths.js";
@@ -314,7 +313,7 @@ describe("Docker path model + architecture guards", () => {
     ).toBe(WORKER_WORKSPACE_PATH);
   });
 
-  it("isolation forbids /run-state as writable and lists it for docker paths", () => {
+  it("isolation forbids /run/secrets as writable and lists it for Docker paths", () => {
     const paths = {
       controlRoot: path.resolve("/tmp/repo"),
       stateRoot: path.resolve("/tmp/state"),
@@ -331,7 +330,7 @@ describe("Docker path model + architecture guards", () => {
     });
     expect(ok.ok).toBe(true);
     expect(forbiddenAgentWritableRoots(paths, path.resolve("/tmp/home"))).toEqual(
-      expect.arrayContaining([WORKER_RUN_STATE_PATH]),
+      expect.arrayContaining(["/run/secrets"]),
     );
     expect(
       checkWorkspaceIsolation({
@@ -339,19 +338,22 @@ describe("Docker path model + architecture guards", () => {
         homeRoot: path.resolve("/tmp/home"),
         strictIsolation: false,
         capabilities: { canRestrictWritableWorkspace: true, providerId: "cursor" },
-        agentCwd: WORKER_RUN_STATE_PATH,
+        agentCwd: "/run/secrets",
         containerExecution: true,
       }).ok,
     ).toBe(false);
   });
 
-  it("step-utils blocks /run-state access when cwd is /workspace", () => {
+  it("does not infer filesystem access from Docker tool argument text", () => {
     expect(
       prohibitedAgentPathAccess({ path: "/run-state/config.json" }, WORKER_WORKSPACE_PATH),
-    ).toBe("run-state");
+    ).toBeUndefined();
     expect(
       prohibitedAgentPathAccess({ path: "/etc/passwd" }, WORKER_WORKSPACE_PATH),
-    ).toBe("outside-workspace");
+    ).toBeUndefined();
+    expect(
+      prohibitedAgentPathAccess({ text: "/t claim" }, WORKER_WORKSPACE_PATH),
+    ).toBeUndefined();
     expect(
       prohibitedAgentPathAccess({ path: "/workspace/src/main.ts" }, WORKER_WORKSPACE_PATH),
     ).toBeUndefined();

@@ -409,59 +409,26 @@ export class TaskExecutionService {
   }
 
   async publish(state: RunState): Promise<RunState> {
-    if ((this.ctx.config.execution?.runtime ?? "local") === "docker") {
-      const { prepareDockerResultExport, isDockerBundleExportReady } = await import(
-        "./docker-publish-service.js"
-      );
-      const { loadBundleImportState } = await import("./bundle-import-io.js");
-      // Idempotent: if export already ready, leave phase as publishing for the host.
-      const existing = await loadBundleImportState(this.ctx.config, state.runId).catch(
-        () => undefined,
-      );
-      if (!isDockerBundleExportReady(existing)) {
-        await prepareDockerResultExport({
-          config: this.ctx.config,
-          store: this.ctx.store,
-          runId: state.runId,
-          workspace: this.ctx.workspace,
-          workspacePath: this.ctx.paths.workspaceRoot,
-        });
-      }
-      // Host completes quarantine import + push/PR (credential boundary).
-      return this.ctx.store.load(state.runId);
-    }
-
-    const fallback: MessageOutput = {
-      subject: `feat: ${state.idea}`.slice(0, 100),
-      body: state.tasks.map((task) => `- ${task.title}`).join("\n"),
-    };
-    const message = await this.message(
-      state.runId,
-      "Write the pull-request title and body for this verified feature",
-      {
-        brief: state.reflectBrief?.confirmed,
-        resolutions: state.grillResolutions,
-        tasks: state.tasks.map(({ title, reviewSummary, commitSha }) => ({
-          title,
-          reviewSummary,
-          commitSha,
-        })),
-      },
-      fallback,
+    const { prepareDockerResultExport, isDockerBundleExportReady } = await import(
+      "./docker-publish-service.js"
     );
-    let working = state;
-    if (this.ctx.config.git.enabled) {
-      working = await this.ensureDeliveryBranchForPublish(working);
-    }
-    const pullRequestUrl =
-      working.branchName && this.ctx.config.git.push
-        ? await this.ctx.git.publish(working.branchName, message)
-        : undefined;
-    return this.ctx.store.record(
-      { ...working, phase: "completed", pullRequestUrl },
-      "run.completed",
-      { pullRequestUrl },
+    const { loadBundleImportState } = await import("./bundle-import-io.js");
+    // Idempotent: if export already ready, leave phase as publishing for the host.
+    const existing = await loadBundleImportState(this.ctx.config, state.runId).catch(
+      () => undefined,
     );
+    if (!isDockerBundleExportReady(existing)) {
+      await prepareDockerResultExport({
+        config: this.ctx.config,
+        store: this.ctx.store,
+        runId: state.runId,
+        workspace: this.ctx.workspace,
+        workspacePath: this.ctx.paths.workspaceRoot,
+        transport: this.ctx.runStatePort ? "rpc" : "filesystem",
+      });
+    }
+    // Host completes quarantine import + push/PR (credential boundary).
+    return this.ctx.store.load(state.runId);
   }
 
   /**

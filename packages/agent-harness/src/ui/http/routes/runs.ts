@@ -4,15 +4,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { HarnessConfigSchema, ProjectSettingsPatchSchema, type HarnessConfig } from "../../../config/schema.js";
 import { loadRunConfig, loadRunWorkspace, writeProjectSettings } from "../../../config/io.js";
 import { loadExternalProjectConfig } from "../../../application/external-config.js";
-import { openRunHarness, type OpenedRunHarness } from "../../../application/run-engine-factory.js";
-import { runInitialSetupThenAdvance } from "../../../application/run-setup.js";
-import { HarnessEngine } from "../../../application/harness-engine.js";
+import { openRunHarness } from "../../../application/run-engine-factory.js";
+import { WorkerHarnessRuntime } from "../../../application/harness-engine.js";
 import {
   mapHostActionToWorkerRpc,
   resolveDockerMutationProxy,
 } from "../../../application/docker-run-proxy.js";
-import { isDockerExecutionRuntime } from "../../../application/docker-worker-session.js";
-import { completeDockerHostPublish } from "../../../application/docker-publish-service.js";
 import { resolveRunBaseBranch } from "../../../application/run-base-branch.js";
 import { HighLevelPlanSchema, VerificationSettingsPatchSchema } from "../../../domain.js";
 import { HarnessFailure } from "../../../errors.js";
@@ -36,7 +33,6 @@ import {
   readActivity,
   readAgentActivity,
   readEvents,
-  readExecutionImage,
   readInstallLog,
   readSessionDetail,
   readSessionSummaries,
@@ -44,47 +40,6 @@ import {
   summarizeRun,
 } from "../run-reads.js";
 import { PREFLIGHT_COMMIT_ORDER_VALUES, projectSettings } from "./settings.js";
-
-type DockerImageAllowlistConfig = {
-  execution?: {
-    docker?: {
-      workerImageDigest?: string;
-      approvedBaseImages?: readonly string[];
-    };
-  };
-};
-
-/**
- * Dockerfile edits may intentionally adopt a newly prepared project worker while
- * the run/profile still records the previous digest. All three sources are
- * operator-controlled exact refs, so retain their union instead of letting a
- * stale profile replace current policy.
- */
-export function executionDockerfileSaveAllowlist(input: {
-  runConfig: DockerImageAllowlistConfig;
-  projectConfig: DockerImageAllowlistConfig;
-  profile?: { workerImage?: string; baseImage?: string };
-}): string[] {
-  return [
-    input.runConfig.execution?.docker?.workerImageDigest,
-    ...(input.runConfig.execution?.docker?.approvedBaseImages ?? []),
-    input.projectConfig.execution?.docker?.workerImageDigest,
-    ...(input.projectConfig.execution?.docker?.approvedBaseImages ?? []),
-    input.profile?.workerImage,
-    input.profile?.baseImage,
-  ].filter(
-    (value, index, values): value is string =>
-      typeof value === "string" && value.length > 0 && values.indexOf(value) === index,
-  );
-}
-
-/** Host-only image gate actions — no worker/container yet (workspace.json may be absent). */
-const HOST_EXECUTION_IMAGE_ACTIONS = new Set([
-  "save_execution_dockerfile",
-  "approve_execution_image",
-  "build_execution_image",
-  "approve_and_build_execution_image",
-]);
 
 function runArtifactOptions(ctx: UiAppContext, runId: string) {
   return { runDirectory: ctx.store.runDirectory(runId) };
@@ -104,8 +59,9 @@ async function applyWrittenProjectSettings(
     const reloaded = await loadExternalProjectConfig({
       repository: previous.repositoryRoot,
     });
-    ctx.setProjectConfig(reloaded.config);
-    return reloaded.config;
+    const config = reloaded.config;
+    ctx.setProjectConfig(config);
+    return config;
   } catch {
     const merged: HarnessConfig = {
       ...written.config,
@@ -156,21 +112,11 @@ async function resolveBaseBranchOverride(
   }
 }
 
-function initialSetupFromOpened(
-  ctx: UiAppContext,
-  runId: string,
-  opened: OpenedRunHarness,
-) {
+function workerStateStartOptions(ctx: UiAppContext) {
   return {
-    runId,
-    config: opened.config,
-    store: ctx.store,
-    paths: opened.paths,
-    repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
-    git: opened.engine.git,
-    knowledge: opened.engine.knowledge,
-    advance: () => opened.engine.advance(runId),
-    onProgress: (message: string) => ctx.jobs.setDetail(runId, message),
+    stateServiceEndpoint: ctx.workerState.endpoint(),
+    issueStateCredential: (runId: string, options: { workerInstanceId: string }) =>
+      ctx.workerState.issueCredential(runId, options),
   };
 }
 
@@ -188,8 +134,8 @@ export async function handleRunsRoutes(
       ctx.getExecutionStatus !== undefined
         ? await ctx.getExecutionStatus()
         : {
-            runtime: projectConfig.execution?.runtime ?? "local",
-            ready: (projectConfig.execution?.runtime ?? "local") === "local",
+            runtime: "docker" as const,
+            ready: false,
             blockers: [],
           };
     json(response, 200, {
@@ -249,21 +195,6 @@ export async function handleRunsRoutes(
       throw new HttpError(503, ctx.agentReadiness.message ?? "The configured agent backend is unavailable");
     }
     const projectConfig = ctx.getProjectConfig();
-    if ((projectConfig.execution?.runtime ?? "local") === "docker") {
-      const execution =
-        ctx.getExecutionStatus !== undefined
-          ? await ctx.getExecutionStatus({ force: true })
-          : { ready: false, blockers: [{ message: "Execution status unavailable" }] };
-      if (!execution.ready) {
-        const detail = execution.blockers
-          .map((blocker) => ("message" in blocker ? blocker.message : String(blocker)))
-          .join("; ");
-        throw new HttpError(
-          503,
-          detail || "Docker execution runtime is not ready for new runs",
-        );
-      }
-    }
     const body = await readJsonBody(request);
     const idea = requiredString(body.idea, "idea", 100_000);
     const runId = optionalString(body.runId, "runId", 100) ?? randomUUID();
@@ -304,39 +235,12 @@ export async function handleRunsRoutes(
         },
       },
     });
-    const engine = new HarnessEngine(runConfig, {
-      backend: ctx.backend,
-      repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
-    });
-    // Creating the durable run must be quick. A first semantic index may
-    // take minutes for a large repository, so run it in the visible job
-    // queue rather than holding the browser request open.
-    // UI already prepares repository intelligence and refreshes knowledge
-    // inside the job queue so the browser request can return immediately.
-    const state = await engine.start(idea, runId, false, false);
+    // The HTTP adapter creates durable host state only. The Cordis lifecycle
+    // owns every Docker/image/workspace/worker side effect asynchronously.
+    const state = await ctx.runLifecycle.createRun(runConfig, idea, runId);
     if (state.phase !== "blocked" && state.phase !== "cancelled" && state.phase !== "completed") {
-      ctx.jobs.enqueue(runId, "index knowledge and reflect", async () => {
-        const opened = await openRunHarness(projectConfig, runId, {
-          backend: ctx.backend,
-          store: ctx.store,
-          repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
-          docker: ctx.docker,
-        });
-        if ((opened.config.execution?.runtime ?? "local") === "docker") {
-          if (!ctx.docker) throw new HttpError(503, "Docker client unavailable");
-          const { continueDockerRunAfterWorkspaceReady } = await import(
-            "../../../application/docker-initial-setup.js"
-          );
-          await continueDockerRunAfterWorkspaceReady({
-            projectConfig: ctx.getProjectConfig(),
-            runId,
-            docker: ctx.docker,
-            runDirectory: ctx.store.runDirectory(runId),
-            onProgress: (message) => ctx.jobs.setDetail(runId, message),
-          });
-        } else {
-          await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
-        }
+      ctx.jobs.enqueue(runId, "prepare Docker worker and reflect", async () => {
+        await ctx.runLifecycle.enqueue(runId);
       });
     }
     json(response, 202, { run: summarizeRun(state, ctx.jobs.get(runId)) });
@@ -356,7 +260,7 @@ export async function handleRunsRoutes(
       json(response, 200, { unchanged: true, signature });
       return true;
     }
-    const [events, sessions, agentActivity, artifacts, runConfig, installLog, workspace, executionState, importState, executionImage] =
+    const [events, sessions, agentActivity, artifacts, runConfig, installLog, workspace, executionState, importState] =
       await Promise.all([
         readEvents(ctx.store, runId),
         readSessionSummaries(ctx.store, runId),
@@ -373,7 +277,6 @@ export async function handleRunsRoutes(
           const { loadBundleImportState } = await import("../../../application/bundle-import-io.js");
           return loadBundleImportState(projectConfig, runId).catch(() => undefined);
         })(),
-        readExecutionImage(ctx.store, runId),
       ]);
     // git.currentBranch spawns a subprocess; only pay for it when the UI
     // actually needs it (blocked runs), and never fold it into the signature.
@@ -414,10 +317,7 @@ export async function handleRunsRoutes(
           importStatus: importState?.status,
           importRejectionReason: importState?.rejectionReason,
           resultBundleHash: importState?.resultBundleHash,
-          // Frozen runtime for this run — never offer switching.
-          frozenRuntime:
-            runConfig?.execution?.runtime ??
-            (workspace.kind === "docker-clone" ? "docker" : "local"),
+          frozenRuntime: workspace.kind === "docker-clone" ? "docker" : undefined,
         }
       : undefined;
     json(response, 200, {
@@ -429,7 +329,6 @@ export async function handleRunsRoutes(
       artifacts,
       activity,
       installLog,
-      executionImage,
       signature,
       ...(git ? { git } : {}),
       ...(ceilings ? { ceilings } : {}),
@@ -445,6 +344,35 @@ export async function handleRunsRoutes(
     const runId = decodeURIComponent(actionMatch[1]!);
     const body = await readJsonBody(request);
     const action = requiredString(body.action, "action", 40);
+    if (
+      ![
+        "advance",
+        "answer",
+        "apply_fix",
+        "cancel",
+        "cleanup",
+        "commit_preflight",
+        "confirm_grill",
+        "confirm_plan",
+        "confirm_verification",
+        "continue",
+        "generate_analysis_prompt",
+        "ignore_artifacts",
+        "note",
+        "propose_fix",
+        "recover_container",
+        "resolve_installs",
+        "resume",
+        "retry",
+        "retry_verification_baseline",
+        "set_rag",
+        "set_repository_intelligence",
+        "stop",
+        "accept_tree",
+      ].includes(action)
+    ) {
+      throw new HttpError(400, `Unsupported action: ${action}`);
+    }
     const stateForGate = action === "apply_fix" ? await ctx.store.load(runId).catch(() => null) : null;
     const applyFixIsConfigOnly =
       action === "apply_fix" &&
@@ -454,17 +382,12 @@ export async function handleRunsRoutes(
       action !== "cancel" &&
       action !== "note" &&
       action !== "stop" &&
-      action !== "save_execution_dockerfile" &&
-      action !== "approve_execution_image" &&
-      action !== "build_execution_image" &&
-      action !== "approve_and_build_execution_image" &&
       !applyFixIsConfigOnly &&
       !ctx.agentReadiness.ready
     ) {
       throw new HttpError(503, ctx.agentReadiness.message ?? "The configured agent backend is unavailable");
     }
     const workspaceMissing = await isRunWorkspaceMissing(ctx, runId);
-    const hostExecutionImageAction = HOST_EXECUTION_IMAGE_ACTIONS.has(action);
     const opened = await openRunHarness(
       projectConfig,
       runId,
@@ -479,17 +402,15 @@ export async function handleRunsRoutes(
           action !== "cancel" &&
           action !== "note" &&
           action !== "stop" &&
-          action !== "generate_analysis_prompt" &&
-          !hostExecutionImageAction,
-        // Docker runs pause for image approval before workspace.json exists.
-        allowMissingWorkspace: workspaceMissing || hostExecutionImageAction,
+          action !== "generate_analysis_prompt",
+        allowMissingWorkspace: workspaceMissing,
       },
     );
     // Analysis generation is tool-free and must remain available after a completed
     // run's disposable worktree has been cleaned up. Use the durable control root.
     const engine =
       action === "generate_analysis_prompt"
-        ? new HarnessEngine(opened.config, {
+        ? new WorkerHarnessRuntime(opened.config, {
             backend: ctx.backend,
             store: ctx.store,
             repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
@@ -509,11 +430,10 @@ export async function handleRunsRoutes(
       (action === "resume" || action === "retry" || action === "continue");
     const skipDockerProxy =
       action === "generate_analysis_prompt" ||
-      hostExecutionImageAction ||
       workspaceMissing ||
       dockerNeedsInitialSetup;
     const dockerProxy =
-      isDockerExecutionRuntime(opened.config) && !skipDockerProxy
+      !skipDockerProxy
         ? await resolveDockerMutationProxy({
             projectConfig,
             runConfig: opened.config,
@@ -540,8 +460,7 @@ export async function handleRunsRoutes(
     }
 
     if (action === "cancel") {
-      // Durable cancel.request first (visible to the worker via /run-state mount),
-      // then RPC so the in-process controller aborts immediately.
+      // Durable host cancellation first, then RPC for immediate in-process abort.
       await engine.writeCancelRequest(runId);
       if (dockerProxy) {
         const result = (await dockerProxy.invoke("cancel", {})) as {
@@ -566,22 +485,13 @@ export async function handleRunsRoutes(
     }
 
     const workerAction = mapHostActionToWorkerRpc(action);
-    if (
-      dockerProxy &&
-      (action === "continue" || action === "resume" || action === "advance")
-    ) {
+    if (action === "continue" || action === "resume" || action === "advance") {
       const latest = await ctx.store.load(runId);
       if (latest.phase === "publishing") {
-        // Host-only: quarantine import + push/PR (never container credentials).
+        // Host-only publication remains owned by the Cordis lifecycle.
         ctx.jobs.enqueue(runId, action, async () => {
           ctx.jobs.setDetail(runId, "Importing Docker result bundle on host");
-          await completeDockerHostPublish({
-            projectConfig,
-            runConfig: opened.config,
-            runId,
-            store: ctx.store,
-            dockerProxy,
-          });
+          await ctx.runLifecycle.enqueue(runId);
         });
         json(response, 202, { accepted: true, job: ctx.jobs.get(runId) });
         return true;
@@ -597,29 +507,7 @@ export async function handleRunsRoutes(
     }
 
     if (action === "continue") {
-      ctx.jobs.enqueue(runId, action, async () => {
-        const latest = await ctx.store.load(runId);
-        if (
-          latest.phase === "new" &&
-          (opened.config.execution?.runtime ?? "local") === "docker"
-        ) {
-          ctx.jobs.setDetail(runId, "Ensuring execution image and Docker workspace");
-          await opened.engine.ensureDockerWorkspaceReady(runId);
-          if (!ctx.docker) throw new HttpError(503, "Docker client unavailable");
-          const { continueDockerRunAfterWorkspaceReady } = await import(
-            "../../../application/docker-initial-setup.js"
-          );
-          await continueDockerRunAfterWorkspaceReady({
-            projectConfig: ctx.getProjectConfig(),
-            runId,
-            docker: ctx.docker,
-            runDirectory: ctx.store.runDirectory(runId),
-            onProgress: (message) => ctx.jobs.setDetail(runId, message),
-          });
-          return;
-        }
-        await engine.advance(runId);
-      });
+      ctx.jobs.enqueue(runId, action, () => ctx.runLifecycle.enqueue(runId));
     } else if (action === "generate_analysis_prompt") {
       ctx.jobs.enqueue(runId, "generate analysis prompt", async () => {
         ctx.jobs.setDetail(runId, "Generating a portable run-analysis prompt");
@@ -629,37 +517,7 @@ export async function handleRunsRoutes(
       // Jobs are intentionally process-local. A dashboard restart keeps the
       // durable run state but cannot safely assume that an interrupted
       // provider call should be retried. Make recovery an explicit action.
-      // Runs still in `new` retry repository intelligence then the document index; later
-      // phases refresh the index in case it was cleared while stopped.
-      ctx.jobs.enqueue(runId, "resume run", async () => {
-        const latest = await ctx.store.load(runId);
-        if (latest.phase === "new") {
-          if ((opened.config.execution?.runtime ?? "local") === "docker") {
-            ctx.jobs.setDetail(runId, "Ensuring execution image and Docker workspace");
-            await opened.engine.ensureDockerWorkspaceReady(runId);
-            if (!ctx.docker) throw new HttpError(503, "Docker client unavailable");
-            const { continueDockerRunAfterWorkspaceReady } = await import(
-              "../../../application/docker-initial-setup.js"
-            );
-            await continueDockerRunAfterWorkspaceReady({
-              projectConfig: ctx.getProjectConfig(),
-              runId,
-              docker: ctx.docker,
-              runDirectory: ctx.store.runDirectory(runId),
-              onProgress: (message) => ctx.jobs.setDetail(runId, message),
-            });
-            return;
-          }
-          await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
-          return;
-        }
-        await ctx.store.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>
-          engine.knowledge.refresh((progress) => {
-            ctx.jobs.setDetail(runId, progress.message);
-          }),
-        );
-        await engine.advance(runId);
-      });
+      ctx.jobs.enqueue(runId, "resume run", () => ctx.runLifecycle.enqueue(runId));
     } else if (action === "answer") {
       const { answers, parked, clarifications } = parseAnswerBody(body);
       ctx.jobs.enqueue(runId, action, async () => {
@@ -703,7 +561,7 @@ export async function handleRunsRoutes(
           runId,
           runArtifactOptions(ctx, runId),
         );
-        await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
+        await new WorkerHarnessRuntime(refreshed, { backend: ctx.backend }).advance(runId);
       });
     } else if (action === "retry") {
       const force = optionalBoolean(body.force, "force") ?? false;
@@ -711,28 +569,8 @@ export async function handleRunsRoutes(
       const maxRunCostUsd = optionalNonNegativeNumber(body.maxRunCostUsd, "maxRunCostUsd");
       ctx.jobs.enqueue(runId, action, async () => {
         ctx.jobs.setDetail(runId, "Retrying the blocked transition");
-        const resumed = await engine.retry(runId, { force, maxRunTokens, maxRunCostUsd });
-        if (resumed.phase === "new") {
-          if ((opened.config.execution?.runtime ?? "local") === "docker") {
-            ctx.jobs.setDetail(runId, "Ensuring execution image and Docker workspace");
-            await opened.engine.ensureDockerWorkspaceReady(runId);
-            if (!ctx.docker) throw new HttpError(503, "Docker client unavailable");
-            const { continueDockerRunAfterWorkspaceReady } = await import(
-              "../../../application/docker-initial-setup.js"
-            );
-            await continueDockerRunAfterWorkspaceReady({
-              projectConfig: ctx.getProjectConfig(),
-              runId,
-              docker: ctx.docker,
-              runDirectory: ctx.store.runDirectory(runId),
-              onProgress: (message) => ctx.jobs.setDetail(runId, message),
-            });
-            return;
-          }
-          await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
-          return;
-        }
-        await engine.advance(runId);
+        await engine.retry(runId, { force, maxRunTokens, maxRunCostUsd });
+        await ctx.runLifecycle.enqueue(runId);
       });
     } else if (action === "commit_preflight") {
       throw new HttpError(
@@ -749,166 +587,7 @@ export async function handleRunsRoutes(
     } else if (action === "recover_container") {
       ctx.jobs.enqueue(runId, action, async () => {
         ctx.jobs.setDetail(runId, "Recovering Docker worker against retained volume");
-        const workspace = await loadRunWorkspace(
-          ctx.getProjectConfig(),
-          runId,
-          runArtifactOptions(ctx, runId),
-        );
-        if (workspace.kind !== "docker-clone") {
-          throw new HttpError(400, "Container recovery only applies to docker-clone runs");
-        }
-        if (!ctx.docker) throw new HttpError(503, "Docker client unavailable");
-        const { ensureDockerWorkerSession } = await import(
-          "../../../application/docker-worker-session.js"
-        );
-        await ensureDockerWorkerSession({
-          projectConfig: ctx.getProjectConfig(),
-          runId,
-          docker: ctx.docker,
-          image: workspace.imageDigest,
-          workspaceVolumeName: workspace.workspaceVolumeName,
-          startIfMissing: true,
-        });
-      });
-    } else if (action === "save_execution_dockerfile") {
-      ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, "Saving execution Dockerfile");
-        const dockerfile =
-          typeof body.dockerfile === "string"
-            ? body.dockerfile
-            : typeof (body as { content?: unknown }).content === "string"
-              ? (body as { content: string }).content
-              : "";
-        if (!dockerfile.trim()) {
-          throw new HttpError(400, "dockerfile text is required");
-        }
-        const paths = (await import("../../../application/paths.js")).resolveHarnessPaths(
-          ctx.getProjectConfig(),
-        );
-        const runConfig = await loadRunConfig(ctx.getProjectConfig(), runId, runArtifactOptions(ctx, runId));
-        const {
-          saveExecutionDockerfile,
-          executionImageArtifactPaths,
-        } = await import("../../../application/execution-image-service.js");
-        const { readFile } = await import("node:fs/promises");
-        const artifacts = executionImageArtifactPaths(paths.stateRoot, runId);
-        let profile: { workerImage?: string; baseImage?: string } | undefined;
-        try {
-          profile = JSON.parse(await readFile(artifacts.profilePath, "utf8")) as {
-            workerImage?: string;
-            baseImage?: string;
-          };
-        } catch {
-          /* config allowlists remain authoritative */
-        }
-        const allowlist = executionDockerfileSaveAllowlist({
-          runConfig,
-          projectConfig: ctx.getProjectConfig(),
-          profile,
-        });
-        await saveExecutionDockerfile({
-          stateRoot: paths.stateRoot,
-          runId,
-          dockerfile,
-          allowlist,
-        });
-      });
-    } else if (action === "approve_execution_image") {
-      ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, "Approving generated execution image");
-        const paths = (await import("../../../application/paths.js")).resolveHarnessPaths(
-          ctx.getProjectConfig(),
-        );
-        const {
-          prepareExecutionImage,
-          approveExecutionImage,
-        } = await import("../../../application/execution-image-service.js");
-        const prepared = await prepareExecutionImage({
-          config: await loadRunConfig(ctx.getProjectConfig(), runId, runArtifactOptions(ctx, runId)),
-          stateRoot: paths.stateRoot,
-          runId,
-          projectStateRoot: paths.stateRoot,
-        });
-        if (prepared.status === "blocked") {
-          throw new HttpError(409, prepared.reason ?? "Execution image is blocked");
-        }
-        if (!("generated" in prepared) || !prepared.generated || !("cacheKey" in prepared)) {
-          throw new HttpError(409, "No generated execution image to approve");
-        }
-        await approveExecutionImage({
-          stateRoot: paths.stateRoot,
-          runId,
-          projectStateRoot: paths.stateRoot,
-          generated: prepared.generated,
-          cacheKey: prepared.cacheKey,
-        });
-      });
-    } else if (action === "build_execution_image") {
-      ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, "Building approved execution image");
-        if (!ctx.docker) throw new HttpError(503, "Docker client unavailable");
-        const paths = (await import("../../../application/paths.js")).resolveHarnessPaths(
-          ctx.getProjectConfig(),
-        );
-        const runConfig = await loadRunConfig(ctx.getProjectConfig(), runId, runArtifactOptions(ctx, runId));
-        const { buildApprovedExecutionImage } = await import(
-          "../../../application/execution-image-service.js"
-        );
-        await buildApprovedExecutionImage({
-          stateRoot: paths.stateRoot,
-          runId,
-          projectStateRoot: paths.stateRoot,
-          docker: ctx.docker,
-          tag: `agent-harness-run-${runId}`.toLowerCase().slice(0, 128),
-          timeoutMs: runConfig.execution?.docker?.buildTimeoutMs,
-          dockerPolicy: runConfig.execution?.docker,
-        });
-      });
-    } else if (action === "approve_and_build_execution_image") {
-      ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, "Approving and building execution image");
-        if (!ctx.docker) throw new HttpError(503, "Docker client unavailable");
-        const paths = (await import("../../../application/paths.js")).resolveHarnessPaths(
-          ctx.getProjectConfig(),
-        );
-        const runConfig = await loadRunConfig(ctx.getProjectConfig(), runId, runArtifactOptions(ctx, runId));
-        const { approveAndBuildExecutionImage } = await import(
-          "../../../application/execution-image-service.js"
-        );
-        await approveAndBuildExecutionImage({
-          config: runConfig,
-          stateRoot: paths.stateRoot,
-          runId,
-          projectStateRoot: paths.stateRoot,
-          repositoryRoot: paths.controlRoot,
-          docker: ctx.docker,
-          tag: `agent-harness-run-${runId}`.toLowerCase().slice(0, 128),
-          timeoutMs: runConfig.execution?.docker?.buildTimeoutMs,
-          dockerPolicy: runConfig.execution?.docker,
-        });
-        ctx.jobs.setDetail(runId, "Creating Docker workspace and continuing setup");
-        let latest = await ctx.store.load(runId);
-        if (latest.phase === "blocked" && latest.blockedFrom === "new") {
-          latest = await engine.retry(runId, { force: true });
-        }
-        await opened.engine.ensureDockerWorkspaceReady(runId);
-        latest = await ctx.store.load(runId);
-        if (latest.phase === "new") {
-          if ((opened.config.execution?.runtime ?? "local") === "docker") {
-            const { continueDockerRunAfterWorkspaceReady } = await import(
-              "../../../application/docker-initial-setup.js"
-            );
-            await continueDockerRunAfterWorkspaceReady({
-              projectConfig: ctx.getProjectConfig(),
-              runId,
-              docker: ctx.docker,
-              runDirectory: ctx.store.runDirectory(runId),
-              onProgress: (message) => ctx.jobs.setDetail(runId, message),
-            });
-          } else {
-            await runInitialSetupThenAdvance(initialSetupFromOpened(ctx, runId, opened));
-          }
-        }
+        await ctx.runLifecycle.enqueue(runId);
       });
     } else if (action === "accept_tree") {
       ctx.jobs.enqueue(runId, action, async () => {
@@ -988,7 +667,7 @@ export async function handleRunsRoutes(
         });
         // Reload frozen config so the planner sees updated verification policy.
         const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId, runArtifactOptions(ctx, runId));
-        await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
+        await new WorkerHarnessRuntime(refreshed, { backend: ctx.backend }).advance(runId);
       });
     } else if (action === "retry_verification_baseline") {
       const persistProjectDefaults =
@@ -1006,7 +685,7 @@ export async function handleRunsRoutes(
         });
         // Reload frozen config in case the operator edited verification commands.
         const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId, runArtifactOptions(ctx, runId));
-        await new HarnessEngine(refreshed, { backend: ctx.backend }).advance(runId);
+        await new WorkerHarnessRuntime(refreshed, { backend: ctx.backend }).advance(runId);
       });
     } else if (action === "set_rag") {
       const rag = optionalBoolean(body.rag, "rag");

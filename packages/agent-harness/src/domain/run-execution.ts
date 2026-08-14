@@ -34,6 +34,8 @@ export const RunExecutionStateSchema = z
       .default("pending"),
     /** Stable container name used for rediscovery after host/UI restart. */
     containerName: z.string().min(1).optional(),
+    /** Stable identity of this worker incarnation for lease fencing. */
+    workerInstanceId: z.string().min(1).optional(),
     /** Ephemeral — rediscovered via docker inspect / labels. */
     containerId: z.string().min(1).optional(),
     /** Published loopback host port (ephemeral; rediscover when missing). */

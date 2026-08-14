@@ -79,7 +79,7 @@ export async function assertUnsupportedGitFeaturesRejected(
     if (modules.exitCode === 0) {
       throw new HarnessFailure(
         "Docker execution rejects repositories that require Git submodules at the frozen base. " +
-          "Set execution.runtime to local, or remove submodule requirements before retrying. " +
+          "Remove submodule requirements before retrying. " +
           "(execution.docker.submoduleLfs.submodules currently supports only \"reject\".)",
         "execution",
         false,
@@ -95,7 +95,7 @@ export async function assertUnsupportedGitFeaturesRejected(
     if (lfsFiles.exitCode === 0 && lfsFiles.stdout.trim()) {
       throw new HarnessFailure(
         "Docker execution rejects repositories that require Git LFS at the frozen base. " +
-          "Set execution.runtime to local, or remove LFS-filtered paths before retrying. " +
+          "Remove LFS-filtered paths before retrying. " +
           "(execution.docker.submoduleLfs.lfs currently supports only \"reject\".)",
         "execution",
         false,
@@ -106,7 +106,7 @@ export async function assertUnsupportedGitFeaturesRejected(
     if (attrs.exitCode === 0 && /\bfilter=lfs\b/i.test(attrs.stdout)) {
       throw new HarnessFailure(
         "Docker execution rejects repositories whose .gitattributes declare Git LFS filters. " +
-          "Set execution.runtime to local, or remove LFS attribute rules before retrying.",
+          "Remove LFS attribute rules before retrying.",
         "execution",
         false,
       );

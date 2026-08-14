@@ -7,7 +7,6 @@ import {
 } from "../worker/protocol.js";
 import {
   ensureDockerWorkerSession,
-  isDockerExecutionRuntime,
   workerRpcActionForHostAction,
 } from "./docker-worker-session.js";
 
@@ -17,8 +16,7 @@ export type DockerMutationProxy = {
 };
 
 /**
- * Resolve an authenticated worker RPC client for a Docker-mode run.
- * Local runtime returns undefined so callers keep using the in-process engine.
+ * Resolve an authenticated worker RPC client for the Docker-only run.
  */
 export async function resolveDockerMutationProxy(input: {
   projectConfig: HarnessConfig;
@@ -26,7 +24,6 @@ export async function resolveDockerMutationProxy(input: {
   runId: string;
   docker?: DockerClient;
 }): Promise<DockerMutationProxy | undefined> {
-  if (!isDockerExecutionRuntime(input.runConfig)) return undefined;
   if (!input.docker) {
     throw new Error(
       "Docker execution runtime requires a DockerClient on the host control plane",

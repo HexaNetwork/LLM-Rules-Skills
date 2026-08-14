@@ -8,15 +8,7 @@ import {
 } from "./harness-home.js";
 
 /**
- * Worker-visible bind mount for the current run's durable state (Docker mode).
- * Host control plane keeps native `stateRoot` / run directories; the container sees
- * only this run's state at `/run-state` (ADR 0015).
- */
-export const WORKER_RUN_STATE_PATH = "/run-state" as const;
-
-/**
  * Worker-visible workspace root inside a Docker run container.
- * Local mode continues to use the host worktree path as `workspaceRoot`.
  */
 export const WORKER_WORKSPACE_PATH = "/workspace" as const;
 
@@ -91,22 +83,6 @@ export function runTransportDirectory(stateRoot: string, runId: string): string 
 /** Host-native path to transport/import.json for bundle import state. */
 export function runBundleImportPath(stateRoot: string, runId: string): string {
   return path.join(runTransportDirectory(stateRoot, runId), "import.json");
-}
-
-/**
- * Host-native directory for generated execution-image artifacts
- * (`Dockerfile`, hashes, validation, build log, digest) — never the control checkout.
- */
-export function runExecutionImageDirectory(stateRoot: string, runId: string): string {
-  return path.join(stateRoot, "runs", runId, "execution-image");
-}
-
-/**
- * Project-level execution-image cache metadata under harness home project state
- * (digest reuse after verifying the local image still exists).
- */
-export function projectExecutionImageCachePath(projectStateRoot: string): string {
-  return path.join(projectStateRoot, "execution-image-cache.json");
 }
 
 /**

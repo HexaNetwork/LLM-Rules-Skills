@@ -1,5 +1,4 @@
 export type { WorkspaceProvisioner, WorkspaceCleanupInspection, CreateWorkspaceInput } from "./types.js";
-export { LocalWorktreeProvisioner } from "./local-worktree-provisioner.js";
 export {
   DockerCloneProvisioner,
   defaultWorkspaceVolumeName,

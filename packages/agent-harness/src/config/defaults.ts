@@ -46,18 +46,11 @@ agent:
   # harness under WSL2/Linux for the same boundary (native Windows node cannot).
   sandbox: true
 
-# Execution runtime is independent of agent.provider (LLM backend).
-# local = linked worktree (default); docker = opt-in container-local clone (ADR 0015).
+# Execution is Docker-only.
 execution:
-  runtime: local
   docker:
-    generatedImagesEnabled: true
-    # Shared digest-pinned toolchain catalog (prefer harness-home via
-    # agent-harness execution approve-base --all --write-settings).
-    approvedBaseImages: []
-    # workerImageDigest: sha256:...
-    buildPullPolicy: if-missing
-    buildTimeoutMs: 1200000
+    # Required maintained worker/toolchain image, resolved by the installer.
+    # workerImageDigest: registry.example/agent-harness@sha256:...
     limits:
       cpus: 2
       memoryMb: 4096

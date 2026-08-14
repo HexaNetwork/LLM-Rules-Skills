@@ -251,7 +251,7 @@ repositoryRoot: .
     expect(CONFIG_VERSION).toBe(16);
     expect(parsed.agent.sandbox).toBe(true);
     expect(parsed.agent.promptBuilder).toBe(false);
-    expect(parsed.execution.runtime).toBe("local");
+    expect(parsed.execution).not.toHaveProperty("runtime");
     expect(parsed.execution.docker.sandboxRequired).toBe(true);
     expect(parsed.knowledge.guidance.enabled).toBe(true);
     expect(parsed.git.ignoredArtifactPatterns.length).toBeGreaterThan(0);
@@ -305,12 +305,12 @@ repositoryRoot: .
       maxCharacters: 1_000});
   });
 
-  it("defaults missing execution on older frozen configs to local runtime", () => {
+  it("normalizes older frozen configs to Docker-only execution policy", () => {
     const frozen = normalizeFrozenRunConfig({
       repositoryRoot: "C:/tmp/project",
       configVersion: 15,
     });
-    expect(frozen.execution.runtime).toBe("local");
+    expect(frozen.execution).not.toHaveProperty("runtime");
     expect(frozen.execution.docker.network.runtime).toBe("bridge");
     expect(configurationHash(frozen)).toBe(configurationHash({
       ...frozen,
@@ -318,25 +318,21 @@ repositoryRoot: .
     }));
   });
 
-  it("hashes execution policy but omits docker runtime stamp paths", () => {
+  it("hashes immutable Docker execution policy but omits runtime stamp paths", () => {
     const base = HarnessConfigSchema.parse({ repositoryRoot: "." });
     const withDockerPolicy = {
       ...base,
       execution: {
         ...base.execution,
-        runtime: "docker" as const,
         docker: {
           ...base.execution.docker,
           workerImageDigest: "sha256:abc",
-          approvedBaseImages: ["node@sha256:base"],
         },
       },
     };
     expect(configurationPolicyDiff(base, withDockerPolicy)).toEqual(
       expect.arrayContaining([
-        "execution.runtime",
         "execution.docker.workerImageDigest",
-        "execution.docker.approvedBaseImages",
       ]),
     );
     const stamped = {

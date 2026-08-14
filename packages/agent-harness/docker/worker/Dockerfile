@@ -3,6 +3,10 @@
 # Binary path must match WORKER_IMAGE_BINARY_PATH in execution-image-generator.
 FROM node:22-bookworm-slim
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /opt/agent-harness
 
 COPY package.json ./

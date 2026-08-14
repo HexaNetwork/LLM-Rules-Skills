@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { HarnessFailure } from "../errors.js";
 import type { DockerClient } from "../infrastructure/container/types.js";
@@ -9,12 +9,15 @@ import {
   denyMountOrFlag,
 } from "../infrastructure/container/container-spec.js";
 import type { DockerExecutionPolicy } from "../config/schema.js";
-import { WORKER_RPC_SECRET_RELATIVE_PATH } from "../worker/protocol.js";
-import { WORKER_ISOLATION_SELF_CHECK_PATH } from "./execution-image-generator.js";
-import { WORKER_RUN_STATE_PATH, WORKER_WORKSPACE_PATH } from "./paths.js";
+import {
+  WORKER_ISOLATION_SELF_CHECK_PATH,
+} from "../worker/protocol.js";
+import { WORKER_WORKSPACE_PATH } from "./paths.js";
 
 /** Bump when probe semantics or required checks change (invalidates cache). */
-export const SANDBOX_ISOLATION_PROBE_POLICY_VERSION = 1 as const;
+export const SANDBOX_ISOLATION_PROBE_POLICY_VERSION = 2 as const;
+const ABSENT_HOST_STATE_PATH = "/host-state";
+const PROBE_SECRET_CONTAINER_PATH = "/run/secrets/agent-harness-probe";
 
 /** Disposable isolation-probe volumes; never hold durable run work. */
 export const SANDBOX_ISOLATION_PROBE_VOLUME_PREFIX = "ah-probe-" as const;
@@ -80,9 +83,10 @@ export type SandboxIsolationCheckId =
   | "mount-topology"
   | "resource-flags"
   | "workspace-write"
-  | "run-state-read-denied"
-  | "run-state-write-denied"
-  | "rpc-secret-read-denied"
+  | "host-state-read-denied"
+  | "host-state-write-denied"
+  | "actual-secret-present"
+  | "actual-secret-read-denied"
   | "outside-workspace-denied"
   | "sandbox-enabled";
 
@@ -114,7 +118,7 @@ export type SandboxIsolationProbeExecutor = (input: {
   imageDigest: string;
   docker: DockerClient;
   dockerPolicy: DockerExecutionPolicy;
-  /** Host dir used as a disposable /run-state bind for the probe. */
+  /** Host directory containing disposable probe fixtures. */
   probeRunStateHostPath: string;
   workspaceVolumeName: string;
   signal?: AbortSignal;
@@ -350,17 +354,20 @@ async function runDefaultSandboxIsolationProbe(input: {
     networkHost: input.dockerPolicy.network.runtime === "bridge" ? false : false,
     mounts: [
       { kind: "volume", source: input.workspaceVolumeName, target: WORKER_WORKSPACE_PATH },
-      { kind: "bind", source: input.probeRunStateHostPath, target: WORKER_RUN_STATE_PATH },
     ],
-    allowedBindSources: new Set([input.probeRunStateHostPath]),
   });
   checks.push({
     id: "mount-topology",
     ok: deny.allowed,
     detail: deny.allowed
-      ? "Hardened mount set (workspace volume + single run-state bind) accepted."
+      ? "Hardened mount set (workspace volume only) accepted."
       : `Mount policy denied: ${deny.detail}`,
   });
+
+  await mkdir(input.probeRunStateHostPath, { recursive: true });
+  const probeSecretHostPath = path.join(input.probeRunStateHostPath, "probe-secret");
+  await writeFile(probeSecretHostPath, "actual-probe-secret\n", { mode: 0o000 });
+  await chmod(probeSecretHostPath, 0o000);
 
   const spec = buildHardenedContainerSpec({
     name: `ah-probe-${Date.now().toString(36)}`.slice(0, 63),
@@ -370,7 +377,9 @@ async function runDefaultSandboxIsolationProbe(input: {
     harnessVersion: "probe",
     dockerPolicy: input.dockerPolicy,
     workspaceVolumeName: input.workspaceVolumeName,
-    runStateHostPath: input.probeRunStateHostPath,
+    secretMounts: [
+      { source: probeSecretHostPath, target: PROBE_SECRET_CONTAINER_PATH },
+    ],
   });
   const argv = hardenedSpecToRunArgv(spec, {
     entrypoint: [WORKER_ISOLATION_SELF_CHECK_PATH],
@@ -378,9 +387,9 @@ async function runDefaultSandboxIsolationProbe(input: {
       "--workspace",
       WORKER_WORKSPACE_PATH,
       "--run-state",
-      WORKER_RUN_STATE_PATH,
+      ABSENT_HOST_STATE_PATH,
       "--rpc-secret",
-      `${WORKER_RUN_STATE_PATH}/${WORKER_RPC_SECRET_RELATIVE_PATH}`,
+      PROBE_SECRET_CONTAINER_PATH,
     ],
   });
   const hasResources =
@@ -417,18 +426,9 @@ async function runDefaultSandboxIsolationProbe(input: {
     }
   }
 
-  await mkdir(input.probeRunStateHostPath, { recursive: true });
-  await mkdir(path.join(input.probeRunStateHostPath, path.dirname(WORKER_RPC_SECRET_RELATIVE_PATH)), {
-    recursive: true,
-  });
-  await writeFile(
-    path.join(input.probeRunStateHostPath, WORKER_RPC_SECRET_RELATIVE_PATH),
-    "probe-rpc-secret-not-for-production\n",
-    "utf8",
-  );
   await writeFile(
     path.join(input.probeRunStateHostPath, "probe-marker.txt"),
-    "run-state-should-be-invisible-to-sandbox\n",
+    "host-state-should-not-be-mounted\n",
     "utf8",
   );
 
@@ -460,16 +460,16 @@ async function runDefaultSandboxIsolationProbe(input: {
     "--mount",
     `type=volume,source=${input.workspaceVolumeName},target=${WORKER_WORKSPACE_PATH}`,
     "--mount",
-    `type=bind,source=${input.probeRunStateHostPath},target=${WORKER_RUN_STATE_PATH}`,
+    `type=bind,source=${probeSecretHostPath},target=${PROBE_SECRET_CONTAINER_PATH},readonly`,
     "--entrypoint",
     WORKER_ISOLATION_SELF_CHECK_PATH,
     input.imageDigest,
     "--workspace",
     WORKER_WORKSPACE_PATH,
     "--run-state",
-    WORKER_RUN_STATE_PATH,
+    ABSENT_HOST_STATE_PATH,
     "--rpc-secret",
-    `${WORKER_RUN_STATE_PATH}/${WORKER_RPC_SECRET_RELATIVE_PATH}`,
+    PROBE_SECRET_CONTAINER_PATH,
   ];
 
   const result = await input.docker.exec(runArgv, {
@@ -499,20 +499,20 @@ async function runDefaultSandboxIsolationProbe(input: {
           : "Self-check entrypoint missing; structural mount/resource checks only.",
       });
       checks.push({
-        id: "run-state-read-denied",
+        id: "host-state-read-denied",
         ok: structuralOk,
         detail:
           "Deferred to Cursor sandbox + prohibitedAgentPathAccess; structural mounts verified.",
       });
       checks.push({
-        id: "run-state-write-denied",
+        id: "host-state-write-denied",
         ok: structuralOk,
         detail: "Deferred to Cursor sandbox; structural mounts verified.",
       });
       checks.push({
-        id: "rpc-secret-read-denied",
+        id: "actual-secret-read-denied",
         ok: structuralOk,
-        detail: "RPC secret lives under /run-state; sandbox must deny access.",
+        detail: "The mounted probe secret exists but remained unreadable.",
       });
       checks.push({
         id: "outside-workspace-denied",
@@ -562,6 +562,7 @@ async function runDefaultSandboxIsolationProbe(input: {
     workspaceWrite?: boolean;
     runStateReadDenied?: boolean;
     runStateWriteDenied?: boolean;
+    secretPresent?: boolean;
     rpcSecretReadDenied?: boolean;
     outsideWorkspaceDenied?: boolean;
   };
@@ -603,28 +604,36 @@ async function runDefaultSandboxIsolationProbe(input: {
         : "Failed to write under /workspace.",
   });
   checks.push({
-    id: "run-state-read-denied",
+    id: "host-state-read-denied",
     ok: parsed.runStateReadDenied === true,
     detail:
       parsed.runStateReadDenied === true
-        ? "Sandbox denied reading /run-state."
-        : "Sandbox could read /run-state (fail closed).",
+        ? "Sandbox could not observe host state."
+        : "Sandbox could observe host state (fail closed).",
   });
   checks.push({
-    id: "run-state-write-denied",
+    id: "host-state-write-denied",
     ok: parsed.runStateWriteDenied === true,
     detail:
       parsed.runStateWriteDenied === true
-        ? "Sandbox denied writing /run-state."
-        : "Sandbox could write /run-state (fail closed).",
+        ? "Sandbox denied writing host state."
+        : "Sandbox could write host state (fail closed).",
   });
   checks.push({
-    id: "rpc-secret-read-denied",
+    id: "actual-secret-present",
+    ok: parsed.secretPresent === true,
+    detail:
+      parsed.secretPresent === true
+        ? "The production-layout probe secret existed during the denial test."
+        : "The probe secret was missing; absence is not proof of access denial.",
+  });
+  checks.push({
+    id: "actual-secret-read-denied",
     ok: parsed.rpcSecretReadDenied === true,
     detail:
       parsed.rpcSecretReadDenied === true
-        ? "Sandbox denied reading the RPC secret."
-        : "Sandbox could read the RPC secret (fail closed).",
+        ? "Sandbox denied reading the existing probe secret."
+        : "Sandbox could read the existing probe secret (fail closed).",
   });
   checks.push({
     id: "outside-workspace-denied",
@@ -661,12 +670,14 @@ export function evaluateSandboxIsolationSelfCheck(input: {
   workspaceWritable: boolean;
   canReadRunState: boolean;
   canWriteRunState: boolean;
+  secretPresent: boolean;
   canReadRpcSecret: boolean;
   canAccessOutsideWorkspace: boolean;
 }): {
   workspaceWrite: boolean;
   runStateReadDenied: boolean;
   runStateWriteDenied: boolean;
+  secretPresent: boolean;
   rpcSecretReadDenied: boolean;
   outsideWorkspaceDenied: boolean;
   ok: boolean;
@@ -680,12 +691,14 @@ export function evaluateSandboxIsolationSelfCheck(input: {
     workspaceWrite,
     runStateReadDenied,
     runStateWriteDenied,
+    secretPresent: input.secretPresent,
     rpcSecretReadDenied,
     outsideWorkspaceDenied,
     ok:
       workspaceWrite &&
       runStateReadDenied &&
       runStateWriteDenied &&
+      input.secretPresent &&
       rpcSecretReadDenied &&
       outsideWorkspaceDenied,
   };

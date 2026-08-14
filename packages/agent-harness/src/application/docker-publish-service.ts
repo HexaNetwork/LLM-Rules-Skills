@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import type { HarnessConfig } from "../config/schema.js";
 import { loadRunWorkspace, writeRunWorkspace } from "../config/io.js";
 import {
@@ -25,7 +26,7 @@ import {
   readResultManifest,
   type ResultBundleManifest,
 } from "../git/result-export.js";
-import type { RunStore } from "../store.js";
+import type { RunRepository as RunStore } from "./run-repository.js";
 import { WORKER_WORKSPACE_PATH } from "./paths.js";
 import {
   hostTransportDirectory,
@@ -33,6 +34,8 @@ import {
   writeBundleImportState,
 } from "./bundle-import-io.js";
 import type { DockerMutationProxy } from "./docker-run-proxy.js";
+
+const RESULT_BUNDLE_CHUNK_BYTES = 512 * 1024;
 import { writeRunExecutionState, loadRunExecutionState } from "./execution-state-io.js";
 import type { RunWorkspace } from "../domain/workspace.js";
 
@@ -49,9 +52,8 @@ export type WorkerPrepareExportResult = {
 };
 
 /**
- * Worker-side prepare-export: write result.bundle + manifest under the run's
- * `transport/` directory (host-visible via /run-state mount) and persist
- * `transport/import.json` as export-ready.
+ * Worker-side prepare-export: write result.bundle + manifest through the
+ * selected transport and persist `transport/import.json` as export-ready.
  */
 export async function prepareDockerResultExport(input: {
   config: HarnessConfig;
@@ -59,6 +61,7 @@ export async function prepareDockerResultExport(input: {
   runId: string;
   workspace: RunWorkspace;
   workspacePath?: string;
+  transport?: "rpc" | "filesystem";
 }): Promise<WorkerPrepareExportResult> {
   const state = await input.store.load(input.runId);
   const baseSha = input.workspace.baseSha;
@@ -66,8 +69,13 @@ export async function prepareDockerResultExport(input: {
     throw new HarnessFailure("Docker export requires a frozen workspace baseSha", "execution", false);
   }
 
-  // Run directory is store.runDirectory (host: …/runs/<id>; worker: /run-state).
-  const transportDirectory = path.join(input.store.runDirectory(input.runId), "transport");
+  const remoteExport = input.transport === "rpc";
+  const transportDirectory = remoteExport
+    ? path.join("/tmp", `agent-harness-export-${input.runId}`)
+    : path.join(input.store.runDirectory(input.runId), "transport");
+  if (remoteExport) {
+    await rm(transportDirectory, { recursive: true, force: true });
+  }
 
   const expectedCommitShas = state.tasks
     .map((task) => task.commitSha)
@@ -99,6 +107,30 @@ export async function prepareDockerResultExport(input: {
     noChange: exported.manifest.noChange,
     updatedAt: new Date().toISOString(),
   });
+  if (remoteExport) {
+    const manifestContents = await readFile(
+      path.join(transportDirectory, RESULT_MANIFEST_FILENAME),
+      "utf8",
+    );
+    await input.store.writeText(
+      input.runId,
+      `transport/${RESULT_MANIFEST_FILENAME}`,
+      manifestContents,
+    );
+    if (!exported.manifest.noChange) {
+      const bundle = await readFile(path.join(transportDirectory, RESULT_BUNDLE_FILENAME));
+      for (let offset = 0, index = 0; offset < bundle.length; offset += RESULT_BUNDLE_CHUNK_BYTES) {
+        const chunk = bundle.subarray(offset, offset + RESULT_BUNDLE_CHUNK_BYTES);
+        await input.store.writeText(
+          input.runId,
+          `transport/result-bundle-chunks/${chunkId(index)}.base64`,
+          chunk.toString("base64"),
+        );
+        index += 1;
+      }
+    }
+    await rm(transportDirectory, { recursive: true, force: true });
+  }
   await input.store.writeJson(input.runId, "transport/import.json", importState);
 
   await input.store.record(state, "run.bundle_exported", {
@@ -187,10 +219,16 @@ export async function completeDockerHostPublish(input: {
     throw new HarnessFailure("Docker publish requires frozen baseSha", "execution", false);
   }
 
+  let importState =
+    (await loadBundleImportState(projectConfig, runId)) ??
+    BundleImportStateSchema.parse({
+      version: 1,
+      status: "export-ready",
+      updatedAt: new Date().toISOString(),
+    });
   const transportDirectory = hostTransportDirectory(projectConfig, runId);
-  const manifest = await readResultManifest(
-    path.join(transportDirectory, RESULT_MANIFEST_FILENAME),
-  );
+  await materializeResultTransport(store, runId, transportDirectory, importState);
+  const manifest = await readResultManifest(path.join(transportDirectory, RESULT_MANIFEST_FILENAME));
 
   const title =
     state.reflectBrief?.confirmedStructured?.proposedTitle ??
@@ -204,14 +242,6 @@ export async function completeDockerHostPublish(input: {
       branchPrefix: runConfig.git.branchPrefix,
       title,
       runId,
-    });
-
-  let importState =
-    (await loadBundleImportState(projectConfig, runId)) ??
-    BundleImportStateSchema.parse({
-      version: 1,
-      status: "export-ready",
-      updatedAt: new Date().toISOString(),
     });
 
   try {
@@ -364,6 +394,45 @@ export async function completeDockerHostPublish(input: {
     "run.completed",
     { pullRequestUrl, dockerHostPublish: true },
   );
+}
+
+async function materializeResultTransport(
+  store: RunStore,
+  runId: string,
+  transportDirectory: string,
+  importState: BundleImportState,
+): Promise<void> {
+  await mkdir(transportDirectory, { recursive: true });
+  const manifest = await store.readText(runId, `transport/${RESULT_MANIFEST_FILENAME}`);
+  await writeFile(path.join(transportDirectory, RESULT_MANIFEST_FILENAME), manifest, "utf8");
+  if (importState.noChange === true) return;
+
+  const bundleBytes = importState.bundleBytes;
+  if (typeof bundleBytes !== "number" || bundleBytes <= 0) {
+    throw new HarnessFailure("Export-ready result is missing bundle byte length", "execution", false);
+  }
+  const chunkCount = Math.ceil(bundleBytes / RESULT_BUNDLE_CHUNK_BYTES);
+  const chunks: Buffer[] = [];
+  for (let index = 0; index < chunkCount; index += 1) {
+    const encoded = await store.readText(
+      runId,
+      `transport/result-bundle-chunks/${chunkId(index)}.base64`,
+    );
+    chunks.push(Buffer.from(encoded, "base64"));
+  }
+  const bundle = Buffer.concat(chunks);
+  if (bundle.length !== bundleBytes) {
+    throw new HarnessFailure(
+      `Result bundle transport length mismatch: expected ${bundleBytes}, received ${bundle.length}`,
+      "execution",
+      true,
+    );
+  }
+  await writeFile(path.join(transportDirectory, RESULT_BUNDLE_FILENAME), bundle);
+}
+
+function chunkId(index: number): string {
+  return index.toString().padStart(6, "0");
 }
 
 export type { ResultBundleManifest };

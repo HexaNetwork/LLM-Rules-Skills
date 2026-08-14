@@ -1,13 +1,5 @@
 /** Browser JS fragment inlined by renderDashboard (Phase 4). */
-export const renderRunScript = `    function isExecutionImageApprovalFailure(failureText) {
-      var failure = String(failureText || "").toLowerCase();
-      return failure.indexOf("requires operator approval before docker clone") >= 0 ||
-        failure.indexOf("approve and build") >= 0 ||
-        (failure.indexOf("execution-image") >= 0 && failure.indexOf("image.digest") >= 0) ||
-        failure.indexOf("built execution image digest") >= 0;
-    }
-
-    function renderSidebar() {
+export const renderRunScript = `    function renderSidebar() {
       var runList = $("runList");
       var scrollTop = runList ? runList.scrollTop : 0;
       var needle = state.filter.toLowerCase();
@@ -15,15 +7,13 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
       var html = runs.length ? runs.map(function (run) {
         var phase = effectivePhase(run);
         var title = shortTitle(run.title || run.idea || run.destination || run.runId, 62);
-        var imageGate = phase === "blocked" && isExecutionImageApprovalFailure(run.failure);
         var progress = run.taskProgress && run.taskProgress.total
           ? run.taskProgress.completed + "/" + run.taskProgress.total
-          : (imageGate ? "awaiting image" : phaseLabel(phase));
-        // Operator image approval is a setup step, not a failure — skip the red "!".
-        var warn = (phase === "failed" || (phase === "blocked" && !imageGate))
+          : phaseLabel(phase);
+        var warn = (phase === "failed" || phase === "blocked")
           ? '<span class="run-warn" title="This run needs attention — open it to see the error" aria-label="Run needs attention">!</span>'
           : "";
-        return '<button class="run-item ' + (run.runId === state.selected && state.view === "runs" ? "active" : "") + '" data-run="' + attr(run.runId) + '"><div class="run-title"><i class="dot ' + attr(imageGate ? "waiting" : phase) + '"></i><span>' + esc(title) + '</span>' + warn + '</div><div class="run-meta"><span>' + esc(progress) + '</span><span>' + esc(ago(run.updatedAt)) + '</span></div></button>';
+        return '<button class="run-item ' + (run.runId === state.selected && state.view === "runs" ? "active" : "") + '" data-run="' + attr(run.runId) + '"><div class="run-title"><i class="dot ' + attr(phase) + '"></i><span>' + esc(title) + '</span>' + warn + '</div><div class="run-meta"><span>' + esc(progress) + '</span><span>' + esc(ago(run.updatedAt)) + '</span></div></button>';
       }).join("") : '<div class="empty" style="padding:25px 10px">No matching runs</div>';
       // Unreadable runs are listed, not hidden: a run silently missing from this
       // list is indistinguishable from a run the harness lost.
@@ -66,11 +56,10 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
         { id: "activity", label: "Agent activity" },
         { id: "artifacts", label: "Artifacts" },
       ];
-      if (shouldShowExecutionImageTab(s)) {
-        tabs.splice(4, 0, { id: "execution-image", label: "Container" });
+      if (state.detail.workspace && state.detail.workspace.kind === "docker-clone") {
+        tabs.splice(4, 0, { id: "container", label: "Container" });
       }
       if (state.tab === "sessions") state.tab = "activity";
-      if (state.tab === "execution-image" && !shouldShowExecutionImageTab(s)) state.tab = "overview";
       var fullIdea = String(s.idea || "");
       var subtitle = title !== fullIdea ? '<div class="subtitle">' + esc(fullIdea) + '</div>' : '';
       var html = '<div class="title-row"><div><div class="eyebrow">Run ' + esc(s.runId.slice(0,8)) + '</div><h1>' + esc(title) + '</h1>' + subtitle + '</div><span class="badge ' + attr(phase) + '" data-testid="run-status"><i class="dot ' + attr(phase) + '"></i>' + esc(phaseLabel(phase)) + '</span></div>';
@@ -82,51 +71,8 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
       else if (state.tab === "decisions") renderDecisions(s);
       else if (state.tab === "tasks") renderTasks(s);
       else if (state.tab === "activity") renderAgentActivity();
-      else if (state.tab === "execution-image") renderExecutionImageTab(s);
+      else if (state.tab === "container") renderContainerTab(s);
       else renderArtifacts();
-    }
-
-    function shouldShowExecutionImageTab(s) {
-      var image = state.detail && state.detail.executionImage;
-      if (image && image.present) return true;
-      var workspace = state.detail && state.detail.workspace;
-      if (workspace && workspace.frozenRuntime === "docker") return true;
-      if (s && s.blockedKind === "execution") return true;
-      var failure = String((s && s.failure) || "").toLowerCase();
-      return isExecutionImageApprovalFailure(failure) ||
-        failure.indexOf("execution image") >= 0;
-    }
-
-    function executionImageStatusLabel(image) {
-      if (!image || !image.present) return "not generated";
-      if (image.imageDigest) return "built";
-      if (image.approval) return "approved · not built";
-      return "awaiting approval";
-    }
-
-    function renderExecutionImagePreview(image, options) {
-      options = options || {};
-      if (!image || !image.present || !image.dockerfile) {
-        return options.allowEmpty
-          ? '<div class="muted" style="margin-top:10px">No generated Dockerfile is available for this run yet.</div>'
-          : "";
-      }
-      var profile = image.profile || {};
-      var meta = [];
-      if (profile.stack) meta.push("stack <code>" + esc(String(profile.stack)) + "</code>");
-      if (profile.baseImage) {
-        var base = String(profile.baseImage);
-        meta.push("base <code title=\\"" + attr(base) + "\\">" + esc(base.length > 56 ? base.slice(0, 56) + "…" : base) + "</code>");
-      }
-      meta.push(esc(executionImageStatusLabel(image)));
-      if (image.dockerfileHash) meta.push("hash <code>" + esc(image.dockerfileHash.slice(0, 12)) + "</code>");
-      return '<div class="execution-image-preview" style="margin-top:12px">' +
-        '<div class="muted" style="margin-bottom:6px"><strong>Generated Dockerfile</strong>' + (meta.length ? '<span class="faint"> · ' + meta.join(" · ") + "</span>" : "") + "</div>" +
-        '<pre class="dockerfile-preview" data-scroll-key="execution-dockerfile">' + esc(image.dockerfile) + "</pre>" +
-        (options.showTabLink
-          ? '<div style="margin-top:8px"><button type="button" class="btn small" data-tab="execution-image">Open Container tab</button></div>'
-          : "") +
-        "</div>";
     }
 
     function actionButtons(s, phase) {
@@ -159,14 +105,9 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
           : '<button class="btn small" data-action="stop" title="Finish the current task, then halt">Stop after task</button>';
       }
       if (s.phase === "blocked" && !state.detail.job) {
-        var isImageGate = s.blockedKind === "execution" || isExecutionImageApprovalFailure(s.failure);
-        if (isImageGate) {
-          out += '<button class="btn small primary" data-action="approve_and_build_execution_image">Approve &amp; build image</button>';
-        } else {
-          out += s.blockedRetriable === false
-            ? '<button class="btn small primary" data-action="retry" data-force="true">Retry anyway</button>'
-            : '<button class="btn small primary" data-action="retry">Retry</button>';
-        }
+        out += s.blockedRetriable === false
+          ? '<button class="btn small primary" data-action="retry" data-force="true">Retry anyway</button>'
+          : '<button class="btn small primary" data-action="retry">Retry</button>';
       }
       if (!["completed","cancelled"].includes(s.phase)) out += '<button class="btn small danger" data-action="cancel" data-testid="cancel-run">Cancel</button>';
       out += '<button class="btn small" data-action="generate_analysis_prompt" title="Ask an agent to package this run for analysis">Generate analysis prompt</button>';
@@ -220,13 +161,6 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
       }
       // Prefer string includes over path regexes: this file is a template-literal
       // script fragment, and slashes in regex literals are easy to break in that chain.
-      if (isExecutionImageApprovalFailure(text)) {
-        return {
-          id: "execution-image",
-          title: "Execution image approval is required",
-          hint: "Review the generated Dockerfile below, then Approve and build. The harness will create the Docker workspace and continue automatically.",
-        };
-      }
       if (kind && byKind[kind]) return byKind[kind];
       var patterns = [
         { id: "dirty-tree",
@@ -667,13 +601,7 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
         var failureText = String(s.failure || "");
         var isTreeDivergence = /Working tree diverged|Workspace diverged|Diverging paths/i.test(failureText);
         var isDirtyTree = !isTreeDivergence && (remediation.id === "dirty-tree" || /dirty working tree|uncommitted changes|working tree is not clean/i.test(failureText));
-        var failureLower = failureText.toLowerCase();
-        var isExecutionImageGate = remediation.id === "execution-image" ||
-          isExecutionImageApprovalFailure(failureText) ||
-          failureLower.indexOf("execution image") >= 0;
-        var failureDetail = isExecutionImageGate
-          ? ""
-          : (isDirtyTree || isTreeDivergence)
+        var failureDetail = (isDirtyTree || isTreeDivergence)
           ? '<pre style="margin-top:8px">' + esc(s.failure || "") + '</pre>'
           : '<details data-details-key="raw-failure"><summary>Raw failure detail</summary><pre>' + esc(s.failure || "The current transition could not complete.") + '</pre></details>';
         var commitControls = "";
@@ -705,15 +633,7 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
             '</div></div>';
         }
         var retryControls = "";
-        var executionImagePreview = "";
-        if (isExecutionImageGate) {
-          executionImagePreview = renderExecutionImagePreview(state.detail.executionImage, { showTabLink: true, allowEmpty: true });
-          retryControls =
-            '<div class="alert-actions">' +
-            '<button class="btn primary" data-action="approve_and_build_execution_image">Approve &amp; build image</button>' +
-            '<button class="btn" data-tab="execution-image">Container tab</button>' +
-            '</div>';
-        } else if (s.blockedKind === "budget") {
+        if (s.blockedKind === "budget") {
           var ceilings = (state.detail && state.detail.ceilings) || {};
           var currentTokens = ceilings.maxRunTokens || 0;
           var currentCost = ceilings.maxRunCostUsd || 0;
@@ -732,15 +652,13 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
         } else if (!isTreeDivergence) {
           retryControls = '<button class="btn danger" data-action="retry">Retry transition</button>';
         }
-        if (retryControls && !isExecutionImageGate) {
+        if (retryControls) {
           retryControls = '<div class="alert-actions">' + retryControls + '</div>';
         }
         var fixer = s.fixerRecovery;
         var fixerControls = '';
         var isConfigBlock = s.blockedKind === 'config' || /run configuration changed|configurationHash|resume with the persisted run config|configVersion .+ is newer than harness|Test command could not be launched/i.test(String(s.failure || ''));
-        if (isExecutionImageGate) {
-          fixerControls = '<strong>Approve the generated image</strong><div class="muted" style="margin-top:5px">This is an operator gate, not an agent repair. Review the Dockerfile above (or in the Execution image tab), then Approve &amp; build. The harness runs the isolation probe when required and continues setup.</div>';
-        } else if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
+        if (fixer && fixer.status === 'proposed' && fixer.role === 'config-fixer') {
           var repairDetails = formatConfigRepair(fixer.plan.configPatch || {});
           var persistButton = canEditSettings
             ? '<button class="btn" data-action="apply_fix" data-persist-project-defaults="true" title="Update this run frozen config and write the same patch into agent-harness.config.yaml for future runs">Apply to run + project defaults</button>'
@@ -758,7 +676,7 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
         } else {
           fixerControls = '<strong>Fix with an agent</strong><div class="muted" style="margin-top:5px">Describe how you want this handled. The fixer will propose a plan first; it cannot edit until you approve it.</div><div class="field" style="margin-top:10px"><label for="fixerGuidance">Recovery guidance</label><textarea id="fixerGuidance" rows="3" placeholder="For example: preserve the existing test and update the configured test path patterns"></textarea></div><button class="btn" data-action="propose_fix">Draft recovery plan</button>';
         }
-        html += '<div class="card"><div class="alert' + (isExecutionImageGate ? " warning" : "") + '"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div>' + (isExecutionImageGate ? "" : '<div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>') + failureDetail + executionImagePreview + commitControls + acceptTreeControls + ignoreArtifactControls + '</div>' + retryControls + '</div><div class="resolution">' + fixerControls + '</div></div>';
+        html += '<div class="card"><div class="alert"><div><strong>' + esc(remediation.title) + '</strong><div class="muted" style="margin-top:5px">' + esc(remediation.hint) + '</div><div class="faint" style="margin-top:6px">Stopped from: ' + esc(s.blockedFrom || "unknown") + (s.blockedKind ? ' · kind: ' + esc(s.blockedKind) : '') + '</div>' + failureDetail + commitControls + acceptTreeControls + ignoreArtifactControls + '</div>' + retryControls + '</div><div class="resolution">' + fixerControls + '</div></div>';
       }
       // Note box is for interview turns only — not plan/verification/install/grill-complete gates.
       var pendingInstallNotes = (s.proposedInstalls || []).some(function (item) { return !item.decision; });
@@ -817,8 +735,7 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
       $("tabBody").innerHTML = html;
     }
 
-    function renderExecutionImageTab(s) {
-      var image = (state.detail && state.detail.executionImage) || { present: false, files: [] };
+    function renderContainerTab(s) {
       var workspace = (state.detail && state.detail.workspace) || {};
       var html = "";
       if ((workspace.kind === "docker-clone" || workspace.frozenRuntime === "docker") && !workspace.removedAt) {
@@ -843,66 +760,6 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
             '</div>';
         }
         html += '</div>';
-      }
-      html += '<div class="card"><div class="card-label">Execution image</div>';
-      html += '<p class="muted">Generated per run under <code>runs/' + esc(s.runId) + '/execution-image/</code>. Review the Dockerfile before approving a Docker workspace build. Matching approvals can be reused later via the project image cache.</p>';
-      if (!image.present) {
-        html += '<div class="empty" style="margin-top:12px">No execution-image artifacts for this run yet. They appear when Docker setup generates a project image.</div></div>';
-        $("tabBody").innerHTML = html;
-        return;
-      }
-      var profile = image.profile || {};
-      var validation = image.validation || {};
-      var rows = [
-        ["Status", executionImageStatusLabel(image)],
-        ["Stack", profile.stack ? String(profile.stack) : "—"],
-        ["Base image", profile.baseImage ? String(profile.baseImage) : "—"],
-        ["Worker image", profile.workerImage ? String(profile.workerImage) : "—"],
-        ["Platform", profile.platform ? String(profile.platform) : "—"],
-        ["Dockerfile hash", image.dockerfileHash || "—"],
-        ["Profile hash", image.profileHash || "—"],
-        ["Image digest", image.imageDigest || "—"],
-        ["Validation", validation.ok === false ? "failed" : (validation.ok ? "ok" : "—")],
-      ];
-      html += '<div class="execution-image-meta" style="margin-top:12px;display:grid;gap:8px">' + rows.map(function (row) {
-        return '<div style="display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:start"><span class="faint">' + esc(row[0]) + '</span><code style="word-break:break-all">' + esc(row[1]) + '</code></div>';
-      }).join("") + '</div>';
-      // Always offer rebuild while idle. A failed isolation probe can leave image.digest
-      // on disk; hiding actions in that state stranded operators with only Save Dockerfile.
-      if (!state.detail.job) {
-        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">' +
-          '<button class="btn primary" data-action="approve_and_build_execution_image">' +
-          (image.imageDigest ? "Rebuild image" : "Approve &amp; build image") +
-          "</button>";
-        if (!image.imageDigest) {
-          html += '<button class="btn" data-action="approve_execution_image">Approve only</button>';
-        }
-        if (image.approval || image.imageDigest) {
-          html += '<button class="btn" data-action="build_execution_image">Build / retry image</button>';
-        }
-        html += '</div>';
-      }
-      html += '</div>';
-      html += '<div class="card"><div class="card-label">Dockerfile</div>';
-      if (!state.detail.job) {
-        html += '<p class="muted" style="margin-bottom:10px">Edit the generated Dockerfile, Save, then Approve &amp; build. Saving clears any prior approval and image digest.</p>';
-        html += '<textarea id="executionDockerfileEditor" class="dockerfile-editor" rows="18" spellcheck="false" data-scroll-key="execution-dockerfile-editor">' + esc(image.dockerfile || "") + '</textarea>';
-        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">' +
-          '<button class="btn primary" data-action="save_execution_dockerfile">Save Dockerfile</button>' +
-          '</div>';
-      } else {
-        html += '<pre class="dockerfile-preview" data-scroll-key="execution-dockerfile-tab">' + esc(image.dockerfile || "") + '</pre>';
-      }
-      html += '</div>';
-      if (image.files && image.files.length) {
-        html += '<div class="card"><div class="card-label">Artifacts</div><div class="artifact-list">' +
-          image.files.map(function (file) {
-            return '<button class="btn artifact" data-artifact="' + attr(file) + '"><span>◇</span><code>' + esc(file) + '</code></button>';
-          }).join("") +
-          '</div></div>';
-      }
-      if (image.buildLog) {
-        html += '<div class="card"><div class="card-label">Build log</div><pre data-scroll-key="execution-build-log">' + esc(image.buildLog) + '</pre></div>';
       }
       $("tabBody").innerHTML = html;
     }

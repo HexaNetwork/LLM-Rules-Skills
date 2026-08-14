@@ -7,31 +7,25 @@ import {
   type DockerClient,
   type DockerReadinessReport,
 } from "../infrastructure/container/index.js";
-import {
-  collectExecutionImageEvidence,
-  type ExecutionImageEvidence,
-} from "./execution-image-evidence.js";
-import { generateExecutionDockerfile } from "./execution-image-generator.js";
-import { isDigestPinnedImageRef } from "./execution-image-generator.js";
+
+function isDigestPinnedImageRef(reference: string): boolean {
+  return reference.startsWith("sha256:") || /@sha256:[a-f0-9]{64}$/i.test(reference);
+}
 
 /**
  * Operator/UI-facing execution runtime status (slice 2 service API).
  * Full UI cards land in slice 7; this is enough to block Docker run creation.
  */
 export type ExecutionRuntimeStatus = {
-  runtime: "local" | "docker";
+  runtime: "docker";
   ready: boolean;
   /** High-level blockers with remediation. */
   blockers: Array<{ code: string; message: string; remediation?: string }>;
   docker?: DockerReadinessReport;
   image?: {
-    generatedImagesEnabled: boolean;
     workerImageConfigured: boolean;
     workerImageDigestPinned: boolean;
-    approvedBaseImageCount: number;
-    evidence?: Pick<ExecutionImageEvidence, "stacks" | "ambiguous">;
-    canGenerate: boolean;
-    generationMessage?: string;
+    available: boolean;
   };
   networkNote?: string;
   /** Present for docker runtime when sandboxRequired; fail-closed until a probe passes. */
@@ -66,29 +60,17 @@ export type EvaluateExecutionRuntimeStatusOptions = {
 /**
  * Evaluate whether new runs may use the configured execution runtime.
  * Local mode is always ready from this gate; Docker mode requires CLI/daemon
- * readiness plus a resolvable generated-image policy.
+ * readiness plus one available immutable worker/toolchain image.
  */
 export async function evaluateExecutionRuntimeStatus(
   options: EvaluateExecutionRuntimeStatusOptions,
 ): Promise<ExecutionRuntimeStatus> {
-  const runtime = options.config.execution?.runtime ?? "local";
-  if (runtime === "local") {
-    return { runtime: "local", ready: true, blockers: [] };
-  }
-
   const blockers: ExecutionRuntimeStatus["blockers"] = [];
   const dockerPolicy = options.config.execution.docker;
   const worker = dockerPolicy.workerImageDigest?.trim() ?? "";
   const workerConfigured = worker.length > 0;
   const workerPinned = workerConfigured && isDigestPinnedImageRef(worker);
 
-  if (!dockerPolicy.generatedImagesEnabled) {
-    blockers.push({
-      code: "generated-images-disabled",
-      message: "execution.docker.generatedImagesEnabled is false.",
-      remediation: "Enable generated images or set execution.runtime to local.",
-    });
-  }
   if (!workerConfigured) {
     blockers.push({
       code: "worker-image-missing",
@@ -102,16 +84,9 @@ export async function evaluateExecutionRuntimeStatus(
       remediation: "Replace the worker image reference with a digest-pinned value.",
     });
   }
-  if (dockerPolicy.approvedBaseImages.length === 0) {
-    blockers.push({
-      code: "base-images-empty",
-      message: "execution.docker.approvedBaseImages is empty.",
-      remediation:
-        "Run `agent-harness execution approve-base --all --write-settings` to pin the shared harness-home toolchain catalog, or add digest-pinned bases in Settings.",
-    });
-  }
 
   let dockerReport: DockerReadinessReport | undefined;
+  let imageAvailable = false;
   const shouldProbe = options.probeDocker !== false;
   if (shouldProbe) {
     const client = options.docker ?? createDockerClient();
@@ -126,54 +101,17 @@ export async function evaluateExecutionRuntimeStatus(
           remediation: check.remediation,
         });
       }
+    } else if (workerPinned) {
+      imageAvailable = await client.imageExists(worker);
+      if (!imageAvailable) {
+        blockers.push({
+          code: "worker-image-unavailable",
+          message: `Maintained worker image is unavailable locally: ${worker}`,
+          remediation: "Run `agent-harness execution prepare-worker --force-rebuild --write-settings`.",
+        });
+      }
     }
   }
-
-  let evidenceSummary: ExecutionRuntimeStatus["image"];
-  let canGenerate = false;
-  let generationMessage: string | undefined;
-  let evidenceStacks: ExecutionImageEvidence["stacks"] | undefined;
-  let ambiguous: boolean | undefined;
-
-  if (options.collectEvidence !== false) {
-    const evidence = await collectExecutionImageEvidence(
-      options.repositoryRoot ?? options.config.repositoryRoot,
-    );
-    evidenceStacks = evidence.stacks;
-    ambiguous = evidence.ambiguous;
-    const generated = generateExecutionDockerfile({
-      evidence,
-      approvedBaseImages: dockerPolicy.approvedBaseImages,
-      workerImage: worker,
-    });
-    canGenerate = generated.ok;
-    generationMessage = generated.ok ? undefined : generated.failure.message;
-    if (!generated.ok) {
-      blockers.push({
-        code: `image-${generated.failure.kind}`,
-        message: generated.failure.message,
-        remediation:
-          generated.failure.kind === "ambiguous"
-            ? "Use a single known stack or keep execution.runtime=local. MVP never falls back to a host image-profiler agent."
-            : generated.failure.kind === "missing-base"
-              ? "Run `agent-harness execution approve-base --all --write-settings`, or add a digest-pinned base in Settings."
-              : "Fix execution.docker image policy (worker digest + approved bases).",
-      });
-    }
-  }
-
-  evidenceSummary = {
-    generatedImagesEnabled: dockerPolicy.generatedImagesEnabled,
-    workerImageConfigured: workerConfigured,
-    workerImageDigestPinned: workerPinned,
-    approvedBaseImageCount: dockerPolicy.approvedBaseImages.length,
-    evidence:
-      evidenceStacks !== undefined
-        ? { stacks: evidenceStacks, ambiguous: Boolean(ambiguous) }
-        : undefined,
-    canGenerate,
-    generationMessage,
-  };
 
   const networkNote = networkPolicyDocumentation(dockerPolicy.network.runtime);
 
@@ -181,36 +119,35 @@ export async function evaluateExecutionRuntimeStatus(
   if (dockerPolicy.sandboxRequired !== false) {
     const { loadSandboxIsolationProbeCache, findCachedSandboxIsolationProbe, sandboxIsolationProbePassed } =
       await import("./sandbox-isolation-probe.js");
-    if (options.projectStateRoot && options.imageDigest) {
+    const isolationImage = options.imageDigest ?? worker;
+    if (options.projectStateRoot && isolationImage) {
       const cache = await loadSandboxIsolationProbeCache(options.projectStateRoot);
-      const cached = findCachedSandboxIsolationProbe(cache, options.imageDigest);
+      const cached = findCachedSandboxIsolationProbe(cache, isolationImage);
       const passed = sandboxIsolationProbePassed(cached);
       sandboxIsolation = {
         required: true,
         passed,
         unsupported: cached?.unsupported,
         reason: cached?.reason,
-        imageDigest: options.imageDigest,
+        imageDigest: isolationImage,
       };
       if (!passed) {
         blockers.push({
           code: "sandbox-isolation-probe",
           message:
             cached?.reason ??
-            "Sandbox isolation probe has not passed for the approved execution image digest.",
+            "Sandbox isolation probe has not passed for the maintained worker image digest.",
           remediation:
-            "Approve/build the generated image so the fail-closed isolation probe can run. " +
-            "Docker mode advertises canRestrictWritableWorkspace only after the probe succeeds.",
+            "Run the credential and sandbox isolation probe for the maintained image.",
         });
       }
     } else {
       sandboxIsolation = {
         required: true,
         passed: false,
-        reason: "No approved image digest yet; isolation probe runs after build.",
+        reason: "No maintained image digest is configured.",
       };
-      // Do not block readiness solely for missing digest — operator must approve/build first.
-      // Digest acceptance and clone create remain fail-closed.
+      // Missing image is already represented by the worker-image blocker.
     }
   } else {
     sandboxIsolation = { required: false, passed: true };
@@ -221,7 +158,11 @@ export async function evaluateExecutionRuntimeStatus(
     ready: blockers.length === 0,
     blockers,
     docker: dockerReport,
-    image: evidenceSummary,
+    image: {
+      workerImageConfigured: workerConfigured,
+      workerImageDigestPinned: workerPinned,
+      available: imageAvailable,
+    },
     networkNote,
     sandboxIsolation,
   };
@@ -232,7 +173,7 @@ export async function assertDockerExecutionReady(
   options: EvaluateExecutionRuntimeStatusOptions,
 ): Promise<ExecutionRuntimeStatus> {
   const status = await evaluateExecutionRuntimeStatus(options);
-  if (status.runtime === "local" || status.ready) return status;
+  if (status.ready) return status;
   const lines = status.blockers.map((blocker) => {
     const rem = blocker.remediation ? ` Remediation: ${blocker.remediation}` : "";
     return `- ${blocker.code}: ${blocker.message}.${rem}`;

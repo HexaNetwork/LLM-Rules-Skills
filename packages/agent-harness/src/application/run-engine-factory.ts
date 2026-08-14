@@ -2,14 +2,14 @@ import { loadRunConfig, loadRunWorkspace } from "../config/io.js";
 import type { HarnessConfig } from "../config/schema.js";
 import type { RunWorkspace } from "../domain/workspace.js";
 import { HarnessFailure } from "../errors.js";
-import { HarnessEngine } from "./harness-engine.js";
+import { WorkerHarnessRuntime } from "./harness-engine.js";
 import { RunStore } from "../store.js";
 import { resolveWorkspaceProvisioner } from "../workspace/index.js";
 import type { HarnessDependencies } from "./dependencies.js";
 import { resolveHarnessPaths, type HarnessPaths } from "./paths.js";
 
 export type OpenedRunHarness = {
-  engine: HarnessEngine;
+  engine: WorkerHarnessRuntime;
   config: HarnessConfig;
   paths: HarnessPaths;
   workspace: RunWorkspace;
@@ -20,8 +20,7 @@ export type OpenRunHarnessOptions = {
   validateWorktree?: boolean;
   /**
    * When true, missing workspace.json yields a provisional engine (no provisioner.open).
-   * Used for Docker image approve/build before the clone exists, and cancel/retry of
-   * runs still gated on that step.
+   * Used for host recovery and cancel/retry before the Docker clone exists.
    */
   allowMissingWorkspace?: boolean;
 };
@@ -68,7 +67,7 @@ export async function openRunHarness(
     await workspaceProvisioner.open(workspace);
   }
 
-  const engine = new HarnessEngine(config, {
+  const engine = new WorkerHarnessRuntime(config, {
     ...dependencies,
     paths,
     store,

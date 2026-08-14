@@ -239,6 +239,24 @@ async function dispatch(
       });
       return { written: true };
     }
+    case "artifacts/delete": {
+      assertMethod(method, "POST", operation);
+      rejectRawPathFields(body);
+      const ref = parseArtifactRef(body.ref);
+      const context = mutationContext(body, credential.workerInstanceId);
+      await ctx.port.deleteArtifact(runId, ref, context);
+      await audit(ctx, runId, { operation: "delete-artifact", requestId: context.requestId, workerInstanceId: context.workerInstanceId, outcome: "ok" });
+      return { deleted: true };
+    }
+    case "artifacts/list": {
+      assertMethod(method, "POST", operation);
+      rejectRawPathFields(body);
+      const kind = requiredString(body.kind, "kind", 100);
+      if (kind !== "session") {
+        throw new StateApiError(400, "invalid_artifact_ref", `Artifact collection ${kind} cannot be listed`);
+      }
+      return { artifacts: await ctx.port.listArtifacts(runId, kind) };
+    }
     case "lease": {
       assertMethod(method, "GET", operation);
       return { lease: (await ctx.port.currentLease(runId)) ?? null };
@@ -246,7 +264,7 @@ async function dispatch(
     case "lease/acquire": {
       assertMethod(method, "POST", operation);
       const input = {
-        workerInstanceId: requiredString(body.workerInstanceId, "workerInstanceId", 200),
+        workerInstanceId: scopedWorkerInstanceId(body, credential.workerInstanceId),
         ttlMs: requiredInteger(body.ttlMs, "ttlMs", 1),
         requestId: optionalString(body.requestId, "requestId", 200) ?? requestId,
       };
@@ -262,7 +280,7 @@ async function dispatch(
     case "lease/renew": {
       assertMethod(method, "POST", operation);
       const input = {
-        workerInstanceId: requiredString(body.workerInstanceId, "workerInstanceId", 200),
+        workerInstanceId: scopedWorkerInstanceId(body, credential.workerInstanceId),
         fencingToken: requiredInteger(body.fencingToken, "fencingToken", 1),
         ttlMs: requiredInteger(body.ttlMs, "ttlMs", 1),
         requestId: optionalString(body.requestId, "requestId", 200) ?? requestId,
@@ -279,7 +297,7 @@ async function dispatch(
     case "lease/release": {
       assertMethod(method, "POST", operation);
       const input = {
-        workerInstanceId: requiredString(body.workerInstanceId, "workerInstanceId", 200),
+        workerInstanceId: scopedWorkerInstanceId(body, credential.workerInstanceId),
         fencingToken: requiredInteger(body.fencingToken, "fencingToken", 1),
         requestId: optionalString(body.requestId, "requestId", 200) ?? requestId,
       };
@@ -296,9 +314,37 @@ async function dispatch(
       assertMethod(method, "GET", operation);
       return { requested: await ctx.port.cancellationRequested(runId) };
     }
+    case "cancellation/request": {
+      assertMethod(method, "POST", operation);
+      const context = mutationContext(body, credential.workerInstanceId);
+      await ctx.port.requestCancellation(runId, context);
+      await audit(ctx, runId, { operation: "cancellation-request", requestId: context.requestId, workerInstanceId: context.workerInstanceId, outcome: "ok" });
+      return { requested: true };
+    }
+    case "cancellation/clear": {
+      assertMethod(method, "POST", operation);
+      const context = mutationContext(body, credential.workerInstanceId);
+      await ctx.port.clearCancellation(runId, context);
+      await audit(ctx, runId, { operation: "cancellation-clear", requestId: context.requestId, workerInstanceId: context.workerInstanceId, outcome: "ok" });
+      return { requested: false };
+    }
     case "stop": {
       assertMethod(method, "GET", operation);
       return { requested: await ctx.port.stopRequested(runId) };
+    }
+    case "stop/request": {
+      assertMethod(method, "POST", operation);
+      const context = mutationContext(body, credential.workerInstanceId);
+      await ctx.port.requestStop(runId, context);
+      await audit(ctx, runId, { operation: "stop-request", requestId: context.requestId, workerInstanceId: context.workerInstanceId, outcome: "ok" });
+      return { requested: true };
+    }
+    case "stop/clear": {
+      assertMethod(method, "POST", operation);
+      const context = mutationContext(body, credential.workerInstanceId);
+      await ctx.port.clearStop(runId, context);
+      await audit(ctx, runId, { operation: "stop-clear", requestId: context.requestId, workerInstanceId: context.workerInstanceId, outcome: "ok" });
+      return { requested: false };
     }
     case "export-ready": {
       assertMethod(method, "POST", operation);
@@ -362,10 +408,21 @@ async function bootstrapDocument(
   const projectConfig = ctx.getProjectConfig();
   const options = { runDirectory: ctx.store.runDirectory(runId) };
   const snapshot = await ctx.port.loadSnapshot(runId);
-  const config = await loadRunConfig(projectConfig, runId, options).catch(() => null);
+  const config = await loadRunConfig(projectConfig, runId, options)
+    .then(sanitizeWorkerConfig)
+    .catch(() => null);
   const workspace = await loadRunWorkspace(projectConfig, runId, options)
     .then(sanitizeWorkspaceIdentity)
     .catch(() => null);
+  const sandboxIsolationPassed = await ctx.port
+    .readArtifact(runId, { kind: "sandbox-probe" })
+    .then((raw) => {
+      if (!raw) return false;
+      const stamp = JSON.parse(raw) as { ok?: boolean; unsupported?: boolean; imageDigest?: string };
+      const imageDigest = workspace && "imageDigest" in workspace ? workspace.imageDigest : undefined;
+      return stamp.ok === true && stamp.unsupported !== true && (!imageDigest || stamp.imageDigest === imageDigest);
+    })
+    .catch(() => false);
   return {
     runId,
     protocolVersion: RUN_STATE_API_PROTOCOL_VERSION,
@@ -373,12 +430,30 @@ async function bootstrapDocument(
     ...(workerInstanceId ? { workerInstanceId } : {}),
     config,
     workspace,
+    sandboxIsolationPassed,
+  };
+}
+
+function sanitizeWorkerConfig(config: HarnessConfig): HarnessConfig {
+  return {
+    ...config,
+    repositoryRoot: "/workspace",
+    stateDirectory: "/tmp/agent-harness-state",
+    knowledge: {
+      ...config.knowledge,
+      guidance: {
+        ...config.knowledge.guidance,
+        projectRoot: undefined,
+        sharedRoot: undefined,
+      },
+    },
   };
 }
 
 /** Strip host filesystem paths from workspace metadata (ADR 0016 invariant 6). */
 function sanitizeWorkspaceIdentity(workspace: RunWorkspace): Record<string, unknown> {
   const base: Record<string, unknown> = {
+    version: workspace.version,
     kind: workspace.kind,
     createdAt: workspace.createdAt,
     ...(workspace.baseSha ? { baseSha: workspace.baseSha } : {}),
@@ -418,8 +493,9 @@ function mutationContext(
   body: Record<string, unknown>,
   credentialWorkerInstanceId: string | undefined,
 ): MutationContext {
-  const workerInstanceId =
-    optionalString(body.workerInstanceId, "workerInstanceId", 200) ?? credentialWorkerInstanceId;
+  const workerInstanceId = credentialWorkerInstanceId
+    ? scopedWorkerInstanceId(body, credentialWorkerInstanceId)
+    : optionalString(body.workerInstanceId, "workerInstanceId", 200);
   return {
     requestId: optionalString(body.requestId, "requestId", 200) ?? randomUUID(),
     idempotencyKey: requiredString(body.idempotencyKey, "idempotencyKey", 300),
@@ -428,6 +504,17 @@ function mutationContext(
       ? { fencingToken: requiredInteger(body.fencingToken, "fencingToken", 1) }
       : {}),
   };
+}
+
+function scopedWorkerInstanceId(
+  body: Record<string, unknown>,
+  credentialWorkerInstanceId: string | undefined,
+): string {
+  const presented = optionalString(body.workerInstanceId, "workerInstanceId", 200);
+  if (credentialWorkerInstanceId && presented && presented !== credentialWorkerInstanceId) {
+    throw new StateApiError(403, "forbidden", "Worker instance does not match the scoped credential");
+  }
+  return credentialWorkerInstanceId ?? requiredString(body.workerInstanceId, "workerInstanceId", 200);
 }
 
 function requiredTransition(value: unknown): TransitionResult {
@@ -478,6 +565,8 @@ function parseArtifactRef(value: unknown): RunArtifactRef {
     "session",
     "session-steps",
     "issue",
+    "tracker-task",
+    "result-bundle-chunk",
   ]);
   if (idKinds.has(kind)) {
     assertOnlyKeys(record, ["kind", "id"], kind);
@@ -501,7 +590,14 @@ function parseArtifactRef(value: unknown): RunArtifactRef {
       name: requiredIdentifier(record.name, "ref.name"),
     };
   }
-  if (kind === "install-log" || kind === "activity") {
+  if (
+    kind === "install-log" ||
+    kind === "activity" ||
+    kind === "config" ||
+    kind === "transport-import" ||
+    kind === "result-manifest" ||
+    kind === "sandbox-probe"
+  ) {
     assertOnlyKeys(record, ["kind"], kind);
     return { kind };
   }

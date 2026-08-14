@@ -23,6 +23,11 @@ export async function continueDockerRunAfterWorkspaceReady(input: {
   /** Prefer store run directory when projectConfig.stateDirectory is wrong/stale. */
   runDirectory?: string;
   onProgress?: (message: string) => void;
+  stateServiceEndpoint?: string;
+  issueStateCredential?: (
+    runId: string,
+    options: { workerInstanceId: string },
+  ) => Promise<{ token: string }>;
 }): Promise<void> {
   const workspace = await loadRunWorkspace(input.projectConfig, input.runId, {
     ...(input.runDirectory ? { runDirectory: input.runDirectory } : {}),
@@ -45,6 +50,8 @@ export async function continueDockerRunAfterWorkspaceReady(input: {
     containerName: workspace.containerName,
     projectKey: input.projectKey ?? "project",
     startIfMissing: true,
+    stateServiceEndpoint: input.stateServiceEndpoint,
+    issueStateCredential: input.issueStateCredential,
   });
 
   input.onProgress?.("Advancing run inside Docker worker");

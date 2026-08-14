@@ -7,6 +7,9 @@ export const WORKER_RPC_PROTOCOL_VERSION = 1 as const;
 
 /** Default listen port inside the container (published to a random host loopback port). */
 export const WORKER_RPC_CONTAINER_PORT = 8787 as const;
+export const WORKER_IMAGE_CLI_PATH = "/opt/agent-harness/cli" as const;
+export const WORKER_ISOLATION_SELF_CHECK_PATH =
+  "/opt/agent-harness/sandbox-isolation-self-check" as const;
 
 /** Max JSON body size accepted by the worker (bytes). */
 export const WORKER_RPC_MAX_BODY_BYTES = 1_000_000 as const;
@@ -29,20 +32,24 @@ export const WORKER_RPC_HARNESS_VERSION_HEADER = "x-harness-version" as const;
  */
 export const HARNESS_PACKAGE_VERSION = "0.3.2" as const;
 
-/** Relative path under the run directory for the RPC secret file (never logged). */
+/** Legacy metadata filename; new workers store it outside the run directory. */
 export const WORKER_RPC_SECRET_RELATIVE_PATH = "execution-secrets/rpc.token" as const;
 
-/** Absolute path of the RPC secret inside the container (/run-state mount). */
+/** Absolute path of the read-only RPC bootstrap secret inside the container. */
 export const WORKER_RPC_SECRET_CONTAINER_PATH =
-  `/run-state/${WORKER_RPC_SECRET_RELATIVE_PATH}` as const;
+  "/run/secrets/agent-harness-worker-rpc" as const;
 
-/** Relative path under the run directory for the worker-only Cursor API key file. */
+/** Legacy metadata filename; new workers store it outside the run directory. */
 export const CURSOR_API_KEY_SECRET_RELATIVE_PATH =
   "execution-secrets/cursor-api-key" as const;
 
-/** Absolute path of the Cursor API key inside the container (/run-state mount). */
+/** Absolute path of the read-only Cursor credential inside the container. */
 export const CURSOR_API_KEY_SECRET_CONTAINER_PATH =
-  `/run-state/${CURSOR_API_KEY_SECRET_RELATIVE_PATH}` as const;
+  "/run/secrets/agent-harness-cursor-api-key" as const;
+
+/** Scoped host-state API bearer token, delivered as a read-only bootstrap secret. */
+export const WORKER_STATE_CREDENTIAL_CONTAINER_PATH =
+  "/run/secrets/agent-harness-state-credential" as const;
 
 /**
  * Allowlisted mutation/control actions exposed over RPC.

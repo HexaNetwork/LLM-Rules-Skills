@@ -171,10 +171,7 @@ export class RunAdvancer {
               break;
             }
             // Docker: after prepare-export, yield to the host for quarantine import + push/PR.
-            if (
-              state.phase === "publishing" &&
-              (this.ctx.config.execution?.runtime ?? "local") === "docker"
-            ) {
+            if (state.phase === "publishing") {
               const { isDockerBundleExportReady } = await import("./docker-publish-service.js");
               const { loadBundleImportState } = await import("./bundle-import-io.js");
               const importState = await loadBundleImportState(this.ctx.config, runId).catch(

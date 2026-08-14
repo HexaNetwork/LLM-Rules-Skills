@@ -1,7 +1,7 @@
 import type { HarnessConfig } from "../config/schema.js";
 import type { RunState } from "../domain.js";
 import { classifyFailure } from "../errors.js";
-import type { RunStore } from "../store.js";
+import type { RunRepository as RunStore } from "./run-repository.js";
 import type { HarnessPaths } from "./paths.js";
 
 const TERMINAL_PHASES = new Set(["blocked", "cancelled", "completed"]);

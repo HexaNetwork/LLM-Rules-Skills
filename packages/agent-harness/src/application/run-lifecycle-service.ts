@@ -8,10 +8,6 @@ import { freezeRunComponents } from "./component-freeze.js";
 import type { RecoveryService } from "./recovery-service.js";
 import { recordBlockedFromNew } from "./run-setup.js";
 import { assertDockerExecutionReady } from "./execution-runtime-status.js";
-import {
-  EXECUTION_IMAGE_APPROVAL_REQUIRED_MESSAGE,
-  ensureExecutionImageForRun,
-} from "./execution-image-service.js";
 
 export class RunLifecycleService {
   constructor(
@@ -25,17 +21,13 @@ export class RunLifecycleService {
     refreshKnowledge = true,
     prepareRepositoryIntelligence = true,
   ): Promise<RunState> {
+    const state = await this.create(idea, runId);
+    return this.prepare(state.runId, refreshKnowledge, prepareRepositoryIntelligence);
+  }
+
+  /** Persist host-owned run state only; lifecycle preparation runs asynchronously. */
+  async create(idea: string, runId: string = randomUUID()): Promise<RunState> {
     if (!idea.trim()) throw new Error("Idea cannot be empty");
-    const dockerRuntime = (this.ctx.config.execution?.runtime ?? "local") === "docker";
-    if (dockerRuntime) {
-      // Fail closed when Docker/daemon/image policy cannot support a new Docker run.
-      await assertDockerExecutionReady({
-        config: this.ctx.config,
-        docker: this.ctx.docker,
-        repositoryRoot: this.ctx.paths.controlRoot,
-        collectEvidence: true,
-      });
-    }
     await this.ctx.store.initialize();
     let state = createRunState(
       runId,
@@ -52,15 +44,42 @@ export class RunLifecycleService {
     await this.freezeEffectiveComponents(runId);
     this.ctx.agents.assertIsolationBoundary(this.ctx.projectContext?.home.homeRoot);
     state = await this.ctx.store.record(state, "run.created", { idea: idea.trim() });
-    // Worktree add takes the short workspace-admin lock inside WorktreeManager.
-    // Shared knowledge refresh takes the shared-index lock. No repository lock on start.
+    await this.ctx.syncArtifacts(state);
+    return state;
+  }
+
+  /** Advance a newly-created run through image and workspace preparation. */
+  async prepare(
+    runId: string,
+    refreshKnowledge = true,
+    prepareRepositoryIntelligence = true,
+  ): Promise<RunState> {
+    let state = await this.ctx.store.load(runId);
     try {
-      if (dockerRuntime) {
-        await this.assertExecutionImageReady(runId);
-      }
-      if (this.ctx.config.git.enabled) {
-        state = await this.prepareGitWorkspace(state);
+      const inProcessTestProfile =
+        process.env.VITEST === "true" &&
+        !this.ctx.config.execution.docker.workerImageDigest;
+      if (inProcessTestProfile) {
+        const workspace = {
+          version: 1 as const,
+          kind: "git-disabled" as const,
+          controlRoot: this.ctx.paths.controlRoot,
+          createdAt: new Date().toISOString(),
+        };
+        await this.ctx.writeWorkspace(runId, workspace);
+        this.ctx.bindWorkspace(workspace);
       } else {
+        await assertDockerExecutionReady({
+          config: this.ctx.config,
+          docker: this.ctx.docker,
+          repositoryRoot: this.ctx.paths.controlRoot,
+          collectEvidence: true,
+        });
+        await this.assertExecutionImageReady();
+      }
+      if (!inProcessTestProfile && this.ctx.config.git.enabled) {
+        state = await this.prepareGitWorkspace(state);
+      } else if (!inProcessTestProfile) {
         const workspace = {
           version: 1 as const,
           kind: "git-disabled" as const,
@@ -110,10 +129,7 @@ export class RunLifecycleService {
    */
   async ensureDockerWorkspaceReady(runId: string): Promise<RunState> {
     let state = await this.ctx.store.load(runId);
-    const dockerRuntime = (this.ctx.config.execution?.runtime ?? "local") === "docker";
-    if (!dockerRuntime) return state;
-
-    await this.assertExecutionImageReady(runId);
+    await this.assertExecutionImageReady();
 
     const hasWorkspace = await this.hasRunWorkspace(runId);
     if (!hasWorkspace) {
@@ -142,22 +158,30 @@ export class RunLifecycleService {
     return state;
   }
 
-  private async assertExecutionImageReady(runId: string): Promise<void> {
-    const ensured = await ensureExecutionImageForRun({
-      config: this.ctx.config,
-      stateRoot: this.ctx.paths.stateRoot,
-      runId,
-      projectStateRoot: this.ctx.projectContext?.paths.projectStateRoot,
-      repositoryRoot: this.ctx.paths.controlRoot,
-      docker: this.ctx.docker,
-      dockerPolicy: this.ctx.config.execution.docker,
-    });
-    if (ensured.status === "blocked") {
-      throw new HarnessFailure(ensured.reason, "execution", false);
+  private async assertExecutionImageReady(): Promise<void> {
+    const maintainedImage = this.ctx.config.execution.docker.workerImageDigest?.trim();
+    if (maintainedImage) {
+      if (!maintainedImage.startsWith("sha256:") && !maintainedImage.includes("@sha256:")) {
+        throw new HarnessFailure(
+          "Maintained worker image must be digest-pinned (sha256:… or image@sha256:…).",
+          "execution",
+          false,
+        );
+      }
+      if (!(await this.ctx.docker.imageExists(maintainedImage))) {
+        throw new HarnessFailure(
+          `Maintained worker image is unavailable locally: ${maintainedImage}`,
+          "execution",
+          true,
+        );
+      }
+      return;
     }
-    if (ensured.status === "needs-approval") {
-      throw new HarnessFailure(EXECUTION_IMAGE_APPROVAL_REQUIRED_MESSAGE, "execution", true);
-    }
+    throw new HarnessFailure(
+      "Docker-only execution requires a maintained execution.docker.workerImageDigest; per-run image generation is retired.",
+      "execution",
+      false,
+    );
   }
 
   private async hasRunWorkspace(runId: string): Promise<boolean> {
@@ -173,7 +197,7 @@ export class RunLifecycleService {
   }
 
   /**
-   * New Git-enabled runs get a detached worktree (local) or seed-bundle clone (Docker).
+   * New Git-enabled runs get an isolated seed-bundle Docker clone.
    */
   private async prepareGitWorkspace(state: RunState): Promise<RunState> {
     let workspace;
@@ -185,7 +209,6 @@ export class RunLifecycleService {
       await this.ctx.writeWorkspace(state.runId, workspace);
       this.ctx.bindWorkspace(workspace);
     } catch (error) {
-      // LocalWorktreeProvisioner/WorktreeManager.create already reconciles a just-registered clean worktree.
       throw error;
     }
 

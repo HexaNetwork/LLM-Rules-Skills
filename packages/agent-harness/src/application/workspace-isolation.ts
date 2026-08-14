@@ -3,7 +3,6 @@ import { HarnessFailure } from "../errors.js";
 import type { AgentBackend } from "../infrastructure/agents/types.js";
 import { isPathUnderControlRoot, pathsEqual } from "./harness-home.js";
 import {
-  WORKER_RUN_STATE_PATH,
   WORKER_WORKSPACE_PATH,
   type HarnessPaths,
 } from "./paths.js";
@@ -25,7 +24,7 @@ export type IsolationCheckInput = {
   /** Optional cwd that will be passed to the agent. */
   agentCwd?: string;
   /**
-   * When true, treat `/workspace` and `/run-state` as opaque container paths
+   * When true, treat `/workspace` as an opaque container path
    * (Docker worker). Slice 5 isolation probes gate advertising restrict capability.
    */
   containerExecution?: boolean;
@@ -48,9 +47,9 @@ export function normalizeExecutionPath(value: string): string {
   const normalized = value.replaceAll("\\", "/");
   if (
     normalized === WORKER_WORKSPACE_PATH ||
-    normalized === WORKER_RUN_STATE_PATH ||
+    normalized === "/run/secrets" ||
     normalized.startsWith(`${WORKER_WORKSPACE_PATH}/`) ||
-    normalized.startsWith(`${WORKER_RUN_STATE_PATH}/`)
+    normalized.startsWith("/run/secrets/")
   ) {
     return normalized;
   }
@@ -79,7 +78,7 @@ function isUnderExecutionRoot(child: string, parent: string): boolean {
 
 /**
  * Enforce the agent isolation boundary: writable root is the run worktree
- * (or `/workspace` in Docker), harness home / `/run-state` are never writable mounts.
+ * (or `/workspace` in Docker); harness home and secret mounts are never writable.
  */
 export function checkWorkspaceIsolation(input: IsolationCheckInput): IsolationCheckResult {
   const issues: string[] = [];
@@ -101,9 +100,6 @@ export function checkWorkspaceIsolation(input: IsolationCheckInput): IsolationCh
       issues.push(
         `Docker agent writable workspace must be ${WORKER_WORKSPACE_PATH}; got ${writable}`,
       );
-    }
-    if (writable === WORKER_RUN_STATE_PATH || writable.startsWith(`${WORKER_RUN_STATE_PATH}/`)) {
-      issues.push(`Agent writable workspace must not be ${WORKER_RUN_STATE_PATH}`);
     }
   } else if (
     input.paths.workspaceRoot !== input.paths.controlRoot &&
@@ -185,7 +181,7 @@ export function capabilitiesForBackend(
 export function forbiddenAgentWritableRoots(paths: HarnessPaths, homeRoot: string): string[] {
   const roots = [path.resolve(homeRoot), path.resolve(paths.stateRoot)];
   if (paths.workspaceRoot === WORKER_WORKSPACE_PATH) {
-    roots.push(WORKER_RUN_STATE_PATH);
+    roots.push("/run/secrets");
   }
   return roots.filter((root) => !executionPathsEqual(root, paths.workspaceRoot));
 }

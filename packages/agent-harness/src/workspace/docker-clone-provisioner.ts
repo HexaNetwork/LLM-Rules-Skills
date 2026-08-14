@@ -1,14 +1,11 @@
-import { access, mkdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import {
-  runExecutionImageDirectory,
   runTransportDirectory,
   WORKER_WORKSPACE_PATH,
   type HarnessPaths,
 } from "../application/paths.js";
-import {
-  WORKER_IMAGE_CLI_PATH,
-} from "../application/execution-image-generator.js";
+import { WORKER_IMAGE_CLI_PATH } from "../worker/protocol.js";
 import { defaultContainerName } from "../application/docker-worker-session.js";
 import type { HarnessConfig } from "../config/schema.js";
 import {
@@ -31,7 +28,7 @@ import {
   HARNESS_CONTAINER_LABEL_PREFIX,
 } from "../infrastructure/container/container-spec.js";
 import type { DockerClient } from "../infrastructure/container/types.js";
-import type { RunStore } from "../store.js";
+import type { RunRepository } from "../application/run-repository.js";
 import type {
   CreateWorkspaceInput,
   WorkspaceCleanupInspection,
@@ -50,7 +47,7 @@ export type MaterializeDockerCloneInput = {
 export type DockerCloneProvisionerOptions = {
   config: HarnessConfig;
   paths: HarnessPaths;
-  store: RunStore;
+  store: RunRepository;
   docker: DockerClient;
   projectKey?: string;
   /**
@@ -90,8 +87,20 @@ export class DockerCloneProvisioner implements WorkspaceProvisioner {
           lfs: policy.lfs,
         });
 
-        const imageDigest = await (this.options.resolveImageDigest?.(input.runId) ??
-          resolveRunImageDigest(stateRoot, input.runId, this.options.docker));
+        const imageDigest =
+          (await this.options.resolveImageDigest?.(input.runId)) ??
+          this.options.config.execution.docker.workerImageDigest?.trim();
+        if (
+          !imageDigest ||
+          (!this.options.resolveImageDigest &&
+            !(await this.options.docker.imageExists(imageDigest)))
+        ) {
+          throw new HarnessFailure(
+            `Maintained worker image is unavailable: ${imageDigest || "(not configured)"}`,
+            "execution",
+            true,
+          );
+        }
 
         if (this.options.config.execution.docker.sandboxRequired !== false) {
           const {
@@ -478,44 +487,4 @@ export function defaultWorkspaceVolumeName(projectKey: string, runId: string): s
   const safeProject = projectKey.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 40);
   const safeRun = runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 40);
   return `ah-ws-${safeProject}-${safeRun}`.toLowerCase().slice(0, 63);
-}
-
-async function resolveRunImageDigest(
-  stateRoot: string,
-  runId: string,
-  docker: DockerClient,
-): Promise<string> {
-  const artifactsDir = runExecutionImageDirectory(stateRoot, runId);
-  const digestPath = path.join(artifactsDir, "image.digest");
-  try {
-    await access(digestPath);
-    const digest = (await readFile(digestPath, "utf8")).trim();
-    if (!digest) {
-      throw new HarnessFailure(
-        "execution-image/image.digest is empty; approve and build the generated image before creating a Docker clone.",
-        "execution",
-        true,
-      );
-    }
-    const exists = await docker.imageExists(digest);
-    if (!exists) {
-      throw new HarnessFailure(
-        `Approved execution image digest ${digest} is not present locally. Rebuild before creating the Docker clone.`,
-        "execution",
-        true,
-      );
-    }
-    return digest;
-  } catch (error) {
-    if (error instanceof HarnessFailure) throw error;
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new HarnessFailure(
-        "Docker clone requires a built execution image digest under runs/<runId>/execution-image/image.digest. " +
-          "Approve and build the generated image first (isolation probe must pass when sandboxRequired).",
-        "execution",
-        true,
-      );
-    }
-    throw error;
-  }
 }

@@ -1,4 +1,5 @@
 import { access, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { hostname as localHostname } from "node:os";
 import path from "node:path";
 import type { AgentCoordinator } from "../infrastructure/agents/agent-coordinator.js";
@@ -12,7 +13,7 @@ import type {
   RepositoryIntelligenceBroker,
 } from "../infrastructure/repository-intelligence/index.js";
 import type { LocalKnowledgeBase } from "../knowledge.js";
-import type { RunStore } from "../store.js";
+import type { RunRepository } from "./run-repository.js";
 import type { TrackerPort } from "../tracker.js";
 import {
   diffWorkspaceEvidence,
@@ -34,13 +35,14 @@ import {
 import { applyWorkspaceToPaths, type HarnessPaths } from "./paths.js";
 import type { WorkspaceProvisioner } from "../workspace/index.js";
 import type { DockerClient } from "../infrastructure/container/types.js";
+import type { RunStatePort } from "./run-state-port.js";
 export type { HarnessDependencies, ApplicationDependencies, ProjectContext };
 export type { HarnessPaths } from "./paths.js";
 
 /** Shared ports, clock/command seams, and cross-cutting run helpers. */
 export class ApplicationContext {
   readonly paths: HarnessPaths;
-  readonly store: RunStore;
+  readonly store: RunRepository;
   readonly knowledge: LocalKnowledgeBase;
   readonly tracker: TrackerPort;
   readonly git: GitService;
@@ -53,6 +55,7 @@ export class ApplicationContext {
   readonly sleep: (ms: number) => Promise<void>;
   readonly cancellation: RunCancellationRegistry;
   readonly projectContext?: ProjectContext;
+  readonly runStatePort?: RunStatePort;
   workspace: RunWorkspace;
   phaseStepper: ((state: RunState) => Promise<RunState>) | undefined;
 
@@ -74,8 +77,9 @@ export class ApplicationContext {
     this.docker = this.deps.docker;
     this.sleep = this.deps.sleep;
     this.projectContext = this.deps.projectContext;
+    this.runStatePort = this.deps.runStatePort;
     this.cancellation = cancellation;
-    this.workspace = config.git.enabled
+    this.workspace = this.deps.workspace ?? (config.git.enabled
       ? {
           version: WORKSPACE_SCHEMA_VERSION,
           kind: "git-worktree",
@@ -87,7 +91,7 @@ export class ApplicationContext {
           kind: "git-disabled",
           controlRoot: this.paths.controlRoot,
           createdAt: new Date().toISOString(),
-        };
+        });
     applyWorkspaceToPaths(this.paths, this.workspace);
   }
 
@@ -109,19 +113,20 @@ export class ApplicationContext {
     action: string,
     work: () => Promise<T>,
   ): Promise<T> {
-    const workspace = await this.loadWorkspace(runId);
-    this.bindWorkspace(workspace);
+    if (this.deps.workspace) this.bindWorkspace(this.deps.workspace);
+    else this.bindWorkspace(await this.loadWorkspace(runId));
     return this.store.withLock(runId, work);
   }
 
-  /** Load workspace.json via the store run directory (host or worker /run-state). */
+  /** Load durable workspace identity or use the worker profile's injected identity. */
   loadWorkspace(runId: string): Promise<RunWorkspace> {
+    if (this.deps.workspace) return Promise.resolve(this.deps.workspace);
     return loadRunWorkspace(this.config, runId, {
       runDirectory: this.store.runDirectory(runId),
     });
   }
 
-  /** Persist workspace.json via the store run directory (host or worker /run-state). */
+  /** Persist host-owned workspace metadata. */
   writeWorkspace(runId: string, workspace: RunWorkspace): Promise<void> {
     return writeRunWorkspace(this.config, runId, workspace, {
       runDirectory: this.store.runDirectory(runId),
@@ -153,6 +158,11 @@ export class ApplicationContext {
   }
 
   async writeCancelRequest(runId: string): Promise<void> {
+    if (this.runStatePort) {
+      const id = randomUUID();
+      await this.runStatePort.requestCancellation(runId, { requestId: id, idempotencyKey: id });
+      return;
+    }
     await writeFile(
       this.cancelRequestPath(runId),
       JSON.stringify({
@@ -164,6 +174,11 @@ export class ApplicationContext {
   }
 
   async writeStopRequest(runId: string): Promise<void> {
+    if (this.runStatePort) {
+      const id = randomUUID();
+      await this.runStatePort.requestStop(runId, { requestId: id, idempotencyKey: id });
+      return;
+    }
     await writeFile(
       this.stopRequestPath(runId),
       JSON.stringify({
@@ -175,14 +190,25 @@ export class ApplicationContext {
   }
 
   async clearCancelRequest(runId: string): Promise<void> {
+    if (this.runStatePort) {
+      const id = randomUUID();
+      await this.runStatePort.clearCancellation(runId, { requestId: id, idempotencyKey: id });
+      return;
+    }
     await unlink(this.cancelRequestPath(runId)).catch(() => undefined);
   }
 
   async clearStopRequest(runId: string): Promise<void> {
+    if (this.runStatePort) {
+      const id = randomUUID();
+      await this.runStatePort.clearStop(runId, { requestId: id, idempotencyKey: id });
+      return;
+    }
     await unlink(this.stopRequestPath(runId)).catch(() => undefined);
   }
 
   async cancelRequestPresent(runId: string): Promise<boolean> {
+    if (this.runStatePort) return this.runStatePort.cancellationRequested(runId);
     try {
       await access(this.cancelRequestPath(runId));
       return true;
@@ -192,6 +218,7 @@ export class ApplicationContext {
   }
 
   async stopRequestPresent(runId: string): Promise<boolean> {
+    if (this.runStatePort) return this.runStatePort.stopRequested(runId);
     try {
       await access(this.stopRequestPath(runId));
       return true;

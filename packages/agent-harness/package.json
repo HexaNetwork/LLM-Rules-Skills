@@ -28,11 +28,12 @@
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:docker": "vitest run --config vitest.docker.config.ts",
+    "test:docker:required": "cross-env AGENT_HARNESS_REQUIRE_DOCKER=1 vitest run --config vitest.docker.config.ts",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "test:acceptance": "vitest run --config vitest.acceptance.config.ts",
     "test:run": "npm run test:unit && npm run test:integration",
-    "test:all": "npm run test:run && npm run test:e2e && npm run build && npm run test:acceptance",
+    "test:all": "npm run test:run && npm run build && npm run test:docker:required && npm run test:e2e && npm run test:acceptance",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
@@ -40,14 +41,20 @@
   },
   "dependencies": {
     "@cursor/sdk": "^1.0.16",
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/cordis-plugin-group": "^1.0.1",
+    "@deepseek-ai/cordis-plugin-include": "^1.0.6",
+    "@deepseek-ai/cordis-plugin-loader": "^1.0.2",
     "commander": "^14.0.0",
     "js-yaml": "^4.1.0",
+    "node-addon-require-builtin": "^0.1.5",
     "zod": "^3.25.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.15.0",
+    "cross-env": "^10.1.0",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
   }

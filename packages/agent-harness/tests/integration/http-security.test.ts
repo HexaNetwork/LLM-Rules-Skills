@@ -3,7 +3,6 @@ import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.
 import { startUiServer, type UiServer } from "../../src/ui/server.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
-import { waitUntil } from "../testkit/wait.js";
 
 describe("Phase 5 HTTP security", () => {
   let fixture: ProjectFixture | undefined;
@@ -16,7 +15,7 @@ describe("Phase 5 HTTP security", () => {
     fixture = undefined;
   });
 
-  it("rejects missing tokens, malformed/oversized bodies, traversal, and surfaces failed jobs", async () => {
+  it("rejects missing tokens, malformed/oversized bodies, traversal, and unsupported actions", async () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 2_000, provider: "cursor" },
@@ -72,44 +71,6 @@ describe("Phase 5 HTTP security", () => {
           body: JSON.stringify({ idea: "Trigger a failed job" })});
         expect(created.status).toBe(202);
         const runId = ((await created.json()) as { run: { runId: string } }).run.runId;
-
-        await waitUntil(
-          async () => {
-            const detail = await fetch(`${ui!.origin}/api/runs/${runId}`, {
-              headers: { "X-Harness-Token": ui!.token }});
-            const body = (await detail.json()) as { state?: { phase?: string }; job?: { status?: string } };
-            return body.state?.phase === "awaiting_input" && !body.job;
-          },
-          { timeoutMs: 10_000, message: "expected run to reach awaiting_input" },
-        );
-
-        // propose_fix throws when the run is not blocked — that rejection is
-        // surfaced as a failed job for the dashboard toast path.
-        const propose = await fetch(`${ui.origin}/api/runs/${runId}/actions`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "X-Harness-Token": ui.token},
-          body: JSON.stringify({ action: "propose_fix", guidance: "try something" })});
-        expect(propose.status).toBe(202);
-
-        let failedJob: { status: string; error?: string } | undefined;
-        await waitUntil(
-          async () => {
-            const detail = await fetch(`${ui!.origin}/api/runs/${runId}`, {
-              headers: { "X-Harness-Token": ui!.token }});
-            const body = (await detail.json()) as {
-              job?: { status: string; error?: string };
-            };
-            if (body.job?.status === "failed") {
-              failedJob = body.job;
-              return true;
-            }
-            return false;
-          },
-          { timeoutMs: 10_000, message: "expected failed job to become visible" },
-        );
-        expect(failedJob?.error).toMatch(/not blocked/i);
 
         const traversal = await fetch(
           `${ui.origin}/api/runs/${runId}/artifact?path=${encodeURIComponent("../README.md")}`,

@@ -28,7 +28,7 @@ import {
   renderPrompt,
   renderPromptBuilderPrompt,
 } from "../../prompts.js";
-import { RunStore } from "../../store.js";
+import type { RunRepository } from "../../application/run-repository.js";
 import { createSessionActivityTracker } from "./activity-tracker.js";
 import { resolveAgentOutput, tryResolveAgentOutput } from "./output-parser.js";
 import {
@@ -64,7 +64,7 @@ export class AgentCoordinator {
   constructor(
     private readonly config: HarnessConfig,
     private readonly backend: AgentBackend,
-    private readonly store: RunStore,
+    private readonly store: RunRepository,
     private readonly knowledge: LocalKnowledgeBase,
     private readonly paths: HarnessPaths = resolveHarnessPaths(config),
   ) {}
@@ -78,7 +78,6 @@ export class AgentCoordinator {
    * Strict mode refuses providers that cannot restrict the workspace root.
    */
   assertIsolationBoundary(homeRoot = resolveHarnessHome().homeRoot): void {
-    const runtime = this.config.execution?.runtime ?? "local";
     const containerExecution = this.paths.workspaceRoot === WORKER_WORKSPACE_PATH;
     assertWorkspaceIsolation({
       paths: this.paths,
@@ -88,15 +87,13 @@ export class AgentCoordinator {
         this.backend,
         this.config.agent.provider,
         {
-          runtime,
-          sandboxIsolationProbePassed:
-            runtime === "docker" ? this.sandboxIsolationProbePassed : true,
+          runtime: "docker",
+          sandboxIsolationProbePassed: this.sandboxIsolationProbePassed,
         },
       ),
       agentCwd: this.workspaceRoot,
       containerExecution,
-      sandboxIsolationProbePassed:
-        runtime === "docker" ? this.sandboxIsolationProbePassed : true,
+      sandboxIsolationProbePassed: this.sandboxIsolationProbePassed,
     });
   }
 
@@ -411,12 +408,8 @@ export class AgentCoordinator {
                 retainProviderSession: options.retainProviderSession || retainForRepair,
                 mode: options.mode,
                 allowTools: options.allowTools,
-                // Docker already isolates the worker; Cursor's nested OS sandbox is
-                // unsupported inside containers and fails agent startup.
-                sandboxEnabled:
-                  this.config.execution?.runtime === "docker"
-                    ? false
-                    : this.config.agent.sandbox,
+                // Provider sandbox remains enabled as defense in depth inside Docker.
+                sandboxEnabled: this.config.agent.sandbox,
                 cwd: this.workspaceRoot,
                 signal,
                 taskId,

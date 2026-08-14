@@ -22,8 +22,8 @@ export type WorkerHandlerContext = {
 
 /**
  * Dispatch an allowlisted worker RPC action onto the in-container HarnessEngine.
- * Engine operations that need a provisioned /workspace clone may fail until slice 4;
- * cancel/status/health work against durable /run-state alone.
+ * Engine operations use /workspace plus the authenticated host state service;
+ * no durable host directory is mounted in the worker.
  */
 export async function dispatchWorkerAction(
   ctx: WorkerHandlerContext,

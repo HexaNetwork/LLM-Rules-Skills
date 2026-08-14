@@ -87,7 +87,7 @@ describe("openRunHarness", () => {
       { validateWorktree: false, allowMissingWorkspace: true },
     );
 
-    expect(opened.config.execution.runtime).toBe("docker");
+    expect(opened.config.execution).not.toHaveProperty("runtime");
     expect(opened.engine).toBeDefined();
     expect(opened.workspace.controlRoot).toBeTruthy();
   });

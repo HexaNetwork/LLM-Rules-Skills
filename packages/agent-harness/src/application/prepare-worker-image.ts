@@ -9,7 +9,10 @@ import {
   type DockerImageInspect,
   type DockerReadinessReport,
 } from "../infrastructure/container/index.js";
-import { isDigestPinnedImageRef } from "./execution-image-generator.js";
+
+function isDigestPinnedImageRef(reference: string): boolean {
+  return reference.startsWith("sha256:") || /@sha256:[a-f0-9]{64}$/i.test(reference);
+}
 import { writeProjectSettings } from "../config/io.js";
 import type { HarnessConfig } from "../config/schema.js";
 
@@ -130,11 +133,9 @@ export async function prepareMaintainedWorkerImage(
 export type WriteWorkerImageSettingsOptions = {
   configPath: string;
   workerImageDigest: string;
-  /** When true, also set execution.runtime to docker. Default false (local stays default). */
-  enableDockerRuntime?: boolean;
 };
 
-/** Persist worker digest (and optionally docker runtime) via the project settings write path. */
+/** Persist the maintained worker digest via the project settings write path. */
 export async function writeWorkerImageProjectSettings(
   options: WriteWorkerImageSettingsOptions,
 ): Promise<{ config: HarnessConfig; path: string }> {
@@ -147,7 +148,6 @@ export async function writeWorkerImageProjectSettings(
   }
   return writeProjectSettings(options.configPath, {
     execution: {
-      ...(options.enableDockerRuntime ? { runtime: "docker" as const } : {}),
       docker: {
         workerImageDigest: options.workerImageDigest,
       },

@@ -6,7 +6,7 @@ import type { PendingEvent, RunState, TransitionResult } from "../domain.js";
  * advances the run through this port using compare-and-swap revisions,
  * idempotency keys, and lease fencing tokens. Implementations:
  * - FilesystemRunStatePort (host services, focused unit tests)
- * - RpcRunStatePort (production worker containers; later slice)
+ * - RpcRunStatePort (production worker containers)
  *
  * Operations are modeled by domain object and artifact identifier — there is
  * no arbitrary file read/write, so a worker can never turn the state service
@@ -25,6 +25,7 @@ export type RunStateSnapshot = {
 export const RUN_DOCUMENT_NAMES = [
   "idea",
   "brief",
+  "grill",
   "unknowns",
   "plan",
   "prd",
@@ -44,9 +45,15 @@ export type RunArtifactRef =
   | { kind: "session-steps"; id: string }
   | { kind: "document"; name: RunDocumentName }
   | { kind: "issue"; id: string }
+  | { kind: "tracker-task"; id: string }
   | { kind: "task-artifact"; taskId: string; name: string }
   | { kind: "install-log" }
-  | { kind: "activity" };
+  | { kind: "activity" }
+  | { kind: "config" }
+  | { kind: "transport-import" }
+  | { kind: "result-manifest" }
+  | { kind: "result-bundle-chunk"; id: string }
+  | { kind: "sandbox-probe" };
 
 export type RunArtifactKind = RunArtifactRef["kind"];
 
@@ -59,9 +66,15 @@ export const RUN_ARTIFACT_MAX_BYTES: Record<RunArtifactKind, number> = {
   "session-steps": 256_000,
   document: 512_000,
   issue: 256_000,
+  "tracker-task": 256_000,
   "task-artifact": 512_000,
   "install-log": 1_000_000,
   activity: 256_000,
+  config: 1_000_000,
+  "transport-import": 1_000_000,
+  "result-manifest": 1_000_000,
+  "result-bundle-chunk": 1_000_000,
+  "sandbox-probe": 256_000,
 };
 
 /** Kinds that are append-only and therefore reject whole-content writes. */
@@ -166,6 +179,12 @@ export interface RunStatePort {
     contents: string,
     context: MutationContext,
   ): Promise<void>;
+
+  /** Remove one typed artifact. Missing artifacts are treated as removed. */
+  deleteArtifact(runId: string, ref: RunArtifactRef, context: MutationContext): Promise<void>;
+
+  /** List typed artifact identifiers for the bounded collection kinds. */
+  listArtifacts(runId: string, kind: "session"): Promise<RunArtifactRef[]>;
 
   requestCancellation(runId: string, context: MutationContext): Promise<void>;
   cancellationRequested(runId: string): Promise<boolean>;
@@ -300,12 +319,24 @@ export function runArtifactPath(ref: RunArtifactRef): string {
       return `${ref.name}.md`;
     case "issue":
       return `issues/${assertIdentifier(ref.id, "issue id")}.md`;
+    case "tracker-task":
+      return `tasks/${assertIdentifier(ref.id, "tracker task id")}.md`;
     case "task-artifact":
       return `tasks/${assertIdentifier(ref.taskId, "task id")}/${assertIdentifier(ref.name, "artifact name")}`;
     case "install-log":
       return "installs.jsonl";
     case "activity":
       return "activity.json";
+    case "config":
+      return "config.json";
+    case "transport-import":
+      return "transport/import.json";
+    case "result-manifest":
+      return "transport/result.manifest.json";
+    case "result-bundle-chunk":
+      return `transport/result-bundle-chunks/${assertIdentifier(ref.id, "result bundle chunk id")}.base64`;
+    case "sandbox-probe":
+      return "sandbox-isolation-probe.json";
   }
 }
 

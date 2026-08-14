@@ -245,10 +245,11 @@ describe("host proxy routing and session affinity", () => {
       stateDirectory: path.join(root, "state"),
       execution: { runtime: "docker" },
     });
-    const runDir = path.join(root, "state", "runs", runId);
-    await mkdir(runDir, { recursive: true });
+    const workerInstanceId = "worker-reattach-1";
+    const bootstrapDir = path.join(root, "state", "worker-bootstrap", runId, workerInstanceId);
+    await mkdir(bootstrapDir, { recursive: true });
     const token = generateWorkerRpcToken();
-    await writeWorkerRpcTokenFile(path.join(runDir, WORKER_RPC_SECRET_RELATIVE_PATH), token);
+    await writeWorkerRpcTokenFile(path.join(bootstrapDir, "worker-rpc.token"), token);
 
     const containerName = "ah-project-run-reattach";
     const hostPort = await listenHealthStub(token);
@@ -258,6 +259,7 @@ describe("host proxy routing and session affinity", () => {
       runtime: "docker",
       lifecycle: "running",
       containerName,
+      workerInstanceId,
       hostPort,
       containerPort: 8787,
       rpcSecretRelativePath: WORKER_RPC_SECRET_RELATIVE_PATH,

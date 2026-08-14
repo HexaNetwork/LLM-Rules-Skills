@@ -5,7 +5,6 @@ import {
   BundleImportStateSchema,
 } from "../../src/domain/run-execution.js";
 import {
-  WORKER_RUN_STATE_PATH,
   WORKER_WORKSPACE_PATH,
   resolveExecutionWorkspaceRoot,
   runExecutionStatePath,
@@ -14,24 +13,11 @@ import {
 import { resolveWorkspaceProvisioner } from "../../src/workspace/index.js";
 
 describe("execution path constants", () => {
-  it("exposes worker bind-mount constants for Docker mode", () => {
-    expect(WORKER_RUN_STATE_PATH).toBe("/run-state");
+  it("exposes the isolated worker workspace constant", () => {
     expect(WORKER_WORKSPACE_PATH).toBe("/workspace");
   });
 
-  it("keeps local worktree host paths and uses /workspace for docker-clone", () => {
-    expect(
-      resolveExecutionWorkspaceRoot(
-        {
-          version: 1,
-          kind: "git-worktree",
-          controlRoot: "/repo",
-          worktreePath: "/repo-worktrees/run-1",
-          createdAt: "2026-08-10T12:00:00.000Z",
-        },
-        "/repo",
-      ),
-    ).toMatch(/run-1$/);
+  it("uses /workspace for docker-clone", () => {
     expect(
       resolveExecutionWorkspaceRoot(
         {
@@ -89,28 +75,8 @@ describe("run execution and transport schemas", () => {
 });
 
 describe("resolveWorkspaceProvisioner", () => {
-  it("returns a local provisioner by default", () => {
+  it("returns the Docker provisioner unconditionally", () => {
     const config = HarnessConfigSchema.parse({ repositoryRoot: "." });
-    const store = {
-      withWorkspaceAdminLock: async <T>(_h: unknown, work: () => Promise<T>) => work(),
-    } as never;
-    const provisioner = resolveWorkspaceProvisioner(config, {
-      paths: {
-        controlRoot: "/repo",
-        stateRoot: "/state",
-        workspaceRoot: "/repo",
-        worktreeRoot: "/worktrees",
-      },
-      store,
-    });
-    expect(provisioner.runtime).toBe("local");
-  });
-
-  it("returns a DockerCloneProvisioner for docker runtime", () => {
-    const config = HarnessConfigSchema.parse({
-      repositoryRoot: ".",
-      execution: { runtime: "docker" },
-    });
     const store = {
       withWorkspaceAdminLock: async <T>(_h: unknown, work: () => Promise<T>) => work(),
     } as never;

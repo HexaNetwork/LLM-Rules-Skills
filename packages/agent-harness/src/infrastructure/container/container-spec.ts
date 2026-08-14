@@ -8,8 +8,8 @@
 import type { DockerExecutionPolicy } from "../../config/schema.js";
 
 /** Must match application/paths.ts WORKER_* constants (avoid infra→application import). */
-const WORKER_RUN_STATE_PATH = "/run-state" as const;
 const WORKER_WORKSPACE_PATH = "/workspace" as const;
+const WORKER_SECRET_ROOT = "/run/secrets/" as const;
 
 export const HARNESS_CONTAINER_LABEL_PREFIX = "io.agent-harness" as const;
 
@@ -35,6 +35,7 @@ export type HardenedContainerSpec = {
   tmpfs: ReadonlyArray<{ path: string; options: string }>;
   /** Non-secret environment variables (`KEY=VALUE`). Never include CURSOR_API_KEY. */
   env?: ReadonlyArray<string>;
+  extraHosts?: ReadonlyArray<string>;
   mounts: ReadonlyArray<ContainerMount>;
   publishLoopback?: { hostPort: number; containerPort: number };
 };
@@ -49,8 +50,8 @@ export type ContainerMount =
   | {
       kind: "bind";
       source: string;
-      target: typeof WORKER_RUN_STATE_PATH;
-      readOnly: false;
+      target: string;
+      readOnly: true;
     };
 
 export type MountDenyReason =
@@ -60,8 +61,7 @@ export type MountDenyReason =
   | "host-network"
   | "extra-bind-mount"
   | "control-checkout"
-  | "harness-home"
-  | "sibling-run-state";
+  | "harness-home";
 
 const FORBIDDEN_BIND_SUFFIXES = [
   "/var/run/docker.sock",
@@ -79,7 +79,7 @@ export function denyMountOrFlag(input: {
   pidHost?: boolean;
   ipcHost?: boolean;
   networkHost?: boolean;
-  mounts?: ReadonlyArray<{ source: string; target: string; kind?: string }>;
+  mounts?: ReadonlyArray<{ source: string; target: string; kind?: string; readOnly?: boolean }>;
   allowedBindSources?: ReadonlySet<string>;
   controlRoot?: string;
   harnessHomeRoot?: string;
@@ -124,24 +124,12 @@ export function denyMountOrFlag(input: {
           detail: "Workspace must be a named volume, not a host bind mount.",
         };
       }
-      if (mount.target === WORKER_RUN_STATE_PATH) {
-        const allowed = input.allowedBindSources;
-        if (allowed && ![...allowed].some((item) => pathsEqualLoose(item, mount.source))) {
-          return {
-            allowed: false,
-            reason: "sibling-run-state",
-            detail: "Only the current run's state directory may be bind-mounted at /run-state.",
-          };
-        }
-      } else if (mount.target !== WORKER_RUN_STATE_PATH) {
-        // Extra binds beyond the single run-state mount are denied.
-        if (mount.target !== "/tmp") {
-          return {
-            allowed: false,
-            reason: "extra-bind-mount",
-            detail: `Extra bind mount to ${mount.target} is forbidden.`,
-          };
-        }
+      if (!mount.target.startsWith(WORKER_SECRET_ROOT) || mount.readOnly !== true) {
+        return {
+          allowed: false,
+          reason: "extra-bind-mount",
+          detail: `Only read-only bootstrap secret files may be bind-mounted; ${mount.target} is forbidden.`,
+        };
       }
       if (input.controlRoot && isPathUnder(mount.source, input.controlRoot)) {
         return {
@@ -153,12 +141,12 @@ export function denyMountOrFlag(input: {
       if (
         input.harnessHomeRoot &&
         isPathUnder(mount.source, input.harnessHomeRoot) &&
-        !(input.allowedBindSources && [...input.allowedBindSources].some((item) => pathsEqualLoose(item, mount.source)))
+        !mount.target.startsWith(WORKER_SECRET_ROOT)
       ) {
         return {
           allowed: false,
           reason: "harness-home",
-          detail: "Harness home (except the current run-state bind) must not be mounted.",
+          detail: "Harness home must not be mounted except for individual read-only bootstrap secrets.",
         };
       }
     }
@@ -191,7 +179,7 @@ export function buildHardenedContainerSpec(input: {
   harnessVersion: string;
   dockerPolicy: DockerExecutionPolicy;
   workspaceVolumeName: string;
-  runStateHostPath: string;
+  secretMounts?: ReadonlyArray<{ source: string; target: string }>;
   /** Non-root user inside the image (numeric preferred). */
   user?: string;
   publishHostPort?: number;
@@ -223,6 +211,7 @@ export function buildHardenedContainerSpec(input: {
       { path: "/home/harness", options: "rw,nosuid,size=512m,uid=10001,gid=10001,mode=755" },
     ],
     env: ["HOME=/home/harness"],
+    extraHosts: ["host.docker.internal:host-gateway"],
     mounts: [
       {
         kind: "volume",
@@ -230,12 +219,12 @@ export function buildHardenedContainerSpec(input: {
         target: WORKER_WORKSPACE_PATH,
         readOnly: false,
       },
-      {
-        kind: "bind",
-        source: input.runStateHostPath,
-        target: WORKER_RUN_STATE_PATH,
-        readOnly: false,
-      },
+      ...(input.secretMounts ?? []).map((mount) => ({
+        kind: "bind" as const,
+        source: mount.source,
+        target: mount.target,
+        readOnly: true as const,
+      })),
     ],
     publishLoopback:
       input.publishHostPort !== undefined
@@ -364,6 +353,9 @@ export function hardenedSpecToRunArgv(
   for (const entry of spec.env ?? []) {
     args.push("--env", entry);
   }
+  for (const entry of spec.extraHosts ?? []) {
+    args.push("--add-host", entry);
+  }
   for (const mount of spec.mounts) {
     if (mount.kind === "volume") {
       args.push(
@@ -373,7 +365,7 @@ export function hardenedSpecToRunArgv(
     } else {
       args.push(
         "--mount",
-        `type=bind,source=${mount.source},target=${mount.target}`,
+        `type=bind,source=${mount.source},target=${mount.target},readonly`,
       );
     }
   }

@@ -14,7 +14,6 @@ import {
 } from "./harness-home.js";
 import type { ProjectLookupResult } from "./project-registry.js";
 import { ProjectRegistry } from "./project-registry.js";
-import { mergeApprovedBaseImageLists } from "./approve-base-image.js";
 
 export type LoadExternalConfigOptions = {
   projectKey?: string;
@@ -106,32 +105,8 @@ export async function loadExternalProjectConfig(
     worktreeRoot: lookup.registration.worktreeRoot ?? lookup.paths.worktreeRoot,
   });
 
-  // Shared toolchain allowlist lives in harness-home; project entries overlay by family.
-  const homeExecution = isRecord(homeDefaults?.execution) ? homeDefaults.execution : {};
-  const homeDocker = isRecord(homeExecution.docker) ? homeExecution.docker : {};
-  const projectExecution = isRecord(projectConfig.execution) ? projectConfig.execution : {};
-  const projectDocker = isRecord(projectExecution.docker) ? projectExecution.docker : {};
-  const homeBases = Array.isArray(homeDocker.approvedBaseImages)
-    ? (homeDocker.approvedBaseImages as string[])
-    : [];
-  const projectBases = Object.prototype.hasOwnProperty.call(projectDocker, "approvedBaseImages")
-    ? Array.isArray(projectDocker.approvedBaseImages)
-      ? (projectDocker.approvedBaseImages as string[])
-      : []
-    : undefined;
-  const approvedBaseImages = mergeApprovedBaseImageLists(homeBases, projectBases);
-
   return {
-    config: {
-      ...merged,
-      execution: {
-        ...merged.execution,
-        docker: {
-          ...merged.execution.docker,
-          approvedBaseImages,
-        },
-      },
-    },
+    config: merged,
     path: lookup.paths.projectConfigPath,
     lookup,
   };

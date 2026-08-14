@@ -1,11 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  loadRunConfig,
-  loadRunWorkspace,
-  runWorkspacePath,
-} from "../../src/config/io.js";
+import { loadRunWorkspace, runWorkspacePath } from "../../src/config/io.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 const dockerCloneWorkspace = (root: string) => ({
@@ -24,7 +20,7 @@ const dockerCloneWorkspace = (root: string) => ({
 });
 
 describe("loadRunWorkspace runDirectory override", () => {
-  it("reads workspace.json from the worker run directory, not host stateDirectory/runs/<id>", async () => {
+  it("reads workspace.json from an explicit external host run directory", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root, {
       // Simulate a frozen Docker run config that still points at a host path.
@@ -35,7 +31,7 @@ describe("loadRunWorkspace runDirectory override", () => {
         enabled: true,
       },
     });
-    const runDir = path.join(root, "run-state-mount");
+    const runDir = path.join(root, "external-run");
     await mkdir(runDir, { recursive: true });
     await writeFile(
       path.join(runDir, "workspace.json"),
@@ -55,34 +51,5 @@ describe("loadRunWorkspace runDirectory override", () => {
     if (workspace.kind === "docker-clone") {
       expect(workspace.imageDigest).toBe("sha256:abc");
     }
-  });
-
-  it("loads flat worker layout when stateDirectory is the run mount", async () => {
-    const root = await fixtureRoot();
-    const runDir = path.join(root, "run-state");
-    await mkdir(runDir, { recursive: true });
-    const config = fixtureConfig(root, {
-      stateDirectory: runDir,
-      repositoryRoot: root,
-      git: {
-        ...fixtureConfig(root).git,
-        enabled: true,
-      },
-    });
-    await writeFile(
-      path.join(runDir, "workspace.json"),
-      `${JSON.stringify(dockerCloneWorkspace(root), null, 2)}\n`,
-      "utf8",
-    );
-    await writeFile(
-      path.join(runDir, "config.json"),
-      `${JSON.stringify(config, null, 2)}\n`,
-      "utf8",
-    );
-
-    const workspace = await loadRunWorkspace(config, "run-1");
-    expect(workspace.kind).toBe("docker-clone");
-    const frozen = await loadRunConfig(config, "run-1");
-    expect(frozen.stateDirectory).toBe(runDir);
   });
 });

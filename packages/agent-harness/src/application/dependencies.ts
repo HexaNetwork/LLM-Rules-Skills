@@ -28,6 +28,9 @@ import type { HarnessHomePaths, ProjectPaths } from "./harness-home.js";
 import { resolveHarnessPaths, type HarnessPaths } from "./paths.js";
 import type { DockerClient } from "../infrastructure/container/types.js";
 import { createDockerClient } from "../infrastructure/container/docker-client.js";
+import type { RunRepository } from "./run-repository.js";
+import type { RunStatePort } from "./run-state-port.js";
+import type { RunWorkspace } from "../domain.js";
 
 export type Clock = { now(): Date };
 
@@ -50,7 +53,7 @@ export type CommandRunner = {
 /** Narrow injectable bundle used by application services. */
 export type ApplicationDependencies = {
   paths: HarnessPaths;
-  store: RunStore;
+  store: RunRepository;
   agents: AgentCoordinator;
   tracker: TrackerPort;
   knowledge: LocalKnowledgeBase;
@@ -64,13 +67,15 @@ export type ApplicationDependencies = {
   /** Argv Docker client (real or fake); used for Docker-mode readiness/image builds. */
   docker: DockerClient;
   projectContext?: ProjectContext;
+  runStatePort?: RunStatePort;
+  workspace?: RunWorkspace;
 };
 
 /** Public construction seam for HarnessEngine / openRunHarness. */
 export type HarnessDependencies = {
   backend: AgentBackend;
   tracker?: TrackerPort;
-  store?: RunStore;
+  store?: RunRepository;
   knowledge?: LocalKnowledgeBase;
   git?: GitService;
   repositoryIntelligence?: RepositoryIntelligenceBroker;
@@ -84,6 +89,8 @@ export type HarnessDependencies = {
   commands?: CommandRunner;
   paths?: HarnessPaths;
   projectContext?: ProjectContext;
+  runStatePort?: RunStatePort;
+  workspace?: RunWorkspace;
 };
 
 export const systemClock: Clock = {
@@ -156,5 +163,7 @@ export function createApplicationDependencies(
     workspaceProvisioner,
     docker,
     projectContext: dependencies.projectContext,
+    runStatePort: dependencies.runStatePort,
+    workspace: dependencies.workspace,
   };
 }

@@ -156,6 +156,26 @@ export class FilesystemRunStatePort implements RunStatePort {
     await this.store.writeText(runId, runArtifactPath(ref), contents);
   }
 
+  async deleteArtifact(
+    runId: string,
+    ref: RunArtifactRef,
+    context: MutationContext,
+  ): Promise<void> {
+    if (context.fencingToken !== undefined) {
+      await this.assertMutationFencing(runId, context.fencingToken);
+    }
+    await this.store.remove(runId, runArtifactPath(ref));
+  }
+
+  async listArtifacts(runId: string, kind: "session"): Promise<RunArtifactRef[]> {
+    if (kind !== "session") return [];
+    const files = await this.store.listFiles(runId, "sessions");
+    return files
+      .map((file) => file.match(/^sessions\/([A-Za-z0-9][A-Za-z0-9._-]*)\.json$/)?.[1])
+      .filter((id): id is string => id !== undefined)
+      .map((id) => ({ kind: "session" as const, id }));
+  }
+
   async requestCancellation(runId: string, context: MutationContext): Promise<void> {
     await this.store.writeJson(runId, "cancel.request", {
       at: this.now().toISOString(),

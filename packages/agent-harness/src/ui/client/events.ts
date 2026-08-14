@@ -94,10 +94,6 @@ export const eventsScript = `    async function waitForJob(runId) {
             : (action === 'commit_preflight' ? 'Working tree committed — continuing'
             : (action === 'accept_tree' ? 'Current tree accepted — continuing'
             : (action === 'retry' ? 'Retry started' : 'Action completed')))))))))));
-        if (action === 'approve_and_build_execution_image') doneMsg = 'Execution image approved and built';
-        else if (action === 'approve_execution_image') doneMsg = 'Execution image approved';
-        else if (action === 'build_execution_image') doneMsg = 'Execution image build finished';
-        else if (action === 'save_execution_dockerfile') doneMsg = 'Dockerfile saved — re-approve before building';
         toast(doneMsg);
       } catch (error) {
         state.pinScrollTop = false;
@@ -255,15 +251,8 @@ export const eventsScript = `    async function waitForJob(runId) {
           runAction('cleanup', { discard: discardCleanup });
           return;
         }
-        if (target.dataset.action === 'recover_container' || target.dataset.action === 'approve_execution_image' || target.dataset.action === 'build_execution_image' || target.dataset.action === 'approve_and_build_execution_image') {
+        if (target.dataset.action === 'recover_container') {
           runAction(target.dataset.action);
-          return;
-        }
-        if (target.dataset.action === 'save_execution_dockerfile') {
-          var editor = document.getElementById('executionDockerfileEditor');
-          var dockerfileText = editor && 'value' in editor ? String(editor.value || '') : '';
-          if (!dockerfileText.trim()) { toast('Dockerfile cannot be empty', true); return; }
-          runAction('save_execution_dockerfile', { dockerfile: dockerfileText });
           return;
         }
         if (target.dataset.action === 'commit_preflight') {

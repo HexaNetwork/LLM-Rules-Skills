@@ -144,10 +144,11 @@ jobs:
       - name: Install
         working-directory: .
         run: npm ci
+      - name: Build maintained worker
+        run: npm run build
       - name: Real-Docker isolation tests
-        run: npm run test:docker
+        run: npm run test:docker:required
         env:
-          # Suite skips with an explicit capability reason if the daemon is unhealthy.
           VITEST_MAX_WORKERS: "1"
       - name: Upload diagnostic artifacts
         if: failure()

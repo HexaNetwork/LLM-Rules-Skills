@@ -307,24 +307,27 @@ cannot race a stale instance.
 - worker and host restarts preserve deterministic run state;
 - no production path supports host-local agent execution.
 
-## Delivery order
+## Delivery order (superseded)
 
-Implement in mergeable slices:
+[ADR 0017](../adr/0017-cordis-composed-docker-runtime.md) replaces the
+constructor-driven delivery topology with one Cordis-composed sequence:
 
-1. ADR and `RunStatePort` contract with contract tests.
-2. Host state service and filesystem adapter.
-3. RPC state adapter and worker bootstrap document.
-4. Stateless worker using the RPC adapter while retaining the old mount behind
-   a temporary development flag.
-5. Credential bootstrap and expanded real isolation probe.
-6. Remove `/run-state`, then remove the path heuristic.
-7. Recovery, leases, fencing, and worker recreation.
-8. Remove local runtime and old protocol/configuration.
-9. Full provider-backed Emperor acceptance run and documentation update.
+1. Freeze the lifecycle, trust, profile, and golden-path contracts.
+2. Land Cordis boot, typed services, registries, and fail-loud diagnostics.
+3. Compose the headless host control plane and sole run-lifecycle owner.
+4. Compose the immutable environment, Git-bundle source, named volume, secured
+   Docker runtime, and credential boundary.
+5. Compose the worker over RPC state, effect-scoped roles/phases, provider,
+   knowledge, verification, commands, and result export.
+6. Prove restart recovery, fencing, ordered teardown, host publication, and
+   control-checkout integrity at every lifecycle boundary.
+7. Make the real-Docker CLI-only golden path blocking.
+8. Switch CLI/UI to the host profile, reject pre-cutover active runs, then
+   delete the local runtime, generated-image pipeline, `/run-state`,
+   `RpcRunStore`, and compatibility facades.
 
-Do not remove `/run-state` until the state service, credential bootstrap,
-recovery path, and real isolation probe all pass. Do not remove the local
-runtime until the Docker acceptance lane covers the complete lifecycle.
+No legacy deletion or default switch occurs before the blocking Docker golden
+path passes repeatedly from clean state.
 
 ## Completion criteria
 

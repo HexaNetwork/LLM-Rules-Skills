@@ -7,7 +7,7 @@ import type {
   RunState,
   TestScenario,
 } from "./domain.js";
-import { RunStore } from "./store.js";
+import type { RunRepository } from "./application/run-repository.js";
 
 export interface TrackerPort {
   sync(state: RunState): Promise<string[]>;
@@ -15,7 +15,7 @@ export interface TrackerPort {
 
 /** Human-readable local issues are the default tracker and recovery surface. */
 export class LocalTracker implements TrackerPort {
-  constructor(private readonly store: RunStore) {}
+  constructor(private readonly store: RunRepository) {}
 
   async sync(state: RunState): Promise<string[]> {
     const paths: string[] = [];

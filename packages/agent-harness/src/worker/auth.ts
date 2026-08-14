@@ -50,8 +50,8 @@ export async function readWorkerRpcToken(secretFilePath: string): Promise<string
 }
 
 /**
- * Persist the RPC token as a run-local secret file (mode 0400 when supported).
- * Path is relative to the run directory on host and under /run-state in the container.
+ * Persist a bootstrap token file (mode 0400 when supported). Production
+ * callers place it outside the durable run directory and mount only this file.
  */
 export async function writeWorkerRpcTokenFile(
   absolutePath: string,

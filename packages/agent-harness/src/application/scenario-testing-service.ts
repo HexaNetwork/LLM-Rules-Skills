@@ -199,8 +199,30 @@ export class ScenarioTestingService {
         { scenarioId: current.id },
       );
       if (nextScenarios.every((item) => item.status === "passing")) {
+        let settled = next;
+        if (this.ctx.config.git.enabled) {
+          const dirty = await this.ctx.git.changedFiles();
+          const nonTest = dirty.filter(
+            (file) => !isTestPath(file, this.ctx.config.workflow.testPathPatterns),
+          );
+          if (nonTest.length > 0) {
+            throw new HarnessFailure(
+              `Refusing to commit scenario tests with non-test changes: ${nonTest.join(", ")}`,
+              "contract",
+              false,
+            );
+          }
+          if (dirty.length > 0) {
+            const committed = await this.ctx.git.commitWorkingTree("test: add acceptance scenarios");
+            const evidence = await this.ctx.stampWorkspaceEvidence();
+            settled = await this.ctx.store.record({ ...settled, ...evidence }, "scenario.tests_committed", {
+              commitSha: committed.sha,
+              files: committed.files,
+            });
+          }
+        }
         return this.ctx.store.record(
-          { ...next, phase: "crystallizing" },
+          { ...settled, phase: "crystallizing" },
           "scenarios.completed",
         );
       }

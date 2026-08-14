@@ -6,6 +6,19 @@ Agent Harness turns an idea into verified, committed feature slices through a du
 
 Requires **Node.js 20.3+** (`AbortSignal.any` for cancellable agent timeouts).
 
+The Docker-only vNext composition uses `@deepseek-ai/cordis`. Inspect the
+trusted host/worker plugin tree without starting Docker:
+
+```bash
+agent-harness vnext dump-config --profile host
+agent-harness vnext dump-config --profile worker
+```
+
+Production profiles disable HMR, require exactly one security-policy plugin,
+reject missing/duplicate/pending providers, and never load plugin module
+specifiers from the target repository. The headless control-server profile
+serves worker state RPC for CLI runs; dashboard routes are an optional adapter.
+
 ```bash
 npm install
 npm run build
@@ -328,11 +341,11 @@ See [intent-first workflow](../../docs/plans/intent-first-workflow.md). Evidence
 
 Agents cannot claim a command passed. The harness owns process execution and records exit code, stdout, stderr, duration, and timestamp.
 
-## Per-run worktrees
+## Per-run Docker workspaces
 
-Every new Git-enabled run gets a registered linked worktree under `<stateDirectory>/worktrees/<runId>` (see [ADR 0010](../../docs/adr/0010-per-run-worktrees.md)). The project checkout is the **control root**; the worktree is the **execution root**. Durable harness state (`runs/`, locks, knowledge) stays on the control/state root. Agents, commands, repository-intelligence indexes, and Git mutations for the run use the worktree.
+Every new run executes in a named Docker volume mounted only at `/workspace`. The host creates a bundle for the exact committed `baseSha`, imports it through a short-lived init container, and starts the long-lived worker from one maintained digest-pinned image. The control checkout and durable run state are never mounted.
 
-At start the harness resolves `git.baseBranch` to an immutable `baseSha`, runs `git worktree add --detach`, and writes `workspace.json`. No delivery branch is created yet. A human-readable branch is created later at publish from the confirmed feature title plus a short run id. Local task commits are valid on detached `HEAD`.
+The worker completes reflection through final review, then sends a hashed result bundle to the host over the typed state transport. Host-only publication validates ancestry in quarantine, promotes the delivery ref, and optionally pushes or opens a pull request. The control checkout branch, index, and files remain unchanged.
 
 ### Dirty control checkout
 
@@ -344,26 +357,24 @@ A dirty operator checkout is **not** a blocker for ordinary new worktree runs. T
 - **Workspace-admin lock** — short lock around shared Git worktree metadata (add/remove/rename branch refs).
 - **Shared-index lock** — knowledge / repository-intelligence refresh coordination.
 
-Independent worktree runs can advance concurrently. Inspect locks with `agent-harness unlock --run-id <id> --inspect-only` (distinguishes run, workspace-admin, and shared-index).
+Independent container runs can advance concurrently. Inspect durable run locks with `agent-harness unlock --run-id <id> --inspect-only`.
 
 ### Cleanup, recovery, and disk use
 
-Worktrees share Git objects with the main repo but can accumulate working trees and build artifacts. Cleanup is explicit and conservative:
+Named volumes can accumulate build artifacts. Cleanup is explicit and conservative:
 
 ```bash
 agent-harness cleanup --run-id <id>
 agent-harness cleanup --run-id <id> --discard   # unpublished commits not on a retained ref / import
 agent-harness execution status
 agent-harness execution diagnostics --run-id <id>
-agent-harness execution approve-image --run-id <id>
-agent-harness execution build-image --run-id <id>
 agent-harness execution recover-container --run-id <id>
 agent-harness execution reconcile-orphans [--apply]
 ```
 
-Cleanup verifies cleanliness and publication/discard state before removing a worktree or Docker container/volume. It refuses dirty trees, active/non-settled runs, path mismatches, running workers/active RPC, and unpublished history without `--discard`. It never runs `git worktree prune`. Completed published runs keep `workspace.json`, state, events, transport audit metadata, and the delivery branch; only the execution workspace is removed (`run.worktree_removed` / `run.docker_workspace_removed`).
+Cleanup verifies publication/discard state before removing a container or volume. It refuses active/non-settled runs, identity mismatches, running workers/active RPC, and unpublished history without `--discard`. Completed published runs keep `workspace.json`, state, events, transport audit metadata, and the delivery branch.
 
-If a worktree is missing or moved, resume blocks with a recoverable workspace failure. Manual repair: restore the directory at the recorded path, or recreate a linked worktree at the recorded `baseSha`/`HEAD` with the same path, then resume. For Docker clones, a missing container may be recreated against the retained named volume (`execution recover-container`); a missing volume blocks with diagnostics rather than silently reseeding.
+A missing worker container is recreated against the retained named volume (`execution recover-container`). A missing volume with retained lifecycle state blocks with diagnostics rather than silently reseeding.
 
 ### Unsupported legacy installs
 
@@ -373,7 +384,7 @@ If a worktree is missing or moved, resume blocks with a recoverable workspace fa
 
 Agents never run git. The harness:
 
-- starts each new Git-enabled run in a detached worktree at the committed base SHA (control checkout branch/index/files are left alone);
+- starts each new Git-enabled run in an isolated named volume at the committed base SHA;
 - creates a delivery branch only when publication needs a named ref;
 - requires every committed path to have been reported by the task worker;
 - asks the small model for commit and pull-request text, with a deterministic fallback;
@@ -398,14 +409,17 @@ From the monorepo root (or `packages/agent-harness`):
 npm run test:unit          # Vitest unit suite (no Docker required)
 npm run test:integration   # Vitest integration suite (real FS / HTTP / ScriptedBackend)
 npm run test:docker        # Real-Docker isolation lane (skips with capability reason if daemon unavailable)
+npm run test:docker:required # Blocking CI lane; Docker unavailability is a failure
 npm run test:e2e:install   # once per machine: download Chromium for Playwright
 npm run test:e2e           # Playwright browser E2E against a real loopback UI
 npm run build              # required before acceptance tests that spawn dist/cli.js
 npm run test:acceptance    # CLI acceptance via createCli injection + compiled bin
-npm run test:all           # unit + integration + e2e + build + acceptance
+npm run test:all           # unit + integration + required Docker + e2e + build + acceptance
 ```
 
-Docker execution mode (`execution.runtime: docker`) is opt-in. The install wizard can detect Docker and, when you confirm, run `agent-harness execution prepare-worker` (readiness probe + build/pull of the maintained worker image; optional project settings pin). Image digests for *project* runs are accepted only after a fail-closed sandbox isolation probe; `CURSOR_API_KEY` for the worker is a run-state secret file (not container env). Bridge networking is filesystem isolation, not exfiltration-proof. Configure via dashboard **Settings → Execution runtime** (freezes into new runs only). Operator controls: `execution prepare-worker`, image approve/build, container recovery, cleanup/discard, `GET /api/execution/status`, and the rest of the `agent-harness execution …` CLI. See [ADR 0015](../../docs/adr/0015-docker-isolated-runs.md) and [INSTALL.md](../../INSTALL.md#7-optional-docker-execution-runtime).
+Docker is the only production runtime. `execution.runtime`, local worktrees, per-run Dockerfiles, generated images, and manual base/image approvals are no longer configuration or runtime paths. Loading a pre-cutover project config fails with migration guidance; the install flow prepares one digest-pinned maintained worker image that every run reuses. Bridge networking is filesystem isolation, not an exfiltration boundary. See [ADR 0017](../../docs/adr/0017-cordis-composed-docker-runtime.md) and [INSTALL.md](../../INSTALL.md#7-docker-runtime).
+
+The non-provider Docker probe mounts an actual mode-`000` fixture at the production `/run/secrets/*` layout and fails if the file is absent or readable; it also verifies `/workspace` writes and host-state absence. Real Cursor credentials remain a release gate: the host refuses to mount `CURSOR_API_KEY` until a credential-gated smoke test demonstrates denial through both Cursor filesystem tools and delegated tasks. That proof requires a real Cursor credential and cannot be established by the deterministic provider.
 
 E2E tests live in `tests/e2e/`. They do **not** launch the production CLI: each test builds a `ProjectFixture`, injects a `ScriptedBackend`, starts `startUiServer({ port: 0, openBrowser: false })`, and opens the authenticated dashboard URL. Failure artifacts land under Git-ignored `test-results/` (Playwright traces under `test-results/playwright/`).
 

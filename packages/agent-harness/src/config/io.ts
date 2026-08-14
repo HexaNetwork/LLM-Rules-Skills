@@ -69,6 +69,7 @@ export async function loadConfig(
   }
   const raw = await readFile(resolved, "utf8");
   const value: unknown = resolved.endsWith(".json") ? JSON.parse(raw) : yaml.load(raw);
+  assertProductionDockerCutover(value);
   const parsed = HarnessConfigSchema.parse(rewriteGraphifyConfigKeys(value));
   return {
     path: resolved,
@@ -77,6 +78,24 @@ export async function loadConfig(
       repositoryRoot: path.resolve(path.dirname(resolved), parsed.repositoryRoot),
     },
   };
+}
+
+function assertProductionDockerCutover(value: unknown): void {
+  if (!isRecord(value) || !isRecord(value.execution)) return;
+  if (Object.prototype.hasOwnProperty.call(value.execution, "runtime")) {
+    throw new Error(
+      "execution.runtime is retired because production is Docker-only. Finish/export/discard active pre-cutover runs, remove the field, and configure execution.docker.workerImageDigest.",
+    );
+  }
+  const docker = isRecord(value.execution.docker) ? value.execution.docker : undefined;
+  if (
+    docker?.generatedImagesEnabled === true ||
+    (Array.isArray(docker?.approvedBaseImages) && docker.approvedBaseImages.length > 0)
+  ) {
+    throw new Error(
+      "Generated per-run execution images and base-image approvals are retired. Configure one maintained execution.docker.workerImageDigest instead.",
+    );
+  }
 }
 
 export async function writeProjectSettings(
@@ -229,18 +248,15 @@ export async function writeProjectSettings(
 
 export type RunArtifactPathOptions = {
   /**
-   * Absolute path to the run directory. Worker mode passes `/run-state` (or the
-   * host path to that same directory) so artifacts resolve without the frozen
-   * host `stateDirectory/.../runs/<id>` layout.
+   * Explicit host path to the run directory for registered external projects.
    */
   runDirectory?: string;
 };
 
 /**
  * Resolve a file under a run directory.
- * Prefer `options.runDirectory` (worker / store). Otherwise try the nested
- * `stateRoot/runs/<id>/` layout, then the flat worker layout where `stateRoot`
- * itself is the run directory (`stateRoot/<file>`).
+ * Prefer `options.runDirectory`; otherwise use the host's nested
+ * `stateRoot/runs/<id>/` layout.
  */
 export async function resolveRunArtifactPath(
   projectConfig: HarnessConfig,
@@ -254,8 +270,6 @@ export async function resolveRunArtifactPath(
   const { stateRoot } = resolveHarnessPaths(projectConfig);
   const nested = path.join(stateRoot, "runs", runId, fileName);
   if (await pathExists(nested)) return nested;
-  const flat = path.join(stateRoot, fileName);
-  if (await pathExists(flat)) return flat;
   return nested;
 }
 
@@ -337,11 +351,7 @@ export async function writeRunWorkspace(
   await writeFile(snapshot, `${JSON.stringify(workspace, null, 2)}\n`, "utf8");
 }
 
-/**
- * Like resolveRunArtifactPath, but when neither nested nor flat file exists yet,
- * prefer flat layout when `stateRoot` already looks like a single-run mount
- * (has state.json or config.json at the root — worker `/run-state`).
- */
+/** Resolve a host-owned run artifact write path. */
 async function resolveRunArtifactWritePath(
   projectConfig: HarnessConfig,
   runId: string,
@@ -350,14 +360,6 @@ async function resolveRunArtifactWritePath(
   const { stateRoot } = resolveHarnessPaths(projectConfig);
   const nested = path.join(stateRoot, "runs", runId, fileName);
   if (await pathExists(nested)) return nested;
-  const flat = path.join(stateRoot, fileName);
-  if (await pathExists(flat)) return flat;
-  if (
-    (await pathExists(path.join(stateRoot, "state.json"))) ||
-    (await pathExists(path.join(stateRoot, "config.json")))
-  ) {
-    return flat;
-  }
   return nested;
 }
 

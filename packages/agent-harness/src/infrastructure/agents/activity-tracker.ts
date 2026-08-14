@@ -1,5 +1,5 @@
 import type { AgentRole } from "../../domain.js";
-import type { RunStore } from "../../store.js";
+import type { RunRepository as RunStore } from "../../application/run-repository.js";
 import type { AgentStepEvent } from "./types.js";
 
 /** Mutable so tests can exercise the cap without writing thousands of lines. */

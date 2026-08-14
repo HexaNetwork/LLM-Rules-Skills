@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
@@ -15,6 +15,10 @@ import {
   runStateApiPath,
 } from "../../src/worker/state-protocol.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
+import { RpcRunStatePort } from "../../src/infrastructure/state/rpc-run-state-port.js";
+import { RpcRunRepository } from "../../src/infrastructure/state/rpc-run-repository.js";
+import { runWorker } from "../../src/worker/run-worker.js";
+import { generateWorkerRpcToken } from "../../src/worker/auth.js";
 
 const NOW = "2026-08-14T12:00:00.000Z";
 
@@ -35,7 +39,7 @@ describe("worker state API", () => {
     fixture = undefined;
   });
 
-  async function setup(runIds: string[] = ["run-a"]) {
+  async function setup(runIds: string[] = ["run-a"], dashboard = true) {
     fixture = await createProjectFixture();
     const stateRoot = resolveHarnessPaths(fixture.config).stateRoot;
     store = new RunStore(fixture.config, stateRoot);
@@ -49,6 +53,7 @@ describe("worker state API", () => {
       backend: createFakeBackend({}),
       port: 0,
       token: "ui-test",
+      dashboard,
     });
     return { stateRoot };
   }
@@ -91,6 +96,17 @@ describe("worker state API", () => {
     };
   }
 
+  it("serves worker RPC without mounting dashboard routes", async () => {
+    await setup(["run-a"], false);
+    expect(ui!.workerStateEndpoint).toMatch(/^http:\/\/host\.docker\.internal:/);
+    expect((await fetch(`${ui!.origin}/health`)).status).toBe(200);
+    expect((await fetch(`${ui!.origin}/`)).status).toBe(404);
+    const { token } = await ui!.issueWorkerStateCredential("run-a", {
+      workerInstanceId: "worker-headless",
+    });
+    expect((await api("run-a", "snapshot", { token })).status).toBe(200);
+  });
+
   it("serves the worker bootstrap document with frozen config, workspace identity, and revision", async () => {
     await setup(["run-a"]);
     const { token } = await ui!.issueWorkerStateCredential("run-a", {
@@ -110,11 +126,87 @@ describe("worker state API", () => {
     expect(result.protocolVersion).toBe(RUN_STATE_API_PROTOCOL_VERSION);
     expect(result.revision).toBe(1);
     expect(result.workerInstanceId).toBe("worker-1");
-    expect(result.config.repositoryRoot).toBe(fixture!.root);
+    expect(result.config.repositoryRoot).toBe("/workspace");
+    expect(JSON.stringify(result)).not.toContain(fixture!.root);
     expect(result.workspace.kind).toBe("git-disabled");
     // Host filesystem paths are stripped from the workspace identity.
     expect(result.workspace).not.toHaveProperty("controlRoot");
     expect(result.workspace).not.toHaveProperty("worktreePath");
+  });
+
+  it("implements RunStatePort through the production RPC adapter", async () => {
+    await setup(["run-a"]);
+    const { token } = await ui!.issueWorkerStateCredential("run-a");
+    const port = new RpcRunStatePort({ endpoint: ui!.origin, credential: token });
+
+    const snapshot = await port.loadSnapshot("run-a");
+    const next = await port.compareAndSwap("run-a", {
+      requestId: "rpc-adapter-request",
+      idempotencyKey: "rpc-adapter-key",
+      expectedRevision: snapshot.revision,
+      transition: transitionFrom(snapshot, { phase: "reflecting" }),
+    });
+    expect(next.revision).toBe(snapshot.revision + 1);
+
+    await port.writeArtifact(
+      "run-a",
+      { kind: "activity" },
+      "{}",
+      { requestId: "rpc-write", idempotencyKey: "rpc-write-key" },
+    );
+    expect(await port.readArtifact("run-a", { kind: "activity" })).toBe("{}");
+    await port.deleteArtifact(
+      "run-a",
+      { kind: "activity" },
+      { requestId: "rpc-delete", idempotencyKey: "rpc-delete-key" },
+    );
+    expect(await port.readArtifact("run-a", { kind: "activity" })).toBeUndefined();
+  });
+
+  it("boots a worker without a run-state filesystem mount", async () => {
+    await setup(["run-a"]);
+    await store.writeJson("run-a", "workspace.json", {
+      version: 1,
+      kind: "docker-clone",
+      controlRoot: fixture!.root,
+      containerName: "worker-test",
+      workspaceVolumeName: "worker-test-volume",
+      workspacePath: "/workspace",
+      imageDigest: "sha256:test",
+      baseSha: "base-test",
+      seedBundleHash: "seed-test",
+      generation: 0,
+      createdAt: NOW,
+    });
+    const workerInstanceId = "worker-rpc-bootstrap";
+    const { token: stateToken } = await ui!.issueWorkerStateCredential("run-a", {
+      workerInstanceId,
+    });
+    const rpcSecret = path.join(fixture!.root, "worker-rpc.token");
+    const stateSecret = path.join(fixture!.root, "worker-state.token");
+    await writeFile(rpcSecret, `${generateWorkerRpcToken()}\n`, "utf8");
+    await writeFile(stateSecret, `${stateToken}\n`, "utf8");
+
+    const worker = await runWorker({
+      runId: "run-a",
+      workerInstanceId,
+      stateEndpoint: ui!.origin,
+      stateCredentialFile: stateSecret,
+      secretFile: rpcSecret,
+      host: "127.0.0.1",
+      port: 0,
+      fakeBackend: true,
+    });
+    try {
+      expect(worker.engine.store).toBeInstanceOf(RpcRunRepository);
+      expect(worker.profile.ctx.runState).toBeInstanceOf(RpcRunStatePort);
+      expect(worker.engine.paths.stateRoot).toBe("/tmp/agent-harness-state");
+      expect(worker.engine.paths.workspaceRoot).toBe("/workspace");
+    } finally {
+      await worker.close();
+    }
+    expect(await new RpcRunStatePort({ endpoint: ui!.origin, credential: stateToken }).currentLease("run-a"))
+      .toBeUndefined();
   });
 
   it("round-trips a snapshot read and compare-and-swap mutation", async () => {

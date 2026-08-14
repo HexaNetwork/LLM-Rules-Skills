@@ -48,9 +48,10 @@ function passingReport(imageDigest = DIGEST): SandboxIsolationProbeReport {
     probedAt: new Date().toISOString(),
     checks: [
       { id: "workspace-write", ok: true, detail: "ok" },
-      { id: "run-state-read-denied", ok: true, detail: "ok" },
-      { id: "run-state-write-denied", ok: true, detail: "ok" },
-      { id: "rpc-secret-read-denied", ok: true, detail: "ok" },
+      { id: "host-state-read-denied", ok: true, detail: "ok" },
+      { id: "host-state-write-denied", ok: true, detail: "ok" },
+      { id: "actual-secret-present", ok: true, detail: "ok" },
+      { id: "actual-secret-read-denied", ok: true, detail: "ok" },
       { id: "outside-workspace-denied", ok: true, detail: "ok" },
       { id: "sandbox-enabled", ok: true, detail: "ok" },
       { id: "mount-topology", ok: true, detail: "ok" },
@@ -192,6 +193,7 @@ describe("sandbox isolation probe gating", () => {
         workspaceWritable: true,
         canReadRunState: false,
         canWriteRunState: false,
+        secretPresent: true,
         canReadRpcSecret: false,
         canAccessOutsideWorkspace: false,
       }).ok,
@@ -201,6 +203,7 @@ describe("sandbox isolation probe gating", () => {
         workspaceWritable: true,
         canReadRunState: true,
         canWriteRunState: false,
+        secretPresent: true,
         canReadRpcSecret: false,
         canAccessOutsideWorkspace: false,
       }).ok,
@@ -248,10 +251,12 @@ describe("capability advertising after probe", () => {
   });
 
   it("default probe overrides worker ENTRYPOINT with self-check path", async () => {
-    const {
-      defaultSandboxIsolationProbeExecutor,
-      WORKER_ISOLATION_SELF_CHECK_PATH,
-    } = await import("../../src/application/index.js");
+    const { defaultSandboxIsolationProbeExecutor } = await import(
+      "../../src/application/index.js"
+    );
+    const { WORKER_ISOLATION_SELF_CHECK_PATH } = await import(
+      "../../src/worker/protocol.js"
+    );
     const probeDir = await mkdtemp(path.join(tmpdir(), "ah-probe-rs-"));
     const docker = createFakeDockerClient({
       scripted: [
@@ -263,6 +268,7 @@ describe("capability advertising after probe", () => {
               workspaceWrite: true,
               runStateReadDenied: true,
               runStateWriteDenied: true,
+              secretPresent: true,
               rpcSecretReadDenied: true,
               outsideWorkspaceDenied: true,
             }),
@@ -273,7 +279,7 @@ describe("capability advertising after probe", () => {
       ],
     });
     const config = HarnessConfigSchema.parse({
-      execution: { runtime: "docker", docker: { sandboxRequired: true } },
+      execution: { docker: { sandboxRequired: true } },
     });
     const report = await defaultSandboxIsolationProbeExecutor({
       imageDigest: DIGEST,
@@ -377,7 +383,7 @@ describe("secret and mount/resource hardening (unit)", () => {
       harnessVersion: "0.3.2",
       dockerPolicy: config.execution.docker,
       workspaceVolumeName: "ah-ws",
-      runStateHostPath: "/state/runs/r",
+      secretMounts: [],
     });
     const argv = hardenedSpecToRunArgv(spec);
     expect(argv).toEqual(

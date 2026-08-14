@@ -80,8 +80,11 @@ describe("dashboard document", () => {
     const html = renderDashboard();
     const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
     expect(script).toContain('id: "execution-image"');
+    expect(script).toContain('id: "execution-image", label: "Container"');
     expect(script).toContain("renderExecutionImageTab");
     expect(script).toContain("renderExecutionImagePreview");
+    expect(script).toContain("Docker runtime details and workspace lifecycle controls");
+    expect(script).not.toContain("<strong>Docker execution</strong>");
     expect(script).toContain("Generated Dockerfile");
     expect(html).toContain("dockerfile-preview");
   });

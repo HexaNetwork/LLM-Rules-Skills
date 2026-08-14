@@ -67,7 +67,7 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
         { id: "artifacts", label: "Artifacts" },
       ];
       if (shouldShowExecutionImageTab(s)) {
-        tabs.splice(4, 0, { id: "execution-image", label: "Execution image" });
+        tabs.splice(4, 0, { id: "execution-image", label: "Container" });
       }
       if (state.tab === "sessions") state.tab = "activity";
       if (state.tab === "execution-image" && !shouldShowExecutionImageTab(s)) state.tab = "overview";
@@ -124,7 +124,7 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
         '<div class="muted" style="margin-bottom:6px"><strong>Generated Dockerfile</strong>' + (meta.length ? '<span class="faint"> · ' + meta.join(" · ") + "</span>" : "") + "</div>" +
         '<pre class="dockerfile-preview" data-scroll-key="execution-dockerfile">' + esc(image.dockerfile) + "</pre>" +
         (options.showTabLink
-          ? '<div style="margin-top:8px"><button type="button" class="btn small" data-tab="execution-image">Open Execution image tab</button></div>'
+          ? '<div style="margin-top:8px"><button type="button" class="btn small" data-tab="execution-image">Open Container tab</button></div>'
           : "") +
         "</div>";
     }
@@ -662,10 +662,6 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
       if (!state.detail.job && ["completed","cancelled"].includes(s.phase) && workspaceMeta.kind === "git-worktree" && workspaceMeta.worktreePath && !workspaceMeta.removedAt) {
         html += '<div class="card"><div class="alert"><div><strong>Worktree cleanup</strong><div class="muted" style="margin-top:5px">Remove the registered worktree after verifying cleanliness and publication state. State, events, and retained branches stay on disk.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" data-action="cleanup">Clean up worktree</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button></div></div></div>';
       }
-      if (!state.detail.job && workspaceMeta.kind === "docker-clone" && !workspaceMeta.removedAt) {
-        var frozenRt = workspaceMeta.frozenRuntime || "docker";
-        html += '<div class="card"><div class="alert"><div><strong>Docker execution</strong><div class="muted" style="margin-top:5px">Frozen runtime: <code>' + esc(frozenRt) + '</code> (cannot switch mid-run). Container <code>' + esc(workspaceMeta.containerName || "") + '</code> · volume <code>' + esc(workspaceMeta.workspaceVolumeName || "") + '</code>' + (workspaceMeta.executionLifecycle ? ' · lifecycle <code>' + esc(workspaceMeta.executionLifecycle) + '</code>' : '') + (workspaceMeta.importStatus ? ' · import <code>' + esc(workspaceMeta.importStatus) + '</code>' : '') + '</div>' + (workspaceMeta.importRejectionReason ? '<div class="muted" style="margin-top:5px">Import rejected: ' + esc(workspaceMeta.importRejectionReason) + '</div>' : '') + '</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" data-action="recover_container">Recover worker container</button><button class="btn primary" data-action="approve_and_build_execution_image">Approve &amp; build image</button><button class="btn" data-action="approve_execution_image">Approve only</button><button class="btn" data-action="build_execution_image">Build / retry image</button>' + (["completed","cancelled"].includes(s.phase) ? '<button class="btn" data-action="cleanup">Clean up Docker workspace</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button>' : '') + '</div></div></div>';
-      }
       if (s.phase === "blocked" && !state.detail.job) {
         var remediation = blockedRemediation(s);
         var failureText = String(s.failure || "");
@@ -715,7 +711,7 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
           retryControls =
             '<div class="alert-actions">' +
             '<button class="btn primary" data-action="approve_and_build_execution_image">Approve &amp; build image</button>' +
-            '<button class="btn" data-tab="execution-image">Execution image tab</button>' +
+            '<button class="btn" data-tab="execution-image">Container tab</button>' +
             '</div>';
         } else if (s.blockedKind === "budget") {
           var ceilings = (state.detail && state.detail.ceilings) || {};
@@ -823,7 +819,32 @@ export const renderRunScript = `    function isExecutionImageApprovalFailure(fai
 
     function renderExecutionImageTab(s) {
       var image = (state.detail && state.detail.executionImage) || { present: false, files: [] };
-      var html = '<div class="card"><div class="card-label">Execution image</div>';
+      var workspace = (state.detail && state.detail.workspace) || {};
+      var html = "";
+      if ((workspace.kind === "docker-clone" || workspace.frozenRuntime === "docker") && !workspace.removedAt) {
+        var containerRows = [
+          ["Runtime", workspace.frozenRuntime || "docker"],
+          ["Container", workspace.containerName || "—"],
+          ["Workspace volume", workspace.workspaceVolumeName || "—"],
+          ["Lifecycle", workspace.executionLifecycle || "—"],
+          ["Import", workspace.importStatus || "—"],
+        ];
+        html += '<div class="card"><div class="card-label">Container</div>';
+        html += '<p class="muted">Docker runtime details and workspace lifecycle controls for this run.</p>';
+        html += '<div style="margin-top:12px;display:grid;gap:8px">' + containerRows.map(function (row) {
+          return '<div style="display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:start"><span class="faint">' + esc(row[0]) + '</span><code style="word-break:break-all">' + esc(row[1]) + '</code></div>';
+        }).join("") + '</div>';
+        if (workspace.importRejectionReason) {
+          html += '<div class="resolution" style="margin-top:14px"><strong>Import rejected</strong><div class="muted" style="margin-top:5px">' + esc(workspace.importRejectionReason) + '</div></div>';
+        }
+        if (!state.detail.job) {
+          html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn" data-action="recover_container">Recover worker container</button>' +
+            (["completed","cancelled"].includes(s.phase) ? '<button class="btn" data-action="cleanup">Clean up Docker workspace</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button>' : '') +
+            '</div>';
+        }
+        html += '</div>';
+      }
+      html += '<div class="card"><div class="card-label">Execution image</div>';
       html += '<p class="muted">Generated per run under <code>runs/' + esc(s.runId) + '/execution-image/</code>. Review the Dockerfile before approving a Docker workspace build. Matching approvals can be reused later via the project image cache.</p>';
       if (!image.present) {
         html += '<div class="empty" style="margin-top:12px">No execution-image artifacts for this run yet. They appear when Docker setup generates a project image.</div></div>';

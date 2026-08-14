@@ -12,6 +12,7 @@ import {
 } from "../../src/infrastructure/worker-rpc/client.js";
 import {
   ensureDockerWorkerSession,
+  waitForDockerWorkerHealth,
   workerRpcActionForHostAction,
 } from "../../src/application/docker-worker-session.js";
 import { mapHostActionToWorkerRpc } from "../../src/application/docker-run-proxy.js";
@@ -65,6 +66,31 @@ function handlerContext(engine: HarnessEngine): WorkerHandlerContext {
 }
 
 describe("worker RPC auth and protocol", () => {
+  it("polls through the normal worker startup race", async () => {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const result = await waitForDockerWorkerHealth(
+      {
+        health: async () => {
+          calls += 1;
+          if (calls < 3) throw new Error("fetch failed");
+          return { status: "ok" } as never;
+        },
+      },
+      {
+        attempts: 4,
+        intervalMs: 25,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
+      },
+    );
+
+    expect(result).toEqual({ status: "ok" });
+    expect(calls).toBe(3);
+    expect(sleeps).toEqual([25, 25]);
+  });
+
   it("rejects missing/invalid tokens", async () => {
     const token = generateWorkerRpcToken();
     const server = await startWorkerRpcServer({

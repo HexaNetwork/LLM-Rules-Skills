@@ -21,6 +21,15 @@ export async function writeCursorApiKeySecretFile(
     throw new Error("CURSOR_API_KEY secret is empty");
   }
   await mkdir(path.dirname(absolutePath), { recursive: true });
+  try {
+    const existing = (await readFile(absolutePath, "utf8")).trim();
+    if (existing === trimmed) return;
+    // chmod(0400) maps to a genuinely read-only file on Windows. Make an
+    // intentional key rotation writable before replacing its contents.
+    await chmod(absolutePath, 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   await writeFile(absolutePath, `${trimmed}\n`, { encoding: "utf8", flag: "w" });
   try {
     await chmod(absolutePath, 0o400);

@@ -53,6 +53,31 @@ export type EnsureDockerWorkerSessionOptions = {
   startIfMissing?: boolean;
 };
 
+/** Bound the normal docker-run-to-listen race without hiding durable failures. */
+export async function waitForDockerWorkerHealth(
+  client: Pick<WorkerRpcClient, "health">,
+  options: {
+    attempts?: number;
+    intervalMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<unknown> {
+  const attempts = Math.max(1, options.attempts ?? 50);
+  const intervalMs = Math.max(0, options.intervalMs ?? 100);
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await client.health();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await sleep(intervalMs);
+    }
+  }
+  throw lastError;
+}
+
 /**
  * Resume after host/UI restart: load execution.json + secret metadata, discover
  * the labeled container by name, probe worker health, return an authenticated client.
@@ -150,7 +175,7 @@ export async function ensureDockerWorkerSession(
   });
 
   try {
-    await client.health();
+    await waitForDockerWorkerHealth(client);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     execution = await writeRunExecutionState(options.projectConfig, options.runId, {

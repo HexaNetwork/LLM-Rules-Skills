@@ -27,11 +27,18 @@ import { handleKnowledgeRoutes } from "./http/routes/knowledge.js";
 import { handleRunsRoutes } from "./http/routes/runs.js";
 import { handleSettingsRoutes } from "./http/routes/settings.js";
 import { handleExecutionRoutes } from "./http/routes/execution.js";
+import { handleWorkerStateRoutes, type WorkerStateApiContext } from "./http/routes/worker-state.js";
 import { RunJobService } from "./run-job-service.js";
 import { createDockerClient } from "../infrastructure/container/docker-client.js";
 import { evaluateExecutionRuntimeStatus } from "../application/execution-runtime-status.js";
 import { reconcileOrphanContainers } from "../application/orphan-reconciler.js";
 import { loadRunWorkspace } from "../config/io.js";
+import { FilesystemRunStatePort } from "../infrastructure/state/filesystem-run-state-port.js";
+import {
+  WorkerStateCredentialIssuer,
+  type IssuedWorkerStateCredential,
+} from "../application/worker-state-credentials.js";
+import { RUN_STATE_API_PREFIX } from "../worker/state-protocol.js";
 
 export type { UiJob } from "./run-job-service.js";
 export { parseAnswerBody } from "./http/request.js";
@@ -51,6 +58,14 @@ export type UiServer = {
   url: string;
   token: string;
   port: number;
+  /**
+   * Mint a per-run worker state credential (plan Phase 3). Actual delivery to
+   * the worker (bootstrap secret) is wired in a later slice.
+   */
+  issueWorkerStateCredential(
+    runId: string,
+    options?: { workerInstanceId?: string; ttlMs?: number },
+  ): Promise<IssuedWorkerStateCredential>;
   close(): Promise<void>;
 };
 
@@ -174,12 +189,31 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
     getExecutionStatus: loadExecutionStatus,
   };
 
+  // Worker-facing state API (ADR 0016, plan Phase 3): separate prefix,
+  // per-run credentials stored outside the run directory, independent
+  // protocol version, and its own response envelope.
+  const workerStateCredentials = new WorkerStateCredentialIssuer(
+    path.join(paths.stateRoot, "worker-credentials"),
+  );
+  const workerStateApi: WorkerStateApiContext = {
+    port: new FilesystemRunStatePort(store),
+    credentials: workerStateCredentials,
+    getProjectConfig: () => projectConfig,
+    store,
+  };
+
   const server = http.createServer(async (request, response) => {
     try {
       setSecurityHeaders(response);
       const url = new URL(request.url ?? "/", `http://${host}`);
       if (url.pathname === "/health") {
         return json(response, 200, { ok: true });
+      }
+      // Worker state API authenticates with its own per-run credential, never
+      // the dashboard token; dispatch before the dashboard auth gate.
+      if (url.pathname.startsWith(`${RUN_STATE_API_PREFIX}/`)) {
+        await handleWorkerStateRoutes(request, response, url, workerStateApi);
+        return;
       }
       // Serve the HTML shell without a query token so browser refresh still works
       // after the client strips ?token= from the address bar into sessionStorage.
@@ -241,6 +275,8 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
     url: dashboardUrl,
     token,
     port: address.port,
+    issueWorkerStateCredential: (runId, issueOptions) =>
+      workerStateCredentials.issue(runId, issueOptions),
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

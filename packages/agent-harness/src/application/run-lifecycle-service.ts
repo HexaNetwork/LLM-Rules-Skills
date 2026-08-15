@@ -89,24 +89,16 @@ export class RunLifecycleService {
         prepareRepositoryIntelligence &&
         this.ctx.config.knowledge.repositoryIntelligence.enabled
       ) {
-        // Docker clones install clone-local excludes during seed init and run RI
-        // inside the worker against /workspace — never touch the control repo exclude.
-        if (this.ctx.workspace.kind !== "docker-clone") {
-          await this.ctx.store.withWorkspaceAdminLock(
-            { runId, action: "ensure-repository-intelligence-ignore" },
-            () => this.ctx.git.ensureRepositoryIntelligenceArtifactsIgnored(),
-          );
-          await this.ctx.knowledge.prepareRepositoryIntelligence();
-        }
+        await this.ctx.store.withWorkspaceAdminLock(
+          { runId, action: "ensure-repository-intelligence-ignore" },
+          () => this.ctx.git.ensureRepositoryIntelligenceArtifactsIgnored(),
+        );
+        await this.ctx.knowledge.prepareRepositoryIntelligence();
       }
       if (refreshKnowledge) {
-        // Host cannot index documents under the worker constant `/workspace`.
-        // Docker initial setup refreshes knowledge inside the worker against the clone.
-        if (this.ctx.workspace.kind !== "docker-clone") {
-          await this.ctx.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>
-            this.ctx.knowledge.refresh(),
-          );
-        }
+        await this.ctx.withSharedIndexLock({ runId, action: "refresh-knowledge" }, () =>
+          this.ctx.knowledge.refresh(),
+        );
       }
     } catch (error) {
       state = await recordBlockedFromNew(this.ctx.store, state, error);

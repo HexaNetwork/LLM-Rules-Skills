@@ -1,9 +1,7 @@
 /**
- * Versioned per-run worker control contract.
- * This protocol owns worker liveness, workflow action delivery, export
- * preparation, and process shutdown. Durable state is owned independently by
- * RunStatePort and the host state API in state-protocol.ts.
- * Host and worker negotiate protocol + harness versions on every request.
+ * Versioned worker liveness contract. Workflow, export, and durable state
+ * stay on the host. Host and worker negotiate protocol + harness versions
+ * on every request.
  */
 
 export const WORKER_RPC_PROTOCOL_VERSION = 1 as const;
@@ -35,45 +33,10 @@ export const WORKER_RPC_HARNESS_VERSION_HEADER = "x-harness-version" as const;
  */
 export const HARNESS_PACKAGE_VERSION = "0.3.2" as const;
 
-/** Absolute path of the read-only RPC bootstrap secret inside the container. */
-export const WORKER_RPC_SECRET_CONTAINER_PATH =
-  "/run/secrets/agent-harness-worker-rpc" as const;
-
-/** Absolute path of the read-only Cursor credential inside the container. */
-export const CURSOR_API_KEY_SECRET_CONTAINER_PATH =
-  "/run/secrets/agent-harness-cursor-api-key" as const;
-
-/** Scoped host-state API bearer token, delivered as a read-only bootstrap secret. */
-export const WORKER_STATE_CREDENTIAL_CONTAINER_PATH =
-  "/run/secrets/agent-harness-state-credential" as const;
-
 /**
- * Allowlisted worker-control and workflow actions exposed over RPC.
- * Host UI action names map onto these (see host proxy).
+ * Allowlisted worker liveness actions. Host UI/CLI mutations never map here.
  */
-export const WORKER_RPC_ACTIONS = [
-  "health",
-  "status",
-  "advance",
-  "initial_setup",
-  "cancel",
-  "retry",
-  "answer",
-  "note",
-  "confirm_grill",
-  "confirm_plan",
-  "confirm_verification",
-  "retry_verification_baseline",
-  "resolve_installs",
-  "propose_fix",
-  "apply_fix",
-  "accept_tree",
-  "set_rag",
-  "set_repository_intelligence",
-  "stop",
-  "prepare-export",
-  "shutdown",
-] as const;
+export const WORKER_RPC_ACTIONS = ["health", "status", "shutdown"] as const;
 
 export type WorkerRpcAction = (typeof WORKER_RPC_ACTIONS)[number];
 

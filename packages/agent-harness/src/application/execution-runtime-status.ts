@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { HarnessConfig } from "../config/schema.js";
 import { HarnessFailure } from "../errors.js";
 import {
@@ -7,6 +8,18 @@ import {
   type DockerClient,
   type DockerReadinessReport,
 } from "../infrastructure/container/index.js";
+import {
+  CURSOR_PROVIDER_CONTRACT_VERSION,
+  PINNED_CURSOR_SDK_VERSION,
+  UNPROVEN_CURSOR_PROVIDER_CONTRACT,
+} from "../infrastructure/provider-proxy/cursor-provider-contract.js";
+import { PROVIDER_API_PROTOCOL_VERSION } from "../worker/provider-protocol.js";
+import {
+  currentCursorProviderProofTuple,
+  findMatchingCursorProviderProof,
+  loadCursorProviderProofCache,
+} from "./cursor-provider-proof.js";
+import { readCursorProviderTlsIdentity } from "../infrastructure/provider-proxy/tls.js";
 
 function isDigestPinnedImageRef(reference: string): boolean {
   return reference.startsWith("sha256:") || /@sha256:[a-f0-9]{64}$/i.test(reference);
@@ -34,6 +47,25 @@ export type ExecutionRuntimeStatus = {
     unsupported?: boolean;
     reason?: string;
     imageDigest?: string;
+  };
+  /** Separate real-provider gate; deterministic Docker readiness cannot satisfy it. */
+  cursorCredential?: {
+    configured: boolean;
+    requiredForRealRuns: true;
+    passed: boolean;
+    custody: "host-proxy";
+    broker: {
+      configured: boolean;
+      reachable: boolean;
+      compatible: boolean;
+      proven: boolean;
+      protocolVersion: number;
+      contractVersion: string;
+      sdkVersion: string;
+    };
+    reason?: string;
+    imageDigest?: string;
+    model: string;
   };
 };
 
@@ -151,6 +183,66 @@ export async function evaluateExecutionRuntimeStatus(
     sandboxIsolation = { required: false, passed: true };
   }
 
+  const configuredApiKey = process.env.CURSOR_API_KEY?.trim();
+  const credentialImage = options.imageDigest ?? worker;
+  const tlsIdentity = options.projectStateRoot
+    ? await readCursorProviderTlsIdentity(
+        path.join(options.projectStateRoot, "cursor-provider-tls"),
+      )
+    : undefined;
+  const proof =
+    configuredApiKey && options.projectStateRoot && credentialImage && tlsIdentity
+      ? findMatchingCursorProviderProof(
+          await loadCursorProviderProofCache(options.projectStateRoot),
+          currentCursorProviderProofTuple({
+            imageDigest: credentialImage,
+            model: options.config.models.capable,
+            tlsIdentity,
+            apiKey: configuredApiKey,
+          }),
+        )
+      : undefined;
+  const providerPassed = Boolean(
+    configuredApiKey &&
+      tlsIdentity &&
+      UNPROVEN_CURSOR_PROVIDER_CONTRACT.productionReady &&
+      proof,
+  );
+  const cursorCredential: ExecutionRuntimeStatus["cursorCredential"] = {
+    configured: Boolean(configuredApiKey),
+    requiredForRealRuns: true,
+    passed: providerPassed,
+    custody: "host-proxy",
+    broker: {
+      configured: Boolean(configuredApiKey && tlsIdentity),
+      reachable: Boolean(proof),
+      compatible: UNPROVEN_CURSOR_PROVIDER_CONTRACT.productionReady,
+      proven: Boolean(proof),
+      protocolVersion: PROVIDER_API_PROTOCOL_VERSION,
+      contractVersion: CURSOR_PROVIDER_CONTRACT_VERSION,
+      sdkVersion: PINNED_CURSOR_SDK_VERSION,
+    },
+    reason: providerPassed
+      ? undefined
+      : !configuredApiKey
+        ? "Host Cursor credential is not configured; deterministic runs remain available."
+        : !UNPROVEN_CURSOR_PROVIDER_CONTRACT.productionReady
+          ? "Pinned Cursor SDK has no green provider-proxy contract for this image."
+          : !tlsIdentity
+            ? "Host Cursor provider TLS material is not initialized."
+            : "No matching green host provider-proxy proof exists for this release tuple.",
+    imageDigest: credentialImage || undefined,
+    model: options.config.models.capable,
+  };
+  if (configuredApiKey && !providerPassed) {
+    blockers.push({
+      code: "cursor-credential-delivery-unsupported",
+      message: cursorCredential.reason!,
+      remediation:
+        "Real Cursor runs remain blocked. Run `agent-harness execution cursor-provider-smoke --repository <path> --force` after the HTTPS broker and SDK contract are available; never restore /run/secrets credential mounting.",
+    });
+  }
+
   return {
     runtime: "docker",
     ready: blockers.length === 0,
@@ -163,6 +255,7 @@ export async function evaluateExecutionRuntimeStatus(
     },
     networkNote,
     sandboxIsolation,
+    cursorCredential,
   };
 }
 

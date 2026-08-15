@@ -54,12 +54,12 @@ describe("dashboard document", () => {
     expect(html).toContain('"X-Harness-Token":token');
   });
 
-  it("exposes Docker container lifecycle surfaces without image approval controls", () => {
+  it("exposes host-worktree cleanup without container reattachment controls", () => {
     const html = renderDashboard();
     const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
-    expect(script).toContain('id: "container", label: "Container"');
-    expect(script).toContain("renderContainerTab");
-    expect(script).toContain("Docker runtime details and workspace lifecycle controls");
+    expect(script).toContain("Host worktree cleanup");
+    expect(script).not.toContain("renderContainerTab");
+    expect(script).not.toContain("Recover worker container");
     expect(script).not.toContain("approve_execution_image");
     expect(script).not.toContain("Generated Dockerfile");
   });

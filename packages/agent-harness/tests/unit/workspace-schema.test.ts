@@ -22,25 +22,21 @@ describe("RunWorkspaceSchema", () => {
     ).toBe("git-disabled");
   });
 
-  it("accepts a docker-clone record with stable identity only", () => {
+  it("accepts a host-worktree record", () => {
     const parsed = RunWorkspaceSchema.parse({
       version: 1,
-      kind: "docker-clone",
+      kind: "host-worktree",
       controlRoot: "/repo",
-      containerName: "harness-run-abc",
-      workspaceVolumeName: "harness-ws-abc",
+      worktreePath: "/state/worktrees/run-abc",
+      gitCommonDir: "/repo/.git",
       workspacePath: "/workspace",
-      imageDigest: "sha256:deadbeef",
       baseSha: "abc123",
-      seedBundleHash: "bundlehash",
-      generation: 0,
       createdAt: "2026-08-10T12:00:00.000Z",
     });
-    expect(parsed.kind).toBe("docker-clone");
-    if (parsed.kind === "docker-clone") {
+    expect(parsed.kind).toBe("host-worktree");
+    if (parsed.kind === "host-worktree") {
       expect(parsed.workspacePath).toBe("/workspace");
-      expect(parsed.containerName).toBe("harness-run-abc");
-      expect(parsed.generation).toBe(0);
+      expect(parsed.worktreePath).toBe("/state/worktrees/run-abc");
     }
   });
 
@@ -82,7 +78,7 @@ describe("migrateRunWorkspace", () => {
     ).toThrow(/workspace metadata is missing/i);
   });
 
-  it.each(["legacy-shared", "git-worktree"])("rejects pre-cutover %s workspace records", (kind) => {
+  it.each(["legacy-shared", "git-worktree", "docker-clone"])("rejects pre-cutover %s workspace records", (kind) => {
     expect(() =>
       migrateRunWorkspace(
         {
@@ -93,29 +89,29 @@ describe("migrateRunWorkspace", () => {
         },
         { controlRoot: "/project" },
       ),
-    ).toThrow(/pre-cutover local workspaces/i);
+    ).toThrow(/pre-cutover workspaces/i);
   });
 
   it("canonicalizes stored paths on migration", () => {
     const migrated = migrateRunWorkspace(
       {
         version: 1,
-        kind: "docker-clone",
+        kind: "host-worktree",
         controlRoot: path.join("/project", "."),
-        containerName: "harness-run-1",
-        workspaceVolumeName: "harness-ws-1",
+        worktreePath: path.join("/state", "worktrees", "run-1"),
+        gitCommonDir: path.join("/project", ".git"),
         workspacePath: "/workspace",
-        imageDigest: "sha256:deadbeef",
         baseSha: "abc123",
-        seedBundleHash: "bundlehash",
-        generation: 0,
         createdAt: "2026-08-10T12:00:00.000Z",
       },
       { controlRoot: "/unused" },
     );
     expect(migrated.controlRoot).toBe(canonicalizeWorkspacePath("/project"));
-    expect(migrated.kind).toBe("docker-clone");
-    expect(migrated.workspacePath).toBe("/workspace");
+    expect(migrated.kind).toBe("host-worktree");
+    if (migrated.kind === "host-worktree") {
+      expect(migrated.workspacePath).toBe("/workspace");
+      expect(migrated.worktreePath).toBe(canonicalizeWorkspacePath("/state/worktrees/run-1"));
+    }
   });
 });
 

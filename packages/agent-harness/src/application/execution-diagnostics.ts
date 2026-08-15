@@ -1,10 +1,9 @@
 import type { HarnessConfig } from "../config/schema.js";
 import type { DockerClient } from "../infrastructure/container/types.js";
-import type { DockerCloneWorkspace, RunWorkspace } from "../domain/workspace.js";
+import type { RunWorkspace } from "../domain/workspace.js";
 import type { BundleImportState, RunExecutionState } from "../domain/run-execution.js";
 import { loadBundleImportState } from "./bundle-import-io.js";
 import { loadRunExecutionState } from "./execution-state-io.js";
-import { HARNESS_CONTAINER_LABEL_PREFIX } from "../infrastructure/container/container-spec.js";
 
 /**
  * Redacted operator diagnostics for Docker-mode runs (ADR 0015 §10).
@@ -84,7 +83,7 @@ export async function collectExecutionDiagnostics(input: {
   const workspace = input.workspace;
 
   const diagnostics: ExecutionDiagnostics = {
-    runtime: workspace?.kind === "docker-clone" ? "docker" : "local",
+    runtime: workspace?.kind === "host-worktree" ? "docker" : "local",
     runId: input.runId,
     workspace: workspace
       ? summarizeWorkspace(workspace)
@@ -94,23 +93,14 @@ export async function collectExecutionDiagnostics(input: {
     workerHealth: input.workerHealth,
   };
 
-  if (input.docker && workspace?.kind === "docker-clone") {
-    diagnostics.dockerInspect = await redactDockerInspect(input.docker, workspace, execution);
-  }
-
   return diagnostics;
 }
 
 function summarizeWorkspace(workspace: RunWorkspace): ExecutionDiagnostics["workspace"] {
-  if (workspace.kind === "docker-clone") {
+  if (workspace.kind === "host-worktree") {
     return {
       kind: workspace.kind,
-      containerName: workspace.containerName,
-      workspaceVolumeName: workspace.workspaceVolumeName,
-      imageDigest: workspace.imageDigest,
       baseSha: workspace.baseSha,
-      seedBundleHash: workspace.seedBundleHash,
-      generation: workspace.generation,
       removedAt: workspace.removedAt,
     };
   }
@@ -145,65 +135,6 @@ function summarizeImport(state: BundleImportState): ExecutionDiagnostics["import
     rejectionReason: state.rejectionReason,
     updatedAt: state.updatedAt,
   };
-}
-
-async function redactDockerInspect(
-  docker: DockerClient,
-  workspace: DockerCloneWorkspace,
-  execution: RunExecutionState | undefined,
-): Promise<NonNullable<ExecutionDiagnostics["dockerInspect"]>> {
-  const out: NonNullable<ExecutionDiagnostics["dockerInspect"]> = {};
-  const containerName = workspace.containerName || execution?.containerName;
-  if (containerName && docker.inspectContainer) {
-    const inspected = await docker.inspectContainer(containerName).catch(() => undefined);
-    if (inspected) {
-      out.container = {
-        id: inspected.id,
-        name: inspected.name,
-        state: inspected.state,
-        image: inspected.image,
-        labels: redactLabels(inspected.labels),
-        publishedPorts: inspected.publishedPorts,
-      };
-    }
-  }
-  const volume = await docker.inspectVolume(workspace.workspaceVolumeName).catch(() => undefined);
-  if (volume) {
-    out.volume = {
-      name: volume.name,
-      driver: volume.driver,
-      mountpointBasename: volume.mountpoint
-        ? volume.mountpoint.replace(/\\/g, "/").split("/").filter(Boolean).at(-1)
-        : undefined,
-    };
-  }
-  const imageRef = workspace.imageDigest || execution?.discoveredImageDigest || execution?.imageId;
-  if (imageRef) {
-    const image = await docker.inspectImage(imageRef).catch(() => undefined);
-    if (image) {
-      out.image = {
-        id: image.id,
-        digest: image.digest,
-        repoTags: image.repoTags,
-        size: image.size,
-      };
-    }
-  }
-  return out;
-}
-
-function redactLabels(labels: Record<string, string>): Record<string, string> {
-  const allowed = new Set([
-    `${HARNESS_CONTAINER_LABEL_PREFIX}.managed`,
-    `${HARNESS_CONTAINER_LABEL_PREFIX}.project-key`,
-    `${HARNESS_CONTAINER_LABEL_PREFIX}.run-id`,
-    `${HARNESS_CONTAINER_LABEL_PREFIX}.version`,
-  ]);
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(labels)) {
-    if (allowed.has(key)) out[key] = value;
-  }
-  return out;
 }
 
 /** True when import journal indicates commits are durable on the host. */

@@ -67,12 +67,11 @@ async function resolveRunArtifacts(
     resolveWorkspaceProvisioner(config, {
       paths,
       store,
-      docker: dependencies.docker,
     });
 
   if (
     workspace &&
-    workspace.kind === "docker-clone" &&
+    workspace.kind === "host-worktree" &&
     options.validateWorkspace !== false
   ) {
     await workspaceProvisioner.open(workspace);
@@ -141,8 +140,3 @@ export async function openWorkerRunRuntime(
   };
 }
 
-/**
- * @deprecated Prefer openHostRunControl for host paths or openWorkerRunRuntime for
- * worker-focused tests. Kept as an alias of openWorkerRunRuntime during migration.
- */
-export const openRunHarness = openWorkerRunRuntime;

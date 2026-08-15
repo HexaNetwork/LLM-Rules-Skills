@@ -1,11 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolveHarnessPaths } from "../../../application/paths.js";
 import { evaluateExecutionRuntimeStatus } from "../../../application/execution-runtime-status.js";
-import {
-  reconcileOrphanContainers,
-  type OrphanReconcileKnownRun,
-} from "../../../application/orphan-reconciler.js";
-import { loadRunWorkspace } from "../../../config/io.js";
+import { reconcileOrphanContainers } from "../../../application/orphan-reconciler.js";
 import type { UiAppContext } from "../context.js";
 import { HttpError, json, optionalBoolean, readJsonBody } from "../request.js";
 
@@ -41,10 +37,9 @@ export async function handleExecutionRoutes(
     }
     const body = await readJsonBody(request).catch(() => ({} as Record<string, unknown>));
     const apply = optionalBoolean((body as { apply?: unknown }).apply, "apply") ?? false;
-    const knownRuns = await collectKnownDockerRuns(ctx);
     const report = await reconcileOrphanContainers({
       docker: ctx.docker,
-      knownRuns,
+      knownRuns: [],
       apply,
     });
     json(response, 200, { reconcile: report });
@@ -54,23 +49,3 @@ export async function handleExecutionRoutes(
   return false;
 }
 
-async function collectKnownDockerRuns(ctx: UiAppContext): Promise<OrphanReconcileKnownRun[]> {
-  const { states } = await ctx.store.listWithFailures();
-  const known: OrphanReconcileKnownRun[] = [];
-  for (const state of states) {
-    try {
-      const workspace = await loadRunWorkspace(ctx.getProjectConfig(), state.runId);
-      if (workspace.kind !== "docker-clone") continue;
-      known.push({
-        runId: state.runId,
-        phase: state.phase,
-        removedAt: workspace.removedAt,
-        workspaceVolumeName: workspace.workspaceVolumeName,
-        containerName: workspace.containerName,
-      });
-    } catch {
-      // skip unreadable workspace
-    }
-  }
-  return known;
-}

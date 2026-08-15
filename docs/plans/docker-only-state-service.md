@@ -5,14 +5,14 @@
 Replace the dual local/Docker execution model with one Docker-only runtime.
 
 The host remains the single-operator control plane. It owns durable run state,
-the dashboard, project registration, Docker lifecycle, workspace seed/export,
-and publication. A per-run container owns the `HarnessEngine`, provider SDK,
-agent sessions, repository tools, and the isolated workspace.
+`HarnessEngine`, the dashboard, project registration, the run's Git worktree,
+commits, Docker lifecycle, and publication. Each bounded agent invocation owns
+only a disposable sandbox and provider session turn.
 
-The run container must not mount the host run directory. In particular, there
-is no `/run-state` mount. The worker reads and mutates durable state through an
-authenticated, versioned host state API. Only the named workspace volume is
-writable by agent tools.
+The sandbox bind-mounts the host run worktree at `/workspace`. It never mounts
+the host run directory, control checkout, credential files, or `/run-state`.
+It receives only `HARNESS_RPC_URL` and `HARNESS_WORKER_TOKEN`; that short-lived,
+run-scoped token advertises only the model capability.
 
 This is a clean break:
 
@@ -29,19 +29,16 @@ Host process
   Dashboard / CLI
   Project registry
   Durable RunStore
-  State + lifecycle RPC service
+  Model capability broker
   Docker lifecycle
-  Seed/result bundle transport
   Publish/push/PR operations
           |
-          | authenticated, versioned RPC
+          | create / exec / destroy + revoke
           v
-Per-run Docker container
-  HarnessEngine
+Disposable Docker sandbox
   Cursor SDK and provider sessions
   Agent tool execution
-  Git and repository intelligence
-  /workspace (named RW volume)
+  /workspace (host worktree bind)
           |
           | HTTPS
           v
@@ -56,9 +53,9 @@ or write operation cannot execute against the host filesystem.
 
 Docker is the primary filesystem and process boundary:
 
-- mount only the named workspace volume at `/workspace`;
+- mount only the assigned host worktree at `/workspace`;
 - never mount the control checkout, harness home, host run directory, Docker
-  socket, host home, or arbitrary bind paths;
+  socket, host home, credential paths, or arbitrary bind paths;
 - use a read-only root filesystem, a non-root worker, dropped capabilities,
   `no-new-privileges`, PID/memory/CPU limits, and private process namespaces;
 - publish worker RPC only to a random host loopback port;
@@ -80,20 +77,24 @@ Keep only controls with unambiguous semantics:
 - install observation and approval where product policy requires it.
 
 The Cursor API key must not be placed in run state, the workspace, image
-layers, Docker command arguments, or project-command environments. Bootstrap
-it through a narrowly scoped secret mechanism, load it into the worker, and
-strip it from every child-process environment. The implementation spike must
-choose one of:
+layers, Docker command arguments, environment, or mounts. The host provider
+proxy holds the credential and exposes only provider operations required by
+the sandbox.
 
-1. a read-only Docker secret file outside `/workspace`, readable by the worker
-   and proven inaccessible to agent tools; or
-2. a host provider proxy that holds the credential and exposes only the
-   provider operations required by the worker.
-
-Prefer the secret-file approach unless the isolation probe cannot prove that
-provider tools and delegated tasks are unable to read it.
+The real Cursor probe has now rejected that approach: delegated reads were
+denied, while the direct phase had no conclusive denial and emitted exact
+credential bytes. The old diagnostic did not retain enough redacted metadata
+to locate those bytes within the tool result versus another SDK event. The
+worker and agent tools share one UID, so file modes cannot repair this boundary.
+Production secret-file mounting is deleted; the host provider proxy is the
+only production credential mechanism.
 
 ## Phase 1: Freeze the architecture
+
+> Historical delivery notes below describe the rejected long-lived worker/state
+> RPC design. The accepted implementation keeps workflow and durable state on
+> the host and uses model-only disposable sandboxes; those notes are not
+> compatibility requirements.
 
 Supersede ADR 0015 with the Docker-only topology and record these invariants:
 
@@ -331,10 +332,16 @@ path passes repeatedly from clean state.
 
 ## Completion criteria
 
-- Agent containers mount only their named workspace volume.
+- Every bounded agent invocation creates, executes, and destroys a sandbox and
+  revokes its capability; no container is reattached.
+- Agent containers mount only the host run worktree at `/workspace`.
 - Durable run state and execution secrets remain host-owned and are not visible
   through the container filesystem.
 - Provider SDK sessions and all local agent tools execute inside Docker.
+- Worker environment/arguments/filesystem/mounts contain no durable provider or
+  Git credential; the only harness capability configuration is
+  `HARNESS_RPC_URL` and `HARNESS_WORKER_TOKEN`.
+- Host services own task commits, push, and publication.
 - The harness performs no natural-language path inference over tool arguments.
 - Docker lifecycle and explicit role policy are the capability controls.
 - Worker recreation and host restart recover without state corruption or

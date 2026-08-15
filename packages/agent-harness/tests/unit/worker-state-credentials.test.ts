@@ -28,6 +28,7 @@ describe("WorkerStateCredentialIssuer", () => {
     expect(credential.runId).toBe("run-a");
     expect(credential.protocolVersion).toBe(RUN_STATE_API_PROTOCOL_VERSION);
     expect(credential.workerInstanceId).toBe("worker-1");
+    expect(credential.capabilities).toEqual(["model"]);
     expect(Date.parse(credential.expiresAt)).toBeGreaterThan(Date.parse(credential.issuedAt));
 
     const verified = await issuer.verify("run-a", token);

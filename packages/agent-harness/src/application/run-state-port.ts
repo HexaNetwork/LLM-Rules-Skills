@@ -6,7 +6,6 @@ import type { PendingEvent, RunState, TransitionResult } from "../domain.js";
  * advances the run through this port using compare-and-swap revisions,
  * idempotency keys, and lease fencing tokens. Implementations:
  * - FilesystemRunStatePort (host services, focused unit tests)
- * - RpcRunStatePort (production worker containers)
  *
  * Operations are modeled by domain object and artifact identifier — there is
  * no arbitrary file read/write, so a worker can never turn the state service

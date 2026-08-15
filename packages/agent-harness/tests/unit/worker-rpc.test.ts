@@ -1,26 +1,14 @@
-import { createServer } from "node:http";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HarnessConfigSchema } from "../../src/config/schema.js";
-import { createFakeDockerClient } from "../../src/infrastructure/container/fake-docker-client.js";
 import {
   WorkerRpcClient,
   WorkerRpcClientError,
   createFakeWorkerRpcClient,
 } from "../../src/infrastructure/worker-rpc/client.js";
-import {
-  ensureDockerWorkerSession,
-  waitForDockerWorkerHealth,
-  workerRpcActionForHostAction,
-} from "../../src/application/docker-worker-session.js";
-import { mapHostActionToWorkerRpc } from "../../src/application/docker-run-proxy.js";
+import { hostOwnerForAction } from "../../src/application/host-run-dispatch.js";
 import {
   generateWorkerRpcToken,
   tokensEqual,
   redactSecrets,
-  writeWorkerRpcTokenFile,
   workerRpcTokenFingerprint,
 } from "../../src/worker/auth.js";
 import { startWorkerRpcServer } from "../../src/worker/rpc-server.js";
@@ -29,7 +17,6 @@ import {
   WORKER_RPC_ACTIONS,
   WORKER_RPC_PROTOCOL_VERSION,
 } from "../../src/worker/protocol.js";
-import type { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import type { WorkerHandlerContext } from "../../src/worker/handlers.js";
 
 const servers: Array<{ close(): Promise<void> }> = [];
@@ -41,67 +28,17 @@ afterEach(async () => {
   }
 });
 
-function stubEngine(overrides: Partial<WorkerHarnessRuntime> = {}): WorkerHarnessRuntime {
-  return {
-    status: async () => ({ runId: "run-1", phase: "awaiting_input", revision: 1 }),
-    advance: async () => ({ runId: "run-1", phase: "awaiting_input", revision: 2 }),
-    cancel: async () => ({
-      pending: true,
-      state: { runId: "run-1", phase: "awaiting_input", revision: 1 },
-    }),
-    ...overrides,
-  } as unknown as WorkerHarnessRuntime;
-}
-
-function handlerContext(engine: WorkerHarnessRuntime): WorkerHandlerContext {
+function handlerContext(): WorkerHandlerContext {
   return {
     runId: "run-1",
-    engine,
     startedAtMs: Date.now(),
-    isAdvancing: () => false,
-    isCancelRequested: async () => false,
     requestShutdown: () => undefined,
   };
 }
 
 describe("worker RPC auth and protocol", () => {
-  it("keeps worker liveness, workflow delivery, export preparation, and shutdown actions", () => {
-    expect(WORKER_RPC_ACTIONS).toEqual(
-      expect.arrayContaining([
-        "health",
-        "status",
-        "advance",
-        "cancel",
-        "stop",
-        "prepare-export",
-        "shutdown",
-      ]),
-    );
-  });
-
-  it("polls through the normal worker startup race", async () => {
-    let calls = 0;
-    const sleeps: number[] = [];
-    const result = await waitForDockerWorkerHealth(
-      {
-        health: async () => {
-          calls += 1;
-          if (calls < 3) throw new Error("fetch failed");
-          return { status: "ok" } as never;
-        },
-      },
-      {
-        attempts: 4,
-        intervalMs: 25,
-        sleep: async (ms) => {
-          sleeps.push(ms);
-        },
-      },
-    );
-
-    expect(result).toEqual({ status: "ok" });
-    expect(calls).toBe(3);
-    expect(sleeps).toEqual([25, 25]);
+  it("exposes only worker liveness actions", () => {
+    expect(WORKER_RPC_ACTIONS).toEqual(["health", "status", "shutdown"]);
   });
 
   it("rejects missing/invalid tokens", async () => {
@@ -110,7 +47,7 @@ describe("worker RPC auth and protocol", () => {
       host: "127.0.0.1",
       port: 0,
       token,
-      handlers: handlerContext(stubEngine()),
+      handlers: handlerContext(),
     });
     servers.push(server);
 
@@ -134,7 +71,7 @@ describe("worker RPC auth and protocol", () => {
       host: "127.0.0.1",
       port: 0,
       token,
-      handlers: handlerContext(stubEngine()),
+      handlers: handlerContext(),
     });
     servers.push(server);
 
@@ -175,11 +112,11 @@ describe("worker RPC auth and protocol", () => {
       port: 0,
       token,
       maxBodyBytes: 64,
-      handlers: handlerContext(stubEngine()),
+      handlers: handlerContext(),
     });
     servers.push(server);
 
-    const response = await fetch(`${server.url}/v1/advance`, {
+    const response = await fetch(`${server.url}/v1/shutdown`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -192,37 +129,33 @@ describe("worker RPC auth and protocol", () => {
     expect(response.status).toBe(413);
   });
 
-  it("cancels through the RPC cancel path", async () => {
-    let cancelled = false;
+  it("rejects workflow actions that now belong on the host", async () => {
     const token = generateWorkerRpcToken();
     const server = await startWorkerRpcServer({
       host: "127.0.0.1",
       port: 0,
       token,
-      handlers: handlerContext(
-        stubEngine({
-          cancel: async () => {
-            cancelled = true;
-            return {
-              pending: true,
-              state: { runId: "run-1", phase: "awaiting_input", revision: 1 },
-            } as never;
-          },
-        }),
-      ),
+      handlers: handlerContext(),
     });
     servers.push(server);
 
-    const client = new WorkerRpcClient({ baseUrl: server.url, token });
-    const result = (await client.cancel()) as { pending: boolean };
-    expect(cancelled).toBe(true);
-    expect(result.pending).toBe(true);
+    const response = await fetch(`${server.url}/v1/advance`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-harness-worker-token": token,
+        "x-harness-rpc-protocol": String(WORKER_RPC_PROTOCOL_VERSION),
+        "x-harness-version": HARNESS_PACKAGE_VERSION,
+      },
+      body: "{}",
+    });
+    expect(response.status).toBe(404);
   });
 
   it("delivers shutdown through worker control without a state mutation", async () => {
     let shutdownRequested = false;
     const token = generateWorkerRpcToken();
-    const context = handlerContext(stubEngine());
+    const context = handlerContext();
     context.requestShutdown = () => {
       shutdownRequested = true;
     };
@@ -251,92 +184,23 @@ describe("token helpers", () => {
 });
 
 describe("host proxy routing and session affinity", () => {
-  it("maps host UI actions onto worker RPC actions", () => {
-    expect(workerRpcActionForHostAction("continue")).toBe("advance");
-    expect(workerRpcActionForHostAction("cancel")).toBe("cancel");
-    expect(mapHostActionToWorkerRpc("cleanup")).toBeUndefined();
-    expect(mapHostActionToWorkerRpc("confirm_grill")).toBe("confirm_grill");
+  it("routes host UI actions onto host owners, not worker RPC", () => {
+    expect(hostOwnerForAction("continue")).toBe("lifecycle");
+    expect(hostOwnerForAction("cancel")).toBe("control");
+    expect(hostOwnerForAction("cleanup")).toBe("control");
+    expect(hostOwnerForAction("confirm_grill")).toBe("engine");
   });
 
-  it("proxies via fake worker client without Docker", async () => {
+  it("records liveness invokes on the fake worker client", async () => {
     const fake = createFakeWorkerRpcClient({
       results: {
-        advance: { runId: "run-1", phase: "grilling", revision: 3 },
-        cancel: { pending: true, phase: "grilling" },
+        health: { status: "ok" },
+        shutdown: { shuttingDown: true },
       },
     });
-    await fake.invoke("advance", {});
-    await fake.invoke("cancel", {});
-    expect(fake.calls.map((call) => call.action)).toEqual(["advance", "cancel"]);
-  });
-
-  it("reattaches using execution.json + secret metadata and fake Docker inspect", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "ah-worker-session-"));
-    const runId = "run-reattach";
-    const projectConfig = HarnessConfigSchema.parse({
-      repositoryRoot: root,
-      stateDirectory: path.join(root, "state"),
-      execution: {},
-    });
-    const workerInstanceId = "worker-reattach-1";
-    const bootstrapDir = path.join(root, "state", "worker-bootstrap", runId, workerInstanceId);
-    await mkdir(bootstrapDir, { recursive: true });
-    const token = generateWorkerRpcToken();
-    await writeWorkerRpcTokenFile(path.join(bootstrapDir, "worker-rpc.token"), token);
-
-    const containerName = "ah-project-run-reattach";
-    const hostPort = await listenHealthStub(token);
-
-    const executionDir = path.join(root, "state", "runs", runId);
-    await mkdir(executionDir, { recursive: true });
-    await writeFile(
-      path.join(executionDir, "execution.json"),
-      `${JSON.stringify({
-        version: 1,
-        runtime: "docker",
-        lifecycle: "running",
-        containerName,
-        workerInstanceId,
-        hostPort,
-        containerPort: 8787,
-        rpcSecretRelativePath: "retired/rpc.token",
-        rpcTokenFingerprint: workerRpcTokenFingerprint(token),
-        rpcProtocolVersion: WORKER_RPC_PROTOCOL_VERSION,
-        workerHarnessVersion: HARNESS_PACKAGE_VERSION,
-        updatedAt: new Date().toISOString(),
-      })}\n`,
-      "utf8",
-    );
-
-    const docker = createFakeDockerClient({
-      containers: new Map([
-        [
-          containerName,
-          {
-            id: "cid-1",
-            name: containerName,
-            state: "running",
-            labels: {},
-            image: "img",
-            publishedPorts: [{ hostPort, containerPort: 8787, hostIp: "127.0.0.1" }],
-          },
-        ],
-      ]),
-    });
-
-    const session = await ensureDockerWorkerSession({
-      projectConfig,
-      runId,
-      docker,
-      startIfMissing: false,
-    });
-    expect(session.execution.containerName).toBe(containerName);
-    expect(session.execution.hostPort).toBe(hostPort);
-    expect(session.execution).not.toHaveProperty("runtime");
-    expect(session.execution).not.toHaveProperty("rpcSecretRelativePath");
-    expect(session.execution.rpcTokenFingerprint).toBe(workerRpcTokenFingerprint(token));
-    const health = (await session.client.health()) as { status: string };
-    expect(health.status).toBe("ok");
+    await fake.invoke("health", {});
+    await fake.invoke("shutdown", {});
+    expect(fake.calls.map((call) => call.action)).toEqual(["health", "shutdown"]);
   });
 
   it("surfaces WorkerRpcClientError codes from failed responses", async () => {
@@ -353,41 +217,3 @@ describe("host proxy routing and session affinity", () => {
     });
   });
 });
-
-async function listenHealthStub(token: string): Promise<number> {
-  const server = createServer((request, response) => {
-    if (request.headers["x-harness-worker-token"] !== token) {
-      response.statusCode = 401;
-      response.end(JSON.stringify({ ok: false, requestId: "x", error: { code: "unauthorized", message: "no" } }));
-      return;
-    }
-    response.statusCode = 200;
-    response.setHeader("content-type", "application/json");
-    response.end(
-      JSON.stringify({
-        ok: true,
-        requestId: "x",
-        result: {
-          status: "ok",
-          runId: "run-reattach",
-          protocolVersion: WORKER_RPC_PROTOCOL_VERSION,
-          harnessVersion: HARNESS_PACKAGE_VERSION,
-          uptimeMs: 1,
-        },
-      }),
-    );
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-  servers.push({
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("no port");
-  return address.port;
-}

@@ -34,7 +34,7 @@ const WINDOWS_RESERVED_NAMES = new Set([
   "lpt9",
 ]);
 
-export const RunWorkspaceKindSchema = z.enum(["git-disabled", "docker-clone"]);
+export const RunWorkspaceKindSchema = z.enum(["git-disabled", "host-worktree"]);
 export type RunWorkspaceKind = z.infer<typeof RunWorkspaceKindSchema>;
 
 /**
@@ -53,22 +53,18 @@ const GitDisabledWorkspaceSchema = z.object({
 });
 
 /**
- * Stable Docker-clone identity. Ephemeral container IDs and host ports
- * are discovered at runtime and stored in execution.json — not here.
+ * Host-owned Git worktree bind-mounted into disposable sandboxes at `/workspace`.
+ * Distinct from retired pre-cutover `git-worktree` local execution.
  */
-const DockerCloneWorkspaceSchema = z.object({
+const HostWorktreeWorkspaceSchema = z.object({
   version: z.literal(WORKSPACE_SCHEMA_VERSION),
-  kind: z.literal("docker-clone"),
+  kind: z.literal("host-worktree"),
   controlRoot: z.string().min(1),
-  containerName: z.string().min(1),
-  workspaceVolumeName: z.string().min(1),
-  /** Worker-visible workspace root inside the container. */
+  worktreePath: z.string().min(1),
+  gitCommonDir: z.string().min(1),
+  /** Worker-visible workspace root inside the sandbox. */
   workspacePath: z.literal("/workspace").default("/workspace"),
-  imageDigest: z.string().min(1),
   baseSha: z.string().min(1),
-  seedBundleHash: z.string().min(1),
-  /** Volume/container recreation generation; increments when identity is re-seeded. */
-  generation: z.number().int().nonnegative(),
   baseBranch: z.string().min(1).optional(),
   branchName: z.string().min(1).optional(),
   createdAt: z.string().min(1),
@@ -77,11 +73,11 @@ const DockerCloneWorkspaceSchema = z.object({
 
 export const RunWorkspaceSchema = z.discriminatedUnion("kind", [
   GitDisabledWorkspaceSchema,
-  DockerCloneWorkspaceSchema,
+  HostWorktreeWorkspaceSchema,
 ]);
 export type RunWorkspace = z.infer<typeof RunWorkspaceSchema>;
 export type GitDisabledWorkspace = z.infer<typeof GitDisabledWorkspaceSchema>;
-export type DockerCloneWorkspace = z.infer<typeof DockerCloneWorkspaceSchema>;
+export type HostWorktreeWorkspace = z.infer<typeof HostWorktreeWorkspaceSchema>;
 
 export const WorkspaceEvidenceSchema = z.object({
   headSha: z.string().min(1),
@@ -121,6 +117,12 @@ export function slugifyFeatureTitle(title: string): string {
     safe = `${safe}-feature`;
   }
   return safe;
+}
+
+/** Filesystem-safe run id segment for host worktree directories. */
+export function sanitizeWorktreeRunId(runId: string): string {
+  const safe = runId.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return safe.slice(0, 80) || "run";
 }
 
 /** Collision-safe short run identifier for delivery branch names (8 alphanumerics). */
@@ -171,22 +173,24 @@ export function migrateRunWorkspace(
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    ["legacy-shared", "git-worktree"].includes(
+    ["legacy-shared", "git-worktree", "docker-clone"].includes(
       String((value as { kind?: unknown }).kind),
     )
   ) {
     throw new HarnessFailure(
-      "Pre-cutover local workspaces are no longer supported. Finish/export/discard the run with the pre-cutover harness, then recreate it as a Docker run.",
+      "Pre-cutover workspaces are no longer supported. Finish/export/discard the run with the pre-cutover harness, then recreate it with a host worktree.",
       "workspace",
       false,
     );
   }
 
   const parsed = RunWorkspaceSchema.parse(value);
-  if (parsed.kind === "docker-clone") {
+  if (parsed.kind === "host-worktree") {
     return RunWorkspaceSchema.parse({
       ...parsed,
       controlRoot: canonicalizeWorkspacePath(parsed.controlRoot),
+      worktreePath: canonicalizeWorkspacePath(parsed.worktreePath),
+      gitCommonDir: canonicalizeWorkspacePath(parsed.gitCommonDir),
       workspacePath: "/workspace",
     });
   }

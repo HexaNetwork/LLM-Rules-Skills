@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { openRunHarness } from "../../src/application/run-engine-factory.js";
+import { openWorkerRunRuntime } from "../../src/application/run-engine-factory.js";
 import { CONFIG_VERSION, configurationHash, HarnessConfigSchema } from "../../src/config/schema.js";
 import { createRunState } from "../../src/domain.js";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 
-describe("openRunHarness", () => {
+describe("openWorkerRunRuntime", () => {
   it("rejects missing workspace.json by default", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ah-orf-miss-"));
     const stateRoot = path.join(root, "state");
@@ -42,7 +42,7 @@ describe("openRunHarness", () => {
     );
 
     await expect(
-      openRunHarness(config, runId, { backend: createFakeBackend({}) }, { validateWorkspace: false }),
+      openWorkerRunRuntime(config, runId, { backend: createFakeBackend({}) }, { validateWorkspace: false }),
     ).rejects.toThrow(/workspace metadata is missing/i);
   });
 
@@ -78,7 +78,7 @@ describe("openRunHarness", () => {
       "utf8",
     );
 
-    const opened = await openRunHarness(
+    const opened = await openWorkerRunRuntime(
       config,
       runId,
       { backend: createFakeBackend({}) },
@@ -133,15 +133,12 @@ describe("openRunHarness", () => {
       `${JSON.stringify(
         {
           version: 1,
-          kind: "docker-clone",
+          kind: "host-worktree",
           controlRoot: root.replaceAll("\\", "/"),
-          containerName: "ah-project-run-store-path",
-          workspaceVolumeName: "ah-ws-project-run-store-path",
+          worktreePath: path.join(root, "worktrees", runId).replaceAll("\\", "/"),
+          gitCommonDir: path.join(root, ".git").replaceAll("\\", "/"),
           workspacePath: "/workspace",
-          imageDigest: "sha256:abc",
           baseSha: "a".repeat(40),
-          seedBundleHash: "sha256:bundle",
-          generation: 0,
           baseBranch: "main",
           createdAt: new Date().toISOString(),
         },
@@ -155,14 +152,14 @@ describe("openRunHarness", () => {
     const store = new RunStore(realConfig, stateRoot);
 
     await expect(
-      openRunHarness(
+      openWorkerRunRuntime(
         wrongProjectConfig,
         runId,
         { backend: createFakeBackend({}), store },
         { validateWorkspace: false },
       ),
     ).resolves.toMatchObject({
-      workspace: { kind: "docker-clone" },
+      workspace: { kind: "host-worktree" },
     });
   });
 });

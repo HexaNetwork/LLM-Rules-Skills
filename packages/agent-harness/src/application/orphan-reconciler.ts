@@ -1,10 +1,17 @@
 import type { DockerClient, DockerContainerInspect } from "../infrastructure/container/types.js";
 import { HARNESS_CONTAINER_LABEL_PREFIX } from "../infrastructure/container/container-spec.js";
-import { harnessManagedContainerFilter } from "./docker-worker-session.js";
 import {
   pruneSandboxIsolationProbeVolumes,
   type PruneSandboxIsolationProbeVolumesReport,
 } from "./sandbox-isolation-probe.js";
+
+function harnessManagedContainerFilter(projectKey?: string, runId?: string): string[] {
+  return [
+    `label=${HARNESS_CONTAINER_LABEL_PREFIX}.managed=true`,
+    ...(projectKey ? [`label=${HARNESS_CONTAINER_LABEL_PREFIX}.project-key=${projectKey}`] : []),
+    ...(runId ? [`label=${HARNESS_CONTAINER_LABEL_PREFIX}.run-id=${runId}`] : []),
+  ];
+}
 
 export type ManagedContainerSummary = {
   id: string;

@@ -286,14 +286,14 @@ export class RunAdvancer {
   }
 
   /**
-   * Rebind execution roots from durable workspace.json and validate Docker identity.
-   * Missing volumes fail with a retriable workspace error (recorded as blocked).
+   * Rebind execution roots from durable workspace.json and validate worktree identity.
    */
   async ensureWorkspaceBound(runId: string): Promise<void> {
     const workspace = await this.ctx.loadWorkspace(runId);
     this.ctx.bindWorkspace(workspace);
-    if (workspace.kind !== "docker-clone") return;
-    await this.ctx.workspaceProvisioner.open(workspace);
+    if (workspace.kind === "host-worktree") {
+      await this.ctx.workspaceProvisioner.open(workspace);
+    }
   }
 
   async ensureCompatibleConfiguration(state: RunState): Promise<RunState> {

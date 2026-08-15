@@ -6,15 +6,37 @@ import {
 } from "./types.js";
 import {
   detectInstallFromToolStep,
-  prohibitedAgentPathAccess,
   summarizeAgentStep,
 } from "./step-utils.js";
 import { reportedTotal } from "./usage.js";
+import type { CursorProviderCompatibility } from "../../worker/provider-protocol.js";
+
+export type CursorBrokerConnection = {
+  brokerToken: string;
+  backendUrl: string;
+  compatibility: CursorProviderCompatibility;
+  expiresAt?: string;
+  renew?: (token: string) => Promise<{
+    brokerToken: string;
+    expiresAt: string;
+    backendUrl: string;
+    compatibility: CursorProviderCompatibility;
+  }>;
+};
 
 export function createCursorBackend(
-  apiKey = process.env.CURSOR_API_KEY,
+  credential: string | CursorBrokerConnection | undefined = process.env.CURSOR_API_KEY,
   options?: { retainTtlMs?: number; maxRetained?: number },
 ): AgentBackend {
+  if (typeof credential === "object") {
+    const backend = new URL(credential.backendUrl);
+    if (backend.protocol !== "https:" || backend.username || backend.password) {
+      throw new Error("Cursor broker backend URL must be credential-free HTTPS");
+    }
+    // SDK 1.0.27's public AgentOptions has no backendUrl field. Its documented
+    // process seam is CURSOR_BACKEND_URL, and one Docker worker owns one run.
+    process.env.CURSOR_BACKEND_URL = backend.toString().replace(/\/$/, "");
+  }
   type CursorUsage = {
     inputTokens?: number;
     outputTokens?: number;
@@ -76,9 +98,40 @@ export function createCursorBackend(
     }
   }
 
+  async function currentCredential(): Promise<string | undefined> {
+    if (typeof credential !== "object") {
+      return credential;
+    }
+    if (
+      credential.renew &&
+      credential.expiresAt &&
+      Date.parse(credential.expiresAt) <= Date.now() + 2 * 60_000
+    ) {
+      const renewed = await credential.renew(credential.brokerToken);
+      for (const entry of retainedAgents.values()) await disposeRetained(entry.agent);
+      retainedAgents.clear();
+      credential.brokerToken = renewed.brokerToken;
+      credential.expiresAt = renewed.expiresAt;
+      credential.backendUrl = renewed.backendUrl;
+      credential.compatibility = renewed.compatibility;
+      const renewedBackend = new URL(renewed.backendUrl);
+      if (
+        renewedBackend.protocol !== "https:" ||
+        renewedBackend.username ||
+        renewedBackend.password
+      ) {
+        throw new Error("Renewed Cursor broker backend URL must be credential-free HTTPS");
+      }
+      process.env.CURSOR_BACKEND_URL = renewedBackend.toString().replace(/\/$/, "");
+    }
+    return credential.brokerToken;
+  }
+
   return {
     readiness() {
-      return apiKey
+      return (typeof credential === "string"
+        ? Boolean(credential)
+        : Boolean(credential?.brokerToken))
         ? { ready: true }
         : { ready: false, message: "CURSOR_API_KEY is required for the Cursor backend." };
     },
@@ -86,13 +139,18 @@ export function createCursorBackend(
       return { canRestrictWritableWorkspace: true, providerId: "cursor" };
     },
     async run(request) {
+      const apiKey = await currentCredential();
       if (!apiKey) throw new Error("CURSOR_API_KEY is required for the Cursor backend");
       const sdk = (await import("@cursor/sdk")) as unknown as {
+        Cursor?: {
+          configure(options: { local: { useHttp1ForAgent: boolean } }): void;
+        };
         Agent: {
           create(options: Record<string, unknown>): Promise<CursorAgent>;
           resume(agentId: string, options?: Record<string, unknown>): Promise<CursorAgent>;
         };
       };
+      sdk.Cursor?.configure({ local: { useHttp1ForAgent: true } });
 
       await sweepExpired(Date.now());
 
@@ -156,12 +214,6 @@ export function createCursorBackend(
             }
             request.onStep?.(summarizeAgentStep(step));
             if (step.type !== "toolCall") return;
-            const prohibitedPath = prohibitedAgentPathAccess(step.message?.args, request.cwd);
-            if (prohibitedPath) {
-              forbiddenToolCall = `${step.message?.type ?? "unknown"} (${prohibitedPath})`;
-              cancel();
-              return;
-            }
             if (request.allowTools === false) {
               forbiddenToolCall = step.message?.type ?? "unknown";
               cancel();

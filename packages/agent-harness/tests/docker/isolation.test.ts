@@ -16,16 +16,12 @@ import { createSeedBundle, initializeCloneFromSeedBundle, verifySeedBundle } fro
 import { createProjectFixture } from "../testkit/project-fixture.js";
 import { git } from "../testkit/git.js";
 import { RunStore } from "../../src/store.js";
-import { createRunState } from "../../src/domain.js";
-import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
 import { writeRunWorkspace } from "../../src/config/io.js";
-import { startUiServer } from "../../src/ui/server.js";
-import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
-import {
-  ensureDockerWorkerSession,
-  stopDockerWorkerSession,
-} from "../../src/application/docker-worker-session.js";
 import { completeDockerHostPublish } from "../../src/application/docker-publish-service.js";
+import { DockerSandboxProvider, harnessWorkerEnv } from "../../src/sandbox/index.js";
+import { HostWorktreeProvisioner } from "../../src/workspace/host-worktree-provisioner.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
+import { createDeterministicWorkflowBackend } from "../../src/vnext/plugins/deterministic-provider.js";
 
 /**
  * Real-Docker lane: local invocations report and skip unavailable Docker.
@@ -181,7 +177,7 @@ describe("real Docker isolation lane", () => {
         workspaceWritable: true,
         canReadRunState: false,
         canWriteRunState: false,
-        secretPresent: true,
+        secretPresent: false,
         canReadRpcSecret: false,
         canAccessOutsideWorkspace: false,
       });
@@ -369,7 +365,7 @@ describe("real Docker isolation lane", () => {
     }
   });
 
-  it("runs reflect through host publication in the real worker profile", async () => {
+  it("runs host-owned workflow with a disposable worktree sandbox", async () => {
     const client = createDockerClient();
     const report = await probeDockerReadiness(client);
     const skip = realDockerSkipReason(report);
@@ -386,86 +382,13 @@ describe("real Docker isolation lane", () => {
       },
     });
     await fixture.initGit({ branch: "main" });
-    const baseSha = (await fixture.git("rev-parse", "HEAD")).trim();
     const controlStatus = await fixture.git("status", "--porcelain=v1");
-    const transport = await mkdtemp(path.join(tmpdir(), "ah-vnext-product-"));
     const stateRoot = await mkdtemp(path.join(tmpdir(), "ah-vnext-state-"));
-    const seed = await createSeedBundle({
-      controlRoot: fixture.root,
-      transportDirectory: transport,
-      baseSha,
-    });
     const suffix = Date.now().toString(36);
-    const image = `agent-harness-vnext-product:${suffix}`;
-    const volume = `ah-vnext-product-ws-${suffix}`;
-    const initName = `ah-vnext-product-init-${suffix}`.slice(0, 63);
-    const workerName = `ah-vnext-product-worker-${suffix}`.slice(0, 63);
+    const sandboxName = `ah-vnext-sandbox-${suffix}`.slice(0, 63);
     const runId = `vnext-product-${suffix}`;
-    let server: Awaited<ReturnType<typeof startUiServer>> | undefined;
 
     try {
-      const built = await client.exec(
-        ["build", "-f", "docker/worker/Dockerfile", "-t", image, "."],
-        { timeoutMs: 180_000 },
-      );
-      expect(built.exitCode, built.stderr || built.stdout).toBe(0);
-      expect((await client.exec(["volume", "create", volume])).exitCode).toBe(0);
-      // Seed through the production init entrypoint so the clone carries the
-      // harness identity marker the worker validates on reopen.
-      const initialized = await client.exec(
-        [
-          "run",
-          "--name",
-          initName,
-          "--rm",
-          "--user",
-          "10001:10001",
-          "--mount",
-          `type=volume,source=${volume},target=/workspace`,
-          "--mount",
-          `type=bind,source=${seed.bundlePath},target=/seed.bundle,readonly`,
-          "--entrypoint",
-          "/opt/agent-harness/cli",
-          image,
-          "workspace-init",
-          "--workspace",
-          "/workspace",
-          "--seed-bundle",
-          "/seed.bundle",
-          "--base-sha",
-          baseSha,
-          "--run-id",
-          runId,
-          "--seed-bundle-hash",
-          seed.bundleHash,
-          "--generation",
-          "0",
-        ],
-        { timeoutMs: 120_000 },
-      );
-      expect(initialized.exitCode, initialized.stderr || initialized.stdout).toBe(0);
-
-      const configured = await client.exec(
-        [
-          "run",
-          "--rm",
-          "--user",
-          "10001:10001",
-          "--mount",
-          `type=volume,source=${volume},target=/workspace`,
-          "--entrypoint",
-          "sh",
-          image,
-          "-c",
-          [
-            "git -C /workspace config user.email harness@example.com",
-            "git -C /workspace config user.name 'Harness Test'",
-          ].join(" && "),
-        ],
-        { timeoutMs: 60_000 },
-      );
-      expect(configured.exitCode, configured.stderr || configured.stdout).toBe(0);
-
       const config = HarnessConfigSchema.parse({
         repositoryRoot: fixture.root,
         stateDirectory: stateRoot,
@@ -473,7 +396,6 @@ describe("real Docker isolation lane", () => {
         execution: {
           runtime: "docker",
           docker: {
-            workerImageDigest: image,
             limits: { cpus: 1, memoryMb: 1024, pidsLimit: 128 },
             network: { runtime: "bridge", packageInstall: "none" },
           },
@@ -493,87 +415,90 @@ describe("real Docker isolation lane", () => {
       });
       const store = new RunStore(config, stateRoot);
       await store.initialize();
-      await store.create(
-        createRunState(
-          runId,
-          "Add a greeting",
-          new Date().toISOString(),
-          configurationHash(config),
-          CONFIG_VERSION,
-        ),
-      );
-      await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
-      await writeRunWorkspace(
-        config,
-        runId,
-        {
-          version: 1,
-          kind: "docker-clone",
-          controlRoot: fixture.root,
-          containerName: workerName,
-          workspaceVolumeName: volume,
-          workspacePath: "/workspace",
-          imageDigest: image,
-          baseSha,
-          seedBundleHash: seed.bundleHash,
-          generation: 0,
-          baseBranch: "main",
-          createdAt: new Date().toISOString(),
-        },
-        { runDirectory: store.runDirectory(runId) },
-      );
-
-      server = await startUiServer({
-        config,
-        backend: createFakeBackend({}),
-        dashboard: false,
-        openBrowser: false,
-        port: 0,
+      const provisioner = new HostWorktreeProvisioner({
+        paths: { controlRoot: fixture.root, stateRoot, workspaceRoot: fixture.root },
+        store,
       });
-      const session = await ensureDockerWorkerSession({
-        projectConfig: config,
-        runId,
-        docker: client,
-        image,
-        workspaceVolumeName: volume,
-        containerName: workerName,
+      const workspace = await provisioner.create({ runId, baseBranch: "main" });
+      if (workspace.kind !== "host-worktree") throw new Error("expected host-worktree");
+
+      const sandbox = await new DockerSandboxProvider(client).create({
+        name: sandboxName,
+        image: "alpine:3.20",
         projectKey: "ci",
-        startIfMissing: true,
-        stateServiceEndpoint: server.workerStateEndpoint,
-        issueStateCredential: (id, options) =>
-          server!.issueWorkerStateCredential(id, options),
-        deterministicTestProfile: true,
+        runId,
+        workspace: { kind: "bind", hostPath: workspace.worktreePath },
+        dockerPolicy: config.execution.docker,
+        env: harnessWorkerEnv({
+          rpcUrl: "https://host.docker.internal:9",
+          token: "opaque-docker-isolation-token",
+        }),
       });
+      try {
+        const listing = await sandbox.exec(["sh", "-c", "ls /workspace && test -f /workspace/README.md"]);
+        expect(listing.exitCode, listing.stderr || listing.stdout).toBe(0);
+        expect(listing.stdout).toContain("README.md");
+        const envProbe = await sandbox.exec([
+          "sh",
+          "-c",
+          "env | sort",
+        ]);
+        expect(envProbe.exitCode).toBe(0);
+        expect(envProbe.stdout).toContain("HARNESS_RPC_URL=");
+        expect(envProbe.stdout).toContain("HARNESS_WORKER_TOKEN=");
+        expect(envProbe.stdout).not.toMatch(
+          /CURSOR_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GH_TOKEN|GITHUB_TOKEN/,
+        );
+      } finally {
+        await sandbox.destroy();
+      }
 
+      const engine = new WorkerHarnessRuntime(config, {
+        backend: createDeterministicWorkflowBackend(),
+        store,
+        workspace,
+        paths: {
+          controlRoot: fixture.root,
+          stateRoot,
+          workspaceRoot: workspace.worktreePath,
+        },
+      });
+      let state = await engine.start("Add a greeting", runId);
+      await writeRunWorkspace(config, runId, workspace, {
+        runDirectory: store.runDirectory(runId),
+      });
       for (let turn = 0; turn < 40; turn += 1) {
-        const state = await store.load(runId);
         if (state.phase === "publishing" || state.phase === "completed") break;
         if (state.phase === "blocked") {
-          throw new Error(`Worker workflow blocked: ${state.failure ?? "unknown"}`);
+          throw new Error(`Host workflow blocked: ${state.failure ?? "unknown"}`);
         }
         const activeQuestion = state.questions.find(
           (question) => question.id === state.activeQuestionId && question.status === "open",
         );
         if (activeQuestion) {
-          await session.client.invoke("answer", {
-            answers: [{ questionId: activeQuestion.id, answer: "Casual" }],
-          });
+          await engine.answerMany(state.runId, [
+            { questionId: activeQuestion.id, answer: "Casual" },
+          ]);
+          state = await engine.advance(state.runId);
         } else if (state.grillReady) {
-          await session.client.invoke("confirm_grill", {});
+          await engine.confirmGrill(state.runId);
+          state = await engine.advance(state.runId);
         } else if (state.verificationReady) {
-          await session.client.invoke("confirm_verification", { keepCurrent: true });
+          await engine.confirmVerification(state.runId, { keepCurrent: true });
+          state = await engine.advance(state.runId);
         } else if (state.planReady) {
-          await session.client.invoke("confirm_plan", {});
+          await engine.confirmPlan(state.runId);
+          state = await engine.advance(state.runId);
         } else {
-          await session.client.advance();
+          state = await engine.advance(state.runId);
         }
       }
 
-      expect((await store.load(runId)).phase).toBe("publishing");
+      expect(state.phase).toBe("publishing");
       const published = await completeDockerHostPublish({
         projectConfig: config,
         runConfig: config,
-        runId,
+        runId: state.runId,
         store,
       });
       expect(published.phase).toBe("completed");
@@ -583,14 +508,8 @@ describe("real Docker isolation lane", () => {
       expect((await fixture.git("show", `${published.branchName}:src/greeting.js`))).toContain(
         "Hello from Docker!",
       );
-
-      await stopDockerWorkerSession({ projectConfig: config, runId, docker: client });
     } finally {
-      await server?.close();
-      await client.exec(["rm", "-f", workerName, initName]);
-      await client.exec(["volume", "rm", "-f", volume]);
-      await client.exec(["image", "rm", "-f", image]);
-      await rm(transport, { recursive: true, force: true });
+      await client.exec(["rm", "-f", sandboxName]);
       await rm(stateRoot, { recursive: true, force: true });
       await fixture.cleanup();
     }

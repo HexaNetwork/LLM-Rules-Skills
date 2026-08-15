@@ -7,34 +7,20 @@ vi.mock("../../src/config/io.js", () => ({
   loadRunWorkspace: vi.fn(),
 }));
 
-vi.mock("../../src/application/docker-worker-session.js", () => ({
-  ensureDockerWorkerSession: vi.fn(),
-}));
-
 import { loadRunWorkspace } from "../../src/config/io.js";
-import { ensureDockerWorkerSession } from "../../src/application/docker-worker-session.js";
 
 describe("continueDockerRunAfterWorkspaceReady", () => {
-  it("starts the worker and invokes advance against the docker-clone", async () => {
-    const invoke = vi.fn(async () => ({ runId: "run-1", phase: "reflecting", revision: 2 }));
+  it("accepts a host-worktree and leaves lifecycle on the host", async () => {
     vi.mocked(loadRunWorkspace).mockResolvedValue({
       version: 1,
-      kind: "docker-clone",
+      kind: "host-worktree",
       controlRoot: "D:/repo",
-      containerName: "ah-project-run-1",
-      workspaceVolumeName: "ah-ws-project-run-1",
+      worktreePath: "D:/state/worktrees/run-1",
+      gitCommonDir: "D:/repo/.git",
       workspacePath: "/workspace",
-      imageDigest: "sha256:abc",
       baseSha: "deadbeef",
-      seedBundleHash: "sha256:bundle",
-      generation: 0,
       baseBranch: "main",
       createdAt: new Date().toISOString(),
-    });
-    vi.mocked(ensureDockerWorkerSession).mockResolvedValue({
-      execution: { runtime: "docker", lifecycle: "running" } as never,
-      client: { invoke } as never,
-      secretFilePath: "secret",
     });
 
     const progress: string[] = [];
@@ -45,20 +31,10 @@ describe("continueDockerRunAfterWorkspaceReady", () => {
       onProgress: (message) => progress.push(message),
     });
 
-    expect(ensureDockerWorkerSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runId: "run-1",
-        image: "sha256:abc",
-        workspaceVolumeName: "ah-ws-project-run-1",
-        containerName: "ah-project-run-1",
-        startIfMissing: true,
-      }),
-    );
-    expect(invoke).toHaveBeenCalledWith("advance", {});
-    expect(progress.some((message) => /Docker worker/i.test(message))).toBe(true);
+    expect(progress.some((message) => /host/i.test(message))).toBe(true);
   });
 
-  it("rejects non-docker workspaces", async () => {
+  it("rejects workspaces the host does not own", async () => {
     vi.mocked(loadRunWorkspace).mockResolvedValue({
       version: 1,
       kind: "git-disabled",
@@ -72,6 +48,6 @@ describe("continueDockerRunAfterWorkspaceReady", () => {
         runId: "run-1",
         docker: {} as DockerClient,
       }),
-    ).rejects.toThrow(/docker-clone workspace/i);
+    ).rejects.toThrow(/host-worktree/i);
   });
 });

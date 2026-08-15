@@ -1,6 +1,5 @@
 import path from "node:path";
 import type { InvokeInput } from "../infrastructure/agents/types.js";
-import type { DockerCloneWorkspace } from "../domain/workspace.js";
 import { normalizeFrozenRunConfig } from "../config/migrations.js";
 import { ProjectSettingsPatchSchema } from "../config/schema.js";
 import type { PreflightCommitOrder } from "../config/schema.js";
@@ -9,7 +8,6 @@ import {
   FixerPlanSchema,
   WorkerOutputSchema,
   clearBlock,
-  decideDockerCleanup,
   isCancelSettled,
   isTerminalPhase,
   type FixerRecovery,
@@ -35,10 +33,6 @@ import {
 } from "./helpers.js";
 import { updateRunConfig } from "./update-run-config.js";
 import { accrueRunUsage } from "./usage-ledger.js";
-import { loadBundleImportState } from "./bundle-import-io.js";
-import { loadRunExecutionState, writeRunExecutionState } from "./execution-state-io.js";
-import { stopDockerWorkerSession } from "./docker-worker-session.js";
-import { commitsImportedOrReachable } from "./execution-diagnostics.js";
 
 const terminal = isTerminalPhase;
 
@@ -50,12 +44,6 @@ function cleanupRefusalMessage(reason: string): string {
       return "Refusing cleanup: Docker workspace has a dirty unexported tree. Export/import first, or pass --discard.";
     case "unpublished-requires-discard":
       return "Refusing cleanup: commits are not reachable from a retained named ref / import. Pass --discard to explicitly discard unpublished work.";
-    case "not-docker-clone":
-      return "Refusing cleanup: run is not a docker-clone workspace.";
-    case "worker-still-running":
-      return "Refusing cleanup: Docker worker container is still running. Stop the worker first.";
-    case "active-rpc":
-      return "Refusing cleanup: Docker worker still has an active RPC session.";
     default:
       return `Refusing cleanup (${reason}).`;
   }
@@ -149,22 +137,6 @@ export class RecoveryService {
     }
     const recorded = await this.ctx.store.record(cancelled, "run.cancelled");
     await this.ctx.clearCancelRequest(state.runId);
-
-    // Docker: abort work, stop/remove the worker container, retain volume + unpublished commits.
-    try {
-      const workspace = await this.ctx.loadWorkspace(state.runId);
-      if (workspace.kind === "docker-clone") {
-        await stopDockerWorkerSession({
-          projectConfig: this.ctx.config,
-          runId: state.runId,
-          docker: this.ctx.docker,
-          containerName: workspace.containerName,
-          rpcShutdown: true,
-        });
-      }
-    } catch {
-      // Cancellation already recorded; container stop is best-effort.
-    }
 
     return recorded;
   }
@@ -644,8 +616,7 @@ export class RecoveryService {
 
   /**
    * Explicitly remove a settled run's workspace after conservative checks.
-   * Docker cleanup stops the worker, removes the
-   * container, and remove the volume only when import/publish is durable or discard.
+   * Removes a settled run's host worktree after conservative checks.
    * Retains workspace.json, state, events, transport audit metadata, and branch.
    */
   async cleanup(
@@ -657,119 +628,35 @@ export class RecoveryService {
       const workspace = await this.ctx.loadWorkspace(runId);
       this.ctx.bindWorkspace(workspace);
 
-      if (workspace.kind === "docker-clone") {
-        return this.cleanupDockerClone(state, workspace, options);
+      if (workspace.kind !== "host-worktree") {
+        throw new HarnessFailure(
+          `Cleanup only applies to host worktrees (this run is ${workspace.kind})`,
+          "workspace",
+          false,
+        );
       }
-
-      throw new HarnessFailure(
-        `Cleanup only applies to Docker workspaces (this run is ${workspace.kind})`,
-        "workspace",
-        false,
-      );
-    });
-  }
-
-  private async cleanupDockerClone(
-    state: RunState,
-    workspace: DockerCloneWorkspace,
-    options?: { discard?: boolean },
-  ): Promise<CleanupResult> {
-    const runId = state.runId;
-    const retainedBranch = workspace.branchName ?? state.branchName;
-
-    if (workspace.removedAt) {
-      return {
-        state,
-        removed: false,
-        reason: "already-removed",
-        retainedBranch,
-      };
-    }
-
-    // Stop worker first so cleanup facts see a stopped container (idempotent).
-    await stopDockerWorkerSession({
-      projectConfig: this.ctx.config,
-      runId,
-      docker: this.ctx.docker,
-      containerName: workspace.containerName,
-      rpcShutdown: true,
-    }).catch(() => undefined);
-
-    const inspected = await this.ctx.docker.inspectContainer?.(workspace.containerName);
-    const workerStopped = !inspected || inspected.state !== "running";
-    const execution = await loadRunExecutionState(this.ctx.config, runId);
-    const activeRpc =
-      execution?.lifecycle === "running" ||
-      execution?.lifecycle === "exporting" ||
-      Boolean(execution?.hostPort && inspected?.state === "running");
-
-    const inspection = await this.ctx.workspaceProvisioner.inspectCleanupTarget(workspace);
-    const importState = await loadBundleImportState(this.ctx.config, runId);
-    const imported = commitsImportedOrReachable(importState);
-    const dirtyUnexportedTree =
-      inspection.dirty &&
-      !imported &&
-      importState?.status !== "export-ready" &&
-      importState?.status !== "quarantined" &&
-      importState?.status !== "validated" &&
-      importState?.status !== "promoted";
-
-    const decision = decideDockerCleanup({
-      phase: state.phase,
-      workspaceKind: "docker-clone",
-      alreadyRemoved: false,
-      workerStopped,
-      activeRpc: activeRpc && !workerStopped,
-      dirtyUnexportedTree,
-      commitsImportedOrReachable: imported || inspection.commitsReachableFromRetainedRef,
-      discard: options?.discard === true,
-    });
-
-    if (!decision.allow) {
-      throw new HarnessFailure(cleanupRefusalMessage(decision.reason), "workspace", false);
-    }
-
-    await this.ctx.workspaceProvisioner.remove(workspace, runId, {
-      removeVolume: decision.removeVolume,
-    });
-
-    const removedAt = new Date().toISOString();
-    const nextWorkspace = {
-      ...workspace,
-      removedAt,
-      branchName: retainedBranch ?? workspace.branchName,
-    };
-    await this.ctx.writeWorkspace(runId, nextWorkspace);
-    this.ctx.bindWorkspace(nextWorkspace);
-
-    if (execution) {
-      await writeRunExecutionState(this.ctx.config, runId, {
-        ...execution,
-        lifecycle: "stopped",
-        containerId: undefined,
-        hostPort: undefined,
-        updatedAt: removedAt,
+      const retainedBranch = workspace.branchName ?? state.branchName;
+      if (workspace.removedAt) {
+        return { state, removed: false, reason: "already-removed", retainedBranch };
+      }
+      if (!isCancelSettled(state.phase) && options?.discard !== true) {
+        throw new HarnessFailure(cleanupRefusalMessage("run-not-settled"), "workspace", false);
+      }
+      const inspection = await this.ctx.workspaceProvisioner.inspectCleanupTarget(workspace);
+      if (inspection.dirty && options?.discard !== true) {
+        throw new HarnessFailure(cleanupRefusalMessage("dirty-unexported-tree"), "workspace", false);
+      }
+      await this.ctx.workspaceProvisioner.remove(workspace, runId);
+      const nextWorkspace = { ...workspace, removedAt: new Date().toISOString() };
+      await this.ctx.writeWorkspace(runId, nextWorkspace);
+      this.ctx.bindWorkspace(nextWorkspace);
+      const nextState = await this.ctx.store.record(state, "run.host_worktree_removed", {
+        discarded: options?.discard === true,
+        ...(retainedBranch ? { retainedBranch } : {}),
+        ...(inspection.headSha ? { headSha: inspection.headSha } : {}),
       });
-    }
-
-    const nextState = await this.ctx.store.record(state, "run.docker_workspace_removed", {
-      reason: decision.reason,
-      discarded: options?.discard === true,
-      removeVolume: decision.removeVolume,
-      ...(retainedBranch ? { retainedBranch } : {}),
-      ...(inspection.headSha ? { headSha: inspection.headSha } : {}),
-      ...(importState?.resultBundleHash
-        ? { resultBundleHash: importState.resultBundleHash }
-        : {}),
-      ...(importState?.seedBundleHash ? { seedBundleHash: importState.seedBundleHash } : {}),
+      return { state: nextState, removed: true, reason: "removed", retainedBranch };
     });
-
-    return {
-      state: nextState,
-      removed: true,
-      reason: decision.reason,
-      retainedBranch,
-    };
   }
 
   /** Finish the current task, then halt before starting the next frontier task. */

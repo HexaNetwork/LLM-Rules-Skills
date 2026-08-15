@@ -123,6 +123,7 @@ export class HostRunLifecycleOwner implements HostRunLifecycleService {
 
       await this.advanceStage(runId, "worker_starting");
       this.startedWorkers.set(runId, runConfig);
+      this.progress(runId, "Advancing host-owned workflow");
       await this.config.startWorker({
         config: runConfig,
         runId,

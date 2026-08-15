@@ -11,7 +11,7 @@ export const RUN_EXECUTION_SCHEMA_VERSION = 1 as const;
  * Restartable Docker execution lifecycle metadata for a single run.
  * Durable under `<runDir>/execution.json`. Ephemeral container IDs and host ports
  * are discovered here and must not be treated as sole workspace identity
- * (see workspace.json `docker-clone` fields and ADR 0016).
+ * Disposable sandbox identity is not retained for reattachment.
  *
  * Secrets: store only non-reversible fingerprints — never paths or raw tokens.
  */

@@ -33,8 +33,6 @@ import {
   loadBundleImportState,
   writeBundleImportState,
 } from "./bundle-import-io.js";
-import type { DockerMutationProxy } from "./docker-run-proxy.js";
-
 const RESULT_BUNDLE_CHUNK_BYTES = 512 * 1024;
 import { writeRunExecutionState, loadRunExecutionState } from "./execution-state-io.js";
 import type { RunWorkspace } from "../domain/workspace.js";
@@ -191,23 +189,24 @@ export async function completeDockerHostPublish(input: {
   runConfig: HarnessConfig;
   runId: string;
   store: RunStore;
-  dockerProxy?: DockerMutationProxy;
   /** Optional PR message; defaults to a deterministic fallback from run state. */
   message?: MessageOutput;
 }): Promise<RunState> {
   const { projectConfig, runConfig, runId, store } = input;
 
-  if (input.dockerProxy) {
-    await input.dockerProxy.invoke("prepare-export", {});
-  } else {
-    const existing = await loadBundleImportState(projectConfig, runId);
-    if (!isDockerBundleExportReady(existing)) {
-      throw new HarnessFailure(
-        "Docker publish requires prepare-export before host delivery",
-        "execution",
-        true,
-      );
-    }
+  const existing = await loadBundleImportState(projectConfig, runId).catch(() => undefined);
+  if (!isDockerBundleExportReady(existing)) {
+    const workspace = await loadRunWorkspace(projectConfig, runId, {
+      runDirectory: store.runDirectory(runId),
+    });
+    await prepareDockerResultExport({
+      config: runConfig,
+      store,
+      runId,
+      workspace,
+      workspacePath:
+        workspace.kind === "host-worktree" ? workspace.worktreePath : WORKER_WORKSPACE_PATH,
+    });
   }
 
   let state = await store.load(runId);
@@ -403,8 +402,22 @@ async function materializeResultTransport(
   importState: BundleImportState,
 ): Promise<void> {
   await mkdir(transportDirectory, { recursive: true });
+  const manifestPath = path.join(transportDirectory, RESULT_MANIFEST_FILENAME);
+  const bundlePath = path.join(transportDirectory, RESULT_BUNDLE_FILENAME);
+
+  // Host-owned filesystem export already lands the manifest/bundle in place.
+  // Reconstruct from RPC chunks only when those files are absent.
+  try {
+    await readFile(manifestPath);
+    if (importState.noChange === true || (await pathExists(bundlePath))) {
+      return;
+    }
+  } catch {
+    // Fall through to chunk reconstruction for remote/RPC exports.
+  }
+
   const manifest = await store.readText(runId, `transport/${RESULT_MANIFEST_FILENAME}`);
-  await writeFile(path.join(transportDirectory, RESULT_MANIFEST_FILENAME), manifest, "utf8");
+  await writeFile(manifestPath, manifest, "utf8");
   if (importState.noChange === true) return;
 
   const bundleBytes = importState.bundleBytes;
@@ -428,7 +441,16 @@ async function materializeResultTransport(
       true,
     );
   }
-  await writeFile(path.join(transportDirectory, RESULT_BUNDLE_FILENAME), bundle);
+  await writeFile(bundlePath, bundle);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await readFile(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function chunkId(index: number): string {

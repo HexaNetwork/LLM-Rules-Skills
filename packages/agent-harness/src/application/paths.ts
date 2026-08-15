@@ -17,8 +17,7 @@ export type HarnessPaths = {
 
 /**
  * Derive harness roots from project/run config and optional workspace metadata.
- * Docker clones use the worker constant `/workspace`; git-disabled stays on the
- * control root.
+ * Host worktrees use the host path; git-disabled stays on the control root.
  *
  * Absolute `stateDirectory` values (external project state) are used as-is.
  * Relative values nest under `controlRoot` for legacy repository-local installs.
@@ -78,14 +77,15 @@ export function runBundleImportPath(stateRoot: string, runId: string): string {
 
 /**
  * Resolve the execution-root path for agents/commands given workspace metadata.
- * Docker clones advertise `/workspace`; git-disabled uses the control root.
+ * Host worktrees use the host path so the host can commit; sandboxes still
+ * see `/workspace`. Git-disabled uses the control root.
  */
 export function resolveExecutionWorkspaceRoot(
   workspace: RunWorkspace | null | undefined,
   controlRootFallback: string,
 ): string {
-  if (workspace?.kind === "docker-clone") {
-    return WORKER_WORKSPACE_PATH;
+  if (workspace?.kind === "host-worktree") {
+    return path.resolve(workspace.worktreePath);
   }
   return path.resolve(controlRootFallback);
 }

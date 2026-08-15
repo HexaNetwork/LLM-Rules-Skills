@@ -113,10 +113,6 @@ export function createApplicationDependencies(
     resolveWorkspaceProvisioner(config, {
       paths,
       store,
-      docker,
-      projectKey: dependencies.projectContext?.paths
-        ? path.basename(dependencies.projectContext.paths.projectStateRoot)
-        : undefined,
     });
   const repositoryIntelligenceRunner: ExecutableRunner =
     dependencies.repositoryIntelligenceRunner ??

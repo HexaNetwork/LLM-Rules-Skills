@@ -32,11 +32,8 @@ import {
 import { createFakeDockerClient } from "../../src/infrastructure/container/fake-docker-client.js";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { buildCommandEnvironment } from "../../src/commands.js";
-import {
-  argvLeaksCursorApiKey,
-  writeCursorApiKeySecretFile,
-  resolveWorkerCursorApiKey,
-} from "../../src/worker/cursor-api-key-secret.js";
+import { argvLeaksProviderCredential } from "../../src/infrastructure/container/container-spec.js";
+import { detectInstallFromToolStep } from "../../src/infrastructure/agents/step-utils.js";
 import { WORKER_WORKSPACE_PATH } from "../../src/application/paths.js";
 import { HarnessFailure } from "../../src/errors.js";
 
@@ -55,8 +52,7 @@ function passingReport(imageDigest = DIGEST): SandboxIsolationProbeReport {
       { id: "workspace-write", ok: true, detail: "ok" },
       { id: "host-state-read-denied", ok: true, detail: "ok" },
       { id: "host-state-write-denied", ok: true, detail: "ok" },
-      { id: "actual-secret-present", ok: true, detail: "ok" },
-      { id: "actual-secret-read-denied", ok: true, detail: "ok" },
+      { id: "credential-mount-absent", ok: true, detail: "ok" },
       { id: "outside-workspace-denied", ok: true, detail: "ok" },
       { id: "sandbox-enabled", ok: true, detail: "ok" },
       { id: "mount-topology", ok: true, detail: "ok" },
@@ -195,7 +191,7 @@ describe("sandbox isolation probe gating", () => {
         workspaceWritable: true,
         canReadRunState: false,
         canWriteRunState: false,
-        secretPresent: true,
+        secretPresent: false,
         canReadRpcSecret: false,
         canAccessOutsideWorkspace: false,
       }).ok,
@@ -205,7 +201,7 @@ describe("sandbox isolation probe gating", () => {
         workspaceWritable: true,
         canReadRunState: true,
         canWriteRunState: false,
-        secretPresent: true,
+        secretPresent: false,
         canReadRpcSecret: false,
         canAccessOutsideWorkspace: false,
       }).ok,
@@ -253,11 +249,6 @@ describe("capability advertising after probe", () => {
     const probeDir = await mkdtemp(path.join(tmpdir(), "ah-probe-rs-"));
     const docker = createFakeDockerClient({
       scripted: [
-        // Staging the mode-000 secret fixture into its disposable volume.
-        {
-          match: "--entrypoint /bin/sh",
-          result: { exitCode: 0, stdout: "", stderr: "", timedOut: false },
-        },
         {
           match: WORKER_ISOLATION_SELF_CHECK_PATH,
           result: {
@@ -266,7 +257,7 @@ describe("capability advertising after probe", () => {
               workspaceWrite: true,
               runStateReadDenied: true,
               runStateWriteDenied: true,
-              secretPresent: true,
+              secretPresent: false,
               rpcSecretReadDenied: true,
               outsideWorkspaceDenied: true,
             }),
@@ -335,6 +326,56 @@ describe("capability advertising after probe", () => {
   });
 });
 
+describe("production worker isolation contract", () => {
+  const config = HarnessConfigSchema.parse({
+    execution: {
+      runtime: "docker",
+      docker: {
+        limits: { cpus: 1, memoryMb: 1024, pidsLimit: 64 },
+        network: { runtime: "bridge" },
+      },
+    },
+  });
+
+  it("exposes only workspace plus tmpfs as writable surfaces and never /run-state or provider keys", () => {
+    const spec = buildHardenedContainerSpec({
+      name: "ah-iso",
+      image: DIGEST,
+      projectKey: "p",
+      runId: "r",
+      harnessVersion: "0.3.2",
+      dockerPolicy: config.execution.docker,
+      workspaceVolumeName: "ah-ws",
+      environment: [
+        "HARNESS_RPC_URL=https://host.docker.internal:8788",
+        "HARNESS_WORKER_TOKEN=opaque-worker-token",
+      ],
+    });
+    const argv = hardenedSpecToRunArgv(spec);
+    const writableMounts = spec.mounts.filter((mount) => mount.readOnly === false);
+    expect(writableMounts).toEqual([
+      expect.objectContaining({ target: WORKER_WORKSPACE_PATH, readOnly: false }),
+    ]);
+    expect(spec.tmpfs.map((entry) => entry.path).sort()).toEqual(["/home/harness", "/tmp"]);
+    expect(spec.mounts.map((mount) => mount.target)).not.toContain("/run-state");
+    expect(argv.join(" ")).not.toMatch(/\/run-state/);
+    expect(argv.join(" ")).not.toMatch(
+      /CURSOR_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GH_TOKEN|GITHUB_TOKEN|docker\.sock/,
+    );
+    expect(spec.mounts.some((mount) => mount.target.startsWith("/run/secrets"))).toBe(false);
+    expect(spec.env).toEqual(
+      expect.arrayContaining([
+        "HARNESS_RPC_URL=https://host.docker.internal:8788",
+        "HARNESS_WORKER_TOKEN=opaque-worker-token",
+      ]),
+    );
+    expect(spec.env?.some((entry) => /^(CURSOR|OPENAI|ANTHROPIC)_API_KEY=/i.test(entry))).toBe(
+      false,
+    );
+    expect(denyInsecureContainerArgv(argv).allowed).toBe(true);
+  });
+});
+
 describe("secret and mount/resource hardening (unit)", () => {
   it("never leaks CURSOR_API_KEY into command environments even when passEnv requests it", () => {
     const previous = process.env.CURSOR_API_KEY;
@@ -351,19 +392,15 @@ describe("secret and mount/resource hardening (unit)", () => {
     }
   });
 
-  it("prefers Cursor API key secret file over env and detects argv leaks", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "ah-key-"));
-    const secretPath = path.join(dir, "worker-bootstrap", "cursor-api-key.token");
-    await writeCursorApiKeySecretFile(secretPath, "file-key-value-abc");
-    await writeCursorApiKeySecretFile(secretPath, "file-key-value-abc");
-    await writeCursorApiKeySecretFile(secretPath, "rotated-file-key-value-xyz");
-    const resolved = await resolveWorkerCursorApiKey({
-      secretFilePath: secretPath,
-      env: { CURSOR_API_KEY: "env-key-should-not-win" },
-    });
-    expect(resolved).toBe("rotated-file-key-value-xyz");
-    expect(argvLeaksCursorApiKey(["run", "-e", "CURSOR_API_KEY=x", "img"])).toBe(true);
-    expect(argvLeaksCursorApiKey(["run", "--name", "c", "img"])).toBe(false);
+  it("detects provider credential leaks in argv and allows slash-prefixed brief text", () => {
+    expect(argvLeaksProviderCredential(["run", "-e", "CURSOR_API_KEY=x", "img"])).toBe(true);
+    expect(argvLeaksProviderCredential(["run", "--name", "c", "img"])).toBe(false);
+    expect(
+      detectInstallFromToolStep({
+        type: "toolCall",
+        message: { type: "write", args: { contents: "Use /t claim in the brief" } },
+      }),
+    ).toBeUndefined();
   });
 
   it("encodes resource limits and denies secret-env / privileged argv", () => {
@@ -384,7 +421,6 @@ describe("secret and mount/resource hardening (unit)", () => {
       harnessVersion: "0.3.2",
       dockerPolicy: config.execution.docker,
       workspaceVolumeName: "ah-ws",
-      secretMounts: [],
     });
     const argv = hardenedSpecToRunArgv(spec);
     expect(argv).toEqual(
@@ -403,6 +439,44 @@ describe("secret and mount/resource hardening (unit)", () => {
       ]),
     );
     expect(argv.join(" ")).not.toMatch(/CURSOR_API_KEY|privileged|docker\.sock/);
+    // The Cursor SDK sandbox helper needs an unprivileged user namespace, which
+    // Docker's default seccomp profile refuses while capabilities are dropped.
+    expect(spec.seccomp).toBe("unconfined");
+    expect(argv).toEqual(
+      expect.arrayContaining(["--security-opt", "seccomp=unconfined", "--cap-drop", "ALL"]),
+    );
+    const structuralOnly = buildHardenedContainerSpec({
+      name: "ah-harden-nosdk",
+      image: DIGEST,
+      projectKey: "p",
+      runId: "r",
+      harnessVersion: "0.3.2",
+      dockerPolicy: config.execution.docker,
+      workspaceVolumeName: "ah-ws",
+      runsCursorSandbox: false,
+    });
+    expect(structuralOnly.seccomp).toBe("docker-default");
+    expect(hardenedSpecToRunArgv(structuralOnly).join(" ")).not.toContain("seccomp");
+    const withPublicCa = buildHardenedContainerSpec({
+      name: "ah-harden-ca",
+      image: DIGEST,
+      projectKey: "p",
+      runId: "r",
+      harnessVersion: "0.3.2",
+      dockerPolicy: config.execution.docker,
+      workspaceVolumeName: "ah-ws",
+      publicReadOnlyMounts: [
+        {
+          source: "C:\\harness-state\\cursor-provider-tls\\ca-cert.pem",
+          target: "/run/agent-harness-public/cursor-provider-ca.pem",
+        },
+      ],
+    });
+    const caArgv = hardenedSpecToRunArgv(withPublicCa);
+    expect(caArgv).toContain(
+      "NODE_EXTRA_CA_CERTS=/run/agent-harness-public/cursor-provider-ca.pem",
+    );
+    expect(caArgv.join(" ")).not.toMatch(/ca-key|server-key|CURSOR_API_KEY/);
     expect(denyInsecureContainerArgv(argv).allowed).toBe(true);
     expect(
       denyInsecureContainerArgv(["run", "-e", "CURSOR_API_KEY=secret", "img"]).allowed,

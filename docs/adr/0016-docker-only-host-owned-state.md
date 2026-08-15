@@ -12,56 +12,80 @@ The dual model also forced the harness to guess at agent intent. Because the con
 
 ## Decision
 
-There is exactly one execution runtime: a per-run Docker container. The local linked-worktree runtime, runtime switching, and pre-cutover run resumption are removed. Users finish, export, or discard old runs before upgrading.
+There is exactly one agent execution runtime: a disposable Docker sandbox bound
+to a host-owned run worktree. Runtime switching and pre-cutover run resumption
+are removed. Users finish, export, or discard old runs before upgrading.
 
 ### Topology
 
-- The **host** is the single-operator control plane: dashboard/CLI, project registry, durable `RunStore`, Docker lifecycle, workspace seed/result bundle transport, and publish/push/PR operations.
-- The **per-run container** owns `HarnessEngine` advancement, the provider SDK and agent sessions, repository tools, and the isolated workspace at `/workspace` (a named read-write volume, the container's only persistent mount).
-- The worker reads and mutates durable state exclusively through an authenticated, versioned host state API. **There is no `/run-state` mount** and no equivalent host state path inside the container.
+- The **host** owns `HarnessEngine` advancement, durable `RunStore`, the run's Git
+  worktree, commits, Docker lifecycle, and publish/push/PR operations.
+- Every bounded agent invocation creates a fresh sandbox, bind-mounts that run's
+  host worktree at `/workspace`, executes once, then destroys the container and
+  revokes its capability. Containers are never reattached.
+- The sandbox receives only `HARNESS_RPC_URL` and `HARNESS_WORKER_TOKEN` as
+  harness capability configuration. **There is no `/run-state` or credential
+  mount** and no equivalent host control path inside the container.
 - Remote inference happens at the provider; the provider client and all local tool execution stay inside the container, so a provider-generated shell/read/write operation cannot reach the host filesystem.
 
 ### Invariants
 
 1. **The host is authoritative for durable state.** All durable files (state, events, sessions, packets, config, secrets) are written by the host using the store's existing atomic-replace and journal recovery behavior.
-2. **The container is authoritative for run advancement while it is active.** Dashboard reads observe host state; dashboard mutations for an active run are delivered to the worker.
-3. **State mutations use compare-and-swap revision semantics.** Every mutation carries the expected revision; a stale revision is rejected explicitly, never silently overwritten.
-4. **One advancing worker exists per run**, enforced by a host-issued lease with a monotonic fencing token per worker instance.
-5. **The worker can be destroyed and recreated against the retained workspace.** Recreation revalidates workspace identity and HEAD, reacquires the lease (new fencing token), reloads state, and resumes only explicitly recoverable operations.
-6. **Agent execution never receives host filesystem paths.** Bootstrap delivers typed domain documents (frozen config, workspace identity, current revision), not paths.
+2. **The host is authoritative for run advancement.** Dashboard and CLI
+   mutations dispatch to the host lifecycle owner.
+3. **Every agent invocation is disposable.** Its sandbox and capability are
+   bounded to one invocation; retained provider IDs may resume remotely, but a
+   container is never resumed or reattached.
+4. **The worker has no durable credential.** The Cursor key remains in the host
+   provider proxy. The worker token is short-lived, run-scoped, and model-only.
+5. **Git is host-owned.** Worktree creation, task commits, push, and publication
+   never move into the sandbox.
+6. **Agent execution sees the worktree only as `/workspace`.** No host path is
+   placed in worker configuration.
 7. **No agent container mounts `/run-state` or an equivalent host state path.** The state API models operations by domain object and artifact identifier; it never accepts caller-selected host paths and never offers arbitrary file read/write.
 8. **Old run formats are unsupported after the cutover.** No migration or resume path for pre-cutover (local-runtime or `/run-state`-worker) runs.
 
 ### State access contract
 
-`HarnessEngine` depends on a `RunStatePort` instead of owning `RunStore` filesystem access: snapshot load, compare-and-swap by expected revision, idempotent event/session-step append, packet/artifact read-write by typed identifier, cancellation/stop flags, and leases/heartbeats. Every mutation carries a request ID and an idempotency key. Two adapters exist: `FilesystemRunStatePort` (host services, focused unit tests) and `RpcRunStatePort` (production worker containers). Contract tests run against both.
+`HarnessEngine` uses the host `RunStore`. Worker capability routes are restricted
+to provider bootstrap/renewal; durable snapshot, CAS, lease, knowledge, and
+progress operations are not advertised to sandboxes.
 
 ### Failure model
 
 | Failure | Behavior |
 |---------|----------|
-| **Host restart** | Durable state is already on disk (atomic replace + transition journal). On restart the host reloads from the store, rediscovers containers by stable workspace identity, and reconnects or recreates workers. No state is lost; an interrupted transition is completed by journal recovery. |
-| **Worker restart / crash** | The workspace volume and host state survive. The host recreates the worker against the retained workspace; the new instance validates workspace identity and HEAD, acquires the lease (new fencing token), reloads the snapshot, and resumes only recoverable operations. Completion is never inferred from an RPC timeout. |
+| **Host restart** | Durable state and the registered worktree are already on disk. No container is rediscovered or reattached. |
+| **Sandbox crash** | The host destroys the failed sandbox, revokes its capability, and a retry creates a new sandbox against the same worktree. |
 | **Dropped RPC response** | The caller retries with the same idempotency key. The host recognizes the applied mutation and returns the recorded result without re-applying it — no duplicate events, no extra revision. |
 | **Duplicate mutation** | Idempotency keys make retries safe; event appends dedup by key; compare-and-swap rejects a second writer whose expected revision has moved. |
 | **Stale worker** | A replaced worker holds an old fencing token. Once a new instance acquires the lease, the stale token is lower than the latest issued token and every state mutation from the stale worker is rejected with a fencing error. |
 | **Cancellation** | Recorded by the host as a durable flag and delivered to the worker; provider cancellation remains best effort, but state transitions stay deterministic (cancel is a host-recorded transition, not an inference from process death). |
-| **Workspace retained without a worker** | Normal quiescent state (paused, awaiting input, finished). The workspace volume is retained until durable export or explicit discard; a new worker can be created against it at any time. |
-| **State retained without a workspace** | A missing volume blocks with a recoverable diagnostic; the host never silently reseeds. Cleanup removes the container first and the volume only after durable export or explicit discard. |
+| **Workspace retained without a worker** | Normal state: sandboxes exist only while bounded work is executing. |
+| **State retained without a workspace** | A missing registered worktree blocks; the host never silently recreates or redirects agent work to the control checkout. |
 
 ### Security and capability model
 
-Docker is the primary filesystem and process boundary: only the named workspace volume is mounted; read-only root filesystem, non-root worker, dropped capabilities, `no-new-privileges`, resource limits, and worker RPC published only to a random host loopback port. Explicit network policy is retained because bridge networking is not an exfiltration boundary.
+Docker is the primary filesystem and process boundary: the assigned host
+worktree is the sole writable bind at `/workspace`; only public trust material
+may be mounted read-only under `/run/agent-harness-public/`. Control state,
+credential paths, Docker socket, host home, and control checkout are rejected.
 
-The Cursor API key is never placed in run state, the workspace, image layers, command arguments, or project-command environments; it is bootstrapped through a read-only secret file outside `/workspace` (preferred) or a host provider proxy, and stripped from every child-process environment.
+Worker containers run with `--security-opt seccomp=unconfined`. The Cursor SDK sandbox helper builds its per-tool filesystem boundary inside an unprivileged user namespace, and Docker's default seccomp profile answers `unshare(CLONE_NEWUSER)` with EPERM whenever CAP_SYS_ADMIN is absent. Under the default profile the SDK silently downgrades every tool call to `insecure_none`, which removes the in-container boundary that keeps agent tools away from the mounted credential. Capabilities stay fully dropped, so this trades a wider syscall surface for the sandbox the credential proof depends on.
+
+The Cursor API key is never placed in run state, the workspace, image layers,
+arguments, environment, or mounts. A host provider proxy retains it and issues
+only a short-lived broker capability to the sandbox.
 
 The harness stops parsing tool argument text as filesystem paths: the generic `outside-workspace` argument heuristic is removed. Remaining controls have unambiguous semantics: role-level `allowTools: false`, container mount/privilege validation, bounded command/resource/network policy, and install observation. If delegated `task` calls do not inherit the proven sandbox boundary, the capability is disabled by tool name.
 
 ## Consequences
 
 - `execution.runtime: local`, runtime switching, linked-worktree execution, and old-run resume logic are removed; Docker readiness becomes a startup requirement.
-- The host gains a worker-facing state API, authenticated per run with a short-lived credential bound to one run ID and protocol version, with audit fields (run ID, worker instance ID, request ID, expected/resulting revision, operation, timestamp) on every mutation. Credentials and artifact bodies are never logged.
-- Worker bootstrap accepts only: run ID, worker instance ID, state-service endpoint, scoped credential, provider credential mechanism, and `/workspace` identity with expected base SHA.
-- The new bidirectional protocol is versioned independently from the old worker RPC contract; harness/protocol mismatch fails closed and surfaces in CLI/UI diagnostics.
-- `/run-state` removal is gated on the state service, credential bootstrap, recovery path, and the real isolation probe all passing; local-runtime removal is gated on the Docker acceptance lane covering the complete lifecycle.
+- The host exposes only the model-provider bootstrap operations required by the
+  sandbox. Capability names are not advertised ahead of implemented need.
+- The sandbox process receives a scoped endpoint/token pair and always uses
+  `/workspace`; host worktree paths stay in host-owned metadata.
+- `/run-state`, secret files, long-lived worker sessions, named clone volumes,
+  and workflow-RPC compatibility are deleted rather than adapted.
 - ADR 0015's dual-runtime and `/run-state` decisions are retained below for history only.

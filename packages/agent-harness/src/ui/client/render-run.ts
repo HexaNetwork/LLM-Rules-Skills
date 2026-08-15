@@ -56,9 +56,6 @@ export const renderRunScript = `    function renderSidebar() {
         { id: "activity", label: "Agent activity" },
         { id: "artifacts", label: "Artifacts" },
       ];
-      if (state.detail.workspace && state.detail.workspace.kind === "docker-clone") {
-        tabs.splice(4, 0, { id: "container", label: "Container" });
-      }
       if (state.tab === "sessions") state.tab = "activity";
       var fullIdea = String(s.idea || "");
       var subtitle = title !== fullIdea ? '<div class="subtitle">' + esc(fullIdea) + '</div>' : '';
@@ -71,7 +68,6 @@ export const renderRunScript = `    function renderSidebar() {
       else if (state.tab === "decisions") renderDecisions(s);
       else if (state.tab === "tasks") renderTasks(s);
       else if (state.tab === "activity") renderAgentActivity();
-      else if (state.tab === "container") renderContainerTab(s);
       else renderArtifacts();
     }
 
@@ -589,8 +585,8 @@ export const renderRunScript = `    function renderSidebar() {
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">' + pauseHint + '</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }
       var workspaceMeta = state.detail.workspace || {};
-      if (!state.detail.job && ["completed","cancelled"].includes(s.phase) && workspaceMeta.kind === "docker-clone" && workspaceMeta.workspaceVolumeName && !workspaceMeta.removedAt) {
-        html += '<div class="card"><div class="alert"><div><strong>Docker workspace cleanup</strong><div class="muted" style="margin-top:5px">Remove the worker container and, after publication or explicit discard, its workspace volume. State, events, and transport audit stay on disk.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" data-action="cleanup">Clean up workspace</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button></div></div></div>';
+      if (!state.detail.job && ["completed","cancelled"].includes(s.phase) && workspaceMeta.kind === "host-worktree" && !workspaceMeta.removedAt) {
+        html += '<div class="card"><div class="alert"><div><strong>Host worktree cleanup</strong><div class="muted" style="margin-top:5px">Remove the settled run worktree after publication, or explicitly discard unpublished changes.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" data-action="cleanup">Clean up workspace</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button></div></div></div>';
       }
       if (s.phase === "blocked" && !state.detail.job) {
         var remediation = blockedRemediation(s);
@@ -724,35 +720,6 @@ export const renderRunScript = `    function renderSidebar() {
       html += resolutions.length ? '<div class="list">' + resolutions.map(function (item) {
         return '<article class="item"><div class="item-head"><div><div class="item-title">' + esc(item.summary) + '</div><div class="muted" style="margin-top:5px">' + esc(item.question) + '</div></div><span class="badge completed">resolved</span></div><div class="conversation"><div class="turn"><b>Answer:</b> ' + esc(item.answer) + '</div></div></article>';
       }).join("") + '</div>' : '<div class="empty">No grill resolutions yet. Confirm the reflect brief to begin grilling.</div>';
-      $("tabBody").innerHTML = html;
-    }
-
-    function renderContainerTab(s) {
-      var workspace = (state.detail && state.detail.workspace) || {};
-      var html = "";
-      if ((workspace.kind === "docker-clone" || workspace.frozenRuntime === "docker") && !workspace.removedAt) {
-        var containerRows = [
-          ["Runtime", workspace.frozenRuntime || "docker"],
-          ["Container", workspace.containerName || "—"],
-          ["Workspace volume", workspace.workspaceVolumeName || "—"],
-          ["Lifecycle", workspace.executionLifecycle || "—"],
-          ["Import", workspace.importStatus || "—"],
-        ];
-        html += '<div class="card"><div class="card-label">Container</div>';
-        html += '<p class="muted">Docker runtime details and workspace lifecycle controls for this run.</p>';
-        html += '<div style="margin-top:12px;display:grid;gap:8px">' + containerRows.map(function (row) {
-          return '<div style="display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:start"><span class="faint">' + esc(row[0]) + '</span><code style="word-break:break-all">' + esc(row[1]) + '</code></div>';
-        }).join("") + '</div>';
-        if (workspace.importRejectionReason) {
-          html += '<div class="resolution" style="margin-top:14px"><strong>Import rejected</strong><div class="muted" style="margin-top:5px">' + esc(workspace.importRejectionReason) + '</div></div>';
-        }
-        if (!state.detail.job) {
-          html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn" data-action="recover_container">Recover worker container</button>' +
-            (["completed","cancelled"].includes(s.phase) ? '<button class="btn" data-action="cleanup">Clean up Docker workspace</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button>' : '') +
-            '</div>';
-        }
-        html += '</div>';
-      }
       $("tabBody").innerHTML = html;
     }
 

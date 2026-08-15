@@ -45,7 +45,7 @@ Manual steps below match the same flow.
 
 - **Node.js 20.3+** (required; there is no non-Node CLI)
 - **npm** (comes with Node)
-- **Cursor API key** (`CURSOR_API_KEY`) for real agent runs once credential mounting clears its isolation release gate; the dashboard and deterministic readiness checks do not require it
+- **Cursor API key** (`CURSOR_API_KEY`) is host-owned. It is never mounted or copied into a worker. Real Cursor runs remain fail-closed until the HTTPS provider proxy has a green SDK/TLS replacement proof; the dashboard and deterministic Docker checks do not require a key.
 - **Windows only:** **WSL2** for the Docker Desktop Linux-container backend
 - **Docker** (required; Linux containers). The install wizard detects `docker info`, Linux container mode, and daemon permissions; if Desktop is installed but stopped it may ask to start it and wait for the daemon. It prepares the maintained worker image after the package build. It does **not** silently install Docker Desktop.
 - Optional: **Ollama** for local embeddings; **GitNexus** (`npm install -g gitnexus`, PolyForm Noncommercial — see below); **CodeGraph** (`npm install -g @colbymchenry/codegraph`)
@@ -109,9 +109,11 @@ This creates `packages/agent-harness/dist/cli.js`. If that file is missing, regi
 ## 3. Optionally set the Cursor API key
 
 The setup wizard can save this as a Windows User environment variable. The
-dashboard can be explored without it. Real Cursor-in-Docker execution remains
-fail-closed while the credential-isolation smoke gate is unresolved; having a
-key does not bypass that gate.
+dashboard can be explored without it. The host provider broker foundation now
+uses an independently scoped, short-lived worker capability and keeps the real
+key in host memory. Production is still fail-closed: pinned SDK 1.0.27 has no
+recorded green backend-URL/TLS contract and the host listener is not yet HTTPS.
+Secret-file delivery remains disabled and is not a fallback.
 
 Current PowerShell session:
 
@@ -126,6 +128,19 @@ Persist for your Windows user (new terminals pick it up):
 ```
 
 Restart any running harness/`ui` process after changing the key. The install wizard can set the User env variable for you — it never writes the key to `.env`.
+
+With the key set in the current shell, run the replacement-proof preflight:
+
+```powershell
+node ".\packages\agent-harness\dist\cli.js" execution cursor-provider-smoke `
+  --repository "C:\path\to\your-project"
+```
+
+Use `--force` to require fresh evidence and `--json` for machine-readable,
+redacted status. Until the SDK/TLS recording spike is complete this command
+reports `unsupported`, sends no live provider request, and leaves real runs
+blocked. The historical `cursor-credential-smoke` remains diagnostic evidence
+for why `/run/secrets` key delivery is forbidden; it cannot enable mounting.
 
 ## 4. Register a project
 
@@ -277,10 +292,12 @@ runs instead of attempting to resume them.
 3. Use launcher choice **Check Docker and worker readiness** whenever you want a readable readiness report without opening the dashboard.
 4. Expect disk/CPU/memory cost for the maintained image and per-run named volumes. Bridge networking is filesystem isolation, **not** egress-proof.
 
-Launch is fail-closed: if Docker, the maintained worker, or its isolation probe
-is not ready, the dashboard launcher stops or offers repair instead of implying
-that local execution is available. Real Cursor secrets are also fail-closed
-until the credential-gated isolation smoke test passes.
+Launch is fail-closed: if Docker, the maintained worker, or its deterministic
+sandbox probe is not ready, the dashboard launcher stops or offers repair.
+Docker setup readiness and real-Cursor readiness are reported separately. When
+a key is configured, status reports the unsupported secret-file delivery
+mechanism and blocks real execution. Use the smoke only to collect redacted
+diagnostic evidence while a non-filesystem broker is developed.
 
 ## Troubleshooting
 
@@ -290,7 +307,7 @@ until the credential-gated isolation smoke test passes.
 | `node` / `npm` not recognized | Install Node 20.3+, then open a new terminal |
 | `npm.ps1 cannot be loaded` / ExecutionPolicy | Use `scripts\Install-AgentHarness.cmd`, or `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or `npm.cmd` |
 | Dashboard access denied / `Invalid or missing dashboard token` | Close the tab, copy the **full** URL printed by the current `ui` process (including `?token=...`), and open that. Restarting `ui` invalidates the old token; an old tab or a bookmark without `?token=` will fail on Start reflect. |
-| Agent backend / missing API key | The dashboard still opens. For real runs, set `CURSOR_API_KEY` and restart `ui`; credential mounting remains blocked until the isolation release gate passes. |
+| Cursor credential delivery unsupported | The dashboard and deterministic Docker setup still work. Keep `CURSOR_API_KEY` unset for those paths. Real Cursor runs require a host provider proxy or equivalent non-filesystem broker; the smoke is diagnostic only. |
 | Leftover `agent-harness.config.yaml` / `.agent-harness/` in the target | Pre-cutover repo-local state is unsupported. Archive or remove it after confirming the external project registration. |
 | `not a git repository` / `git status failed (128)` on Start reflect | The target folder is not a git repo but `git.enabled` is true. The install wizard auto-inits git and commits after registration; otherwise `git init` + initial commit, or set `git.enabled: false` in the harness-home project config |
 

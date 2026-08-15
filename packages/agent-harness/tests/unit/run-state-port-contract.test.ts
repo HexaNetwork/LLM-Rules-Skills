@@ -21,8 +21,7 @@ const NOW = "2026-08-14T12:00:00.000Z";
 
 /**
  * Adapter-agnostic RunStatePort contract (ADR 0016). Every adapter —
- * FilesystemRunStatePort today, RpcRunStatePort in a later slice — must pass
- * this suite so the engine can run against either unchanged.
+ * FilesystemRunStatePort must pass this suite so the host engine can rely on it.
  */
 export type RunStatePortContractHarness = {
   port: RunStatePort;

@@ -72,7 +72,6 @@ export type { CancelResult, CleanupResult } from "./application/helpers.js";
 export { pendingGrillReady, pendingPlanReady, taskForPacket } from "./application/helpers.js";
 export {
   openHostRunControl,
-  openRunHarness,
   openWorkerRunRuntime,
 } from "./application/run-engine-factory.js";
 export { HostRunBootstrap, createHostRunBootstrap } from "./application/host-run-bootstrap.js";

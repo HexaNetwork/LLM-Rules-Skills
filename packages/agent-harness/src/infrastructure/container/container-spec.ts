@@ -9,11 +9,22 @@ import type { DockerExecutionPolicy } from "../../config/schema.js";
 
 /** Must match application/paths.ts WORKER_* constants (avoid infra→application import). */
 const WORKER_WORKSPACE_PATH = "/workspace" as const;
-const WORKER_SECRET_ROOT = "/run/secrets/" as const;
 
 export const HARNESS_CONTAINER_LABEL_PREFIX = "io.agent-harness" as const;
 
 export type NetworkMode = "bridge" | "none" | "allowlist-proxy";
+
+/**
+ * Seccomp profile requested through `--security-opt seccomp=…`.
+ *
+ * The Cursor SDK sandbox helper builds its filesystem boundary inside an
+ * unprivileged user namespace, and Docker's default profile answers
+ * `unshare(CLONE_NEWUSER)` with EPERM unless the container holds CAP_SYS_ADMIN.
+ * Without `unconfined` the SDK silently downgrades every agent tool call to
+ * `insecure_none`, which is the isolation the credential proof depends on.
+ * Capabilities stay fully dropped in both modes.
+ */
+export type SeccompProfile = "docker-default" | "unconfined";
 
 export type ContainerResourceLimits = {
   cpus: number;
@@ -31,8 +42,10 @@ export type HardenedContainerSpec = {
   readOnlyRootfs: true;
   dropAllCapabilities: true;
   noNewPrivileges: true;
+  seccomp: SeccompProfile;
   limits: ContainerResourceLimits;
   tmpfs: ReadonlyArray<{ path: string; options: string }>;
+  workingDir?: string;
   /** Non-secret environment variables (`KEY=VALUE`). Never include CURSOR_API_KEY. */
   env?: ReadonlyArray<string>;
   extraHosts?: ReadonlyArray<string>;
@@ -50,9 +63,23 @@ export type ContainerMount =
   | {
       kind: "bind";
       source: string;
+      target: typeof WORKER_WORKSPACE_PATH;
+      readOnly: false;
+    }
+  | {
+      kind: "bind";
+      source: string;
       target: string;
       readOnly: true;
     };
+
+export type HardenedWorkspace =
+  | { kind: "volume"; volumeName: string }
+  | { kind: "bind"; hostPath: string };
+
+const PUBLIC_TRUST_ROOT = "/run/agent-harness-public/" as const;
+const FORBIDDEN_PROVIDER_ENV =
+  /^(?:CURSOR_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GH_TOKEN|GITHUB_TOKEN)=/i;
 
 export type MountDenyReason =
   | "docker-socket"
@@ -118,17 +145,22 @@ export function denyMountOrFlag(input: {
     }
     if (mount.kind === "bind" || mount.kind === undefined) {
       if (mount.target === WORKER_WORKSPACE_PATH) {
+        if (mount.readOnly === false) {
+          continue;
+        }
         return {
           allowed: false,
           reason: "extra-bind-mount",
-          detail: "Workspace must be a named volume, not a host bind mount.",
+          detail: "Workspace bind mounts must be writable.",
         };
       }
-      if (!mount.target.startsWith(WORKER_SECRET_ROOT) || mount.readOnly !== true) {
+      const publicTrust =
+        mount.target.startsWith(PUBLIC_TRUST_ROOT) && mount.readOnly === true;
+      if (!publicTrust) {
         return {
           allowed: false,
           reason: "extra-bind-mount",
-          detail: `Only read-only bootstrap secret files may be bind-mounted; ${mount.target} is forbidden.`,
+          detail: `Only the assigned workspace or public trust files may be bind-mounted; ${mount.target} is forbidden.`,
         };
       }
       if (input.controlRoot && isPathUnder(mount.source, input.controlRoot)) {
@@ -140,13 +172,12 @@ export function denyMountOrFlag(input: {
       }
       if (
         input.harnessHomeRoot &&
-        isPathUnder(mount.source, input.harnessHomeRoot) &&
-        !mount.target.startsWith(WORKER_SECRET_ROOT)
+        isPathUnder(mount.source, input.harnessHomeRoot)
       ) {
         return {
           allowed: false,
           reason: "harness-home",
-          detail: "Harness home must not be mounted except for individual read-only bootstrap secrets.",
+          detail: "Harness home must not be mounted into a run container.",
         };
       }
     }
@@ -178,14 +209,48 @@ export function buildHardenedContainerSpec(input: {
   runId: string;
   harnessVersion: string;
   dockerPolicy: DockerExecutionPolicy;
-  workspaceVolumeName: string;
-  secretMounts?: ReadonlyArray<{ source: string; target: string }>;
+  /** @deprecated Prefer `workspace`. Probe volumes still use this. */
+  workspaceVolumeName?: string;
+  workspace?: HardenedWorkspace;
+  /** Non-secret trust/configuration files delivered read-only. */
+  publicReadOnlyMounts?: ReadonlyArray<{ source: string; target: string }>;
   /** Non-root user inside the image (numeric preferred). */
   user?: string;
+  /** Fixed in-container process cwd. */
+  workingDir?: string;
+  /** Additional non-secret process configuration. */
+  environment?: ReadonlyArray<string>;
+  /**
+   * The container runs agent tools under the Cursor SDK sandbox, which needs an
+   * unprivileged user namespace. Set false only for containers that never start
+   * the SDK (structural self-checks).
+   */
+  runsCursorSandbox?: boolean;
   publishHostPort?: number;
   workerPort?: number;
 }): HardenedContainerSpec {
   const network = input.dockerPolicy.network.runtime;
+  const workspace = input.workspace
+    ?? (input.workspaceVolumeName
+      ? { kind: "volume" as const, volumeName: input.workspaceVolumeName }
+      : undefined);
+  if (!workspace) {
+    throw new Error("buildHardenedContainerSpec requires workspace or workspaceVolumeName");
+  }
+  const workspaceMount: ContainerMount =
+    workspace.kind === "bind"
+      ? {
+          kind: "bind",
+          source: workspace.hostPath,
+          target: WORKER_WORKSPACE_PATH,
+          readOnly: false,
+        }
+      : {
+          kind: "volume",
+          source: workspace.volumeName,
+          target: WORKER_WORKSPACE_PATH,
+          readOnly: false,
+        };
   return {
     name: input.name,
     image: input.image,
@@ -199,6 +264,7 @@ export function buildHardenedContainerSpec(input: {
     readOnlyRootfs: true,
     dropAllCapabilities: true,
     noNewPrivileges: true,
+    seccomp: input.runsCursorSandbox === false ? "docker-default" : "unconfined",
     limits: {
       cpus: input.dockerPolicy.limits.cpus,
       memoryMb: input.dockerPolicy.limits.memoryMb,
@@ -210,16 +276,20 @@ export function buildHardenedContainerSpec(input: {
       // uid/gid must match the non-root worker user or mkdir fails with EACCES.
       { path: "/home/harness", options: "rw,nosuid,size=512m,uid=10001,gid=10001,mode=755" },
     ],
-    env: ["HOME=/home/harness"],
+    workingDir: input.workingDir,
+    env: [
+      "HOME=/home/harness",
+      ...(input.publicReadOnlyMounts?.some(
+        (mount) => mount.target === "/run/agent-harness-public/cursor-provider-ca.pem",
+      )
+        ? ["NODE_EXTRA_CA_CERTS=/run/agent-harness-public/cursor-provider-ca.pem"]
+        : []),
+      ...(input.environment ?? []),
+    ],
     extraHosts: ["host.docker.internal:host-gateway"],
     mounts: [
-      {
-        kind: "volume",
-        source: input.workspaceVolumeName,
-        target: WORKER_WORKSPACE_PATH,
-        readOnly: false,
-      },
-      ...(input.secretMounts ?? []).map((mount) => ({
+      workspaceMount,
+      ...(input.publicReadOnlyMounts ?? []).map((mount) => ({
         kind: "bind" as const,
         source: mount.source,
         target: mount.target,
@@ -259,7 +329,13 @@ export function networkPolicyDocumentation(mode: NetworkMode): string {
  */
 export function denyInsecureContainerArgv(
   argv: readonly string[],
-): { allowed: true } | { allowed: false; reason: MountDenyReason | "secret-env"; detail: string } {
+): {
+  allowed: true;
+} | {
+  allowed: false;
+  reason: MountDenyReason | "secret-env" | "tls-verification-disabled";
+  detail: string;
+} {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
     if (arg === "--privileged") {
@@ -292,19 +368,32 @@ export function denyInsecureContainerArgv(
     }
     if (arg === "-e" || arg === "--env") {
       const value = argv[i + 1] ?? "";
-      if (/^CURSOR_API_KEY=/i.test(value) || value === "CURSOR_API_KEY") {
+      if (FORBIDDEN_PROVIDER_ENV.test(value) || /^(?:CURSOR_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GH_TOKEN|GITHUB_TOKEN)$/i.test(value)) {
         return {
           allowed: false,
           reason: "secret-env",
-          detail: "CURSOR_API_KEY must be injected via the run-state secret file, not container env.",
+          detail: "Durable provider and host credentials must remain on the host, never container env.",
         };
       }
     }
-    if (/^--env=CURSOR_API_KEY=/i.test(arg)) {
+    if (/^--env=(?:CURSOR_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GH_TOKEN|GITHUB_TOKEN)=/i.test(arg)) {
       return {
         allowed: false,
         reason: "secret-env",
-        detail: "CURSOR_API_KEY must be injected via the run-state secret file, not container env.",
+        detail: "Durable provider and host credentials must remain on the host, never container env.",
+      };
+    }
+    if (
+      /^(?:NODE_TLS_REJECT_UNAUTHORIZED|CURSOR_TLS_REJECT_UNAUTHORIZED)=0$/i.test(arg) ||
+      ((arg === "-e" || arg === "--env") &&
+        /^(?:NODE_TLS_REJECT_UNAUTHORIZED|CURSOR_TLS_REJECT_UNAUTHORIZED)=0$/i.test(
+          argv[i + 1] ?? "",
+        ))
+    ) {
+      return {
+        allowed: false,
+        reason: "tls-verification-disabled",
+        detail: "Disabling TLS verification for the host provider proxy is forbidden.",
       };
     }
     if (/docker\.sock/i.test(arg)) {
@@ -344,6 +433,12 @@ export function hardenedSpecToRunArgv(
     "--memory",
     `${spec.limits.memoryMb}m`,
   ];
+  if (spec.seccomp === "unconfined") {
+    args.push("--security-opt", "seccomp=unconfined");
+  }
+  if (spec.workingDir) {
+    args.push("--workdir", spec.workingDir);
+  }
   for (const [key, value] of Object.entries(spec.labels)) {
     args.push("--label", `${key}=${value}`);
   }
@@ -365,7 +460,9 @@ export function hardenedSpecToRunArgv(
     } else {
       args.push(
         "--mount",
-        `type=bind,source=${mount.source},target=${mount.target},readonly`,
+        mount.readOnly
+          ? `type=bind,source=${mount.source},target=${mount.target},readonly`
+          : `type=bind,source=${mount.source},target=${mount.target}`,
       );
     }
   }
@@ -385,6 +482,34 @@ export function hardenedSpecToRunArgv(
     args.push(...options.entrypoint.slice(1));
   }
   return args;
+}
+
+const PROVIDER_KEY_SHAPED_ARG =
+  /^(?:cursor_[A-Za-z0-9_-]{12,}|key_[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9]{12,})$/i;
+
+/**
+ * True when container argv contains durable provider/host credential bytes or env.
+ */
+export function argvLeaksProviderCredential(
+  argv: readonly string[],
+  apiKey?: string,
+): boolean {
+  const expectedKey = apiKey?.trim();
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]!;
+    if (expectedKey && arg.includes(expectedKey)) return true;
+    if (PROVIDER_KEY_SHAPED_ARG.test(arg)) return true;
+    if (arg === "-e" || arg === "--env") {
+      const value = argv[i + 1] ?? "";
+      if (FORBIDDEN_PROVIDER_ENV.test(value) || /^(?:CURSOR_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GH_TOKEN|GITHUB_TOKEN)$/i.test(value)) {
+        return true;
+      }
+    }
+    if (/^--env=(?:CURSOR_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GH_TOKEN|GITHUB_TOKEN)=/i.test(arg)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function pathsEqualLoose(a: string, b: string): boolean {

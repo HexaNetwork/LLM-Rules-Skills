@@ -132,8 +132,14 @@ function Invoke-ReadinessCheck {
   $json = (& node $Cli execution status --repository $Repository --json | Out-String)
   if ($LASTEXITCODE -ne 0) { throw "execution status failed (exit $LASTEXITCODE)" }
   $status = $json | ConvertFrom-Json
+  $script:LastReadinessStatus = $status
   if ([bool]$status.ready) {
-    Write-Host "  Ready: Docker and the maintained worker passed all checks." -ForegroundColor Green
+    Write-Host "  Docker setup ready: maintained worker and sandbox checks passed." -ForegroundColor Green
+    if ([bool]$status.cursorCredential.passed) {
+      Write-Host "  Real Cursor ready: credential isolation smoke passed." -ForegroundColor Green
+    } elseif (-not [bool]$status.cursorCredential.configured) {
+      Write-Host "  Real Cursor not configured: set CURSOR_API_KEY and run the credential smoke when needed." -ForegroundColor DarkGray
+    }
     return $true
   }
   Write-Host "  Not ready yet." -ForegroundColor Yellow
@@ -184,6 +190,12 @@ if ($Action -eq "Check") {
 }
 
 if (-not (Invoke-ReadinessCheck -Repository $Project)) {
+  $nonCredentialBlockers = @($script:LastReadinessStatus.blockers | Where-Object {
+    $_.code -ne "cursor-credential-isolation"
+  })
+  if ($nonCredentialBlockers.Count -eq 0 -and [bool]$script:LastReadinessStatus.cursorCredential.configured) {
+    throw "Real Cursor readiness is blocked. Run: node `"$Cli`" execution cursor-credential-smoke --repository `"$Project`""
+  }
   Write-Host ""
   Write-Host "  Prepare/repair the worker image now? [Y/n] " -ForegroundColor Yellow -NoNewline
   $answer = Read-Host
@@ -218,7 +230,7 @@ Write-Host "  Keep this window open. The browser uses the one-time URL printed b
 if ([string]::IsNullOrWhiteSpace($env:CURSOR_API_KEY)) {
   Write-Host "  CURSOR_API_KEY is not set. The dashboard opens, but real agent execution is unavailable." -ForegroundColor Yellow
 } else {
-  Write-Host "  Note: real Cursor-in-Docker execution remains fail-closed until the credential isolation gate passes." -ForegroundColor Yellow
+  Write-Host "  Real Cursor credential proof matched the maintained worker image." -ForegroundColor Green
 }
 Set-Location -LiteralPath $Project
 & node $Cli @uiArgs

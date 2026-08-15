@@ -1,13 +1,11 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 
 /** 256 bits of entropy, hex-encoded (64 chars). */
 export const WORKER_RPC_TOKEN_BYTES = 32 as const;
 
 /**
  * Generate a high-entropy per-run RPC token.
- * Never log or put this in environment variables.
+ * Never log this token.
  */
 export function generateWorkerRpcToken(): string {
   return randomBytes(WORKER_RPC_TOKEN_BYTES).toString("hex");
@@ -40,28 +38,3 @@ export function workerRpcTokenFingerprint(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex").slice(0, 16);
 }
 
-export async function readWorkerRpcToken(secretFilePath: string): Promise<string> {
-  const raw = await readFile(secretFilePath, "utf8");
-  const token = raw.trim();
-  if (token.length < 32) {
-    throw new Error(`RPC secret at ${secretFilePath} is missing or too short`);
-  }
-  return token;
-}
-
-/**
- * Persist a bootstrap token file (mode 0400 when supported). Production
- * callers place it outside the durable run directory and mount only this file.
- */
-export async function writeWorkerRpcTokenFile(
-  absolutePath: string,
-  token: string,
-): Promise<void> {
-  await mkdir(path.dirname(absolutePath), { recursive: true });
-  await writeFile(absolutePath, `${token}\n`, { encoding: "utf8", flag: "w" });
-  try {
-    await chmod(absolutePath, 0o400);
-  } catch {
-    // Windows may ignore chmod; still fine as long as the file is not in env/logs.
-  }
-}

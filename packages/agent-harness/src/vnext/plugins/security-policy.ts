@@ -4,12 +4,13 @@ import type { SecurityPolicyService } from "../services/contracts.js";
 
 export function assertProductionContainerSpec(spec: HardenedContainerSpec): void {
   const workspaceMounts = spec.mounts.filter((mount) => mount.target === "/workspace");
+  const workspaceMount = workspaceMounts[0];
   if (
     workspaceMounts.length !== 1 ||
-    workspaceMounts[0]?.kind !== "volume" ||
-    workspaceMounts[0].readOnly
+    !workspaceMount ||
+    workspaceMount.readOnly
   ) {
-    throw new Error("Security policy requires exactly one read-write named volume at /workspace");
+    throw new Error("Security policy requires exactly one read-write workspace mount");
   }
   if (!spec.readOnlyRootfs) throw new Error("Security policy requires a read-only root filesystem");
   if (spec.user === "0" || spec.user.startsWith("0:") || spec.user === "root") {
@@ -27,14 +28,23 @@ export function assertProductionContainerSpec(spec: HardenedContainerSpec): void
     const coordinates = `${mount.source}:${mount.target}`.replaceAll("\\", "/").toLowerCase();
     if (
       coordinates.includes("docker.sock") ||
+      mount.target === "/run-state" ||
+      mount.target.startsWith("/run-state/") ||
+      mount.target === "/run/secrets" ||
+      mount.target.startsWith("/run/secrets/") ||
       mount.target === "/root" ||
       mount.target === "/home"
     ) {
       throw new Error(`Security policy rejected forbidden mount ${mount.target}`);
     }
     if (mount.kind === "bind") {
-      if (!mount.readOnly || !mount.target.startsWith("/run/secrets/")) {
-        throw new Error("Only read-only bootstrap files under /run/secrets may be bind-mounted");
+      const workspace = mount.target === "/workspace" && mount.readOnly === false;
+      const publicTrust =
+        mount.readOnly && mount.target.startsWith("/run/agent-harness-public/");
+      if (!workspace && !publicTrust) {
+        throw new Error(
+          "Only the host worktree and read-only public trust files may be bind-mounted",
+        );
       }
     }
   }

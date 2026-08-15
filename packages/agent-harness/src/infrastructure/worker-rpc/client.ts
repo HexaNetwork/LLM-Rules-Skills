@@ -71,14 +71,6 @@ export class WorkerRpcClient {
     return this.invoke("status", undefined, "GET");
   }
 
-  async cancel(body: Record<string, unknown> = {}): Promise<unknown> {
-    return this.invoke("cancel", body);
-  }
-
-  async advance(body: Record<string, unknown> = {}): Promise<unknown> {
-    return this.invoke("advance", body);
-  }
-
   async invoke(
     action: WorkerRpcAction,
     body?: Record<string, unknown>,

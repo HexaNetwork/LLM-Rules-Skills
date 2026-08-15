@@ -30,24 +30,23 @@ describe("resolveHarnessPaths", () => {
     expect(paths.stateRoot).toBe(stateRoot);
   });
 
-  it("points workspaceRoot at the Docker worker path when workspace metadata is provided", () => {
+  it("points host services at the host worktree path", () => {
     const controlRoot = path.resolve("/tmp/harness-control");
     const config = buildFixtureConfig(controlRoot, { stateDirectory: ".agent-harness" });
     const paths = resolveHarnessPaths(config, {
       version: 1,
-      kind: "docker-clone",
+      kind: "host-worktree",
       controlRoot,
-      containerName: "harness-run-1",
-      workspaceVolumeName: "harness-ws-1",
+      worktreePath: path.join(controlRoot, ".agent-harness", "worktrees", "run-1"),
+      gitCommonDir: path.join(controlRoot, ".git"),
       workspacePath: "/workspace",
-      imageDigest: "sha256:deadbeef",
       baseSha: "abc123",
-      seedBundleHash: "bundlehash",
-      generation: 0,
       createdAt: "2026-08-10T00:00:00.000Z"});
 
     expect(paths.controlRoot).toBe(controlRoot);
-    expect(paths.workspaceRoot).toBe("/workspace");
+    expect(paths.workspaceRoot).toBe(
+      path.resolve(controlRoot, ".agent-harness", "worktrees", "run-1"),
+    );
   });
 });
 

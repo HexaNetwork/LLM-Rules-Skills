@@ -30,6 +30,8 @@ npm run build
 npx agent-harness project add --repository "/path/to/your-project"
 npx agent-harness execution prepare-worker --repository "/path/to/your-project" --force-rebuild --write-settings
 npx agent-harness execution status --repository "/path/to/your-project"
+# With CURSOR_API_KEY set only on the host, run the proxy-proof preflight:
+npx agent-harness execution cursor-provider-smoke --repository "/path/to/your-project"
 npx agent-harness ui --repository "/path/to/your-project"
 ```
 
@@ -47,7 +49,7 @@ and after verified task commits that touch source files. `init` / `deploy` write
 config when needed and do not install either CLI. Use `--no-repository-intelligence` on deploy for
 document-only projects (disables `knowledge.repositoryIntelligence`).
 
-The dashboard opens on an authenticated loopback URL and centralizes run creation, human questions, progress, test evidence, session handoffs, artifacts, retries, cancellation, and local knowledge search. `CURSOR_API_KEY` is needed for real agent runs, but real Cursor secret mounting remains fail-closed until the credential isolation release gate passes. The generated config pins models, commands, retry budgets, coverage policy, git publication, and local knowledge sources.
+The dashboard opens on an authenticated loopback URL and centralizes run creation, human questions, progress, test evidence, session handoffs, artifacts, retries, cancellation, and local knowledge search. Every bounded agent invocation runs in a fresh Docker sandbox over the host-owned run worktree, then destroys the sandbox and revokes its model-only capability. The host provider broker substitutes the real Cursor authorization only on the host upstream hop. Secret-file delivery is disabled and is never a fallback.
 
 The lifecycle is:
 
@@ -84,6 +86,9 @@ agent-harness knowledge refresh
 agent-harness knowledge add docs/api.md
 agent-harness knowledge search "refund ledger"
 agent-harness knowledge search "proration" --include-project billing-service
+
+agent-harness execution status --repository "/path/to/project"
+agent-harness execution cursor-provider-smoke --repository "/path/to/project" [--force] [--json]
 ```
 
 `start` freezes the project config into that run's snapshot. Later commands load the snapshot, so changing the project config cannot silently change an active run.
@@ -98,10 +103,12 @@ Answering a batch is keyboard-driven: `1`–`4` pick an option for the focused q
 
 Blocked runs key remediation on `blockedKind` (dirty tree, missing agent credential, missing repository-intelligence index, changed configuration, workspace divergence, provider, budget) with the raw failure kept in a collapsed section. Token/cost ceilings surface a raise-and-retry control. While an agent step is in flight, the header shows live activity from `activity.json` (role, model, elapsed, last step summary). The **Agent activity** tab defaults to a chronological **Execution sequence** (invocations interleaved with verification and routing transitions) and keeps **Provider contexts** as a secondary view for context reuse and token analysis. The Overview Usage card shows accrued tokens, cached total, and cost against any configured ceiling.
 
-Cursor workers run only in per-run Linux containers. The container receives one
-named read-write volume at `/workspace`; the control checkout and durable state
-are never mounted. The host owns durable state, publication credentials, and
-container lifecycle, while the worker uses authenticated typed state RPC.
+Cursor agents run only in disposable Linux sandboxes. Each sandbox receives the
+run's host worktree as a read-write bind at `/workspace`; the control checkout,
+durable state, and credentials are never mounted. The host owns workflow,
+commits, publication, and capability revocation. A separate provider token is
+obtained through model-only bootstrap; it cannot call durable state routes and
+the state token cannot call provider routes.
 Container hardening is the primary filesystem/process boundary; bridge
 networking is not an egress-proof boundary.
 
@@ -438,7 +445,7 @@ npm run test:all           # unit + integration + required Docker + e2e + build 
 
 Docker is the only production runtime. The retired runtime selector, host-local execution, per-run Dockerfiles, generated images, and manual base/image approvals are no longer configuration or runtime paths. Loading a pre-cutover project config fails with archive/discard guidance; the install flow prepares one digest-pinned maintained worker image that every run reuses. Each run gets a named volume at `/workspace`, while durable state stays on the host behind authenticated typed state RPC. Bridge networking is filesystem isolation, not an exfiltration boundary. See [ADR 0017](../../docs/adr/0017-cordis-composed-docker-runtime.md) and [INSTALL.md](../../INSTALL.md#7-docker-runtime).
 
-The non-provider Docker probe mounts an actual mode-`000` fixture at the production `/run/secrets/*` layout and fails if the file is absent or readable; it also verifies `/workspace` writes and host-state absence. The fixture is staged into a disposable volume rather than bind-mounted from the host, because Docker Desktop surfaces host bind mounts as world-readable regardless of their host mode and could not prove the denial. `execution prepare-worker` runs this probe and caches a pass per image digest under the project state root; run creation and `execution status` both fail closed on that cache. Real Cursor credentials remain a release gate: the host refuses to mount `CURSOR_API_KEY` until a credential-gated smoke test demonstrates denial through both Cursor filesystem tools and delegated tasks. That proof requires a real Cursor credential and cannot be established by the deterministic provider.
+The non-provider Docker probe mounts an actual mode-`000` fixture at the production `/run/secrets/*` layout and fails if the file is absent or readable; it also verifies `/workspace` writes and host-state absence. The fixture is staged into a disposable volume rather than bind-mounted from the host, because Docker Desktop surfaces host bind mounts as world-readable regardless of their host mode and could not prove the denial. `execution prepare-worker` runs this probe and caches a pass per image digest under the project state root; run creation and `execution status` both fail closed on that cache. This deterministic test is not evidence about Cursor tools. The historical real-provider smoke found exact credential bytes in the direct phase without a conclusive read denial. Production `CURSOR_API_KEY` mounts are disabled unconditionally. The replacement host-proxy gate additionally requires an exact image/SDK/protocol/contract/proxy/model/TLS/key-rotation proof tuple; the current unproven SDK contract keeps that gate closed.
 
 E2E tests live in `tests/e2e/`. They do **not** launch the production CLI: each test builds a `ProjectFixture`, injects a `ScriptedBackend`, starts `startUiServer({ port: 0, openBrowser: false })`, and opens the authenticated dashboard URL. Failure artifacts land under Git-ignored `test-results/` (Playwright traces under `test-results/playwright/`).
 

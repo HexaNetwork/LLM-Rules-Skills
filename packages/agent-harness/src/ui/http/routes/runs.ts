@@ -4,11 +4,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { HarnessConfigSchema, type HarnessConfig } from "../../../config/schema.js";
 import { loadRunConfig, loadRunWorkspace, writeProjectSettings } from "../../../config/io.js";
 import { loadExternalProjectConfig } from "../../../application/external-config.js";
-import { openHostRunControl } from "../../../application/run-engine-factory.js";
-import {
-  mapHostActionToWorkerRpc,
-  resolveDockerMutationProxy,
-} from "../../../application/docker-run-proxy.js";
+import { openHostRunControl, openWorkerRunRuntime } from "../../../application/run-engine-factory.js";
+import { dispatchHostRunAction } from "../../../application/host-run-dispatch.js";
 import { resolveRunBaseBranch } from "../../../application/run-base-branch.js";
 import { HarnessFailure } from "../../../errors.js";
 import { GitService, pathToIgnoredArtifactGlob } from "../../../git.js";
@@ -297,11 +294,7 @@ export async function handleRunsRoutes(
     const deliveryWorkspace = workspace
       ? {
           kind: workspace.kind,
-          containerName: workspace.kind === "docker-clone" ? workspace.containerName : undefined,
-          workspaceVolumeName:
-            workspace.kind === "docker-clone" ? workspace.workspaceVolumeName : undefined,
-          imageDigest: workspace.kind === "docker-clone" ? workspace.imageDigest : undefined,
-          workspacePath: workspace.kind === "docker-clone" ? workspace.workspacePath : undefined,
+          workspacePath: workspace.kind === "host-worktree" ? workspace.workspacePath : undefined,
           baseBranch: workspace.baseBranch,
           baseSha: workspace.baseSha,
           branchName: workspace.branchName ?? state.branchName,
@@ -310,7 +303,7 @@ export async function handleRunsRoutes(
           importStatus: importState?.status,
           importRejectionReason: importState?.rejectionReason,
           resultBundleHash: importState?.resultBundleHash,
-          frozenRuntime: workspace.kind === "docker-clone" ? "docker" : undefined,
+          frozenRuntime: workspace.kind === "host-worktree" ? "docker" : undefined,
         }
       : undefined;
     json(response, 200, {
@@ -400,66 +393,32 @@ export async function handleRunsRoutes(
     );
     const control = opened.control;
 
-    // No worker/container until Approve & build creates the Docker clone.
-    // Phase `new` Docker runs must start the worker and run initial_setup there —
-    // never host-spawn git against the `/workspace` constant (Windows: spawn git ENOENT).
-    const stateForDockerSetup =
-      action === "resume" || action === "retry" || action === "continue"
-        ? await ctx.store.load(runId).catch(() => null)
-        : null;
-    const dockerNeedsInitialSetup =
-      Boolean(stateForDockerSetup) &&
-      stateForDockerSetup!.phase === "new" &&
-      (action === "resume" || action === "retry" || action === "continue");
-    const skipDockerProxy =
-      action === "generate_analysis_prompt" ||
-      action === "cleanup" ||
-      workspaceMissing ||
-      dockerNeedsInitialSetup;
-    const dockerProxy =
-      !skipDockerProxy
-        ? await resolveDockerMutationProxy({
-            projectConfig,
-            runConfig: opened.config,
-            runId,
-            docker: ctx.docker,
-          }).catch((error) => {
-            if (action === "cancel" || action === "stop") {
-              // Cancel/stop still write durable markers even when RPC is down.
-              return undefined;
-            }
-            throw error;
-          })
-        : undefined;
-
-    if (action === "stop") {
-      if (dockerProxy) {
-        const state = await dockerProxy.invoke("stop", {});
-        json(response, 200, { accepted: true, state });
+    if (action === "continue" || action === "resume" || action === "advance") {
+      const latest = await ctx.store.load(runId);
+      if (latest.phase === "publishing") {
+        ctx.jobs.enqueue(runId, action, async () => {
+          ctx.jobs.setDetail(runId, "Importing result bundle on host");
+          await ctx.runLifecycle.enqueue(runId);
+        });
+        json(response, 202, { accepted: true, job: ctx.jobs.get(runId) });
         return true;
       }
-      const state = await control.requestStop(runId);
-      json(response, 200, { accepted: true, state });
-      return true;
     }
 
-    if (action === "cancel") {
-      // Durable host cancellation first, then RPC for immediate in-process abort.
-      await control.writeCancelRequest(runId);
-      if (dockerProxy) {
-        const result = (await dockerProxy.invoke("cancel", {})) as {
-          pending?: boolean;
-          phase?: string;
-        };
-        const state = await ctx.store.load(runId);
-        json(response, result.pending ? 202 : 200, {
-          accepted: true,
-          pending: Boolean(result.pending),
-          state,
-        });
-        return true;
-      }
-      const result = await control.cancel(runId);
+    if (action === "stop" || action === "cancel") {
+      const result = await dispatchHostRunAction({
+        action,
+        runId,
+        body,
+        control,
+        runLifecycle: ctx.runLifecycle,
+        openEngine: () =>
+          openWorkerRunRuntime(projectConfig, runId, {
+            backend: ctx.backend,
+            store: ctx.store,
+            docker: ctx.docker,
+          }).then((openedEngine) => openedEngine.engine),
+      });
       json(response, result.pending ? 202 : 200, {
         accepted: true,
         pending: result.pending,
@@ -468,96 +427,37 @@ export async function handleRunsRoutes(
       return true;
     }
 
-    const workerAction = mapHostActionToWorkerRpc(action);
-    if (action === "continue" || action === "resume" || action === "advance") {
-      const latest = await ctx.store.load(runId);
-      if (latest.phase === "publishing") {
-        // Host-only publication remains owned by the Cordis lifecycle.
-        ctx.jobs.enqueue(runId, action, async () => {
-          ctx.jobs.setDetail(runId, "Importing Docker result bundle on host");
-          await ctx.runLifecycle.enqueue(runId);
-        });
-        json(response, 202, { accepted: true, job: ctx.jobs.get(runId) });
-        return true;
-      }
-    }
-    if (dockerProxy && workerAction) {
-      ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, `Proxying ${action} to Docker worker`);
-        await dockerProxy.invoke(workerAction, body);
-      });
-      json(response, 202, { accepted: true, job: ctx.jobs.get(runId) });
-      return true;
-    }
-
-    if (action === "continue") {
-      ctx.jobs.enqueue(runId, action, () => ctx.runLifecycle.enqueue(runId));
-    } else if (action === "generate_analysis_prompt") {
-      ctx.jobs.enqueue(runId, "generate analysis prompt", async () => {
-        ctx.jobs.setDetail(runId, "Generating a portable run-analysis prompt");
-        await control.generateRunAnalysisPrompt(runId);
-      });
-    } else if (action === "resume") {
-      // Jobs are intentionally process-local. A dashboard restart keeps the
-      // durable run state but cannot safely assume that an interrupted
-      // provider call should be retried. Make recovery an explicit action.
-      ctx.jobs.enqueue(runId, "resume run", () => ctx.runLifecycle.enqueue(runId));
-    } else if (action === "retry") {
-      if (!dockerProxy) {
-        ctx.jobs.enqueue(runId, action, async () => {
-          ctx.jobs.setDetail(runId, "Retrying through host lifecycle");
-          await ctx.runLifecycle.enqueue(runId);
-        });
-      } else {
-        throw new HttpError(503, "Docker worker RPC is unavailable for retry");
-      }
-    } else if (action === "cleanup") {
-      const discard = optionalBoolean(body.discard, "discard") ?? false;
-      ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, "Cleaning up run workspace");
-        await control.cleanup(runId, { discard });
-      });
-    } else if (action === "recover_container") {
-      ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, "Recovering Docker worker against retained volume");
-        await ctx.runLifecycle.enqueue(runId);
-      });
-    } else if (action === "ignore_artifacts") {
-      if (!ctx.configPath) {
-        throw new HttpError(400, "Cannot persist ignored artifacts without a config file path");
-      }
-      const paths = optionalStringArray(body.paths, "paths", 500) ?? [];
-      if (paths.length === 0) {
-        throw new HttpError(400, "paths must be a non-empty string array");
-      }
-      const added = paths.map(pathToIgnoredArtifactGlob);
-      const merged = [
-        ...new Set([...projectConfig.git.ignoredArtifactPatterns, ...added]),
-      ];
-      const updated = await writeProjectSettings(ctx.configPath, {
-        git: { ignoredArtifactPatterns: merged },
-      });
-      const config = await applyWrittenProjectSettings(ctx, updated);
-      const configRelative = path
-        .relative(config.repositoryRoot, ctx.configPath)
-        .replaceAll("\\", "/");
-      ctx.jobs.enqueue(runId, action, async () => {
-        await control.setIgnoredArtifactPatterns(runId, merged);
-        if (dockerProxy) {
-          await dockerProxy.invoke("accept_tree", {
-            reportPaths:
-              configRelative && !configRelative.startsWith("..") ? [configRelative] : [],
-          });
+    ctx.jobs.enqueue(runId, action, async () => {
+      ctx.jobs.setDetail(runId, `Dispatching ${action} on the host`);
+      if (action === "ignore_artifacts") {
+        if (!ctx.configPath) {
+          throw new HttpError(400, "Cannot persist ignored artifacts without a config file path");
         }
+        const paths = optionalStringArray(body.paths, "paths", 500) ?? [];
+        if (paths.length === 0) {
+          throw new HttpError(400, "paths must be a non-empty string array");
+        }
+        const added = paths.map(pathToIgnoredArtifactGlob);
+        const merged = [...new Set([...projectConfig.git.ignoredArtifactPatterns, ...added])];
+        await writeProjectSettings(ctx.configPath, {
+          git: { ignoredArtifactPatterns: merged },
+        });
+        body.patterns = merged;
+      }
+      await dispatchHostRunAction({
+        action,
+        runId,
+        body,
+        control,
+        runLifecycle: ctx.runLifecycle,
+        openEngine: () =>
+          openWorkerRunRuntime(projectConfig, runId, {
+            backend: ctx.backend,
+            store: ctx.store,
+            docker: ctx.docker,
+          }).then((openedEngine) => openedEngine.engine),
       });
-    } else if (workerAction) {
-      throw new HttpError(
-        503,
-        `Docker worker is required for action "${action}". Use recover_container if the retained volume still exists.`,
-      );
-    } else {
-      throw new HttpError(400, `Unsupported action: ${action}`);
-    }
+    });
     json(response, 202, { accepted: true, job: ctx.jobs.get(runId) });
     return true;
   }

@@ -52,26 +52,6 @@ export function detectInstallFromToolStep(step: {
   return detectInstallFromCommand(command);
 }
 
-/**
- * Defense-in-depth detection for provider file tools. Cursor's OS sandbox is
- * the authoritative boundary; this cancels conspicuous attempts and makes the
- * violation visible in durable run state.
- */
-export function prohibitedAgentPathAccess(args: unknown, cwd: string): string | undefined {
-  const text = allArgumentStrings(args).join("\n").replaceAll("\\", "/").toLocaleLowerCase();
-  if (!text) return undefined;
-  if (/(^|\/)agent-transcripts(?:\/|$)/m.test(text)) return "agent-transcripts";
-  if (/(^|\/)\.cursor(?:\/|$)/m.test(text)) return ".cursor";
-  if (/(^|\/)\.codegraph(?:\/|$)/m.test(text)) return ".codegraph";
-  if (/(^|\/)graphify-out(?:\/|$)/m.test(text)) return "graphify-out";
-
-  const normalizedCwd = cwd.replaceAll("\\", "/").toLocaleLowerCase();
-  const containerWorkspace = normalizedCwd === "/workspace" || normalizedCwd.startsWith("/workspace/");
-  // Docker + Cursor sandbox are the boundary. Do not parse arbitrary argument
-  // text as a path: slash-prefixed domain content such as `/t claim` is valid.
-  if (containerWorkspace) return undefined;
-  return undefined;
-}
 
 function allArgumentStrings(value: unknown): string[] {
   if (typeof value === "string") return [value];

@@ -24,8 +24,7 @@ export const RUN_STATE_API_REQUEST_ID_HEADER = "x-request-id" as const;
 /** Max JSON body size accepted by the state API (bytes). */
 export const RUN_STATE_API_MAX_BODY_BYTES = 2_000_000 as const;
 
-/** Error codes the host state API can return. RunStateErrorCode values pass
- * through unchanged so an RpcRunStatePort can rethrow the same typed errors. */
+/** Error codes the host model-broker API can return. */
 export type RunStateApiErrorCode =
   | "stale_revision"
   | "idempotency_conflict"

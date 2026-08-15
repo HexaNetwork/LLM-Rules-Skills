@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import type {
   DockerClient,
@@ -17,6 +17,7 @@ export type CreateDockerClientOptions = {
   /** Docker CLI binary; defaults to `docker` on PATH. */
   dockerBin?: string;
   execFile?: typeof execFileAsync;
+  spawn?: typeof spawn;
 };
 
 /**
@@ -25,12 +26,51 @@ export type CreateDockerClientOptions = {
 export function createDockerClient(options: CreateDockerClientOptions = {}): DockerClient {
   const bin = options.dockerBin?.trim() || "docker";
   const run = options.execFile ?? execFileAsync;
+  const spawnProcess = options.spawn ?? spawn;
 
   async function exec(
     args: readonly string[],
     execOptions: DockerExecOptions = {},
   ): Promise<DockerExecResult> {
     const timeoutMs = execOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (execOptions.input !== undefined) {
+      return new Promise<DockerExecResult>((resolve) => {
+        const child = spawnProcess(bin, [...args], {
+          cwd: execOptions.cwd,
+          windowsHide: true,
+          signal: execOptions.signal,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        const maxBuffer = execOptions.maxBuffer ?? DEFAULT_MAX_BUFFER;
+        let stdout = "";
+        let stderr = "";
+        let retained = 0;
+        let timedOut = false;
+        const retain = (chunk: Buffer, target: "stdout" | "stderr"): void => {
+          const remaining = Math.max(0, maxBuffer - retained);
+          if (remaining === 0) return;
+          const text = chunk.subarray(0, remaining).toString();
+          retained += Buffer.byteLength(text);
+          if (target === "stdout") stdout += text;
+          else stderr += text;
+        };
+        child.stdout.on("data", (chunk: Buffer) => retain(chunk, "stdout"));
+        child.stderr.on("data", (chunk: Buffer) => retain(chunk, "stderr"));
+        const timer = setTimeout(() => {
+          timedOut = true;
+          child.kill();
+        }, timeoutMs);
+        child.once("error", (error) => {
+          clearTimeout(timer);
+          resolve({ exitCode: timedOut ? 124 : 1, stdout, stderr: stderr || error.message, timedOut });
+        });
+        child.once("close", (code) => {
+          clearTimeout(timer);
+          resolve({ exitCode: timedOut ? 124 : (code ?? 1), stdout, stderr, timedOut });
+        });
+        child.stdin.end(execOptions.input);
+      });
+    }
     try {
       const result = await run(bin, [...args], {
         cwd: execOptions.cwd,
@@ -224,71 +264,4 @@ export function createDockerClient(options: CreateDockerClientOptions = {}): Doc
   };
 }
 
-/** Pure argv builder for `docker run` hardened flags (no execution). */
-export function buildDockerRunArgv(spec: {
-  image: string;
-  name: string;
-  labels: Record<string, string>;
-  network: string;
-  cpus: number;
-  memoryMb: number;
-  pidsLimit: number;
-  workspaceVolume: string;
-  workspaceMountPath: string;
-  runStateBind: string;
-  runStateMountPath: string;
-  user?: string;
-  entrypoint?: string[];
-  command?: string[];
-  publishHostPort?: { hostPort: number; containerPort: number };
-}): string[] {
-  const args: string[] = ["run", "-d", "--name", spec.name];
-  for (const [key, value] of Object.entries(spec.labels)) {
-    args.push("--label", `${key}=${value}`);
-  }
-  args.push(
-    "--network",
-    spec.network,
-    "--read-only",
-    "--security-opt",
-    "no-new-privileges:true",
-    "--cap-drop",
-    "ALL",
-    "--pids-limit",
-    String(spec.pidsLimit),
-    "--cpus",
-    String(spec.cpus),
-    "--memory",
-    `${spec.memoryMb}m`,
-    "--tmpfs",
-    "/tmp:rw,noexec,nosuid,size=64m",
-    "--mount",
-    `type=volume,source=${spec.workspaceVolume},target=${spec.workspaceMountPath}`,
-    "--mount",
-    `type=bind,source=${spec.runStateBind},target=${spec.runStateMountPath},readonly=false`,
-  );
-  if (spec.user) {
-    args.push("--user", spec.user);
-  }
-  if (spec.publishHostPort) {
-    args.push(
-      "--publish",
-      `127.0.0.1:${spec.publishHostPort.hostPort}:${spec.publishHostPort.containerPort}`,
-    );
-  }
-  if (spec.entrypoint) {
-    args.push("--entrypoint", spec.entrypoint[0]!);
-    // Remaining entrypoint args become command when using --entrypoint binary form;
-    // callers should pass full command separately when needed.
-  }
-  args.push(spec.image);
-  if (spec.command) {
-    args.push(...spec.command);
-  } else if (spec.entrypoint && spec.entrypoint.length > 1) {
-    args.push(...spec.entrypoint.slice(1));
-  }
-  return args;
-}
-
-/** @deprecated Prefer DockerClient; retained for inspect helpers in later slices. */
 export type { DockerContainerInspect };

@@ -14,6 +14,8 @@ export type DockerExecOptions = {
   cwd?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Optional stdin for bounded non-interactive commands. */
+  input?: string;
   /** Max combined stdout/stderr retained (bytes). */
   maxBuffer?: number;
 };

@@ -1,7 +1,4 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildDockerRunArgv,
-} from "../../src/infrastructure/container/docker-client.js";
 import { createFakeDockerClient } from "../../src/infrastructure/container/fake-docker-client.js";
 import {
   assertDockerReadiness,
@@ -42,26 +39,24 @@ describe("fake DockerClient argv behavior", () => {
     );
   });
 
-  it("createDockerClient build argv uses arrays only", () => {
-    const args = buildDockerRunArgv({
-      image: "img",
-      name: "c1",
-      labels: { "io.agent-harness.run-id": "r1" },
-      network: "bridge",
-      cpus: 2,
-      memoryMb: 4096,
-      pidsLimit: 256,
-      workspaceVolume: "vol",
-      workspaceMountPath: "/workspace",
-      runStateBind: "/state/runs/r1",
-      runStateMountPath: "/run-state",
-      user: "10001:10001",
+  it("hardened run argv never encodes /run-state", () => {
+    const config = HarnessConfigSchema.parse({
+      execution: { docker: { limits: { cpus: 2, memoryMb: 4096, pidsLimit: 256 } } },
     });
-    expect(args[0]).toBe("run");
-    expect(args).toContain("--read-only");
-    expect(args).toContain("--cap-drop");
-    expect(args).toContain("ALL");
-    expect(args.join(" ")).not.toMatch(/privileged|docker\.sock/);
+    const argv = hardenedSpecToRunArgv(
+      buildHardenedContainerSpec({
+        name: "c1",
+        image: "img",
+        projectKey: "p",
+        runId: "r1",
+        harnessVersion: "0.3.2",
+        dockerPolicy: config.execution.docker,
+        workspace: { kind: "bind", hostPath: "/host/worktrees/r1" },
+      }),
+    );
+    expect(argv[0]).toBe("run");
+    expect(argv).toContain("--read-only");
+    expect(argv.join(" ")).not.toMatch(/\/run-state|privileged|docker\.sock/);
   });
 });
 
@@ -109,9 +104,7 @@ describe("hardened container spec and mount deny rules", () => {
       harnessVersion: "0.3.2",
       dockerPolicy: config.execution.docker,
       workspaceVolumeName: "ah-ws-run-1",
-      secretMounts: [
-        { source: "/host/bootstrap/rpc.token", target: "/run/secrets/agent-harness-worker-rpc" },
-      ],
+      environment: ["HARNESS_WORKER_TOKEN=opaque-worker-token"],
       publishHostPort: 4123,
     });
     expect(spec.readOnlyRootfs).toBe(true);
@@ -119,7 +112,7 @@ describe("hardened container spec and mount deny rules", () => {
     expect(spec.noNewPrivileges).toBe(true);
     expect(spec.user).toBe("10001:10001");
     expect(spec.network).toBe("bridge");
-    expect(spec.mounts).toHaveLength(2);
+    expect(spec.mounts).toHaveLength(1);
     expect(spec.mounts).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ target: "/run-state" })]),
     );
@@ -156,9 +149,9 @@ describe("hardened container spec and mount deny rules", () => {
     ).toBe(false);
     expect(
       denyMountOrFlag({
-        mounts: [{ kind: "bind", source: "/repo", target: "/workspace" }],
+        mounts: [{ kind: "bind", source: "/repo", target: "/workspace", readOnly: false }],
       }).allowed,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       denyMountOrFlag({
         mounts: [{ kind: "bind", source: "/other-run", target: "/run-state" }],
@@ -172,7 +165,7 @@ describe("hardened container spec and mount deny rules", () => {
           { kind: "bind", source: "/secret/rpc", target: "/run/secrets/worker-rpc", readOnly: true },
         ],
       }).allowed,
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 
@@ -237,5 +230,42 @@ describe("execution runtime status gate", () => {
     });
     expect(status.ready).toBe(true);
     expect(status.image?.available).toBe(true);
+  });
+
+  it("reports host-proxy custody while matching live proof remains fail-closed", async () => {
+    const previous = process.env.CURSOR_API_KEY;
+    process.env.CURSOR_API_KEY = "cursor-test-key-never-persisted";
+    try {
+      const config = HarnessConfigSchema.parse({
+        execution: { docker: { workerImageDigest: WORKER } },
+      });
+      const status = await evaluateExecutionRuntimeStatus({
+        config,
+        probeDocker: false,
+        imageDigest: WORKER,
+      });
+      expect(status.cursorCredential).toMatchObject({
+        configured: true,
+        passed: false,
+        custody: "host-proxy",
+        broker: {
+          configured: false,
+          compatible: true,
+          proven: false,
+        },
+      });
+      expect(status.blockers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "cursor-credential-delivery-unsupported",
+            message: expect.stringMatching(/TLS material is not initialized/i),
+            remediation: expect.stringMatching(/cursor-provider-smoke/i),
+          }),
+        ]),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.CURSOR_API_KEY;
+      else process.env.CURSOR_API_KEY = previous;
+    }
   });
 });

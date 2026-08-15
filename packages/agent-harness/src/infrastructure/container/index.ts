@@ -1,5 +1,5 @@
 export type { DockerClient, DockerExecResult, DockerExecOptions, DockerImageInspect, DockerVolumeInspect, DockerContainerInspect } from "./types.js";
-export { createDockerClient, buildDockerRunArgv } from "./docker-client.js";
+export { createDockerClient } from "./docker-client.js";
 export { createFakeDockerClient, type FakeDockerCall, type FakeDockerClientOptions } from "./fake-docker-client.js";
 export {
   probeDockerReadiness,
@@ -16,6 +16,7 @@ export {
   buildHardenedContainerSpec,
   denyMountOrFlag,
   denyInsecureContainerArgv,
+  argvLeaksProviderCredential,
   harnessContainerLabels,
   hardenedSpecToRunArgv,
   networkPolicyDocumentation,
@@ -23,6 +24,7 @@ export {
   type ContainerMount,
   type ContainerResourceLimits,
   type HardenedContainerSpec,
+  type HardenedWorkspace,
   type MountDenyReason,
   type NetworkMode,
 } from "./container-spec.js";

@@ -399,6 +399,7 @@ export class AgentCoordinator {
           result = await withTimeout(
             (signal) =>
               this.backend.run({
+                runId,
                 role,
                 model,
                 prompt,

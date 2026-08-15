@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
 import { HarnessConfigSchema } from "../../src/config/schema.js";
 import {
   RunExecutionStateSchema,
@@ -11,7 +12,7 @@ import {
   runBundleImportPath,
 } from "../../src/application/paths.js";
 import {
-  DockerCloneProvisioner,
+  HostWorktreeProvisioner,
   resolveWorkspaceProvisioner,
 } from "../../src/workspace/index.js";
 
@@ -20,25 +21,40 @@ describe("execution path constants", () => {
     expect(WORKER_WORKSPACE_PATH).toBe("/workspace");
   });
 
-  it("uses /workspace for docker-clone", () => {
+  it("uses the host worktree path for host-owned commits", () => {
     expect(
       resolveExecutionWorkspaceRoot(
         {
           version: 1,
-          kind: "docker-clone",
+          kind: "host-worktree",
           controlRoot: "/repo",
-          containerName: "c",
-          workspaceVolumeName: "v",
+          worktreePath: "/state/worktrees/run-1",
+          gitCommonDir: "/repo/.git",
           workspacePath: "/workspace",
-          imageDigest: "sha256:x",
           baseSha: "abc",
-          seedBundleHash: "h",
-          generation: 0,
+          createdAt: "2026-08-15T12:00:00.000Z",
+        },
+        "/repo",
+      ).replaceAll("\\", "/"),
+    ).toMatch(/\/state\/worktrees\/run-1$/);
+  });
+
+  it("uses the host worktree path on the host", () => {
+    expect(
+      resolveExecutionWorkspaceRoot(
+        {
+          version: 1,
+          kind: "host-worktree",
+          controlRoot: "/repo",
+          worktreePath: "/state/worktrees/run-1",
+          gitCommonDir: "/repo/.git",
+          workspacePath: "/workspace",
+          baseSha: "abc",
           createdAt: "2026-08-10T12:00:00.000Z",
         },
         "/repo",
       ),
-    ).toBe("/workspace");
+    ).toBe(path.resolve("/state/worktrees/run-1"));
   });
 
   it("places execution and transport metadata under the run directory", () => {
@@ -95,7 +111,7 @@ describe("run execution and transport schemas", () => {
 });
 
 describe("resolveWorkspaceProvisioner", () => {
-  it("returns the Docker provisioner unconditionally", () => {
+  it("returns the host worktree provisioner unconditionally", () => {
     const config = HarnessConfigSchema.parse({ repositoryRoot: "." });
     const store = {
       withWorkspaceAdminLock: async <T>(_h: unknown, work: () => Promise<T>) => work(),
@@ -108,6 +124,6 @@ describe("resolveWorkspaceProvisioner", () => {
       },
       store,
     });
-    expect(provisioner).toBeInstanceOf(DockerCloneProvisioner);
+    expect(provisioner).toBeInstanceOf(HostWorktreeProvisioner);
   });
 });

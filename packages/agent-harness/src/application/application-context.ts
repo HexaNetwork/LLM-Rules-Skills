@@ -95,7 +95,7 @@ export class ApplicationContext {
   }
 
   usesDockerWorkspace(): boolean {
-    return this.workspace.kind === "docker-clone";
+    return this.workspace.kind === "host-worktree";
   }
 
   /**

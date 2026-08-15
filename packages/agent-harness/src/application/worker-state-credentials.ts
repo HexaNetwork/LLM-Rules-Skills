@@ -18,6 +18,9 @@ export const WORKER_STATE_CREDENTIAL_VERSION = 1 as const;
 /** Default credential lifetime; the host re-issues on worker recreation. */
 export const WORKER_STATE_CREDENTIAL_TTL_MS = 24 * 60 * 60 * 1000;
 
+export const WORKER_BROKER_CAPABILITIES = ["model"] as const;
+export type WorkerBrokerCapability = (typeof WORKER_BROKER_CAPABILITIES)[number];
+
 export type WorkerStateCredential = {
   version: typeof WORKER_STATE_CREDENTIAL_VERSION;
   runId: string;
@@ -25,6 +28,7 @@ export type WorkerStateCredential = {
   /** SHA-256 of the bearer token; the plaintext token is never persisted. */
   tokenHash: string;
   workerInstanceId?: string;
+  capabilities: WorkerBrokerCapability[];
   issuedAt: string;
   expiresAt: string;
 };
@@ -62,6 +66,7 @@ export class WorkerStateCredentialIssuer {
       protocolVersion: RUN_STATE_API_PROTOCOL_VERSION,
       tokenHash: hashToken(token),
       ...(options.workerInstanceId ? { workerInstanceId: options.workerInstanceId } : {}),
+      capabilities: [...WORKER_BROKER_CAPABILITIES],
       issuedAt: issuedAt.toISOString(),
       expiresAt: new Date(
         issuedAt.getTime() + Math.max(1, options.ttlMs ?? WORKER_STATE_CREDENTIAL_TTL_MS),
@@ -170,5 +175,10 @@ function parseCredential(raw: string): WorkerStateCredential {
   ) {
     throw new Error("Malformed worker state credential record");
   }
-  return record as WorkerStateCredential;
+  const capabilities = Array.isArray(record.capabilities)
+    ? record.capabilities.filter((item): item is WorkerBrokerCapability =>
+        WORKER_BROKER_CAPABILITIES.includes(item as WorkerBrokerCapability),
+      )
+    : [...WORKER_BROKER_CAPABILITIES];
+  return { ...(record as WorkerStateCredential), capabilities };
 }

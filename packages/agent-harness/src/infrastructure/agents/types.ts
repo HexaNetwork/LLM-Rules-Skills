@@ -18,6 +18,7 @@ export type ObservedInstallEvent = {
 };
 
 export type AgentRequest = {
+  runId: string;
   role: AgentRole;
   model: string;
   prompt: string;

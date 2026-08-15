@@ -5,16 +5,10 @@ export type {
   WorkspaceInspection,
 } from "./types.js";
 export {
-  DockerCloneProvisioner,
-  defaultWorkspaceVolumeName,
-  type DockerCloneProvisionerOptions,
-  type MaterializeDockerCloneInput,
-} from "./docker-clone-provisioner.js";
+  HostWorktreeProvisioner,
+  type HostWorktreeProvisionerOptions,
+} from "./host-worktree-provisioner.js";
 export {
   resolveWorkspaceProvisioner,
   type ResolveWorkspaceProvisionerOptions,
 } from "./resolve-workspace-provisioner.js";
-export {
-  WorkerWorkspaceProvisioner,
-  type WorkerWorkspaceProvisionerOptions,
-} from "./worker-workspace-provisioner.js";

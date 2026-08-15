@@ -21,7 +21,7 @@ import {
   type OpenRunHarnessOptions,
 } from "../application/run-engine-factory.js";
 import type { HostRunControl } from "../application/host-run-control.js";
-import { resolveDockerMutationProxy } from "../application/docker-run-proxy.js";
+import { dispatchHostRunAction } from "../application/host-run-dispatch.js";
 import { GitService } from "../git.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { startUiServer, type UiServer } from "../ui/server.js";
@@ -32,7 +32,6 @@ import { resolveRunBaseBranch } from "../application/run-base-branch.js";
 import type { OperatorRunRepository } from "../application/run-repository.js";
 import { dumpProfileConfig } from "../vnext/boot/boot-profile.js";
 import { profileForDump } from "../vnext/profiles/index.js";
-import type { WorkerRpcAction } from "../worker/protocol.js";
 
 export type CliDependencies = {
   createBackend: (apiKey?: string) => AgentBackend;
@@ -67,6 +66,29 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .option("--profile <name>", "host, worker, or deterministic-test", "host")
     .action((options: { profile: string }) => {
       console.log(dumpProfileConfig(profileForDump(options.profile)));
+    });
+
+  program
+    .command("cursor-provider-sdk-smoke-child", { hidden: true })
+    .description("Run the pinned Cursor SDK provider contract inside the worker image")
+    .action(async () => {
+      // The command owns its own JSON emission and process-failure handling so
+      // the recorder always receives a result line, even on a hard SDK crash.
+      const { runCursorProviderSdkSmokeChildCommand } = await import(
+        "../application/cursor-provider-sdk-smoke-child.js"
+      );
+      process.exitCode = await runCursorProviderSdkSmokeChildCommand();
+    });
+
+  program
+    .command("sandbox-agent-child", { hidden: true })
+    .description("Execute one brokered agent invocation inside a disposable sandbox")
+    .action(async () => {
+      const { runSandboxAgentChild } = await import(
+        "../application/sandbox-agent-child.js"
+      );
+      const result = await runSandboxAgentChild(JSON.parse(await readProcessStdin()));
+      process.stdout.write(`${JSON.stringify(result)}\n`);
     });
 
   program
@@ -381,6 +403,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           runConfig,
           runId: options.runId,
           docker,
+          backend: dependencies.createBackend(),
           action: "answer",
           body: {
             answers: [{ questionId: options.question, answer: options.text }],
@@ -392,6 +415,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
             runConfig,
             runId: options.runId,
             docker,
+            backend: dependencies.createBackend(),
             action: "advance",
           });
         }
@@ -427,6 +451,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           runConfig,
           runId: options.runId,
           docker,
+          backend: dependencies.createBackend(),
           action: "confirm_grill",
           body: { feedback: options.feedback },
         });
@@ -436,6 +461,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
             runConfig,
             runId: options.runId,
             docker,
+            backend: dependencies.createBackend(),
             action: "advance",
           });
         }
@@ -471,6 +497,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           runConfig,
           runId: options.runId,
           docker,
+          backend: dependencies.createBackend(),
           action: "confirm_plan",
           body: { feedback: options.feedback },
         });
@@ -480,6 +507,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
             runConfig,
             runId: options.runId,
             docker,
+            backend: dependencies.createBackend(),
             action: "advance",
           });
         }
@@ -554,6 +582,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           runConfig,
           runId: options.runId,
           docker,
+          backend: dependencies.createBackend(),
           action: "confirm_verification",
           body: {
             keepCurrent: options.keepCurrent,
@@ -567,6 +596,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
             runConfig: await loadRunConfig(loaded.config, options.runId),
             runId: options.runId,
             docker,
+            backend: dependencies.createBackend(),
             action: "advance",
           });
         }
@@ -610,6 +640,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           runConfig: await loadRunConfig(loaded.config, options.runId),
           runId: options.runId,
           docker,
+          backend: dependencies.createBackend(),
           action: "retry_verification_baseline",
           body: {
             verificationCommand: options.verificationCommand,
@@ -629,6 +660,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
             runConfig: await loadRunConfig(loaded.config, options.runId),
             runId: options.runId,
             docker,
+            backend: dependencies.createBackend(),
             action: "advance",
           });
           state = await control.status(options.runId);
@@ -697,6 +729,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           runConfig: opened.config,
           runId: options.runId,
           docker: opened.docker,
+          backend: dependencies.createBackend(),
           action: "accept_tree",
         });
       } else if (options.commitDirty) {
@@ -710,6 +743,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           runConfig: opened.config,
           runId: options.runId,
           docker: opened.docker,
+          backend: dependencies.createBackend(),
           action: "retry",
           body: {
             force: options.force,
@@ -851,7 +885,112 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         if (blocker.remediation) console.log(`  remediation: ${blocker.remediation}`);
       }
       if (status.networkNote) console.log(`Network: ${status.networkNote}`);
+      if (status.cursorCredential) {
+        console.log(
+          status.cursorCredential.passed
+            ? "Cursor credential custody: host proxy; key not delivered to worker."
+            : `Cursor provider: blocked — ${status.cursorCredential.reason}`,
+        );
+      }
     });
+
+  execution
+    .command("cursor-provider-smoke")
+    .description("Run the fail-closed host Cursor provider-proxy proof preflight")
+    .requiredOption("--repository <path>", "registered project repository")
+    .option("--force", "ignore matching cached evidence", false)
+    .option("--json", "print a redacted status object", false)
+    .action(
+      async (options: { repository: string; force: boolean; json: boolean }) => {
+        const apiKey = process.env.CURSOR_API_KEY?.trim();
+        if (!apiKey) {
+          throw new Error(
+            "Host Cursor credential is not configured. Set CURSOR_API_KEY in this PowerShell session only; never pass it as an argument or paste it into chat.",
+          );
+        }
+        const loaded = await resolvedProjectConfig({ repository: options.repository });
+        const imageDigest = loaded.config.execution.docker.workerImageDigest?.trim();
+        if (!imageDigest) {
+          throw new Error(
+            "No maintained worker image digest is configured. Run `agent-harness execution prepare-worker --repository <path> --force-rebuild --write-settings` first.",
+          );
+        }
+        const {
+          cursorProviderProofCacheKey,
+          currentCursorProviderProofTuple,
+          findMatchingCursorProviderProof,
+          loadCursorProviderProofCache,
+        } = await import("../application/cursor-provider-proof.js");
+        const { resolveHarnessPaths } = await import("../application/paths.js");
+        const { ensureCursorProviderTlsMaterial } = await import(
+          "../infrastructure/provider-proxy/tls.js"
+        );
+        const paths = resolveHarnessPaths(loaded.config);
+        const tls = await ensureCursorProviderTlsMaterial(
+          path.join(paths.stateRoot, "cursor-provider-tls"),
+        );
+        const tuple = currentCursorProviderProofTuple({
+          imageDigest,
+          model: loaded.config.models.capable,
+          tlsIdentity: tls.tlsIdentity,
+          apiKey,
+        });
+        const cached = options.force
+          ? undefined
+          : findMatchingCursorProviderProof(
+              await loadCursorProviderProofCache(paths.stateRoot),
+              tuple,
+            );
+        const report =
+          cached ??
+          (await (
+            await import("../application/cursor-provider-contract-recorder.js")
+          ).recordLiveCursorProviderContract({
+            apiKey,
+            projectStateRoot: paths.stateRoot,
+            tuple,
+            tls,
+            docker: dependencies.createDockerClient(),
+            dockerPolicy: loaded.config.execution.docker,
+          }));
+        const ok = report.ok && !report.unsupported;
+        const payload = {
+          ok,
+          unsupported: report.unsupported,
+          custody: "host-proxy",
+          keyDeliveredToWorker: false,
+          proofIdentity: cursorProviderProofCacheKey(tuple).slice(0, 16),
+          imageDigest,
+          sdkVersion: tuple.sdkVersion,
+          providerProtocolVersion: tuple.providerProtocolVersion,
+          contractVersion: tuple.contractVersion,
+          proxyVersion: tuple.proxyVersion,
+          model: tuple.model,
+          tlsIdentity: tuple.tlsIdentity,
+          provedAt: report.provedAt,
+          checks: report.checks,
+          operations: report.operations,
+          lifecycle: report.lifecycle,
+          credentialAbsence: report.credentialAbsence,
+          sdkDiagnostics: report.sdkDiagnostics,
+          lifecycleStages: report.lifecycleStages,
+          reason: report.reason,
+          next: ok ? undefined : "Resolve the reported TLS/auth/SDK failure and rerun with --force.",
+        };
+        if (options.json) console.log(JSON.stringify(payload, null, 2));
+        else {
+          console.log("Cursor credential custody: host proxy; key not delivered to worker.");
+          console.log(
+            `Provider proxy proof: ${payload.ok ? "PASSED" : "BLOCKED"} (${payload.proofIdentity})`,
+          );
+          for (const check of payload.checks) {
+            console.log(`- ${check.ok ? "PASS" : "FAIL"} ${check.id}: ${check.detail}`);
+          }
+          if (payload.reason) console.log(`Reason: ${payload.reason}`);
+        }
+        if (!payload.ok) process.exitCode = 2;
+      },
+    );
 
   execution
     .command("prepare-worker")
@@ -1051,29 +1190,12 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         "../application/execution-diagnostics.js"
       );
       const { loadRunWorkspace } = await import("../config/io.js");
-      const { ensureDockerWorkerSession } = await import(
-        "../application/docker-worker-session.js"
-      );
       const workspace = await loadRunWorkspace(config, options.runId).catch(() => undefined);
       const docker = createDockerClient();
-      let workerHealth: { ok: boolean; detail?: string } | undefined;
-      if (workspace?.kind === "docker-clone") {
-        try {
-          const session = await ensureDockerWorkerSession({
-            projectConfig: config,
-            runId: options.runId,
-            docker,
-            startIfMissing: false,
-          });
-          await session.client.health();
-          workerHealth = { ok: true };
-        } catch (error) {
-          workerHealth = {
-            ok: false,
-            detail: error instanceof Error ? error.message : String(error),
-          };
-        }
-      }
+      const workerHealth =
+        workspace?.kind === "host-worktree"
+          ? { ok: true, detail: "Worker sandboxes are disposable; host worktree and run state remain." }
+          : undefined;
       const diagnostics = await collectExecutionDiagnostics({
         projectConfig: config,
         runId: options.runId,
@@ -1086,34 +1208,21 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
 
   execution
     .command("recover-container")
-    .description("Recreate the worker container against the retained named volume (never reseed)")
+    .description("No-op: worker sandboxes are disposable; host worktree and run state remain")
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
     .action(async (options: { runId: string; config?: string }) => {
       const { config } = await loadConfig(options.config);
-      const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
       const { loadRunWorkspace } = await import("../config/io.js");
-      const { ensureDockerWorkerSession } = await import(
-        "../application/docker-worker-session.js"
-      );
-      const workspace = await loadRunWorkspace(config, options.runId);
-      if (workspace.kind !== "docker-clone") {
-        throw new Error(`Run ${options.runId} is not a docker-clone workspace`);
-      }
-      const session = await ensureDockerWorkerSession({
-        projectConfig: config,
-        runId: options.runId,
-        docker: createDockerClient(),
-        image: workspace.imageDigest,
-        workspaceVolumeName: workspace.workspaceVolumeName,
-        startIfMissing: true,
-      });
+      const workspace = await loadRunWorkspace(config, options.runId).catch(() => undefined);
       console.log(
         JSON.stringify(
           {
-            containerName: session.execution.containerName,
-            hostPort: session.execution.hostPort,
-            lifecycle: session.execution.lifecycle,
+            runId: options.runId,
+            workspaceKind: workspace?.kind ?? "missing",
+            disposable: true,
+            detail:
+              "Containers are created per bounded exec and destroyed afterward. Recreate a sandbox instead of recovering a long-lived worker.",
           },
           null,
           2,
@@ -1133,32 +1242,9 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       const { config } = await loadConfig(options.config);
       const { createDockerClient } = await import("../infrastructure/container/docker-client.js");
       const { reconcileOrphanContainers } = await import("../application/orphan-reconciler.js");
-      const { loadRunWorkspace } = await import("../config/io.js");
-      const { resolveHarnessPaths } = await import("../application/paths.js");
-      const { RunStore } = await import("../store.js");
-      const paths = resolveHarnessPaths(config);
-      const store = new RunStore(config, paths.stateRoot);
-      await store.initialize();
-      const { states } = await store.listWithFailures();
-      const knownRuns = [];
-      for (const state of states) {
-        try {
-          const workspace = await loadRunWorkspace(config, state.runId);
-          if (workspace.kind !== "docker-clone") continue;
-          knownRuns.push({
-            runId: state.runId,
-            phase: state.phase,
-            removedAt: workspace.removedAt,
-            workspaceVolumeName: workspace.workspaceVolumeName,
-            containerName: workspace.containerName,
-          });
-        } catch {
-          // skip
-        }
-      }
       const report = await reconcileOrphanContainers({
         docker: createDockerClient(),
-        knownRuns,
+        knownRuns: [],
         apply: options.apply,
       });
       if (options.json) {
@@ -1472,28 +1558,14 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .description("Run the per-run Docker worker RPC server (internal)")
     .requiredOption("--run-id <id>", "run id")
     .requiredOption("--worker-instance-id <id>", "worker instance id")
-    .requiredOption("--state-endpoint <url>", "host state-service endpoint")
+    .requiredOption("--state-endpoint <url>", "host broker endpoint")
     .option("--listen <host:port>", "bind address", "0.0.0.0:8787")
-    .option("--secret-file <path>", "read-only RPC token file")
-    .option("--state-credential-file <path>", "read-only state credential file")
-    .option("--cursor-secret-file <path>", "read-only Cursor credential file")
-    .option("--fake-backend", "use FakeBackend (tests/dev)", false)
-    .option(
-      "--deterministic-test-profile",
-      "use deterministic vNext provider (acceptance only)",
-      false,
-    )
     .action(
       async (options: {
         runId: string;
         workerInstanceId: string;
         stateEndpoint: string;
         listen: string;
-        secretFile?: string;
-        stateCredentialFile?: string;
-        cursorSecretFile?: string;
-        fakeBackend: boolean;
-        deterministicTestProfile: boolean;
       }) => {
         const { runWorker } = await import("../worker/run-worker.js");
         const listen = options.listen.trim();
@@ -1510,11 +1582,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           stateEndpoint: options.stateEndpoint,
           host,
           port,
-          secretFile: options.secretFile,
-          stateCredentialFile: options.stateCredentialFile,
-          cursorSecretFile: options.cursorSecretFile,
-          fakeBackend: options.fakeBackend,
-          deterministicTestProfile: options.deterministicTestProfile,
         });
         const shutdown = async () => {
           await worker.close();
@@ -1698,21 +1765,37 @@ async function invokeDockerWorkerAction(input: {
   runConfig: HarnessConfig;
   runId: string;
   docker: DockerClient;
-  action: WorkerRpcAction;
+  action: string;
   body?: Record<string, unknown>;
+  backend?: import("../infrastructure/agents/types.js").AgentBackend;
 }): Promise<unknown> {
-  const proxy = await resolveDockerMutationProxy({
-    projectConfig: input.projectConfig,
-    runConfig: input.runConfig,
-    runId: input.runId,
+  const backend = input.backend ?? (await import("../infrastructure/agents/fake-backend.js")).createFakeBackend({});
+  const opened = await openHostRunControl(input.projectConfig, input.runId, {
+    backend,
     docker: input.docker,
   });
-  if (!proxy) {
-    throw new Error(
-      `Docker worker is not running for ${input.runId}. Start/continue the run so the worker is ready, then retry.`,
-    );
-  }
-  return proxy.invoke(input.action, input.body ?? {});
+  const { openWorkerRunRuntime } = await import("../application/run-engine-factory.js");
+  const { HostRunLifecycleOwner } = await import("../vnext/plugins/host-run-lifecycle.js");
+  const lifecycle = new HostRunLifecycleOwner({
+    store: opened.control.store,
+    runtimeDependencies: { backend, docker: input.docker },
+    loadRunConfig: async () => input.runConfig,
+    startWorker: async () => undefined,
+  });
+  return dispatchHostRunAction({
+    action: input.action,
+    runId: input.runId,
+    body: input.body ?? {},
+    control: opened.control,
+    runLifecycle: lifecycle,
+    openEngine: async () =>
+      (
+        await openWorkerRunRuntime(input.projectConfig, input.runId, {
+          backend,
+          docker: input.docker,
+        })
+      ).engine,
+  });
 }
 
 async function aggregateSessionUsage(
@@ -1937,4 +2020,12 @@ function positiveInteger(value: string, name: string): number {
 function splitProjectIds(value: string | undefined): string[] {
   if (!value) return [];
   return value.split(",").map((id) => id.trim()).filter(Boolean);
+}
+
+async function readProcessStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }

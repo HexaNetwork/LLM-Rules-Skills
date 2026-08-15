@@ -4,17 +4,14 @@ import { describe, expect, it } from "vitest";
 import { loadRunWorkspace, runWorkspacePath } from "../../src/config/io.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
-const dockerCloneWorkspace = (root: string) => ({
+const hostWorktreeWorkspace = (root: string) => ({
   version: 1 as const,
-  kind: "docker-clone" as const,
+  kind: "host-worktree" as const,
   controlRoot: root.replaceAll("\\", "/"),
-  containerName: "ah-project-run-1",
-  workspaceVolumeName: "ah-ws-project-run-1",
+  worktreePath: path.join(root, "worktrees", "run-1").replaceAll("\\", "/"),
+  gitCommonDir: path.join(root, ".git").replaceAll("\\", "/"),
   workspacePath: "/workspace",
-  imageDigest: "sha256:abc",
   baseSha: "a".repeat(40),
-  seedBundleHash: "sha256:bundle",
-  generation: 0,
   baseBranch: "main",
   createdAt: new Date().toISOString(),
 });
@@ -35,7 +32,7 @@ describe("loadRunWorkspace runDirectory override", () => {
     await mkdir(runDir, { recursive: true });
     await writeFile(
       path.join(runDir, "workspace.json"),
-      `${JSON.stringify(dockerCloneWorkspace(root), null, 2)}\n`,
+      `${JSON.stringify(hostWorktreeWorkspace(root), null, 2)}\n`,
       "utf8",
     );
 
@@ -47,9 +44,9 @@ describe("loadRunWorkspace runDirectory override", () => {
     await expect(loadRunWorkspace(config, "run-1")).rejects.toThrow(/workspace metadata is missing/i);
 
     const workspace = await loadRunWorkspace(config, "run-1", { runDirectory: runDir });
-    expect(workspace.kind).toBe("docker-clone");
-    if (workspace.kind === "docker-clone") {
-      expect(workspace.imageDigest).toBe("sha256:abc");
+    expect(workspace.kind).toBe("host-worktree");
+    if (workspace.kind === "host-worktree") {
+      expect(workspace.workspacePath).toBe("/workspace");
     }
   });
 });

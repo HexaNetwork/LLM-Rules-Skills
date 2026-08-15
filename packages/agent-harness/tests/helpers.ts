@@ -1,6 +1,6 @@
 import type { HarnessConfig } from "../src/config/schema.js";
 import type { CommandResult } from "../src/commands.js";
-import type { HarnessEngine } from "../src/application/harness-engine.js";
+import type { WorkerHarnessRuntime } from "../src/application/harness-engine.js";
 import type { HighLevelPlan, RunState } from "../src/domain.js";
 import type { CommandRunner } from "../src/application/dependencies.js";
 import {
@@ -75,7 +75,7 @@ export function passingCommandRunner(
  * (or through plan confirmation when autoConfirmPlan is true — default).
  */
 export async function confirmGrillAndAdvance(
-  engine: HarnessEngine,
+  engine: WorkerHarnessRuntime,
   runId: string,
   feedback?: string,
   options: {
@@ -108,7 +108,7 @@ export async function confirmGrillAndAdvance(
 
 /** Approve the high-level plan and advance through to-prd + issue-slicer. */
 export async function confirmPlanAndAdvance(
-  engine: HarnessEngine,
+  engine: WorkerHarnessRuntime,
   runId: string,
   options: { feedback?: string; plan?: HighLevelPlan } = {},
 ): Promise<RunState> {
@@ -118,9 +118,9 @@ export async function confirmPlanAndAdvance(
 
 /** Accept the verification gate and continue advancing. */
 export async function confirmVerificationAndAdvance(
-  engine: HarnessEngine,
+  engine: WorkerHarnessRuntime,
   runId: string,
-  options: Parameters<HarnessEngine["confirmVerification"]>[1] & {
+  options: Parameters<WorkerHarnessRuntime["confirmVerification"]>[1] & {
     /** When true, auto-retry a baseline failure with an exit-0 command. */
     clearBaselineFailure?: boolean;
     verificationCommand?: string;

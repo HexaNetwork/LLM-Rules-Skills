@@ -44,6 +44,7 @@ describe("repository intelligence config migration", () => {
   it("normalizes Graphify-era frozen snapshots through the retained historical seam", () => {
     const config = normalizeFrozenRunConfig({
       repositoryRoot: ".",
+      execution: {},
       workflow: { graphifyCharacters: 1234 },
       knowledge: {
         graphify: {
@@ -65,6 +66,8 @@ describe("repository intelligence config migration", () => {
     await writeFile(configPath, [
       "version: 2",
       "repositoryRoot: .",
+      "execution:",
+      "  docker: {}",
       "knowledge:",
       "  codegraph:",
       "    enabled: false",
@@ -76,7 +79,7 @@ describe("repository intelligence config migration", () => {
     ].join("\n"), "utf8");
 
     await writeProjectSettings(configPath, {
-      git: { autoCommitPreflight: true },
+      git: { ignoredArtifactPatterns: ["**/dist/**"] },
     });
     const written = await readFile(configPath, "utf8");
     const value = yaml.load(written) as {

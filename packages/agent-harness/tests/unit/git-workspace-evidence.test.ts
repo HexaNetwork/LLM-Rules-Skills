@@ -1,4 +1,3 @@
-import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { GitService } from "../../src/git.js";
@@ -59,26 +58,5 @@ describe("GitService.workspaceEvidence", () => {
     const afterCommit = await git.workspaceEvidence();
     expect(afterCommit.headSha).not.toBe(baseline.headSha);
     expect(afterCommit.changedPaths).toEqual([]);
-  });
-
-  it("does not include control-checkout-only paths when cwd is a worktree", async () => {
-    fixture = await createProjectFixture({
-      config: { git: { enabled: true, baseBranch: "main" } },
-    });
-    await fixture.initGit({ branch: "main" });
-    const worktree = await fixture.addDetachedWorktree("evidence-wt");
-    await fixture.write("control-only.txt", "from operator\n");
-
-    const paths = resolveHarnessPaths(fixture.config);
-    paths.workspaceRoot = worktree.path;
-    const git = new GitService(fixture.config, paths);
-    const evidence = await git.workspaceEvidence();
-    expect(evidence.changedPaths).not.toContain("control-only.txt");
-    expect(evidence.headSha).toBe(worktree.headSha);
-
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(path.join(worktree.path, "in-worktree.txt"), "inside\n", "utf8");
-    const dirty = await git.workspaceEvidence();
-    expect(dirty.changedPaths).toContain("in-worktree.txt");
   });
 });

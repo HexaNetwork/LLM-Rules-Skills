@@ -17,7 +17,6 @@ describe("resolveHarnessPaths", () => {
     expect(paths.controlRoot).toBe(path.resolve(root));
     expect(paths.workspaceRoot).toBe(paths.controlRoot);
     expect(paths.stateRoot).toBe(path.resolve(root, ".agent-harness"));
-    expect(paths.worktreeRoot).toBe(path.join(paths.stateRoot, "worktrees"));
   });
 
   it("resolves an absolute stateDirectory without nesting under controlRoot", () => {
@@ -29,35 +28,26 @@ describe("resolveHarnessPaths", () => {
     expect(paths.controlRoot).toBe(controlRoot);
     expect(paths.workspaceRoot).toBe(controlRoot);
     expect(paths.stateRoot).toBe(stateRoot);
-    expect(paths.worktreeRoot).toBe(
-      path.join(path.dirname(controlRoot), `${path.basename(controlRoot)}-worktrees`),
-    );
   });
 
-  it("points workspaceRoot at a git-worktree path when workspace metadata is provided", () => {
+  it("points workspaceRoot at the Docker worker path when workspace metadata is provided", () => {
     const controlRoot = path.resolve("/tmp/harness-control");
-    const worktreePath = path.resolve("/tmp/harness-state/worktrees/run-1");
     const config = buildFixtureConfig(controlRoot, { stateDirectory: ".agent-harness" });
     const paths = resolveHarnessPaths(config, {
       version: 1,
-      kind: "git-worktree",
+      kind: "docker-clone",
       controlRoot,
-      worktreePath,
+      containerName: "harness-run-1",
+      workspaceVolumeName: "harness-ws-1",
+      workspacePath: "/workspace",
+      imageDigest: "sha256:deadbeef",
+      baseSha: "abc123",
+      seedBundleHash: "bundlehash",
+      generation: 0,
       createdAt: "2026-08-10T00:00:00.000Z"});
 
     expect(paths.controlRoot).toBe(controlRoot);
-    expect(paths.workspaceRoot).toBe(worktreePath);
-  });
-
-  it("honors an explicit worktreeRoot override", () => {
-    const controlRoot = path.resolve("/tmp/harness-control");
-    const stateRoot = path.resolve("/tmp/harness-state");
-    const worktreeRoot = path.resolve("/tmp/ah-wt");
-    const config = buildFixtureConfig(controlRoot, {
-      stateDirectory: stateRoot,
-      worktreeRoot});
-    const paths = resolveHarnessPaths(config);
-    expect(paths.worktreeRoot).toBe(worktreeRoot);
+    expect(paths.workspaceRoot).toBe("/workspace");
   });
 });
 
@@ -86,18 +76,16 @@ describe("HarnessPaths composition", () => {
 });
 
 describe("configurationHash runtime path stability", () => {
-  it("omits repositoryRoot, stateDirectory, worktreeRoot, and sharedIndexDirectory from the hash", () => {
+  it("omits repositoryRoot, stateDirectory, and sharedIndexDirectory from the hash", () => {
     const base = HarnessConfigSchema.parse({
       repositoryRoot: "/project-a",
       stateDirectory: ".agent-harness",
-      worktreeRoot: "/tmp/wt-a",
       knowledge: { sharedIndexDirectory: "shared-a" },
       workflow: { }});
     const relocated = {
       ...base,
       repositoryRoot: "/project-b",
       stateDirectory: "/absolute/state",
-      worktreeRoot: "/tmp/wt-b",
       knowledge: { ...base.knowledge, sharedIndexDirectory: "shared-b" }};
 
     expect(configurationHash(relocated)).toBe(configurationHash(base));

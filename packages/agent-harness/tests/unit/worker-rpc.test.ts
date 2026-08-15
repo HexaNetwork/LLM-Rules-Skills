@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,7 +16,6 @@ import {
   workerRpcActionForHostAction,
 } from "../../src/application/docker-worker-session.js";
 import { mapHostActionToWorkerRpc } from "../../src/application/docker-run-proxy.js";
-import { writeRunExecutionState } from "../../src/application/execution-state-io.js";
 import {
   generateWorkerRpcToken,
   tokensEqual,
@@ -27,10 +26,10 @@ import {
 import { startWorkerRpcServer } from "../../src/worker/rpc-server.js";
 import {
   HARNESS_PACKAGE_VERSION,
+  WORKER_RPC_ACTIONS,
   WORKER_RPC_PROTOCOL_VERSION,
-  WORKER_RPC_SECRET_RELATIVE_PATH,
 } from "../../src/worker/protocol.js";
-import type { HarnessEngine } from "../../src/application/harness-engine.js";
+import type { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import type { WorkerHandlerContext } from "../../src/worker/handlers.js";
 
 const servers: Array<{ close(): Promise<void> }> = [];
@@ -42,7 +41,7 @@ afterEach(async () => {
   }
 });
 
-function stubEngine(overrides: Partial<HarnessEngine> = {}): HarnessEngine {
+function stubEngine(overrides: Partial<WorkerHarnessRuntime> = {}): WorkerHarnessRuntime {
   return {
     status: async () => ({ runId: "run-1", phase: "awaiting_input", revision: 1 }),
     advance: async () => ({ runId: "run-1", phase: "awaiting_input", revision: 2 }),
@@ -51,10 +50,10 @@ function stubEngine(overrides: Partial<HarnessEngine> = {}): HarnessEngine {
       state: { runId: "run-1", phase: "awaiting_input", revision: 1 },
     }),
     ...overrides,
-  } as unknown as HarnessEngine;
+  } as unknown as WorkerHarnessRuntime;
 }
 
-function handlerContext(engine: HarnessEngine): WorkerHandlerContext {
+function handlerContext(engine: WorkerHarnessRuntime): WorkerHandlerContext {
   return {
     runId: "run-1",
     engine,
@@ -66,6 +65,20 @@ function handlerContext(engine: HarnessEngine): WorkerHandlerContext {
 }
 
 describe("worker RPC auth and protocol", () => {
+  it("keeps worker liveness, workflow delivery, export preparation, and shutdown actions", () => {
+    expect(WORKER_RPC_ACTIONS).toEqual(
+      expect.arrayContaining([
+        "health",
+        "status",
+        "advance",
+        "cancel",
+        "stop",
+        "prepare-export",
+        "shutdown",
+      ]),
+    );
+  });
+
   it("polls through the normal worker startup race", async () => {
     let calls = 0;
     const sleeps: number[] = [];
@@ -205,6 +218,26 @@ describe("worker RPC auth and protocol", () => {
     expect(cancelled).toBe(true);
     expect(result.pending).toBe(true);
   });
+
+  it("delivers shutdown through worker control without a state mutation", async () => {
+    let shutdownRequested = false;
+    const token = generateWorkerRpcToken();
+    const context = handlerContext(stubEngine());
+    context.requestShutdown = () => {
+      shutdownRequested = true;
+    };
+    const server = await startWorkerRpcServer({
+      host: "127.0.0.1",
+      port: 0,
+      token,
+      handlers: context,
+    });
+    servers.push(server);
+
+    const client = new WorkerRpcClient({ baseUrl: server.url, token });
+    await expect(client.invoke("shutdown", {})).resolves.toEqual({ shuttingDown: true });
+    expect(shutdownRequested).toBe(true);
+  });
 });
 
 describe("token helpers", () => {
@@ -243,7 +276,7 @@ describe("host proxy routing and session affinity", () => {
     const projectConfig = HarnessConfigSchema.parse({
       repositoryRoot: root,
       stateDirectory: path.join(root, "state"),
-      execution: { runtime: "docker" },
+      execution: {},
     });
     const workerInstanceId = "worker-reattach-1";
     const bootstrapDir = path.join(root, "state", "worker-bootstrap", runId, workerInstanceId);
@@ -254,18 +287,26 @@ describe("host proxy routing and session affinity", () => {
     const containerName = "ah-project-run-reattach";
     const hostPort = await listenHealthStub(token);
 
-    await writeRunExecutionState(projectConfig, runId, {
-      version: 1,
-      runtime: "docker",
-      lifecycle: "running",
-      containerName,
-      workerInstanceId,
-      hostPort,
-      containerPort: 8787,
-      rpcSecretRelativePath: WORKER_RPC_SECRET_RELATIVE_PATH,
-      rpcTokenFingerprint: workerRpcTokenFingerprint(token),
-      updatedAt: new Date().toISOString(),
-    });
+    const executionDir = path.join(root, "state", "runs", runId);
+    await mkdir(executionDir, { recursive: true });
+    await writeFile(
+      path.join(executionDir, "execution.json"),
+      `${JSON.stringify({
+        version: 1,
+        runtime: "docker",
+        lifecycle: "running",
+        containerName,
+        workerInstanceId,
+        hostPort,
+        containerPort: 8787,
+        rpcSecretRelativePath: "retired/rpc.token",
+        rpcTokenFingerprint: workerRpcTokenFingerprint(token),
+        rpcProtocolVersion: WORKER_RPC_PROTOCOL_VERSION,
+        workerHarnessVersion: HARNESS_PACKAGE_VERSION,
+        updatedAt: new Date().toISOString(),
+      })}\n`,
+      "utf8",
+    );
 
     const docker = createFakeDockerClient({
       containers: new Map([
@@ -291,6 +332,8 @@ describe("host proxy routing and session affinity", () => {
     });
     expect(session.execution.containerName).toBe(containerName);
     expect(session.execution.hostPort).toBe(hostPort);
+    expect(session.execution).not.toHaveProperty("runtime");
+    expect(session.execution).not.toHaveProperty("rpcSecretRelativePath");
     expect(session.execution.rpcTokenFingerprint).toBe(workerRpcTokenFingerprint(token));
     const health = (await session.client.health()) as { status: string };
     expect(health.status).toBe("ok");

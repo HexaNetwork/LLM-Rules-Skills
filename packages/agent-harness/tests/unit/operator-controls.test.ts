@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveHarnessPaths } from "../../src/application/paths.js";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
-import { HarnessEngine } from "../../src/application/harness-engine.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import { createRunState } from "../../src/domain.js";
 import { RunStore } from "../../src/store.js";
 import {
@@ -92,7 +92,7 @@ describe("operator controls", () => {
         return { summary: "Defined Checkout", changedFiles: ["GLOSSARY.md"] };
       },
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
 
     const state = await engine.confirmGrill(runId);
 
@@ -116,7 +116,7 @@ describe("operator controls", () => {
     const config = fixtureConfig(root, {
       workflow: { } as never,
       agent: { promptBuilder: false } as never});
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     const reflectQ = state.questions.find((item) => item.status === "open");
@@ -176,7 +176,7 @@ describe("operator controls", () => {
     const config = fixtureConfig(root, {
       workflow: { } as never,
       agent: { promptBuilder: false } as never});
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     let state = await engine.start("Ship greeting");
     state = await engine.advance(state.runId);
     state = await engine.answerMany(state.runId, [
@@ -259,7 +259,7 @@ describe("operator controls", () => {
           testPaths: [],
           changedFiles: []}]});
     await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const engine = new WorkerHarnessRuntime(config, { backend: createFakeBackend({}) });
     const state = await engine.requestStop(runId);
     expect(state.stoppedAfterTaskAt).toBeTruthy();
     expect(state.phase).toBe("executing");
@@ -285,7 +285,7 @@ describe("operator controls", () => {
       phase: "executing",
       tasks: []});
     await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const engine = new WorkerHarnessRuntime(config, { backend: createFakeBackend({}) });
 
     await engine.setRag(runId, false);
     const afterRag = (await store.readJson(runId, "config.json")) as {
@@ -338,7 +338,7 @@ describe("operator controls", () => {
             validationCommands: []}
           : { summary: "Restored the broken files.", changedFiles: ["src/app.ts"] };
       }});
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
 
     await expect(engine.applyApprovedFix(runId)).rejects.toThrow(/no fixer plan awaiting approval/);
     const proposed = await engine.proposeFix(runId, "Repair the broken implementer output.");
@@ -411,7 +411,7 @@ describe("operator controls", () => {
         released.push(providerSessionId);
         await inner.release?.(providerSessionId);
       }};
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
 
     const first = await engine.proposeFix(runId, "Repair the broken implementer output.");
     const firstSession = first.fixerRecovery?.providerSessionId;
@@ -462,7 +462,7 @@ describe("operator controls", () => {
         fixerCalls += 1;
         return { summary: "should not run", changedFiles: [] };
       }});
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
 
     const proposed = await engine.proposeFix(runId, "Preserve the test and widen patterns.");
     expect(proposed.fixerRecovery).toMatchObject({
@@ -528,7 +528,7 @@ describe("operator controls", () => {
           allowedPaths: ["agent-harness.config.yaml"],
           validationCommands: []};
       }});
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
 
     const proposed = await engine.proposeFix(runId, "Fix the verification command for this host.");
     expect(proposed.fixerRecovery?.role).toBe("config-fixer");
@@ -574,7 +574,7 @@ describe("operator controls", () => {
         proposedAt: new Date().toISOString(),
         changedFiles: []}});
     await store.writeJson(runId, "config.json", { ...config, configVersion: CONFIG_VERSION });
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const engine = new WorkerHarnessRuntime(config, { backend: createFakeBackend({}) });
 
     await expect(engine.applyApprovedFix(runId)).rejects.toThrow(/config-fixer repair that updates the frozen run config/);
   });

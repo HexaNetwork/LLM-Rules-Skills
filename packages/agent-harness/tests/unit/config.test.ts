@@ -268,6 +268,7 @@ repositoryRoot: .
   it("rewrites frozen Graphify keys into neutral repository intelligence", () => {
     const frozen = normalizeFrozenRunConfig({
       repositoryRoot: "C:/tmp/project",
+      execution: {},
       workflow: { graphifyCharacters: 2_500 },
       knowledge: {
         graphify: {
@@ -305,17 +306,13 @@ repositoryRoot: .
       maxCharacters: 1_000});
   });
 
-  it("normalizes older frozen configs to Docker-only execution policy", () => {
-    const frozen = normalizeFrozenRunConfig({
-      repositoryRoot: "C:/tmp/project",
-      configVersion: 15,
-    });
-    expect(frozen.execution).not.toHaveProperty("runtime");
-    expect(frozen.execution.docker.network.runtime).toBe("bridge");
-    expect(configurationHash(frozen)).toBe(configurationHash({
-      ...frozen,
-      execution: { ...frozen.execution, docker: { ...frozen.execution.docker } },
-    }));
+  it("rejects pre-cutover frozen configs without Docker execution policy", () => {
+    expect(() =>
+      normalizeFrozenRunConfig({
+        repositoryRoot: "C:/tmp/project",
+        configVersion: 15,
+      }),
+    ).toThrow(/pre-cutover configuration/i);
   });
 
   it("hashes immutable Docker execution policy but omits runtime stamp paths", () => {
@@ -426,7 +423,6 @@ repositoryRoot: .
     expect(
       configurationHash({
         ...base,
-        worktreePath: "D:/state/worktrees/run-1",
         controlRoot: "D:/control/root",
         gitCommonDir: "D:/control/root/.git",
         baseSha: "a".repeat(40),

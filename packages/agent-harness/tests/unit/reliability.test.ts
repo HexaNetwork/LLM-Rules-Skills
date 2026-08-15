@@ -12,7 +12,7 @@ import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.
 import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
 import { runCommand } from "../../src/commands.js";
 import { createRunState, type RunState } from "../../src/domain.js";
-import { HarnessEngine } from "../../src/application/harness-engine.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import {
   HarnessFailure,
   classifyFailure} from "../../src/errors.js";
@@ -245,7 +245,7 @@ describe("failure classification", () => {
           unknowns: []};
       }});
     const sleeps: number[] = [];
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -285,7 +285,7 @@ describe("failure classification", () => {
           assumptions: [],
           unknowns: []};
       }});
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       sleep: async () => {
         // reflect.started persists phase=reflecting before the provider throws. Without
@@ -317,7 +317,7 @@ describe("failure classification", () => {
       reflector: () => {
         throw new AgentBackendRunError("Cursor run flaky during backoff");
       }});
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -346,7 +346,7 @@ describe("failure classification", () => {
       reflector: () => {
         throw new AgentBackendRunError("Cursor run always-fails error");
       }});
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       sleep: async () => undefined});
     let state = await engine.start("always fail");
@@ -360,7 +360,7 @@ describe("failure classification", () => {
   it("refuses retry on a config-kind block without force, and allows it with force", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend: createFakeBackend({})});
     await engine.store.initialize();
     const now = new Date().toISOString();
@@ -387,7 +387,7 @@ describe("failure classification", () => {
   it("keeps retry permissive when blockedRetriable is undefined (legacy runs)", async () => {
     const root = await fixtureRoot();
     const config = fixtureConfig(root);
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend: createFakeBackend({})});
     await engine.store.initialize();
     const state: RunState = {
@@ -412,7 +412,7 @@ describe("failure classification", () => {
         outOfScope: [],
         assumptions: [],
         unknowns: []})});
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     let state = await engine.start("hash drift");
     state = {
       ...state,
@@ -442,7 +442,7 @@ describe("failure classification", () => {
         outOfScope: [],
         assumptions: [],
         unknowns: []})});
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     const state = await engine.start("hash drift");
 
     engine.config.commands.verification = [{ id: "test", command: "npm run changed-test", timeoutMs: 600_000 }];

@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import type { AgentRequest } from "../../src/infrastructure/agents/types.js";
-import { HarnessEngine } from "../../src/application/harness-engine.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import {
   createPlannerPrdSequence,
   HIGH_LEVEL_PLAN,
@@ -33,7 +33,7 @@ describe("plan() workspace guard", () => {
     }
   });
 
-  it("blocks on a dirty worktree before invoking the planner", async () => {
+  it("blocks on a dirty workspace before invoking the planner", async () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true } as never,
@@ -55,7 +55,7 @@ describe("plan() workspace guard", () => {
       },
       "scenario-planner": () => SCENARIO_PLANNER_OUTPUT});
 
-    const engine = new HarnessEngine(fixture.config, { backend });
+    const engine = new WorkerHarnessRuntime(fixture.config, { backend });
     const planning = await reachPlanning(engine);
 
     await writeFile(path.join(engine.paths.workspaceRoot, "package-lock.json"), "{}\n", "utf8");
@@ -70,7 +70,7 @@ describe("plan() workspace guard", () => {
     expect(blocked.tasks).toHaveLength(0);
   });
 
-  it("persists the plan when the planner dirties the worktree, and retry continues the cold path", async () => {
+  it("persists the plan when the planner dirties the workspace, and retry continues the cold path", async () => {
     fixture = await createProjectFixture({
       config: {
         git: { enabled: true } as never,
@@ -79,7 +79,7 @@ describe("plan() workspace guard", () => {
     await fixture.initGit();
 
     let plannerCalls = 0;
-    let worktreeRoot = "";
+    let workspaceRoot = "";
     const seq = createPlannerPrdSequence(HIGH_LEVEL_PLAN);
     const backend = createFakeBackend({
       reflector: () => REFLECT_OUTPUT,
@@ -89,7 +89,7 @@ describe("plan() workspace guard", () => {
         resolutions: []}),
       planner: async (request) => {
         plannerCalls += 1;
-        worktreeRoot = request.cwd;
+        workspaceRoot = request.cwd;
         // Only the high-level plan step dirties the tree; PRD continuation must stay clean.
         const text = `${request.prompt ?? ""}\n${request.continuationPrompt ?? ""}`;
         const isPrd = /local PRD|user stories|Expand the approved high-level plan/i.test(text);
@@ -104,7 +104,7 @@ describe("plan() workspace guard", () => {
       },
       "scenario-planner": () => SCENARIO_PLANNER_OUTPUT});
 
-    const engine = new HarnessEngine(fixture.config, { backend });
+    const engine = new WorkerHarnessRuntime(fixture.config, { backend });
     const planning = await reachPlanning(engine);
     const runId = planning.runId;
 
@@ -125,9 +125,9 @@ describe("plan() workspace guard", () => {
       .map((line) => JSON.parse(line) as { type: string });
     expect(events.some((event) => event.type === "plan.created")).toBe(true);
 
-    // Operator clears the dirty worktree the planner left behind.
-    await runGit(worktreeRoot, "add", "--all");
-    await runGit(worktreeRoot, "commit", "-m", "chore: accept planner side effect");
+    // Operator clears the dirty workspace the planner left behind.
+    await runGit(workspaceRoot, "add", "--all");
+    await runGit(workspaceRoot, "commit", "-m", "chore: accept planner side effect");
 
     await engine.retry(runId);
     const resumed = await engine.advance(runId);
@@ -147,7 +147,7 @@ describe("plan() workspace guard", () => {
   });
 });
 
-async function reachPlanning(engine: HarnessEngine) {
+async function reachPlanning(engine: WorkerHarnessRuntime) {
   let state = await engine.start("Add a greeting feature");
   expect(state.phase).toBe("new");
   state = await engine.advance(state.runId);

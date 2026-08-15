@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
-import { HarnessEngine } from "../../src/application/harness-engine.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import { withDiagnosticArtifacts } from "../testkit/diagnostics.js";
 import { createProjectFixture, type ProjectFixture } from "../testkit/project-fixture.js";
 
@@ -24,7 +24,7 @@ describe("Phase 5 stale-lock recovery", () => {
     fixture = undefined;
   });
 
-  it("allows concurrent worktree advances without corrupting either run", async () => {
+  it("allows concurrent workspace advances without corrupting either run", async () => {
     fixture = await createProjectFixture({
       config: {
         agent: { promptBuilder: false, schemaRepairAttempts: 0, timeoutMs: 5_000, provider: "cursor" },
@@ -53,7 +53,7 @@ describe("Phase 5 stale-lock recovery", () => {
           releaseB = resolve;
         });
 
-        const engineA = new HarnessEngine(fixture!.config, {
+        const engineA = new WorkerHarnessRuntime(fixture!.config, {
           backend: createFakeBackend({
             reflector: async () => {
               startedA();
@@ -62,7 +62,7 @@ describe("Phase 5 stale-lock recovery", () => {
             },
           }),
         });
-        const engineB = new HarnessEngine(fixture!.config, {
+        const engineB = new WorkerHarnessRuntime(fixture!.config, {
           backend: createFakeBackend({
             reflector: async () => {
               startedB();

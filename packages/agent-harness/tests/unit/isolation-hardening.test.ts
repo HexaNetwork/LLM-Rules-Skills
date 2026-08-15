@@ -4,19 +4,24 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assertSandboxIsolationProbePassed,
-  capabilitiesForBackend,
-  checkWorkspaceIsolation,
+  defaultSandboxIsolationProbeExecutor,
   ensureSandboxIsolationProbe,
   evaluateSandboxIsolationSelfCheck,
   findCachedSandboxIsolationProbe,
   loadSandboxIsolationProbeCache,
+  pruneSandboxIsolationProbeVolumes,
   saveSandboxIsolationProbeCache,
   sandboxIsolationProbeCacheKey,
   sandboxIsolationProbePassed,
   SANDBOX_ISOLATION_PROBE_POLICY_VERSION,
   type SandboxIsolationProbeExecutor,
   type SandboxIsolationProbeReport,
-} from "../../src/application/index.js";
+} from "../../src/application/sandbox-isolation-probe.js";
+import {
+  capabilitiesForBackend,
+  checkWorkspaceIsolation,
+} from "../../src/application/workspace-isolation.js";
+import { reconcileOrphanContainers } from "../../src/application/orphan-reconciler.js";
 import { HarnessConfigSchema } from "../../src/config/schema.js";
 import {
   buildHardenedContainerSpec,
@@ -168,9 +173,6 @@ describe("sandbox isolation probe gating", () => {
     docker.volumes.set("ah-probe-leftover2", { name: "ah-probe-leftover2", driver: "local" });
     docker.volumes.set("ah-ws-project-run-1", { name: "ah-ws-project-run-1", driver: "local" });
 
-    const { pruneSandboxIsolationProbeVolumes, reconcileOrphanContainers } = await import(
-      "../../src/application/index.js"
-    );
     const pruned = await pruneSandboxIsolationProbeVolumes(docker);
     expect(pruned.found.sort()).toEqual(["ah-probe-leftover1", "ah-probe-leftover2"]);
     expect(pruned.removed.sort()).toEqual(["ah-probe-leftover1", "ah-probe-leftover2"]);
@@ -212,22 +214,17 @@ describe("sandbox isolation probe gating", () => {
 });
 
 describe("capability advertising after probe", () => {
-  it("Docker mode advertises canRestrictWritableWorkspace only after probe success", () => {
+  it("advertises canRestrictWritableWorkspace only after Docker probe success", () => {
     const backend = createFakeBackend({});
     expect(
       capabilitiesForBackend(backend, "fake", {
-        runtime: "docker",
         sandboxIsolationProbePassed: false,
       }).canRestrictWritableWorkspace,
     ).toBe(false);
     expect(
       capabilitiesForBackend(backend, "fake", {
-        runtime: "docker",
         sandboxIsolationProbePassed: true,
       }).canRestrictWritableWorkspace,
-    ).toBe(true);
-    expect(
-      capabilitiesForBackend(backend, "fake", { runtime: "local" }).canRestrictWritableWorkspace,
     ).toBe(true);
   });
 
@@ -237,7 +234,6 @@ describe("capability advertising after probe", () => {
         controlRoot: "/repo",
         stateRoot: "/state",
         workspaceRoot: WORKER_WORKSPACE_PATH,
-        worktreeRoot: "/wt",
       },
       homeRoot: "/home",
       strictIsolation: true,
@@ -251,17 +247,19 @@ describe("capability advertising after probe", () => {
   });
 
   it("default probe overrides worker ENTRYPOINT with self-check path", async () => {
-    const { defaultSandboxIsolationProbeExecutor } = await import(
-      "../../src/application/index.js"
-    );
     const { WORKER_ISOLATION_SELF_CHECK_PATH } = await import(
       "../../src/worker/protocol.js"
     );
     const probeDir = await mkdtemp(path.join(tmpdir(), "ah-probe-rs-"));
     const docker = createFakeDockerClient({
       scripted: [
+        // Staging the mode-000 secret fixture into its disposable volume.
         {
-          match: /^run /,
+          match: "--entrypoint /bin/sh",
+          result: { exitCode: 0, stdout: "", stderr: "", timedOut: false },
+        },
+        {
+          match: WORKER_ISOLATION_SELF_CHECK_PATH,
           result: {
             exitCode: 0,
             stdout: JSON.stringify({
@@ -289,7 +287,9 @@ describe("capability advertising after probe", () => {
       workspaceVolumeName: "ah-probe-vol",
     });
     expect(report.ok).toBe(true);
-    const runCall = docker.calls.find((call) => call.args[0] === "run");
+    const runCall = docker.calls.find(
+      (call) => call.args[0] === "run" && call.args.includes(WORKER_ISOLATION_SELF_CHECK_PATH),
+    );
     expect(runCall?.args).toEqual(
       expect.arrayContaining(["--entrypoint", WORKER_ISOLATION_SELF_CHECK_PATH, DIGEST]),
     );
@@ -299,12 +299,13 @@ describe("capability advertising after probe", () => {
   });
 
   it("classifies executable-not-found as missing self-check, not missing image", async () => {
-    const { defaultSandboxIsolationProbeExecutor } = await import(
-      "../../src/application/index.js"
-    );
     const probeDir = await mkdtemp(path.join(tmpdir(), "ah-probe-miss-"));
     const docker = createFakeDockerClient({
       scripted: [
+        {
+          match: "--entrypoint /bin/sh",
+          result: { exitCode: 0, stdout: "", stderr: "", timedOut: false },
+        },
         {
           match: /^run /,
           result: {
@@ -352,7 +353,7 @@ describe("secret and mount/resource hardening (unit)", () => {
 
   it("prefers Cursor API key secret file over env and detects argv leaks", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ah-key-"));
-    const secretPath = path.join(dir, "execution-secrets", "cursor-api-key");
+    const secretPath = path.join(dir, "worker-bootstrap", "cursor-api-key.token");
     await writeCursorApiKeySecretFile(secretPath, "file-key-value-abc");
     await writeCursorApiKeySecretFile(secretPath, "file-key-value-abc");
     await writeCursorApiKeySecretFile(secretPath, "rotated-file-key-value-xyz");

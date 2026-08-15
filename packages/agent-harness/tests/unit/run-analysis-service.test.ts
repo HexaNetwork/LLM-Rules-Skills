@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HarnessEngine } from "../../src/application/harness-engine.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
@@ -16,7 +16,7 @@ describe("run analysis prompt generation", () => {
         };
       },
     });
-    const engine = new HarnessEngine(fixtureConfig(root), { backend });
+    const engine = new WorkerHarnessRuntime(fixtureConfig(root), { backend });
     await engine.start("Exercise the manual analysis trigger", "analysis-run", false, false);
 
     await engine.generateRunAnalysisPrompt("analysis-run");

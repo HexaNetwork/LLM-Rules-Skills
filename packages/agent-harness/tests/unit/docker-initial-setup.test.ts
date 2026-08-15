@@ -61,9 +61,8 @@ describe("continueDockerRunAfterWorkspaceReady", () => {
   it("rejects non-docker workspaces", async () => {
     vi.mocked(loadRunWorkspace).mockResolvedValue({
       version: 1,
-      kind: "git-worktree",
+      kind: "git-disabled",
       controlRoot: "D:/repo",
-      worktreePath: "D:/worktrees/run-1",
       createdAt: new Date().toISOString(),
     });
 

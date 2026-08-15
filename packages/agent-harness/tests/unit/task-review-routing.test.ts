@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
-import { HarnessEngine } from "../../src/application/harness-engine.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 function reviewingTask(overrides: Partial<BuildTask> = {}): BuildTask {
@@ -35,7 +35,7 @@ function reviewingTask(overrides: Partial<BuildTask> = {}): BuildTask {
 }
 
 async function seedReviewingRun(
-  engine: HarnessEngine,
+  engine: WorkerHarnessRuntime,
   config: ReturnType<typeof fixtureConfig>,
   runId: string,
   task: BuildTask,
@@ -73,7 +73,7 @@ describe("task-reviewer routing", () => {
         return { approved: true, summary: "ok", findings: [] };
       },
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     const started = await seedReviewingRun(engine, config, "task-reviewer-role", reviewingTask());
     const state = await engine.advance(started.runId);
     expect(roles[0]).toBe("task-reviewer");
@@ -97,7 +97,7 @@ describe("task-reviewer routing", () => {
         ],
       }),
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     const started = await seedReviewingRun(
       engine,
       config,
@@ -129,7 +129,7 @@ describe("task-reviewer routing", () => {
         ],
       }),
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     const started = await seedReviewingRun(
       engine,
       config,
@@ -160,7 +160,7 @@ describe("task-reviewer routing", () => {
         ],
       }),
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     const started = await seedReviewingRun(
       engine,
       config,
@@ -204,7 +204,7 @@ describe("task-reviewer routing", () => {
         return { summary: "repaired", changedFiles: ["src/greet.ts"] };
       },
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     const started = await seedReviewingRun(
       engine,
       config,
@@ -234,7 +234,7 @@ describe("task-reviewer routing", () => {
         return { approved: true, summary: "final ok", findings: [] };
       },
     });
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     const doneTask = reviewingTask({
       status: "done",
       step: "done",

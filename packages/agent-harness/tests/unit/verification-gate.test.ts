@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createFakeBackend } from "../../src/infrastructure/agents/fake-backend.js";
 import { configurationHash } from "../../src/config/schema.js";
-import { HarnessEngine } from "../../src/application/harness-engine.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import { VerificationSettingsPatchSchema } from "../../src/domain.js";
 import {
   confirmGrillAndAdvance,
@@ -57,7 +57,7 @@ describe("verification settings gate", () => {
       workflow: { } as never,
       agent: { promptBuilder: false } as never,
       commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never});
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       commands: passingCommandRunner()});
     let state = await engine.start("Ship greeting");
@@ -123,7 +123,7 @@ describe("verification settings gate", () => {
       workflow: { } as never,
       agent: { promptBuilder: false } as never,
       commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never});
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       commands: passingCommandRunner()});
     let state = await engine.start("Ship greeting");
@@ -148,7 +148,7 @@ describe("verification settings gate", () => {
   it("rejects unrelated keys on the verification patch schema", () => {
     expect(() =>
       VerificationSettingsPatchSchema.parse({
-        git: { autoCommitPreflight: true }}),
+        git: { enabled: true }}),
     ).toThrow();
     expect(() =>
       VerificationSettingsPatchSchema.parse({
@@ -182,7 +182,7 @@ describe("verification settings gate", () => {
     const config = fixtureConfig(root, {
       workflow: { } as never,
       agent: { promptBuilder: false } as never});
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       commands: passingCommandRunner()});
     let state = await engine.start("Ship greeting");
@@ -229,7 +229,7 @@ describe("verification settings gate", () => {
     const config = fixtureConfig(root, {
       workflow: { } as never,
       agent: { promptBuilder: false } as never});
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       commands: passingCommandRunner()});
     let state = await engine.start("Ship greeting");
@@ -257,7 +257,7 @@ describe("verification settings gate", () => {
     const config = fixtureConfig(root, {
       workflow: { } as never,
       agent: { promptBuilder: false } as never});
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       commands: passingCommandRunner()});
     let state = await engine.start("Ship greeting");
@@ -288,7 +288,7 @@ describe("verification settings gate", () => {
       workflow: { } as never,
       agent: { promptBuilder: false } as never,
       commands: { verification: [{ id: "test", command: "npm test", timeoutMs: 600_000 }] } as never});
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       commands: {
         async run(command) {
@@ -357,7 +357,7 @@ describe("verification settings gate", () => {
     const config = fixtureConfig(root, {
       workflow: { } as never,
       agent: { promptBuilder: false } as never});
-    const engine = new HarnessEngine(config, {
+    const engine = new WorkerHarnessRuntime(config, {
       backend,
       commands: {
         async run(command) {

@@ -135,7 +135,6 @@ describe("DockerCloneProvisioner lifecycle (fake Docker)", () => {
     const fixture = await createProjectFixture({
       config: {
         execution: {
-          runtime: "docker",
           docker: { sandboxRequired: false },
         },
       },
@@ -148,7 +147,6 @@ describe("DockerCloneProvisioner lifecycle (fake Docker)", () => {
         controlRoot: fixture.root,
         stateRoot: path.join(fixture.root, ".agent-harness"),
         workspaceRoot: fixture.root,
-        worktreeRoot: path.join(fixture.root, ".agent-harness", "worktrees"),
       },
       store: {
         withWorkspaceAdminLock: async <T>(_h: unknown, work: () => Promise<T>) => work(),
@@ -181,7 +179,6 @@ describe("DockerCloneProvisioner lifecycle (fake Docker)", () => {
     const fixture = await createProjectFixture({
       config: {
         execution: {
-          runtime: "docker",
           docker: {
             sandboxRequired: false,
             workerImageDigest:
@@ -221,7 +218,6 @@ describe("DockerCloneProvisioner lifecycle (fake Docker)", () => {
         controlRoot: fixture.root,
         stateRoot,
         workspaceRoot: fixture.root,
-        worktreeRoot: path.join(stateRoot, "worktrees"),
       },
       store,
       docker,
@@ -256,13 +252,11 @@ describe("DockerCloneProvisioner lifecycle (fake Docker)", () => {
     const provisioner = new DockerCloneProvisioner({
       config: HarnessConfigSchema.parse({
         repositoryRoot: ".",
-        execution: { runtime: "docker" },
       }),
       paths: {
         controlRoot: "/repo",
         stateRoot: "/state",
         workspaceRoot: "/repo",
-        worktreeRoot: "/worktrees",
       },
       store: {
         withWorkspaceAdminLock: async <T>(_h: unknown, work: () => Promise<T>) => work(),
@@ -318,7 +312,6 @@ describe("Docker path model + architecture guards", () => {
       controlRoot: path.resolve("/tmp/repo"),
       stateRoot: path.resolve("/tmp/state"),
       workspaceRoot: WORKER_WORKSPACE_PATH,
-      worktreeRoot: path.resolve("/tmp/worktrees"),
     };
     const ok = checkWorkspaceIsolation({
       paths,
@@ -372,19 +365,16 @@ describe("Docker path model + architecture guards", () => {
     }
   });
 
-  it("wires Docker runtime to DockerCloneProvisioner without host worktree fallback", () => {
+  it("wires the implicit provisioner to DockerCloneProvisioner", () => {
     const config = HarnessConfigSchema.parse({
       repositoryRoot: ".",
-      execution: { runtime: "docker" },
     });
     const deps = createApplicationDependencies(config, {
       backend: createFakeBackend({}),
       docker: createFakeDockerClient({ healthy: true }),
     });
-    expect(deps.workspaceProvisioner.runtime).toBe("docker");
+    expect(deps.workspaceProvisioner).toBeInstanceOf(DockerCloneProvisioner);
     expect(deps.commands).toBeDefined();
-    // Architecture: Docker mode must not resolve the local worktree provisioner.
-    expect(deps.workspaceProvisioner.runtime).not.toBe("local");
   });
 });
 

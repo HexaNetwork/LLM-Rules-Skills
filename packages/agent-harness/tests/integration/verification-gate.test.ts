@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HarnessEngine } from "../../src/application/harness-engine.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import {
   confirmGrillAndAdvance,
   confirmPlanAndAdvance,
@@ -97,7 +97,7 @@ describe("verification gate integration", () => {
         role: "reviewer",
         output: { approved: true, summary: "final ok", findings: [] }}]);
 
-    const engine = new HarnessEngine(fixture.config, {
+    const engine = new WorkerHarnessRuntime(fixture.config, {
       backend: scripted.backend,
       commands: passingCommandRunner()});
     let state = await engine.start("Add greeting");
@@ -196,7 +196,7 @@ describe("verification gate integration", () => {
       {
         role: "reviewer",
         output: { approved: true, summary: "final ok", findings: [] }}]);
-    const engine = new HarnessEngine(fixture.config, {
+    const engine = new WorkerHarnessRuntime(fixture.config, {
       backend: scripted.backend,
       commands: passingCommandRunner()});
     let state = await engine.start("Add greeting");
@@ -244,7 +244,7 @@ describe("verification gate integration", () => {
               scenarioIds: ["greet-happy"],
               blockedBy: []}],
           proposedInstalls: []}}]);
-    const engine = new HarnessEngine(fixture.config, {
+    const engine = new WorkerHarnessRuntime(fixture.config, {
       backend: scripted.backend,
       commands: {
         async run(command) {

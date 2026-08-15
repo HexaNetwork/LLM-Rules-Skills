@@ -10,7 +10,10 @@ import {
   runExecutionStatePath,
   runBundleImportPath,
 } from "../../src/application/paths.js";
-import { resolveWorkspaceProvisioner } from "../../src/workspace/index.js";
+import {
+  DockerCloneProvisioner,
+  resolveWorkspaceProvisioner,
+} from "../../src/workspace/index.js";
 
 describe("execution path constants", () => {
   it("exposes the isolated worker workspace constant", () => {
@@ -53,12 +56,10 @@ describe("run execution and transport schemas", () => {
     expect(
       RunExecutionStateSchema.parse({
         version: 1,
-        runtime: "docker",
         lifecycle: "running",
         containerName: "ah-proj-run-1",
         containerId: "ephemeral",
         hostPort: 4123,
-        rpcSecretRelativePath: "execution-secrets/rpc.token",
         rpcTokenFingerprint: "abcd1234abcd1234",
         updatedAt: "2026-08-13T12:00:00.000Z",
       }).containerName,
@@ -71,6 +72,25 @@ describe("run execution and transport schemas", () => {
         updatedAt: "2026-08-13T12:00:00.000Z",
       }).status,
     ).toBe("seed-ready");
+  });
+
+  it("does not model retired runtime or bootstrap secret paths", () => {
+    const current = {
+      version: 1,
+      lifecycle: "running",
+      rpcTokenFingerprint: "abcd1234abcd1234",
+      updatedAt: "2026-08-13T12:00:00.000Z",
+    };
+    expect(RunExecutionStateSchema.parse(current)).not.toHaveProperty("runtime");
+    expect(() =>
+      RunExecutionStateSchema.parse({ ...current, runtime: "local" }),
+    ).toThrow();
+    expect(() =>
+      RunExecutionStateSchema.parse({
+        ...current,
+        rpcSecretRelativePath: "retired/rpc.token",
+      }),
+    ).toThrow();
   });
 });
 
@@ -85,10 +105,9 @@ describe("resolveWorkspaceProvisioner", () => {
         controlRoot: "/repo",
         stateRoot: "/state",
         workspaceRoot: "/repo",
-        worktreeRoot: "/worktrees",
       },
       store,
     });
-    expect(provisioner.runtime).toBe("docker");
+    expect(provisioner).toBeInstanceOf(DockerCloneProvisioner);
   });
 });

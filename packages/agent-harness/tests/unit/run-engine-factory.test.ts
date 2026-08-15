@@ -20,7 +20,6 @@ describe("openRunHarness", () => {
       repositoryRoot: root,
       stateDirectory: stateRoot,
       git: { enabled: true, baseBranch: "main" },
-      execution: { runtime: "docker" },
       knowledge: {
         sources: [{ path: "README.md" }],
         repositoryIntelligence: { enabled: false },
@@ -43,7 +42,7 @@ describe("openRunHarness", () => {
     );
 
     await expect(
-      openRunHarness(config, runId, { backend: createFakeBackend({}) }, { validateWorktree: false }),
+      openRunHarness(config, runId, { backend: createFakeBackend({}) }, { validateWorkspace: false }),
     ).rejects.toThrow(/workspace metadata is missing/i);
   });
 
@@ -58,7 +57,6 @@ describe("openRunHarness", () => {
       repositoryRoot: root,
       stateDirectory: stateRoot,
       git: { enabled: true, baseBranch: "main" },
-      execution: { runtime: "docker" },
       knowledge: {
         sources: [{ path: "README.md" }],
         repositoryIntelligence: { enabled: false },
@@ -84,7 +82,7 @@ describe("openRunHarness", () => {
       config,
       runId,
       { backend: createFakeBackend({}) },
-      { validateWorktree: false, allowMissingWorkspace: true },
+      { validateWorkspace: false, allowMissingWorkspace: true },
     );
 
     expect(opened.config.execution).not.toHaveProperty("runtime");
@@ -104,7 +102,6 @@ describe("openRunHarness", () => {
       repositoryRoot: root,
       stateDirectory: stateRoot,
       git: { enabled: true, baseBranch: "main" },
-      execution: { runtime: "docker" },
       knowledge: {
         sources: [{ path: "README.md" }],
         repositoryIntelligence: { enabled: false },
@@ -162,7 +159,7 @@ describe("openRunHarness", () => {
         wrongProjectConfig,
         runId,
         { backend: createFakeBackend({}), store },
-        { validateWorktree: false },
+        { validateWorkspace: false },
       ),
     ).resolves.toMatchObject({
       workspace: { kind: "docker-clone" },

@@ -410,6 +410,8 @@ describe("real Docker isolation lane", () => {
       );
       expect(built.exitCode, built.stderr || built.stdout).toBe(0);
       expect((await client.exec(["volume", "create", volume])).exitCode).toBe(0);
+      // Seed through the production init entrypoint so the clone carries the
+      // harness identity marker the worker validates on reopen.
       const initialized = await client.exec(
         [
           "run",
@@ -417,28 +419,52 @@ describe("real Docker isolation lane", () => {
           initName,
           "--rm",
           "--user",
-          "0:0",
+          "10001:10001",
           "--mount",
           `type=volume,source=${volume},target=/workspace`,
           "--mount",
-          `type=bind,source=${seed.bundlePath},target=/seed/repository.bundle,readonly`,
+          `type=bind,source=${seed.bundlePath},target=/seed.bundle,readonly`,
+          "--entrypoint",
+          "/opt/agent-harness/cli",
+          image,
+          "workspace-init",
+          "--workspace",
+          "/workspace",
+          "--seed-bundle",
+          "/seed.bundle",
+          "--base-sha",
+          baseSha,
+          "--run-id",
+          runId,
+          "--seed-bundle-hash",
+          seed.bundleHash,
+          "--generation",
+          "0",
+        ],
+        { timeoutMs: 120_000 },
+      );
+      expect(initialized.exitCode, initialized.stderr || initialized.stdout).toBe(0);
+
+      const configured = await client.exec(
+        [
+          "run",
+          "--rm",
+          "--user",
+          "10001:10001",
+          "--mount",
+          `type=volume,source=${volume},target=/workspace`,
           "--entrypoint",
           "sh",
           image,
           "-c",
           [
-            "git init /tmp/source",
-            `git -C /tmp/source fetch /seed/repository.bundle ${baseSha}`,
-            "git -C /tmp/source checkout -b main FETCH_HEAD",
-            "cp -a /tmp/source/. /workspace/",
             "git -C /workspace config user.email harness@example.com",
             "git -C /workspace config user.name 'Harness Test'",
-            "chown -R 10001:10001 /workspace",
           ].join(" && "),
         ],
-        { timeoutMs: 120_000 },
+        { timeoutMs: 60_000 },
       );
-      expect(initialized.exitCode, initialized.stderr || initialized.stdout).toBe(0);
+      expect(configured.exitCode, configured.stderr || configured.stdout).toBe(0);
 
       const config = HarnessConfigSchema.parse({
         repositoryRoot: fixture.root,

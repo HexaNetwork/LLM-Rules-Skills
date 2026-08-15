@@ -82,7 +82,7 @@ describe("formatWorkspaceDivergenceMessage", () => {
       changedPaths: ["external-edit.txt", "src/a.ts"]});
     const diff = diffWorkspaceEvidence(previous, observed);
     const message = formatWorkspaceDivergenceMessage(diff, observed);
-    expect(message).toMatch(/Workspace diverged in this run's worktree/i);
+    expect(message).toMatch(/Workspace diverged in this run's Docker workspace/i);
     expect(message).toMatch(/HEAD/);
     expect(message).toMatch(/working files/i);
     expect(message).not.toMatch(/\bindex\b/i);

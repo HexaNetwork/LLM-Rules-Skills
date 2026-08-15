@@ -362,8 +362,6 @@ async function writeFixtureConfigYaml(configPath: string, config: HarnessConfig)
     git: {
       enabled: config.git.enabled,
       baseBranch: config.git.baseBranch,
-      autoCommitPreflight: config.git.autoCommitPreflight,
-      preflightCommitOrder: config.git.preflightCommitOrder,
       ignoredArtifactPatterns: config.git.ignoredArtifactPatterns},
     tracker: config.tracker,
     knowledge: {

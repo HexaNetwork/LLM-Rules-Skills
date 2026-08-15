@@ -84,7 +84,7 @@ describe("dashboard document", () => {
     expect(html).toContain("indexOf('repository:') === 0 ? 'structural'");
     expect(html).toContain("Start from branch");
     expect(html).toContain('id="baseBranch"');
-    expect(html).toContain("Creates the run worktree from this local branch tip");
+    expect(html).toContain("Seeds the Docker workspace from this committed local branch tip");
     expect(html).toContain("Does not switch or clean the project folder");
     expect(html).toContain("fillBaseBranchSelect");
     expect(html).toContain("body.baseBranch = baseBranchSelect.value");
@@ -144,7 +144,7 @@ describe("dashboard document", () => {
     expect(html).toContain("Copy branch name");
     expect(html).toContain("Copy base branch");
     expect(html).toContain("Copy base SHA");
-    expect(html).toContain("Copy worktree path");
+    expect(html).not.toContain("Copy worktree path");
     expect(html).toContain("bootstrap.project.root");
     expect(html).toContain("data-setting-key");
     expect(html).toContain("Settings apply to new runs. Blocked runs use a reviewed recommended repair");
@@ -471,13 +471,13 @@ describe("dashboard document", () => {
     expect(html).toContain("(run.title || \"\") + \" \" + run.idea");
   });
 
-  it("shows worktree, base SHA, and branch pending in delivery status", () => {
+  it("shows Docker delivery identity, base SHA, and branch pending", () => {
     const html = renderDashboard();
     const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
 
     expect(script).toContain("branch pending");
     expect(script).toContain("Base SHA");
-    expect(script).toContain("Worktree");
+    expect(script).not.toContain("Worktree");
     expect(script).toContain("state.detail.workspace");
     expect(script).not.toContain("Not created yet");
   });
@@ -579,7 +579,7 @@ describe("dashboard document", () => {
     expect(html).toContain('data-action="cleanup"');
     expect(html).not.toContain('data-action="migrate_workspace"');
     expect(html).not.toContain('class="preflight-commit-actions"');
-    expect(html).toContain("Committed-base worktree");
+    expect(html).toContain("Committed-base workspace");
   });
 
   it("offers Accept current tree and continue for working-tree divergence blocks", () => {
@@ -595,8 +595,8 @@ describe("dashboard document", () => {
     const html = renderDashboard();
 
     expect(html).toContain('if (s.phase === "blocked" && !state.detail.job)');
-    expect(html).toContain('jobAction === "commit_preflight"');
-    expect(html).toContain("Committing the working tree and retrying");
+    expect(html).not.toContain("commit_preflight");
+    expect(html).toContain("Accepting the current tree and continuing");
     expect(html).toContain("state.detail.job = response.job");
   });
 

@@ -4,35 +4,36 @@ import {
   assertWorkspaceIsolation,
   checkWorkspaceIsolation,
   forbiddenAgentWritableRoots} from "../../src/application/workspace-isolation.js";
+import { WORKER_WORKSPACE_PATH } from "../../src/application/paths.js";
 import type { AgentBackend } from "../../src/infrastructure/agents/types.js";
 
 describe("workspace isolation", () => {
   const controlRoot = path.resolve("/tmp/repo");
   const stateRoot = path.resolve("/tmp/harness-home/projects/p1");
-  const worktreeRoot = path.resolve("/tmp/repo-worktrees");
-  const workspaceRoot = path.join(worktreeRoot, "run-1");
+  const workspaceRoot = WORKER_WORKSPACE_PATH;
   const homeRoot = path.resolve("/tmp/harness-home");
 
   const paths = {
     controlRoot,
     stateRoot,
-    workspaceRoot,
-    worktreeRoot};
+    workspaceRoot};
 
-  it("accepts the run worktree as the writable root", () => {
+  it("accepts the Docker workspace as the writable root", () => {
     const result = checkWorkspaceIsolation({
       paths,
       homeRoot,
       strictIsolation: true,
       capabilities: { canRestrictWritableWorkspace: true, providerId: "cursor" },
-      agentCwd: workspaceRoot});
+      agentCwd: workspaceRoot,
+      containerExecution: true,
+      sandboxIsolationProbePassed: true});
     expect(result.ok).toBe(true);
     expect(forbiddenAgentWritableRoots(paths, homeRoot)).toEqual(
       expect.arrayContaining([homeRoot, stateRoot]),
     );
   });
 
-  it("rejects harness home as a writable agent mount", () => {
+  it("rejects a non-Docker writable agent mount", () => {
     const result = checkWorkspaceIsolation({
       paths,
       homeRoot,
@@ -40,7 +41,7 @@ describe("workspace isolation", () => {
       capabilities: { canRestrictWritableWorkspace: true, providerId: "cursor" },
       agentCwd: homeRoot});
     expect(result.ok).toBe(false);
-    expect(result.issues.join(" ")).toMatch(/harness home/);
+    expect(result.issues.join(" ")).toMatch(/Docker agent writable workspace/);
   });
 
   it("refuses strict isolation when the provider cannot restrict the workspace", () => {
@@ -50,7 +51,9 @@ describe("workspace isolation", () => {
         homeRoot,
         strictIsolation: true,
         capabilities: { canRestrictWritableWorkspace: false, providerId: "open" },
-        agentCwd: workspaceRoot}),
+        agentCwd: workspaceRoot,
+        containerExecution: true,
+        sandboxIsolationProbePassed: true}),
     ).toThrow(/cannot restrict the writable workspace/);
   });
 
@@ -68,7 +71,9 @@ describe("workspace isolation", () => {
         homeRoot,
         strictIsolation: true,
         capabilities: backend.workspaceCapabilities!(),
-        agentCwd: workspaceRoot}),
+        agentCwd: workspaceRoot,
+        containerExecution: true,
+        sandboxIsolationProbePassed: true}),
     ).toThrow(/incapable/);
   });
 });

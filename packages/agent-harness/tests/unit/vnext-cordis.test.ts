@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import {
   bootProfile,
@@ -8,14 +8,6 @@ import {
 } from "../../src/vnext/boot/boot-profile.js";
 import { securityPolicyPlugin } from "../../src/vnext/plugins/security-policy.js";
 import { immutableEnvironmentPlugin } from "../../src/vnext/plugins/immutable-environment.js";
-import {
-  RunLifecycleCoordinator,
-  type LifecycleStageHandler,
-} from "../../src/vnext/plugins/run-lifecycle.js";
-import type {
-  HostLifecycleState,
-  LifecycleStage,
-} from "../../src/vnext/services/contracts.js";
 import { profileForDump } from "../../src/vnext/profiles/index.js";
 
 describe("Cordis vNext profiles", () => {
@@ -78,6 +70,81 @@ describe("Cordis vNext profiles", () => {
     expect(dump).not.toContain("hidden");
   });
 
+  it.each([
+    [
+      "host",
+      [
+        "runState",
+        "runArtifacts",
+        "runLifecycle",
+        "containerRuntime",
+        "workspaceSource",
+        "environment",
+        "workerControl",
+        "credentials",
+        "publisher",
+        "webServer",
+        "securityPolicy",
+      ],
+    ],
+    [
+      "worker",
+      [
+        "runState",
+        "runArtifacts",
+        "workerControl",
+        "credentials",
+        "agents",
+        "knowledge",
+        "repositoryIntelligence",
+        "verification",
+        "resultExport",
+        "commands",
+        "securityPolicy",
+        "roles",
+        "workflow",
+      ],
+    ],
+  ] as const)("declares every required %s provider exactly once", (name, requiredServices) => {
+    const profile = profileForDump(name);
+    expect(profile.production).toBe(true);
+    expect(profile.hmr).toBe(false);
+    expect(profile.requiredServices).toEqual(requiredServices);
+
+    for (const service of requiredServices) {
+      const providers = profile.rows.filter(
+        (row) => !row.disabled && row.provides?.includes(service),
+      );
+      expect(providers.map((row) => row.id), `provider for ${name}.${service}`).toHaveLength(1);
+    }
+  });
+
+  it.each(["host", "worker"] as const)(
+    "keeps %s dump inspection usable while production boot fails loudly without providers",
+    async (name) => {
+      const profile = profileForDump(name);
+      const dump = JSON.parse(dumpProfileConfig(profile)) as {
+        profile: string;
+        production: boolean;
+        requiredServices: string[];
+        rows: Array<{ id: string; provides: string[] }>;
+      };
+
+      expect(dump).toMatchObject({
+        profile: name,
+        production: true,
+        requiredServices: profile.requiredServices,
+      });
+      expect(dump.rows.length).toBe(profile.rows.length);
+      await expect(bootProfile(profile)).rejects.toThrow(
+        new RegExp(
+          `Failed to boot Cordis profile "${name}".*(required|service|implementation|unavailable)`,
+          "i",
+        ),
+      );
+    },
+  );
+
   it("resolves only the configured immutable image digest", async () => {
     const digest = `sha256:${"a".repeat(64)}`;
     const runtimePlugin = (ctx: Context) =>
@@ -113,132 +180,5 @@ describe("Cordis vNext profiles", () => {
       digest,
     });
     await booted.dispose();
-  });
-});
-
-describe("Cordis host lifecycle", () => {
-  it("validates each idempotent stage and resumes from the last durable boundary", async () => {
-    const durable = new Map<string, HostLifecycleState>();
-    const completed = new Set<LifecycleStage>();
-    const apply = vi.fn(async (_runId: string, stage: LifecycleStage) => {
-      completed.add(stage);
-    });
-    const handlers = Object.fromEntries(
-      [
-        "image_ready",
-        "volume_ready",
-        "workspace_seeded",
-        "worker_starting",
-        "worker_ready",
-        "running",
-        "export_ready",
-        "settled",
-      ].map((stage) => [
-        stage,
-        {
-          inspect: async () => completed.has(stage as LifecycleStage),
-          apply: async (runId: string) => apply(runId, stage as LifecycleStage),
-        } satisfies LifecycleStageHandler,
-      ]),
-    );
-    const emitted: string[] = [];
-    const ctx = {
-      emit: (name: string) => emitted.push(name),
-    } as unknown as Context;
-    const coordinator = new RunLifecycleCoordinator(ctx, {
-      load: async (runId) => durable.get(runId),
-      save: async (state) => {
-        durable.set(state.runId, state);
-      },
-      listRecoverableRunIds: async () => ["run-1"],
-      handlers,
-    });
-
-    await coordinator.enqueue("run-1");
-    expect(durable.get("run-1")?.stage).toBe("settled");
-    expect(apply).toHaveBeenCalledTimes(8);
-    await coordinator.recover();
-    expect(apply).toHaveBeenCalledTimes(8);
-    expect(emitted).toContain("run/settled");
-  });
-
-  it("recovers deterministically after every persisted lifecycle boundary", async () => {
-    const stages: LifecycleStage[] = [
-      "created",
-      "image_ready",
-      "volume_ready",
-      "workspace_seeded",
-      "worker_starting",
-      "worker_ready",
-      "running",
-      "export_ready",
-      "settled",
-    ];
-    for (const [boundaryIndex, boundary] of stages.entries()) {
-      const durable = new Map<string, HostLifecycleState>([
-        ["restart-run", { runId: "restart-run", stage: boundary, revision: boundaryIndex }],
-      ]);
-      const completed = new Set(stages.slice(0, boundaryIndex + 1));
-      const applied: LifecycleStage[] = [];
-      const handlers = Object.fromEntries(
-        stages.slice(1).map((stage) => [
-          stage,
-          {
-            inspect: async () => completed.has(stage),
-            apply: async () => {
-              applied.push(stage);
-              completed.add(stage);
-            },
-          } satisfies LifecycleStageHandler,
-        ]),
-      );
-      const restarted = new RunLifecycleCoordinator(
-        { emit: () => undefined } as unknown as Context,
-        {
-          load: async (runId) => durable.get(runId),
-          save: async (state) => {
-            durable.set(state.runId, state);
-          },
-          listRecoverableRunIds: async () => ["restart-run"],
-          handlers,
-        },
-      );
-
-      await restarted.recover();
-
-      expect(durable.get("restart-run")?.stage).toBe("settled");
-      expect(applied).toEqual(stages.slice(boundaryIndex + 1));
-    }
-  });
-
-  it("persists a retryable failed-stage record without advancing", async () => {
-    let state: HostLifecycleState | undefined;
-    const coordinator = new RunLifecycleCoordinator(
-      { emit: () => undefined } as unknown as Context,
-      {
-        load: async () => state,
-        save: async (next) => {
-          state = next;
-        },
-        listRecoverableRunIds: async () => [],
-        handlers: {
-          image_ready: {
-            inspect: async () => false,
-            apply: async () => {
-              throw new Error("registry unavailable");
-            },
-            retryable: () => true,
-          },
-        },
-      },
-    );
-
-    await expect(coordinator.enqueue("run-2")).rejects.toThrow("registry unavailable");
-    expect(state?.stage).toBe("created");
-    expect(state?.failure).toMatchObject({
-      stage: "image_ready",
-      retryable: true,
-      lastSuccessfulStage: "created",
-    });
   });
 });

@@ -1,31 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   decideDockerCleanup,
-  decideWorktreeCleanup,
   decideWorkspaceCleanup,
   type DockerCleanupFacts,
-  type WorktreeCleanupFacts,
 } from "../../src/domain/workspace-cleanup.js";
 import { decideOrphanAction, type ManagedContainerSummary } from "../../src/application/orphan-reconciler.js";
 import { HARNESS_CONTAINER_LABEL_PREFIX } from "../../src/infrastructure/container/container-spec.js";
 import { commitsImportedOrReachable } from "../../src/application/execution-diagnostics.js";
 import type { BundleImportState } from "../../src/domain/run-execution.js";
-
-function worktreeFacts(overrides: Partial<WorktreeCleanupFacts> = {}): WorktreeCleanupFacts {
-  return {
-    phase: "completed",
-    workspaceKind: "git-worktree",
-    alreadyRemoved: false,
-    dirty: false,
-    pathValid: true,
-    registered: true,
-    gitCommonDirMatches: true,
-    commitsReachableFromRetainedRef: true,
-    hasRetainedNamedRef: true,
-    discard: false,
-    ...overrides,
-  };
-}
 
 function dockerFacts(overrides: Partial<DockerCleanupFacts> = {}): DockerCleanupFacts {
   return {
@@ -40,95 +22,6 @@ function dockerFacts(overrides: Partial<DockerCleanupFacts> = {}): DockerCleanup
     ...overrides,
   };
 }
-
-describe("decideWorktreeCleanup", () => {
-  it("allows removing a clean completed worktree when commits are on a retained ref", () => {
-    expect(decideWorktreeCleanup(worktreeFacts())).toEqual({
-      allow: true,
-      reason: "published-complete",
-    });
-  });
-
-  it("allows already-removed worktrees as a no-op", () => {
-    expect(decideWorktreeCleanup(worktreeFacts({ alreadyRemoved: true }))).toEqual({
-      allow: true,
-      reason: "already-removed",
-    });
-  });
-
-  it("allows clean settled runs with no unique commits even without a delivery branch", () => {
-    expect(
-      decideWorktreeCleanup(
-        worktreeFacts({
-          phase: "cancelled",
-          hasRetainedNamedRef: false,
-          commitsReachableFromRetainedRef: true,
-        }),
-      ),
-    ).toEqual({
-      allow: true,
-      reason: "published-complete",
-    });
-  });
-
-  it("allows discarded unpublished runs only with discard confirmation", () => {
-    expect(
-      decideWorktreeCleanup(
-        worktreeFacts({
-          phase: "cancelled",
-          hasRetainedNamedRef: false,
-          commitsReachableFromRetainedRef: false,
-          discard: false,
-        }),
-      ),
-    ).toEqual({
-      allow: false,
-      reason: "unpublished-requires-discard",
-    });
-
-    expect(
-      decideWorktreeCleanup(
-        worktreeFacts({
-          phase: "cancelled",
-          hasRetainedNamedRef: false,
-          commitsReachableFromRetainedRef: false,
-          discard: true,
-        }),
-      ),
-    ).toEqual({
-      allow: true,
-      reason: "discarded-unpublished",
-    });
-  });
-
-  it("refuses dirty, non-settled, path-invalid, unregistered, and common-dir mismatches", () => {
-    expect(decideWorktreeCleanup(worktreeFacts({ dirty: true })).allow).toBe(false);
-    expect(decideWorktreeCleanup(worktreeFacts({ phase: "executing" })).allow).toBe(false);
-    expect(decideWorktreeCleanup(worktreeFacts({ phase: "blocked" })).allow).toBe(false);
-    expect(decideWorktreeCleanup(worktreeFacts({ pathValid: false })).allow).toBe(false);
-    expect(decideWorktreeCleanup(worktreeFacts({ registered: false })).allow).toBe(false);
-    expect(decideWorktreeCleanup(worktreeFacts({ gitCommonDirMatches: false })).allow).toBe(false);
-  });
-
-  it("refuses non-worktree kinds", () => {
-    expect(decideWorktreeCleanup(worktreeFacts({ workspaceKind: "git-disabled" })).allow).toBe(false);
-  });
-
-  it("refuses completed detached unpublished history without discard", () => {
-    expect(
-      decideWorktreeCleanup(
-        worktreeFacts({
-          hasRetainedNamedRef: false,
-          commitsReachableFromRetainedRef: false,
-          discard: false,
-        }),
-      ),
-    ).toEqual({
-      allow: false,
-      reason: "unpublished-requires-discard",
-    });
-  });
-});
 
 describe("decideDockerCleanup", () => {
   it("allows volume removal when settled, stopped, clean, and imported", () => {

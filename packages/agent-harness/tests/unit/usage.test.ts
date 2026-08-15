@@ -6,7 +6,7 @@ import { ApplicationContext } from "../../src/application/application-context.js
 import { accrueRunUsage } from "../../src/application/usage-ledger.js";
 import { CONFIG_VERSION, configurationHash } from "../../src/config/schema.js";
 import { createRunState, type BuildTask, type RunState } from "../../src/domain.js";
-import { HarnessEngine } from "../../src/application/harness-engine.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import { fixtureConfig, fixtureRoot } from "../helpers.js";
 
 describe("reportedTotal", () => {
@@ -58,7 +58,7 @@ describe("run usage accrual and cost ceiling", () => {
           cacheReadTokens: 60,
           totalTokens: 120};
       }};
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     const hash = configurationHash(config);
     const runId = "config-fixer-usage";
     const state: RunState = {
@@ -101,7 +101,7 @@ describe("run usage accrual and cost ceiling", () => {
       },
       reviewer: () => ({ approved: true, summary: "ok", findings: [] }),
       "message-writer": () => ({ subject: "feat: a", body: "" })});
-    const engine = new HarnessEngine(config, { backend });
+    const engine = new WorkerHarnessRuntime(config, { backend });
     const tasks: BuildTask[] = [1, 2].map((index) => ({
       id: `t${index}`,
       title: `Ship ${index}`,
@@ -157,7 +157,7 @@ describe("run usage accrual and cost ceiling", () => {
             outputPerMillion: 2,
             cacheReadPerMillion: 0.1,
             cacheWritePerMillion: 1.25}}}});
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const engine = new WorkerHarnessRuntime(config, { backend: createFakeBackend({}) });
     const hash = configurationHash(config);
     let state: RunState = {
       ...createRunState("usage-idempotent", "idea", new Date().toISOString(), hash, CONFIG_VERSION),
@@ -217,7 +217,7 @@ describe("run usage accrual and cost ceiling", () => {
       workflow: {
         ...config.workflow,
         testPathPatterns: ["modules/**/src/test/**"]}};
-    const engine = new HarnessEngine(liveConfig, { backend: createFakeBackend({}) });
+    const engine = new WorkerHarnessRuntime(liveConfig, { backend: createFakeBackend({}) });
     const hash = configurationHash(config);
     let state: RunState = {
       ...createRunState("raise-ceiling", "idea", new Date().toISOString(), hash, CONFIG_VERSION),
@@ -255,7 +255,7 @@ describe("run usage accrual and cost ceiling", () => {
         roles: {},
         pricing: {
           "priced-model": { inputPerMillion: 10, outputPerMillion: 20 }}}});
-    const engine = new HarnessEngine(config, { backend: createFakeBackend({}) });
+    const engine = new WorkerHarnessRuntime(config, { backend: createFakeBackend({}) });
     const hash = configurationHash(config);
     let state: RunState = {
       ...createRunState("unpriced-model", "idea", new Date().toISOString(), hash, CONFIG_VERSION),

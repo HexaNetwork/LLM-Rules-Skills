@@ -11,8 +11,7 @@ import { ProjectRegistry } from "../../src/application/project-registry.js";
 import { harnessPathsFromProject } from "../../src/application/paths.js";
 import { HarnessConfigSchema } from "../../src/config/schema.js";
 import { defaultConfigYaml } from "../../src/config/defaults.js";
-import { HarnessEngine } from "../../src/application/harness-engine.js";
-import { assertGitWorktreeCapability } from "../../src/git/capabilities.js";
+import { WorkerHarnessRuntime } from "../../src/application/harness-engine.js";
 import { git } from "../testkit/git.js";
 import { passingCommandRunner } from "../helpers.js";
 

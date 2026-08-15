@@ -50,11 +50,10 @@ describe("architecture: HarnessPaths wiring", () => {
     expect(pathsSource).toMatch(/controlRoot:\s*string/);
     expect(pathsSource).toMatch(/stateRoot:\s*string/);
     expect(pathsSource).toMatch(/workspaceRoot:\s*string/);
-    expect(pathsSource).toMatch(/worktreeRoot:\s*string/);
     expect(pathsSource).toMatch(/workspaceRoot/);
-    expect(pathsSource).toMatch(/git-worktree/);
+    expect(pathsSource).not.toMatch(/git-worktree/);
     expect(pathsSource).toMatch(/controlRoot/);
-    expect(pathsSource).toMatch(/deriveSiblingWorktreeRoot|isPathUnderControlRoot/);
+    expect(pathsSource).not.toMatch(/worktreeRoot/);
 
     expect(contextSource).toMatch(/readonly paths:\s*HarnessPaths/);
     expect(depsSource).toMatch(/paths:\s*HarnessPaths/);
@@ -67,10 +66,9 @@ describe("architecture: HarnessPaths wiring", () => {
     expect(homeSource).toMatch(/homeRoot:\s*string/);
     expect(homeSource).toMatch(/projectsRoot:\s*string/);
     expect(homeSource).toMatch(/export type ProjectPaths\s*=\s*\{/);
-    expect(homeSource).toMatch(/worktreeRoot:\s*string/);
     expect(homeSource).toMatch(/projectStateRoot:\s*string/);
     expect(homeSource).toMatch(/AGENT_HARNESS_HOME/);
-    expect(homeSource).toMatch(/assertWorktreeRootOutsideControlRoot/);
+    expect(homeSource).not.toMatch(/worktreeRoot/);
 
     const pathsSource = await readSrc("application/paths.ts");
     // Absolute external state stays outside controlRoot; relative legacy nests.
@@ -159,11 +157,16 @@ describe("architecture: Cordis production ownership", () => {
     expect(routes).not.toContain("ensureDockerWorkspaceReady");
   });
 
-  it("keeps HarnessEngine as a facade outside Cordis worker composition", async () => {
+  it("retires the HarnessEngine facade and keeps Cordis worker composition on WorkerHarnessRuntime", async () => {
     const engine = await readSrc("application/harness-engine.ts");
     const worker = await readSrc("vnext/plugins/worker-runtime.ts");
-    expect(engine).toContain("export class HarnessEngine extends WorkerHarnessRuntime {}");
+    const hostLifecycle = await readSrc("vnext/plugins/host-run-lifecycle.ts");
+    const index = await readSrc("index.ts");
+    expect(engine).not.toContain("export class HarnessEngine");
+    expect(engine).toContain("export class WorkerHarnessRuntime");
+    expect(index).not.toMatch(/export \{[^}]*HarnessEngine/);
     expect(worker).toContain("new WorkerHarnessRuntime");
-    expect(worker).not.toContain("new HarnessEngine");
+    expect(hostLifecycle).not.toContain("WorkerHarnessRuntime");
+    expect(hostLifecycle).toContain("createHostRunBootstrap");
   });
 });

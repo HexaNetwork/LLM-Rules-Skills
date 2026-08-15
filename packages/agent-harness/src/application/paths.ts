@@ -1,11 +1,7 @@
 import path from "node:path";
 import type { HarnessConfig } from "../config/schema.js";
 import type { RunWorkspace } from "../domain/workspace.js";
-import {
-  deriveSiblingWorktreeRoot,
-  isPathUnderControlRoot,
-  type ProjectPaths,
-} from "./harness-home.js";
+import type { ProjectPaths } from "./harness-home.js";
 
 /**
  * Worker-visible workspace root inside a Docker run container.
@@ -17,14 +13,12 @@ export type HarnessPaths = {
   controlRoot: string;
   stateRoot: string;
   workspaceRoot: string;
-  /** Parent directory for new run worktrees (sibling or configured override). */
-  worktreeRoot: string;
 };
 
 /**
  * Derive harness roots from project/run config and optional workspace metadata.
- * `git-worktree` runs execute in the recorded worktree; `docker-clone` uses the
- * worker constant `/workspace`; git-disabled stays on the control root.
+ * Docker clones use the worker constant `/workspace`; git-disabled stays on the
+ * control root.
  *
  * Absolute `stateDirectory` values (external project state) are used as-is.
  * Relative values nest under `controlRoot` for legacy repository-local installs.
@@ -37,13 +31,11 @@ export function resolveHarnessPaths(
   const stateRoot = path.isAbsolute(config.stateDirectory)
     ? path.resolve(config.stateDirectory)
     : path.resolve(controlRoot, config.stateDirectory);
-  const worktreeRoot = resolveWorktreeRoot(config, controlRoot, stateRoot);
   const workspaceRoot = resolveExecutionWorkspaceRoot(workspace, controlRoot);
   return {
     controlRoot,
     stateRoot,
     workspaceRoot,
-    worktreeRoot,
   };
 }
 
@@ -57,7 +49,6 @@ export function harnessPathsFromProject(
     controlRoot: path.resolve(project.controlRoot),
     stateRoot: path.resolve(project.projectStateRoot),
     workspaceRoot,
-    worktreeRoot: path.resolve(project.worktreeRoot),
   };
 }
 
@@ -87,38 +78,15 @@ export function runBundleImportPath(stateRoot: string, runId: string): string {
 
 /**
  * Resolve the execution-root path for agents/commands given workspace metadata.
- * Local worktrees stay on the host path; Docker clones advertise `/workspace`.
+ * Docker clones advertise `/workspace`; git-disabled uses the control root.
  */
 export function resolveExecutionWorkspaceRoot(
   workspace: RunWorkspace | null | undefined,
   controlRootFallback: string,
 ): string {
-  if (workspace?.kind === "git-worktree" && workspace.worktreePath) {
-    return path.resolve(workspace.worktreePath);
-  }
   if (workspace?.kind === "docker-clone") {
     return WORKER_WORKSPACE_PATH;
   }
   return path.resolve(controlRootFallback);
 }
 
-/**
- * Prefer an explicit config.worktreeRoot; otherwise use the sibling convention when
- * state lives outside the control root, and legacy `<stateRoot>/worktrees` otherwise.
- */
-function resolveWorktreeRoot(
-  config: HarnessConfig,
-  controlRoot: string,
-  stateRoot: string,
-): string {
-  const configured = config.worktreeRoot?.trim();
-  if (configured) {
-    return path.isAbsolute(configured)
-      ? path.resolve(configured)
-      : path.resolve(controlRoot, configured);
-  }
-  if (!isPathUnderControlRoot(stateRoot, controlRoot)) {
-    return deriveSiblingWorktreeRoot(controlRoot);
-  }
-  return path.join(stateRoot, "worktrees");
-}

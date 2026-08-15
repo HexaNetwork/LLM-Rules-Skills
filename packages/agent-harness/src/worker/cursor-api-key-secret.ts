@@ -1,14 +1,11 @@
 import { chmod, mkdir, readFile, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
-import {
-  CURSOR_API_KEY_SECRET_CONTAINER_PATH,
-  CURSOR_API_KEY_SECRET_RELATIVE_PATH,
-} from "./protocol.js";
+import { CURSOR_API_KEY_SECRET_CONTAINER_PATH } from "./protocol.js";
 
-export { CURSOR_API_KEY_SECRET_CONTAINER_PATH, CURSOR_API_KEY_SECRET_RELATIVE_PATH };
+export { CURSOR_API_KEY_SECRET_CONTAINER_PATH };
 
 /**
- * Persist CURSOR_API_KEY as a run-local secret file (mode 0400 when supported).
+ * Persist CURSOR_API_KEY as a host bootstrap secret file (mode 0400 when supported).
  * Prefer this over injecting the key into the container environment so project
  * commands and `docker inspect` env dumps cannot observe it.
  */

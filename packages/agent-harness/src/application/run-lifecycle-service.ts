@@ -5,15 +5,11 @@ import { clearBlock } from "../domain/policies.js";
 import { HarnessFailure } from "../errors.js";
 import type { ApplicationContext } from "./application-context.js";
 import { freezeRunComponents } from "./component-freeze.js";
-import type { RecoveryService } from "./recovery-service.js";
 import { recordBlockedFromNew } from "./run-setup.js";
 import { assertDockerExecutionReady } from "./execution-runtime-status.js";
 
 export class RunLifecycleService {
-  constructor(
-    private readonly ctx: ApplicationContext,
-    private readonly _recovery: RecoveryService,
-  ) {}
+  constructor(private readonly ctx: ApplicationContext) {}
 
   async start(
     idea: string,
@@ -214,16 +210,10 @@ export class RunLifecycleService {
 
     state = await this.ctx.store.record(
       state,
-      "run.worktree_created",
+      "run.workspace_created",
       {
-        baseBranch:
-          workspace.kind === "git-worktree" || workspace.kind === "docker-clone"
-            ? workspace.baseBranch
-            : undefined,
-        baseSha:
-          workspace.kind === "git-worktree" || workspace.kind === "docker-clone"
-            ? workspace.baseSha
-            : undefined,
+        baseBranch: workspace.baseBranch,
+        baseSha: workspace.baseSha,
         // Paths stay in workspace.json; event carries only non-sensitive coordinates.
         kind: workspace.kind,
       },

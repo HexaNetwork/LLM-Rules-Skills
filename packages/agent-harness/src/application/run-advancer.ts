@@ -102,7 +102,7 @@ export class RunAdvancer {
     this.ctx.cancellation.register(runId);
     let state: RunState;
     try {
-      // Legacy-shared: repository → run. Worktree/git-disabled: run lock only.
+      // Legacy-shared: repository → run. Docker/git-disabled: run lock only.
       state = await this.ctx.withMutatingRunLock(runId, "advance", async () => {
         const loaded = await this.ctx.store.load(runId);
         return this.runAdvanceLoop(runId, loaded);
@@ -286,13 +286,13 @@ export class RunAdvancer {
   }
 
   /**
-   * Rebind execution roots from durable workspace.json and validate worktree identity.
-   * Missing/moved worktrees fail with a retriable workspace error (recorded as blocked).
+   * Rebind execution roots from durable workspace.json and validate Docker identity.
+   * Missing volumes fail with a retriable workspace error (recorded as blocked).
    */
   async ensureWorkspaceBound(runId: string): Promise<void> {
     const workspace = await this.ctx.loadWorkspace(runId);
     this.ctx.bindWorkspace(workspace);
-    if (workspace.kind !== "git-worktree") return;
+    if (workspace.kind !== "docker-clone") return;
     await this.ctx.workspaceProvisioner.open(workspace);
   }
 

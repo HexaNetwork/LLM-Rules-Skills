@@ -6,6 +6,8 @@ import type { HarnessPaths } from "../../application/paths.js";
 import type { RunRepository } from "../../application/run-repository.js";
 import type { RunStatePort } from "../../application/run-state-port.js";
 import { WorkerHarnessRuntime } from "../../application/harness-engine.js";
+import type { WorkspaceProvisioner } from "../../workspace/types.js";
+import { WorkerWorkspaceProvisioner } from "../../workspace/worker-workspace-provisioner.js";
 
 export type WorkerRuntimeConfig = {
   config: HarnessConfig;
@@ -14,6 +16,8 @@ export type WorkerRuntimeConfig = {
   runStatePort: RunStatePort;
   workspace: RunWorkspace;
   paths: HarnessPaths;
+  /** Defaults to the in-container provisioner; host Docker is unreachable here. */
+  workspaceProvisioner?: WorkspaceProvisioner;
 };
 
 export type WorkerRuntimeControl = {
@@ -31,6 +35,9 @@ export function workerRuntimePlugin(ctx: Context, input: WorkerRuntimeConfig): v
     runStatePort: input.runStatePort,
     workspace: input.workspace,
     paths: input.paths,
+    workspaceProvisioner:
+      input.workspaceProvisioner ??
+      new WorkerWorkspaceProvisioner({ workspacePath: input.paths.workspaceRoot }),
   });
   const control: WorkerRuntimeControl = {
     engine,

@@ -17,7 +17,9 @@ import { WORKER_WORKSPACE_PATH } from "./paths.js";
 /** Bump when probe semantics or required checks change (invalidates cache). */
 export const SANDBOX_ISOLATION_PROBE_POLICY_VERSION = 2 as const;
 const ABSENT_HOST_STATE_PATH = "/host-state";
-const PROBE_SECRET_CONTAINER_PATH = "/run/secrets/agent-harness-probe";
+const PROBE_SECRET_DIRECTORY = "/run/secrets";
+const PROBE_SECRET_FILENAME = "agent-harness-probe";
+const PROBE_SECRET_CONTAINER_PATH = `${PROBE_SECRET_DIRECTORY}/${PROBE_SECRET_FILENAME}`;
 
 /** Disposable isolation-probe volumes; never hold durable run work. */
 export const SANDBOX_ISOLATION_PROBE_VOLUME_PREFIX = "ah-probe-" as const;
@@ -180,7 +182,7 @@ export function findCachedSandboxIsolationProbe(
 }
 
 /**
- * Fail-closed gate: Docker mode may advertise restrict capability / accept a digest
+ * Fail-closed gate: Docker may advertise restrict capability / accept a digest
  * only when a successful probe exists for this digest + policy version.
  */
 export function sandboxIsolationProbePassed(
@@ -326,14 +328,67 @@ export async function defaultSandboxIsolationProbeExecutor(input: {
   try {
     return await runDefaultSandboxIsolationProbe(input);
   } finally {
-    if (isSandboxIsolationProbeVolumeName(input.workspaceVolumeName)) {
-      await removeSandboxIsolationProbeVolume(
-        input.docker,
-        input.workspaceVolumeName,
-        input.signal,
-      ).catch(() => undefined);
+    for (const volume of [
+      input.workspaceVolumeName,
+      probeSecretVolumeName(input.workspaceVolumeName),
+    ]) {
+      if (isSandboxIsolationProbeVolumeName(volume)) {
+        await removeSandboxIsolationProbeVolume(input.docker, volume, input.signal).catch(
+          () => undefined,
+        );
+      }
     }
   }
+}
+
+/** Disposable companion volume holding the mode-000 secret fixture. */
+export function probeSecretVolumeName(workspaceVolumeName: string): string {
+  return `${workspaceVolumeName}-secret`;
+}
+
+/**
+ * Write a root-owned, mode-000 secret at the production `/run/secrets` layout into
+ * a disposable volume, so the read-denial check is enforced by the container kernel
+ * on every host OS instead of by host bind-mount permission mapping.
+ */
+async function seedProbeSecretVolume(input: {
+  docker: DockerClient;
+  imageDigest: string;
+  secretVolumeName: string;
+  signal?: AbortSignal;
+}): Promise<{ ok: boolean; detail: string }> {
+  const existing = await input.docker.inspectVolume(input.secretVolumeName);
+  if (!existing) {
+    const created = await input.docker.exec(["volume", "create", input.secretVolumeName], {
+      signal: input.signal,
+    });
+    if (created.exitCode !== 0) {
+      return { ok: false, detail: created.stderr || created.stdout || "volume create failed" };
+    }
+  }
+  const target = `/probe-secrets/${PROBE_SECRET_FILENAME}`;
+  const seeded = await input.docker.exec(
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--user",
+      "0:0",
+      "--mount",
+      `type=volume,source=${input.secretVolumeName},target=/probe-secrets`,
+      "--entrypoint",
+      "/bin/sh",
+      input.imageDigest,
+      "-c",
+      `set -e; printf '%s\\n' actual-probe-secret > ${target}; chown 0:0 ${target}; chmod 000 ${target}`,
+    ],
+    { timeoutMs: 120_000, signal: input.signal },
+  );
+  if (seeded.exitCode !== 0) {
+    return { ok: false, detail: seeded.stderr || seeded.stdout || `exit ${seeded.exitCode}` };
+  }
+  return { ok: true, detail: "staged" };
 }
 
 async function runDefaultSandboxIsolationProbe(input: {
@@ -368,6 +423,29 @@ async function runDefaultSandboxIsolationProbe(input: {
   const probeSecretHostPath = path.join(input.probeRunStateHostPath, "probe-secret");
   await writeFile(probeSecretHostPath, "actual-probe-secret\n", { mode: 0o000 });
   await chmod(probeSecretHostPath, 0o000);
+
+  // The fixture lives in a disposable volume rather than a host bind mount: bind
+  // mounts on Docker Desktop (Windows/macOS) surface host files as world-readable
+  // regardless of their host mode, which cannot prove the denial this check asserts.
+  const secretVolumeName = probeSecretVolumeName(input.workspaceVolumeName);
+  const seeded = await seedProbeSecretVolume({
+    docker: input.docker,
+    imageDigest: input.imageDigest,
+    secretVolumeName,
+    signal: input.signal,
+  });
+  if (!seeded.ok) {
+    return {
+      version: 1,
+      ok: false,
+      unsupported: true,
+      imageDigest: input.imageDigest,
+      policyVersion: SANDBOX_ISOLATION_PROBE_POLICY_VERSION,
+      probedAt,
+      checks,
+      reason: `Sandbox isolation probe unsupported: could not stage the secret fixture (${seeded.detail}).`,
+    };
+  }
 
   const spec = buildHardenedContainerSpec({
     name: `ah-probe-${Date.now().toString(36)}`.slice(0, 63),
@@ -460,7 +538,7 @@ async function runDefaultSandboxIsolationProbe(input: {
     "--mount",
     `type=volume,source=${input.workspaceVolumeName},target=${WORKER_WORKSPACE_PATH}`,
     "--mount",
-    `type=bind,source=${probeSecretHostPath},target=${PROBE_SECRET_CONTAINER_PATH},readonly`,
+    `type=volume,source=${secretVolumeName},target=${PROBE_SECRET_DIRECTORY},readonly`,
     "--entrypoint",
     WORKER_ISOLATION_SELF_CHECK_PATH,
     input.imageDigest,

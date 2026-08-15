@@ -1,19 +1,10 @@
-import type { PreflightCommitOrder } from "../config/schema.js";
 import type {
   BuildTask,
   ProposedInstall,
   RunState,
   RunWorkspace,
-  RunWorkspaceKind,
 } from "../domain.js";
 import { CONFIG_FAILURE_PATTERN } from "../errors.js";
-
-export type PreflightCommitResult = {
-  committedBranch?: string;
-  runBranch?: string;
-  sha: string;
-  files: string[];
-};
 
 export type CancelResult = {
   state: RunState;
@@ -102,43 +93,6 @@ export function repairRoute(input: {
 /** True when recovery should use the config-fixer (frozen snapshot patch), not a file fixer. */
 export function isConfigFixerCandidate(blockedKind?: string, failure?: string): boolean {
   return repairRoute({ blockedKind, failure }) === "config-fixer";
-}
-
-/** Legacy shared-checkout commit-order recovery has been removed. */
-export function offersPreflightCommitOrders(_kind: RunWorkspaceKind): boolean {
-  return false;
-}
-
-export function preflightCommitUnavailableMessage(kind: RunWorkspaceKind): string {
-  if (kind === "git-worktree") {
-    return (
-      "Preflight commit-order controls are not offered for worktree runs. " +
-      "New runs start from the committed base branch only; uncommitted control-checkout " +
-      "changes are never imported. Commit or stash changes inside the run worktree, then retry."
-    );
-  }
-  return `Preflight commit-order controls are not available for ${kind} workspaces.`;
-}
-
-export function defaultPreflightCommitMessage(runId: string): string {
-  return `chore: commit working tree before harness run ${runId}`;
-}
-
-export function preflightCommitDetail(
-  order: PreflightCommitOrder,
-  commit: PreflightCommitResult,
-  auto: boolean,
-): Record<string, unknown> {
-  return {
-    order,
-    auto,
-    sha: commit.sha,
-    branch: commit.committedBranch,
-    files: commit.files,
-    ...(order === "branch-then-commit"
-      ? { deviation: "run branch created from current HEAD, not config.git.baseBranch" }
-      : {}),
-  };
 }
 
 const PACKET_DESCRIPTION_LIMIT = 2_000;

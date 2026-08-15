@@ -56,8 +56,6 @@ type SettingDefinition =
   | StringSettingDefinition
   | StringListSettingDefinition;
 
-export const PREFLIGHT_COMMIT_ORDER_VALUES = ["branch-then-commit", "commit-then-branch"] as const;
-
 export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
   {
     key: "workflow.maxGrillQuestionsPerEpisode",
@@ -123,28 +121,6 @@ export const PROJECT_SETTING_DEFINITIONS: SettingDefinition[] = [
     type: "string",
     maximum: 10_000,
     optional: true,
-    appliesTo: "new_runs",
-  },
-  {
-    key: "git.autoCommitPreflight",
-    category: "Git",
-    label: "Auto-commit a dirty tree before a run (legacy)",
-    description:
-      "Legacy-shared runs only. New worktree runs always start from the committed base branch; a dirty control checkout is ignored (no notice) and never imported. This setting has no effect on worktree starts.",
-    type: "boolean",
-    appliesTo: "new_runs",
-  },
-  {
-    key: "git.preflightCommitOrder",
-    category: "Git",
-    label: "Preflight commit order (legacy)",
-    description:
-      "Legacy-shared runs only. Controls whether a dirty-tree recovery commit lands on the run branch first or on the current branch. Worktree runs do not offer these commit-order controls.",
-    type: "enum",
-    options: [
-      { value: "branch-then-commit", label: "Branch then commit" },
-      { value: "commit-then-branch", label: "Commit then branch" },
-    ],
     appliesTo: "new_runs",
   },
   {
@@ -305,8 +281,6 @@ export function projectSettings(config: HarnessConfig, configPath?: string): Rec
       "workflow.testPathPatterns": config.workflow.testPathPatterns,
       "commands.verification": config.commands.verification.map((item) => item.command),
       "commands.testTargetTemplate": config.commands.testTargetTemplate ?? "",
-      "git.autoCommitPreflight": config.git.autoCommitPreflight,
-      "git.preflightCommitOrder": config.git.preflightCommitOrder,
       "git.ignoredArtifactPatterns": config.git.ignoredArtifactPatterns,
       "knowledge.repositoryIntelligence.enabled":
         config.knowledge.repositoryIntelligence.enabled,
@@ -431,15 +405,6 @@ export async function handleSettingsRoutes(
       1,
       6,
     );
-    const autoCommitPreflight = optionalBoolean(
-      values["git.autoCommitPreflight"],
-      "git.autoCommitPreflight",
-    );
-    const preflightCommitOrder = optionalEnum(
-      values["git.preflightCommitOrder"],
-      "git.preflightCommitOrder",
-      PREFLIGHT_COMMIT_ORDER_VALUES,
-    );
     const ignoredArtifactPatterns = optionalStringArray(
       values["git.ignoredArtifactPatterns"],
       "git.ignoredArtifactPatterns",
@@ -563,14 +528,10 @@ export async function handleSettingsRoutes(
             },
           }
         : {}),
-      ...(autoCommitPreflight != null ||
-      preflightCommitOrder != null ||
-      ignoredArtifactPatterns != null
+      ...(ignoredArtifactPatterns != null
         ? {
             git: {
-              ...(autoCommitPreflight != null ? { autoCommitPreflight } : {}),
-              ...(preflightCommitOrder != null ? { preflightCommitOrder } : {}),
-              ...(ignoredArtifactPatterns != null ? { ignoredArtifactPatterns } : {}),
+              ignoredArtifactPatterns,
             },
           }
         : {}),
@@ -634,7 +595,6 @@ export async function handleSettingsRoutes(
         ...updated.config,
         repositoryRoot: previous.repositoryRoot,
         stateDirectory: previous.stateDirectory,
-        worktreeRoot: previous.worktreeRoot ?? updated.config.worktreeRoot,
         knowledge: {
           ...updated.config.knowledge,
           guidance: {

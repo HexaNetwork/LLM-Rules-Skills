@@ -377,7 +377,7 @@ export class RunStore {
   }
 
   /**
-   * Legacy-shared checkout exclusion. Worktree/git-disabled runs must not take
+   * Legacy-shared checkout exclusion. Docker/git-disabled runs must not take
    * this for normal advancement. Callers that also take a per-run lock must
    * acquire this first (repository → run) to avoid deadlock.
    */
@@ -426,7 +426,7 @@ export class RunStore {
   }
 
   /**
-   * Short lock around shared Git worktree-metadata mutations
+   * Short lock around shared workspace-administration mutations
    * (add/register/remove/rename). Normal advancement does not take this lock.
    */
   async withWorkspaceAdminLock<T>(
@@ -445,7 +445,7 @@ export class RunStore {
 
   /**
    * Short lock around mutable shared knowledge-index updates under stateRoot.
-   * CodeGraph indexes in a run worktree are run-local and do not need this lock.
+   * CodeGraph indexes in a Docker workspace are run-local and do not need this lock.
    */
   async withSharedIndexLock<T>(
     holder: { runId: string; action: string },

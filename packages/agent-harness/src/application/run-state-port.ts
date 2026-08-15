@@ -1,7 +1,7 @@
 import type { PendingEvent, RunState, TransitionResult } from "../domain.js";
 
 /**
- * RunStatePort: the boundary between HarnessEngine and durable run state
+ * RunStatePort: the boundary between workflow runtimes and durable run state
  * (ADR 0016). The host is authoritative for durable state; the active worker
  * advances the run through this port using compare-and-swap revisions,
  * idempotency keys, and lease fencing tokens. Implementations:

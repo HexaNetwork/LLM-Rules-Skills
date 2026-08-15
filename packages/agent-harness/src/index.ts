@@ -37,7 +37,6 @@ export {
   KnowledgeScopeSchema,
   KnowledgeSourceSchema,
   KnowledgeVisibilitySchema,
-  PreflightCommitOrderSchema,
   ProjectSettingsPatchSchema,
   RunPolicyPatchSchema,
   configurationHash,
@@ -46,7 +45,6 @@ export {
   type KnowledgeScope,
   type KnowledgeSource,
   type KnowledgeVisibility,
-  type PreflightCommitOrder,
   type ProjectSettingsPatch,
   type RunPolicyPatch,
 } from "./config/schema.js";
@@ -68,11 +66,17 @@ export {
 } from "./config/migrations.js";
 export * from "./domain.js";
 export * from "./embeddings.js";
-export { HarnessEngine } from "./application/harness-engine.js";
+export { WorkerHarnessRuntime } from "./application/harness-engine.js";
 export type { HarnessDependencies } from "./application/dependencies.js";
 export type { CancelResult, CleanupResult } from "./application/helpers.js";
 export { pendingGrillReady, pendingPlanReady, taskForPacket } from "./application/helpers.js";
-export { openRunHarness } from "./application/run-engine-factory.js";
+export {
+  openHostRunControl,
+  openRunHarness,
+  openWorkerRunRuntime,
+} from "./application/run-engine-factory.js";
+export { HostRunBootstrap, createHostRunBootstrap } from "./application/host-run-bootstrap.js";
+export { HostRunControl } from "./application/host-run-control.js";
 export { RetrievalOrchestrator } from "./application/retrieval-orchestrator.js";
 export * from "./errors.js";
 export * from "./git.js";

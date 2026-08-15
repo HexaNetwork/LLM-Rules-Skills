@@ -18,14 +18,12 @@ import {
 } from "../worker/auth.js";
 import {
   writeCursorApiKeySecretFile,
-  CURSOR_API_KEY_SECRET_RELATIVE_PATH,
   argvLeaksCursorApiKey,
 } from "../worker/cursor-api-key-secret.js";
 import {
   HARNESS_PACKAGE_VERSION,
   WORKER_RPC_CONTAINER_PORT,
   WORKER_RPC_PROTOCOL_VERSION,
-  WORKER_RPC_SECRET_RELATIVE_PATH,
   WORKER_RPC_SECRET_CONTAINER_PATH,
   WORKER_STATE_CREDENTIAL_CONTAINER_PATH,
   CURSOR_API_KEY_SECRET_CONTAINER_PATH,
@@ -95,8 +93,9 @@ export async function waitForDockerWorkerHealth(
 }
 
 /**
- * Resume after host/UI restart: load execution.json + secret metadata, discover
- * the labeled container by name, probe worker health, return an authenticated client.
+ * Resume after host/UI restart: load execution.json, derive the worker-bootstrap
+ * secret location from the worker instance, discover the labeled container by
+ * name, probe worker health, and return an authenticated client.
  */
 export async function ensureDockerWorkerSession(
   options: EnsureDockerWorkerSessionOptions,
@@ -106,7 +105,6 @@ export async function ensureDockerWorkerSession(
     (await loadRunExecutionState(options.projectConfig, options.runId)) ??
     createPendingDockerExecutionState();
 
-  const secretRelative = execution.rpcSecretRelativePath ?? WORKER_RPC_SECRET_RELATIVE_PATH;
   const workerInstanceId = execution.workerInstanceId ?? randomUUID();
   const bootstrapDirectory = path.join(
     resolveHarnessPaths(options.projectConfig).stateRoot,
@@ -231,12 +229,10 @@ export async function ensureDockerWorkerSession(
     const message = error instanceof Error ? error.message : String(error);
     execution = await writeRunExecutionState(options.projectConfig, options.runId, {
       ...execution,
-      runtime: "docker",
       lifecycle: "failed",
       containerName,
       containerId,
       hostPort,
-      rpcSecretRelativePath: secretRelative,
       workerInstanceId,
       rpcTokenFingerprint: workerRpcTokenFingerprint(token),
       rpcProtocolVersion: WORKER_RPC_PROTOCOL_VERSION,
@@ -253,12 +249,10 @@ export async function ensureDockerWorkerSession(
 
   execution = await writeRunExecutionState(options.projectConfig, options.runId, {
     ...execution,
-    runtime: "docker",
     lifecycle: "running",
     containerName,
     containerId,
     hostPort,
-    rpcSecretRelativePath: secretRelative,
     workerInstanceId,
     rpcTokenFingerprint: workerRpcTokenFingerprint(token),
     rpcProtocolVersion: WORKER_RPC_PROTOCOL_VERSION,
@@ -437,7 +431,6 @@ export async function stopDockerWorkerSession(options: {
 
   await writeRunExecutionState(options.projectConfig, options.runId, {
     ...execution,
-    runtime: "docker",
     lifecycle: "stopped",
     containerName,
     containerId: undefined,

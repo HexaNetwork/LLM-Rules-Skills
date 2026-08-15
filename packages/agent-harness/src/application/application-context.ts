@@ -79,19 +79,12 @@ export class ApplicationContext {
     this.projectContext = this.deps.projectContext;
     this.runStatePort = this.deps.runStatePort;
     this.cancellation = cancellation;
-    this.workspace = this.deps.workspace ?? (config.git.enabled
-      ? {
-          version: WORKSPACE_SCHEMA_VERSION,
-          kind: "git-worktree",
-          controlRoot: this.paths.controlRoot,
-          createdAt: new Date().toISOString(),
-        }
-      : {
-          version: WORKSPACE_SCHEMA_VERSION,
-          kind: "git-disabled",
-          controlRoot: this.paths.controlRoot,
-          createdAt: new Date().toISOString(),
-        });
+    this.workspace = this.deps.workspace ?? {
+      version: WORKSPACE_SCHEMA_VERSION,
+      kind: "git-disabled",
+      controlRoot: this.paths.controlRoot,
+      createdAt: new Date().toISOString(),
+    };
     applyWorkspaceToPaths(this.paths, this.workspace);
   }
 
@@ -101,8 +94,8 @@ export class ApplicationContext {
     applyWorkspaceToPaths(this.paths, workspace);
   }
 
-  usesGitWorktree(): boolean {
-    return this.workspace.kind === "git-worktree";
+  usesDockerWorkspace(): boolean {
+    return this.workspace.kind === "docker-clone";
   }
 
   /**
@@ -268,7 +261,7 @@ export class ApplicationContext {
   }
 
   /**
-   * Throws HarnessFailure when this run's worktree no longer matches the last stamp.
+   * Throws HarnessFailure when this run's workspace no longer matches the last stamp.
    * Structured evidence yields component-level diagnostics.
    */
   async assertTreeFingerprint(state: RunState): Promise<void> {
@@ -301,7 +294,7 @@ export class ApplicationContext {
     if (observed.fingerprint === state.treeFingerprint) return;
     const current = await this.git.changedFiles();
     throw new HarnessFailure(
-      `Workspace diverged in this run's worktree. Diverging paths: ${
+      `Workspace diverged in this run's Docker workspace. Diverging paths: ${
         current.length > 0 ? current.join(", ") : "(HEAD or index changed with no dirty paths)"
       }`,
       "workspace",

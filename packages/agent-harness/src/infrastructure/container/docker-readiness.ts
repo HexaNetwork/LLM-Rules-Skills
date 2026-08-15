@@ -126,7 +126,7 @@ export async function probeDockerReadiness(
       checks.push({
         id: "linux-containers",
         ok: false,
-        detail: `Container OS type is ${info.osType}; harness Docker mode requires Linux containers.`,
+        detail: `Container OS type is ${info.osType}; the harness requires Linux containers.`,
         remediation:
           process.platform === "win32"
             ? "In Docker Desktop, switch from Windows containers to Linux containers."

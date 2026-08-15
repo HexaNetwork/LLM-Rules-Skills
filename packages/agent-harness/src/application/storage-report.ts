@@ -3,7 +3,6 @@ import path from "node:path";
 import type { ProjectPaths } from "./harness-home.js";
 
 export type StorageCategory =
-  | "worktrees"
   | "run-artifacts-sessions"
   | "knowledge-indexes"
   | "logs-caches"
@@ -19,7 +18,6 @@ export type StorageUsage = {
 export type ProjectStorageReport = {
   projectKey: string;
   controlRoot: string;
-  worktreeRoot: string;
   projectStateRoot: string;
   categories: StorageUsage[];
   totalBytes: number;
@@ -29,7 +27,6 @@ export type ProjectStorageReport = {
 export async function reportProjectStorage(paths: ProjectPaths): Promise<ProjectStorageReport> {
   const categories: StorageUsage[] = [];
 
-  categories.push(await measureCategory("worktrees", paths.worktreeRoot));
   categories.push(
     await measureCategory("run-artifacts-sessions", paths.runsRoot, {
       includeNames: ["artifacts", "sessions", "events.jsonl", "state.json", "config.json"],
@@ -54,7 +51,6 @@ export async function reportProjectStorage(paths: ProjectPaths): Promise<Project
   return {
     projectKey: paths.projectKey,
     controlRoot: paths.controlRoot,
-    worktreeRoot: paths.worktreeRoot,
     projectStateRoot: paths.projectStateRoot,
     categories,
     totalBytes,

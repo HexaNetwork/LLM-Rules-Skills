@@ -10,7 +10,6 @@ import {
   WorkerOutputSchema,
   clearBlock,
   decideDockerCleanup,
-  decideWorktreeCleanup,
   isCancelSettled,
   isTerminalPhase,
   type FixerRecovery,
@@ -26,18 +25,13 @@ import { applyFrozenConfigRepair } from "./frozen-config-repair.js";
 import type { InterviewService } from "./interview-service.js";
 import {
   CANCEL_LOCK_WAIT_MS,
-  defaultPreflightCommitMessage,
   indexOfTaskForReportedPaths,
   isConfigFixerCandidate,
-  offersPreflightCommitOrders,
   pendingInstallApprovals,
-  preflightCommitDetail,
-  preflightCommitUnavailableMessage,
   repairRoute,
   unique,
   type CancelResult,
   type CleanupResult,
-  type PreflightCommitResult,
 } from "./helpers.js";
 import { updateRunConfig } from "./update-run-config.js";
 import { accrueRunUsage } from "./usage-ledger.js";
@@ -52,20 +46,10 @@ function cleanupRefusalMessage(reason: string): string {
   switch (reason) {
     case "run-not-settled":
       return "Refusing cleanup: run is still active. Cancel or complete it first.";
-    case "dirty-worktree":
-      return "Refusing cleanup: run worktree is dirty. Commit, stash, or discard local changes first.";
     case "dirty-unexported-tree":
       return "Refusing cleanup: Docker workspace has a dirty unexported tree. Export/import first, or pass --discard.";
-    case "path-invalid":
-      return "Refusing cleanup: recorded worktree path failed validation.";
-    case "not-registered":
-      return "Refusing cleanup: worktree is not registered in git worktree list.";
-    case "git-common-dir-mismatch":
-      return "Refusing cleanup: worktree does not match the recorded Git common directory.";
     case "unpublished-requires-discard":
       return "Refusing cleanup: commits are not reachable from a retained named ref / import. Pass --discard to explicitly discard unpublished work.";
-    case "not-git-worktree":
-      return "Refusing cleanup: run is not a git-worktree workspace.";
     case "not-docker-clone":
       return "Refusing cleanup: run is not a docker-clone workspace.";
     case "worker-still-running":
@@ -215,8 +199,6 @@ export class RecoveryService {
           : {}),
       },
       git: {
-        autoCommitPreflight: frozen.git.autoCommitPreflight,
-        preflightCommitOrder: frozen.git.preflightCommitOrder,
         ignoredArtifactPatterns: frozen.git.ignoredArtifactPatterns,
       },
     };
@@ -615,82 +597,19 @@ export class RecoveryService {
 
   async commitPreflight(
     runId: string,
-    options?: { order?: PreflightCommitOrder; message?: string },
+    _options?: { order?: PreflightCommitOrder; message?: string },
   ): Promise<RunState> {
     return this.ctx.withMutatingRunLock(runId, "commitPreflight", async () => {
-      let state = await this.ctx.store.load(runId);
+      const state = await this.ctx.store.load(runId);
       if (state.phase !== "blocked" || !state.blockedFrom) {
         throw new Error(`Run ${runId} is not resumably blocked`);
       }
-      if (!offersPreflightCommitOrders(this.ctx.workspace.kind)) {
-        throw new HarnessFailure(
-          preflightCommitUnavailableMessage(this.ctx.workspace.kind),
-          "workspace",
-          false,
-        );
-      }
-      const order = options?.order ?? this.ctx.config.git.preflightCommitOrder;
-      const message = options?.message ?? defaultPreflightCommitMessage(runId);
-      const commit = await this.runPreflightCommit(runId, order, message);
-      // Fingerprint after ensureRunBranch: that hop can move HEAD.
-      let branchName = commit.runBranch ?? state.branchName;
-      let cutRunBranch = false;
-      if (order === "commit-then-branch" && this.ctx.config.git.enabled) {
-        // Shared branch-ref creation takes the short workspace-admin lock.
-        const ensured = await this.ctx.store.withWorkspaceAdminLock(
-          { runId, action: "create-run-branch" },
-          () =>
-            this.ctx.usesGitWorktree()
-              ? this.ctx.git.createRunBranchFromHead(runId)
-              : this.ctx.git.ensureRunBranch(runId),
-        );
-        if (ensured) {
-          cutRunBranch = ensured !== branchName;
-          branchName = ensured;
-        }
-      }
-      const stamped = this.ctx.config.git.enabled
-        ? await this.ctx.stampWorkspaceEvidence()
-        : undefined;
-      state = await this.ctx.store.record(
-        {
-          ...clearBlock(state, state.blockedFrom),
-          branchName,
-          ...(stamped ?? {}),
-        },
-        "run.preflight_committed",
-        preflightCommitDetail(order, commit, false),
+      throw new HarnessFailure(
+        "Preflight commit controls were retired with local execution. Commit or stash changes in the repository before creating a Docker run.",
+        "workspace",
+        false,
       );
-      if (cutRunBranch && branchName) {
-        state = await this.ctx.store.record(
-          state,
-          "run.branch_ready",
-          { branch: branchName, baseBranch: this.ctx.config.git.baseBranch },
-        );
-      }
-      return state;
     });
-  }
-
-  async runPreflightCommit(
-    runId: string,
-    order: PreflightCommitOrder,
-    message: string,
-  ): Promise<PreflightCommitResult> {
-    // branch-then-commit must cut the branch before committing so the dirty tree rides onto it.
-    if (order === "branch-then-commit") {
-      const runBranch = await this.ctx.store.withWorkspaceAdminLock(
-        { runId, action: "create-run-branch" },
-        () => this.ctx.git.createRunBranchFromHead(runId),
-      );
-      const result = await this.ctx.git.commitWorkingTree(message);
-      return { committedBranch: runBranch, runBranch, sha: result.sha, files: result.files };
-    }
-    const result = await this.ctx.git.commitWorkingTree(message);
-    // commit-then-branch lands on whatever was checked out; that is an audit
-    // fact, not the run branch, so it must not overwrite state.branchName.
-    const committedBranch = await this.ctx.git.currentBranch();
-    return { committedBranch, sha: result.sha, files: result.files };
   }
 
   async cancel(runId: string): Promise<CancelResult> {
@@ -725,7 +644,7 @@ export class RecoveryService {
 
   /**
    * Explicitly remove a settled run's workspace after conservative checks.
-   * Worktree: remove registered linked worktree. Docker: stop worker, remove
+   * Docker cleanup stops the worker, removes the
    * container, and remove the volume only when import/publish is durable or discard.
    * Retains workspace.json, state, events, transport audit metadata, and branch.
    */
@@ -742,69 +661,11 @@ export class RecoveryService {
         return this.cleanupDockerClone(state, workspace, options);
       }
 
-      if (workspace.kind !== "git-worktree") {
-        throw new HarnessFailure(
-          `Cleanup only applies to git-worktree or docker-clone runs (this run is ${workspace.kind})`,
-          "workspace",
-          false,
-        );
-      }
-
-      if (workspace.removedAt) {
-        return {
-          state,
-          removed: false,
-          reason: "already-removed",
-          retainedBranch: workspace.branchName ?? state.branchName,
-        };
-      }
-
-      const manager = this.ctx.workspaceProvisioner;
-      const inspection = await manager.inspectCleanupTarget(workspace);
-      const retainedBranch = workspace.branchName ?? state.branchName;
-      const decision = decideWorktreeCleanup({
-        phase: state.phase,
-        workspaceKind: workspace.kind,
-        alreadyRemoved: false,
-        dirty: inspection.dirty,
-        pathValid: inspection.pathValid,
-        registered: inspection.registered,
-        gitCommonDirMatches: inspection.gitCommonDirMatches,
-        commitsReachableFromRetainedRef: inspection.commitsReachableFromRetainedRef,
-        hasRetainedNamedRef: Boolean(retainedBranch),
-        discard: options?.discard === true,
-      });
-
-      if (!decision.allow) {
-        throw new HarnessFailure(cleanupRefusalMessage(decision.reason), "workspace", false);
-      }
-
-      await manager.remove(workspace, runId);
-      const removedAt = new Date().toISOString();
-      const nextWorkspace = {
-        ...workspace,
-        removedAt,
-        branchName: retainedBranch ?? workspace.branchName,
-      };
-      await this.ctx.writeWorkspace(runId, nextWorkspace);
-      this.ctx.bindWorkspace(nextWorkspace);
-
-      const nextState = await this.ctx.store.record(
-        state,
-        "run.worktree_removed",
-        {
-          reason: decision.reason,
-          discarded: options?.discard === true,
-          ...(retainedBranch ? { retainedBranch } : {}),
-          ...(inspection.headSha ? { headSha: inspection.headSha } : {}),
-        },
+      throw new HarnessFailure(
+        `Cleanup only applies to Docker workspaces (this run is ${workspace.kind})`,
+        "workspace",
+        false,
       );
-      return {
-        state: nextState,
-        removed: true,
-        reason: decision.reason,
-        retainedBranch,
-      };
     });
   }
 
@@ -973,7 +834,7 @@ export class RecoveryService {
     runId: string,
     decisions: { accepted?: string[]; denied?: string[] },
   ): Promise<RunState> {
-    // Legacy-shared installs still take the repository lock; worktree installs are run-local.
+    // Installation decisions are serialized with the run's Docker workspace state.
     return this.ctx.withMutatingRunLock(runId, "resolve-installs", async () => {
       let state = await this.ctx.store.load(runId);
       const pending = pendingInstallApprovals(state);

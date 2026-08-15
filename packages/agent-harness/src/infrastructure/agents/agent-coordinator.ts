@@ -87,7 +87,6 @@ export class AgentCoordinator {
         this.backend,
         this.config.agent.provider,
         {
-          runtime: "docker",
           sandboxIsolationProbePassed: this.sandboxIsolationProbePassed,
         },
       ),
@@ -98,7 +97,7 @@ export class AgentCoordinator {
   }
 
   /**
-   * Docker mode only: set after a cached fail-closed sandbox isolation probe succeeds
+   * Set after a cached fail-closed Docker sandbox isolation probe succeeds
    * for the run's image digest. Gates `canRestrictWritableWorkspace` advertising.
    */
   setSandboxIsolationProbePassed(passed: boolean): void {

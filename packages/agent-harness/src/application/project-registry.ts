@@ -13,8 +13,6 @@ import {
   resolveProjectPaths,
   type HarnessHomePaths,
   type ProjectPaths,
-  WORKTREE_ROOT_OWNERSHIP_FILE,
-  type WorktreeRootOwnership,
 } from "./harness-home.js";
 
 export const PROJECT_REGISTRATION_VERSION = 1 as const;
@@ -27,7 +25,6 @@ export const ProjectRegistrationSchema = z.object({
   canonicalControlRoot: z.string().min(1),
   gitCommonDir: z.string().min(1).optional(),
   remoteFingerprint: z.string().min(1).optional(),
-  worktreeRoot: z.string().min(1).optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });
@@ -42,7 +39,6 @@ export type ProjectLookupResult = {
 export type AddProjectOptions = {
   repository: string;
   name?: string;
-  worktreeRoot?: string;
   home?: HarnessHomePaths;
   now?: () => Date;
 };
@@ -167,7 +163,6 @@ export class ProjectRegistry {
       projectKey,
       controlRoot,
       home: this.home,
-      worktreeRoot: options.worktreeRoot,
     });
 
     const registration: ProjectRegistration = {
@@ -180,9 +175,6 @@ export class ProjectRegistry {
         ? { gitCommonDir: canonicalizeWorkspacePath(identity.gitCommonDir) }
         : {}),
       ...(identity.remoteFingerprint ? { remoteFingerprint: identity.remoteFingerprint } : {}),
-      ...(options.worktreeRoot?.trim()
-        ? { worktreeRoot: canonicalizeWorkspacePath(paths.worktreeRoot) }
-        : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -193,8 +185,6 @@ export class ProjectRegistry {
     await mkdir(paths.projectLocksRoot, { recursive: true });
     await mkdir(paths.projectGuidanceRoot, { recursive: true });
     await writeAtomicJson(paths.registrationPath, registration);
-    await ensureWorktreeRootOwnership(paths);
-
     return this.toLookup(registration);
   }
 
@@ -236,15 +226,13 @@ export class ProjectRegistry {
       projectKey: updated.projectKey,
       controlRoot,
       home: this.home,
-      worktreeRoot: updated.worktreeRoot,
     });
     await writeAtomicJson(paths.registrationPath, updated);
-    await ensureWorktreeRootOwnership(paths);
     return this.toLookup(updated);
   }
 
   /**
-   * Remove a registration only when no active runs / registered worktrees remain.
+   * Remove a registration only when no active or unsettled runs remain.
    * Never deletes or modifies the target repository.
    */
   async remove(projectKey: string, options: { force?: boolean } = {}): Promise<ProjectRegistration> {
@@ -310,7 +298,6 @@ export class ProjectRegistry {
       projectKey: registration.projectKey,
       controlRoot: registration.controlRoot,
       home: this.home,
-      worktreeRoot: registration.worktreeRoot,
     });
     return { registration, paths, home: this.home };
   }
@@ -334,37 +321,6 @@ export class ProjectRegistry {
     // Also match when cwd is inside a registered repo (resolve git toplevel first in discover).
     return undefined;
   }
-}
-
-async function ensureWorktreeRootOwnership(paths: ProjectPaths): Promise<void> {
-  await mkdir(paths.worktreeRoot, { recursive: true });
-  const markerPath = path.join(paths.worktreeRoot, WORKTREE_ROOT_OWNERSHIP_FILE);
-  const ownership: WorktreeRootOwnership = {
-    version: 1,
-    projectKey: paths.projectKey,
-    controlRoot: canonicalizeWorkspacePath(paths.controlRoot),
-    createdAt: new Date().toISOString(),
-  };
-  try {
-    const existingRaw: unknown = JSON.parse(await readFile(markerPath, "utf8"));
-    const existing = existingRaw as WorktreeRootOwnership;
-    if (
-      existing.projectKey &&
-      existing.projectKey !== paths.projectKey &&
-      !pathsEqual(existing.controlRoot ?? "", paths.controlRoot)
-    ) {
-      throw new HarnessFailure(
-        `Worktree root ${paths.worktreeRoot} is already owned by project ${existing.projectKey}.`,
-        "workspace",
-        false,
-      );
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) {
-      if (error instanceof HarnessFailure) throw error;
-    }
-  }
-  await writeAtomicJson(markerPath, ownership);
 }
 
 async function assertDirectory(directory: string): Promise<void> {

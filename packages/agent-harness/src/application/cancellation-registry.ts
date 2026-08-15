@@ -1,7 +1,7 @@
 /**
  * Process-wide registry of in-flight advance AbortControllers.
- * The UI constructs a fresh HarnessEngine per request, but cancel must still
- * abort an in-flight advance in the same Node process.
+ * Worker processes may construct a fresh runtime per request, but cancel must
+ * still abort an in-flight advance in the same Node process.
  */
 export class RunCancellationRegistry {
   private readonly active = new Map<string, AbortController>();

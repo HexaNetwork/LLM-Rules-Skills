@@ -114,13 +114,6 @@ function summarizeWorkspace(workspace: RunWorkspace): ExecutionDiagnostics["work
       removedAt: workspace.removedAt,
     };
   }
-  if (workspace.kind === "git-worktree") {
-    return {
-      kind: workspace.kind,
-      baseSha: workspace.baseSha,
-      removedAt: workspace.removedAt,
-    };
-  }
   return { kind: workspace.kind };
 }
 

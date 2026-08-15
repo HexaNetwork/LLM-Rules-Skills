@@ -18,7 +18,7 @@ import { RunAnalysisService } from "./run-analysis-service.js";
 
 /**
  * Application composition root: wires services and forwards the public run API.
- * Prefer openRunHarness() when reopening an existing run.
+ * Prefer openWorkerRunRuntime() in worker tests, or Cordis workerRuntimePlugin in production.
  */
 export class WorkerHarnessRuntime {
   private readonly ctx: ApplicationContext;
@@ -52,7 +52,7 @@ export class WorkerHarnessRuntime {
     this.planning = new PlanningService(ctx);
     this.execution = new TaskExecutionService(ctx);
     this.recovery = new RecoveryService(ctx, this.interview);
-    this.lifecycle = new RunLifecycleService(ctx, this.recovery);
+    this.lifecycle = new RunLifecycleService(ctx);
     this.runAnalysis = new RunAnalysisService(ctx);
     const scenarioTesting = new ScenarioTestingService(ctx);
     const crystallizing = new CrystallizingService(ctx);
@@ -261,9 +261,3 @@ export class WorkerHarnessRuntime {
     return this.execution.setIgnoredArtifactPatterns(runId, patterns);
   }
 }
-
-/**
- * Temporary compatibility facade for tests and non-production callers.
- * Production worker composition instantiates WorkerHarnessRuntime from Cordis.
- */
-export class HarnessEngine extends WorkerHarnessRuntime {}

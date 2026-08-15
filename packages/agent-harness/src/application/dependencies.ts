@@ -71,7 +71,7 @@ export type ApplicationDependencies = {
   workspace?: RunWorkspace;
 };
 
-/** Public construction seam for HarnessEngine / openRunHarness. */
+/** Public construction seam for WorkerHarnessRuntime / host reopen factories. */
 export type HarnessDependencies = {
   backend: AgentBackend;
   tracker?: TrackerPort;

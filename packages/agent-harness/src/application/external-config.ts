@@ -56,7 +56,6 @@ export async function loadExternalProjectConfig(
       externalProjectConfigYaml({
         projectGuidanceRoot: lookup.paths.projectGuidanceRoot,
         sharedGuidanceRoot: home.sharedGuidanceRoot,
-        worktreeRoot: lookup.paths.worktreeRoot,
       }),
       "utf8",
     );
@@ -102,7 +101,6 @@ export async function loadExternalProjectConfig(
     },
     repositoryRoot: lookup.paths.controlRoot,
     stateDirectory: lookup.paths.projectStateRoot,
-    worktreeRoot: lookup.registration.worktreeRoot ?? lookup.paths.worktreeRoot,
   });
 
   return {
@@ -119,7 +117,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function externalProjectConfigYaml(options: {
   projectGuidanceRoot: string;
   sharedGuidanceRoot: string;
-  worktreeRoot: string;
 }): string {
   // Keep project files sparse so harness-home defaults remain effective.
   const stamped = {
@@ -127,7 +124,6 @@ function externalProjectConfigYaml(options: {
     repositoryRoot: ".",
     // Load-time stamping replaces this with the absolute project state root.
     stateDirectory: ".",
-    worktreeRoot: options.worktreeRoot,
     knowledge: {
       sources: [
         { path: "README.md", scope: "project", visibility: "private" },

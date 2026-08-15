@@ -1,7 +1,10 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { HarnessConfig } from "../../config/schema.js";
 import type { RunState } from "../../domain.js";
-import { WorkerHarnessRuntime } from "../../application/harness-engine.js";
+import {
+  createHostRunBootstrap,
+  type HostRunBootstrap,
+} from "../../application/host-run-bootstrap.js";
 import type { RunRepository } from "../../application/run-repository.js";
 import type { HarnessDependencies } from "../../application/dependencies.js";
 import type {
@@ -44,7 +47,7 @@ export class HostRunLifecycleOwner implements HostRunLifecycleService {
 
   async createRun(config: HarnessConfig, idea: string, runId: string): Promise<RunState> {
     if (this.stopping) throw new Error("Host run lifecycle is disposing");
-    const state = await this.runtime(config).createRun(idea, runId);
+    const state = await this.bootstrap(config).createRun(idea, runId);
     await this.save({ runId, stage: "created", revision: 0 });
     return state;
   }
@@ -110,9 +113,9 @@ export class HostRunLifecycleOwner implements HostRunLifecycleService {
         return;
       }
 
-      const engine = this.runtime(runConfig);
+      const bootstrap = this.bootstrap(runConfig);
       this.progress(runId, "Ensuring maintained image and Docker workspace");
-      const prepared = await engine.prepareRun(runId, false, false);
+      const prepared = await bootstrap.prepareWorkspace(runId);
       if (prepared.phase === "blocked" || prepared.phase === "cancelled") return;
       await this.advanceStage(runId, "image_ready");
       await this.advanceStage(runId, "volume_ready");
@@ -178,8 +181,8 @@ export class HostRunLifecycleOwner implements HostRunLifecycleService {
     this.config.onProgress?.(runId, message);
   }
 
-  private runtime(config: HarnessConfig): WorkerHarnessRuntime {
-    return new WorkerHarnessRuntime(config, this.config.runtimeDependencies);
+  private bootstrap(config: HarnessConfig): HostRunBootstrap {
+    return createHostRunBootstrap(config, this.config.runtimeDependencies);
   }
 
   private async stopWorker(runId: string, config: HarnessConfig): Promise<void> {

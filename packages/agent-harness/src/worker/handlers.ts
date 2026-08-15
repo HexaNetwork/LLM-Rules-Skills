@@ -1,4 +1,4 @@
-import type { HarnessEngine } from "../application/harness-engine.js";
+import type { WorkerHarnessRuntime } from "../application/harness-engine.js";
 import type { CancelResult } from "../application/helpers.js";
 import type { RunState } from "../domain.js";
 import type {
@@ -11,7 +11,7 @@ import { HARNESS_PACKAGE_VERSION, WORKER_RPC_PROTOCOL_VERSION } from "./protocol
 
 export type WorkerHandlerContext = {
   runId: string;
-  engine: HarnessEngine;
+  engine: WorkerHarnessRuntime;
   startedAtMs: number;
   /** True while an advance (or long mutation) holds the in-process cancellation slot. */
   isAdvancing: () => boolean;
@@ -21,9 +21,9 @@ export type WorkerHandlerContext = {
 };
 
 /**
- * Dispatch an allowlisted worker RPC action onto the in-container HarnessEngine.
- * Engine operations use /workspace plus the authenticated host state service;
- * no durable host directory is mounted in the worker.
+ * Dispatch an allowlisted worker-control/workflow action onto the in-container
+ * WorkerHarnessRuntime. Runtime operations use /workspace and reach durable
+ * state only through the independently authenticated host state service.
  */
 export async function dispatchWorkerAction(
   ctx: WorkerHandlerContext,

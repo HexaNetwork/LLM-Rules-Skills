@@ -3,10 +3,18 @@ import type { HarnessConfig } from "../config/schema.js";
 import type { RunWorkspace } from "../domain/workspace.js";
 import { HarnessFailure } from "../errors.js";
 import { WorkerHarnessRuntime } from "./harness-engine.js";
+import { HostRunControl } from "./host-run-control.js";
 import { RunStore } from "../store.js";
 import { resolveWorkspaceProvisioner } from "../workspace/index.js";
 import type { HarnessDependencies } from "./dependencies.js";
 import { resolveHarnessPaths, type HarnessPaths } from "./paths.js";
+
+export type OpenedHostRunControl = {
+  control: HostRunControl;
+  config: HarnessConfig;
+  paths: HarnessPaths;
+  workspace: RunWorkspace;
+};
 
 export type OpenedRunHarness = {
   engine: WorkerHarnessRuntime;
@@ -16,27 +24,31 @@ export type OpenedRunHarness = {
 };
 
 export type OpenRunHarnessOptions = {
-  /** When false, skip worktree registration checks (status/cancel/unlock). Default true. */
-  validateWorktree?: boolean;
+  /** When false, skip Docker workspace identity checks. Default true. */
+  validateWorkspace?: boolean;
   /**
-   * When true, missing workspace.json yields a provisional engine (no provisioner.open).
-   * Used for host recovery and cancel/retry before the Docker clone exists.
+   * When true, missing workspace.json yields a provisional control surface
+   * (no provisioner.open). Used for host recovery and cancel/retry before the
+   * Docker clone exists.
    */
   allowMissingWorkspace?: boolean;
 };
 
-/**
- * Recompose a run engine from project defaults + frozen run config + workspace metadata.
- * Validates registered worktrees before returning unless `validateWorktree` is false.
- */
-export async function openRunHarness(
+type ResolvedRunArtifacts = {
+  config: HarnessConfig;
+  paths: HarnessPaths;
+  workspace: RunWorkspace | undefined;
+  store: NonNullable<HarnessDependencies["store"]> | RunStore;
+  workspaceProvisioner: ReturnType<typeof resolveWorkspaceProvisioner>;
+  dependencies: HarnessDependencies;
+};
+
+async function resolveRunArtifacts(
   projectConfig: HarnessConfig,
   runId: string,
   dependencies: HarnessDependencies,
   options: OpenRunHarnessOptions = {},
-): Promise<OpenedRunHarness> {
-  // Prefer the caller's store run directory so Docker workers / external homes
-  // still resolve artifacts when projectConfig.stateDirectory is a host path.
+): Promise<ResolvedRunArtifacts> {
   const runDirectory = dependencies.store?.runDirectory(runId);
   const artifactOptions = runDirectory ? { runDirectory } : undefined;
   const config = await loadRunConfig(projectConfig, runId, artifactOptions);
@@ -49,7 +61,6 @@ export async function openRunHarness(
     if (!missing || options.allowMissingWorkspace !== true) throw error;
   }
   const paths = resolveHarnessPaths(config, workspace ?? null);
-
   const store = dependencies.store ?? new RunStore(config, paths.stateRoot);
   const workspaceProvisioner =
     dependencies.workspaceProvisioner ??
@@ -61,18 +72,77 @@ export async function openRunHarness(
 
   if (
     workspace &&
-    (workspace.kind === "git-worktree" || workspace.kind === "docker-clone") &&
-    options.validateWorktree !== false
+    workspace.kind === "docker-clone" &&
+    options.validateWorkspace !== false
   ) {
     await workspaceProvisioner.open(workspace);
   }
 
-  const engine = new WorkerHarnessRuntime(config, {
-    ...dependencies,
+  return {
+    config,
     paths,
+    workspace,
     store,
     workspaceProvisioner,
-  });
-  if (workspace) engine.bindWorkspace(workspace);
-  return { engine, config, paths, workspace: workspace ?? engine.workspace };
+    dependencies: {
+      ...dependencies,
+      paths,
+      store,
+      workspaceProvisioner,
+    },
+  };
 }
+
+/**
+ * Host reopen factory: durable cancel/stop/cleanup/status/analysis without a
+ * worker workflow runtime.
+ */
+export async function openHostRunControl(
+  projectConfig: HarnessConfig,
+  runId: string,
+  dependencies: HarnessDependencies,
+  options: OpenRunHarnessOptions = {},
+): Promise<OpenedHostRunControl> {
+  const resolved = await resolveRunArtifacts(projectConfig, runId, dependencies, options);
+  const control = new HostRunControl(resolved.config, {
+    ...resolved.dependencies,
+    workspace: resolved.workspace,
+  });
+  if (resolved.workspace) control.ctx.bindWorkspace(resolved.workspace);
+  return {
+    control,
+    config: resolved.config,
+    paths: resolved.paths,
+    workspace: resolved.workspace ?? control.workspace,
+  };
+}
+
+/**
+ * Worker-focused reopen factory used by worker tests and explicit worker tooling.
+ * Production host paths must use openHostRunControl or worker-control RPC.
+ */
+export async function openWorkerRunRuntime(
+  projectConfig: HarnessConfig,
+  runId: string,
+  dependencies: HarnessDependencies,
+  options: OpenRunHarnessOptions = {},
+): Promise<OpenedRunHarness> {
+  const resolved = await resolveRunArtifacts(projectConfig, runId, dependencies, options);
+  const engine = new WorkerHarnessRuntime(resolved.config, {
+    ...resolved.dependencies,
+    workspace: resolved.workspace,
+  });
+  if (resolved.workspace) engine.bindWorkspace(resolved.workspace);
+  return {
+    engine,
+    config: resolved.config,
+    paths: resolved.paths,
+    workspace: resolved.workspace ?? engine.workspace,
+  };
+}
+
+/**
+ * @deprecated Prefer openHostRunControl for host paths or openWorkerRunRuntime for
+ * worker-focused tests. Kept as an alias of openWorkerRunRuntime during migration.
+ */
+export const openRunHarness = openWorkerRunRuntime;

@@ -1,7 +1,7 @@
 import type { AgentRole, WorkPacket } from "./domain.js";
 
 const WORKSPACE_READ_BOUNDARY =
-  "Access only the assigned working tree. Never read or search Cursor agent transcripts, any .cursor directory, raw .codegraph artifacts, sibling worktrees, or files from another agent session; the work packet is the complete cross-agent handoff.";
+  "Access only the assigned workspace. Never read or search Cursor agent transcripts, any .cursor directory, raw .codegraph artifacts, other workspaces, or files from another agent session; the work packet is the complete cross-agent handoff.";
 
 export const ROLE_RULES: Record<AgentRole, string[]> = {
   reflector: [

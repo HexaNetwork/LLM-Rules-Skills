@@ -1,5 +1,8 @@
 /**
- * Versioned per-run worker RPC contract (ADR 0015 §6).
+ * Versioned per-run worker control contract.
+ * This protocol owns worker liveness, workflow action delivery, export
+ * preparation, and process shutdown. Durable state is owned independently by
+ * RunStatePort and the host state API in state-protocol.ts.
  * Host and worker negotiate protocol + harness versions on every request.
  */
 
@@ -32,16 +35,9 @@ export const WORKER_RPC_HARNESS_VERSION_HEADER = "x-harness-version" as const;
  */
 export const HARNESS_PACKAGE_VERSION = "0.3.2" as const;
 
-/** Legacy metadata filename; new workers store it outside the run directory. */
-export const WORKER_RPC_SECRET_RELATIVE_PATH = "execution-secrets/rpc.token" as const;
-
 /** Absolute path of the read-only RPC bootstrap secret inside the container. */
 export const WORKER_RPC_SECRET_CONTAINER_PATH =
   "/run/secrets/agent-harness-worker-rpc" as const;
-
-/** Legacy metadata filename; new workers store it outside the run directory. */
-export const CURSOR_API_KEY_SECRET_RELATIVE_PATH =
-  "execution-secrets/cursor-api-key" as const;
 
 /** Absolute path of the read-only Cursor credential inside the container. */
 export const CURSOR_API_KEY_SECRET_CONTAINER_PATH =
@@ -52,7 +48,7 @@ export const WORKER_STATE_CREDENTIAL_CONTAINER_PATH =
   "/run/secrets/agent-harness-state-credential" as const;
 
 /**
- * Allowlisted mutation/control actions exposed over RPC.
+ * Allowlisted worker-control and workflow actions exposed over RPC.
  * Host UI action names map onto these (see host proxy).
  */
 export const WORKER_RPC_ACTIONS = [

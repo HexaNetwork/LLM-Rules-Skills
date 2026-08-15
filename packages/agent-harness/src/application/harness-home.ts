@@ -1,12 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { canonicalizeWorkspacePath, isWorktreePathContained } from "../domain/workspace.js";
-import { HarnessFailure } from "../errors.js";
+import { canonicalizeWorkspacePath } from "../domain/workspace.js";
 
 export const HARNESS_HOME_ENV = "AGENT_HARNESS_HOME";
-export const WORKTREE_ROOT_OWNERSHIP_FILE = ".agent-harness-worktree-root.json";
 
 /** Platform-appropriate harness home layout (control plane, not execution data). */
 export type HarnessHomePaths = {
@@ -21,7 +18,6 @@ export type HarnessHomePaths = {
 export type ProjectPaths = {
   projectKey: string;
   controlRoot: string;
-  worktreeRoot: string;
   projectStateRoot: string;
   projectKnowledgeRoot: string;
   projectLocksRoot: string;
@@ -44,15 +40,6 @@ export type DeriveProjectPathsOptions = {
   projectKey: string;
   controlRoot: string;
   home?: HarnessHomePaths;
-  /** Explicit worktree root override; otherwise sibling `<name>-worktrees`. */
-  worktreeRoot?: string;
-};
-
-export type WorktreeRootOwnership = {
-  version: 1;
-  projectKey: string;
-  controlRoot: string;
-  createdAt: string;
 };
 
 /**
@@ -110,35 +97,13 @@ export function defaultHarnessHomeRoot(
   return posix.join(homedir(), ".local", "state", "agent-harness");
 }
 
-/** Derive sibling worktree root: `<parent>/<basename>-worktrees`. */
-export function deriveSiblingWorktreeRoot(controlRoot: string): string {
-  const resolved = path.resolve(controlRoot);
-  const parent = path.dirname(resolved);
-  const name = path.basename(resolved);
-  if (!name || name === path.sep || name === ".") {
-    throw new HarnessFailure(
-      `Cannot derive sibling worktree root from control root ${resolved}`,
-      "workspace",
-      false,
-    );
-  }
-  return path.join(parent, `${name}-worktrees`);
-}
-
 export function resolveProjectPaths(options: DeriveProjectPathsOptions): ProjectPaths {
   const home = options.home ?? resolveHarnessHome();
   const controlRoot = path.resolve(options.controlRoot);
   const projectRoot = path.join(home.projectsRoot, options.projectKey);
-  const worktreeRoot = path.resolve(
-    options.worktreeRoot?.trim() ? options.worktreeRoot : deriveSiblingWorktreeRoot(controlRoot),
-  );
-
-  assertWorktreeRootOutsideControlRoot(worktreeRoot, controlRoot);
-
   return {
     projectKey: options.projectKey,
     controlRoot,
-    worktreeRoot,
     projectStateRoot: projectRoot,
     projectKnowledgeRoot: path.join(projectRoot, "knowledge"),
     projectLocksRoot: path.join(projectRoot, "locks"),
@@ -147,74 +112,6 @@ export function resolveProjectPaths(options: DeriveProjectPathsOptions): Project
     registrationPath: path.join(projectRoot, "registration.json"),
     runsRoot: path.join(projectRoot, "runs"),
   };
-}
-
-/** True when `candidate` is exactly controlRoot or a path beneath it. */
-export function isPathUnderControlRoot(candidate: string, controlRoot: string): boolean {
-  return isWorktreePathContained(candidate, controlRoot);
-}
-
-export function assertWorktreeRootOutsideControlRoot(
-  worktreeRoot: string,
-  controlRoot: string,
-): void {
-  if (isPathUnderControlRoot(worktreeRoot, controlRoot)) {
-    throw new HarnessFailure(
-      `Worktree root must be outside the target repository (${canonicalizeWorkspacePath(controlRoot)}): ${canonicalizeWorkspacePath(worktreeRoot)}`,
-      "workspace",
-      false,
-    );
-  }
-}
-
-/**
- * Validate a worktree root before create/remove: outside control root, expected
- * sibling or explicit override, and no symlink/junction escape into the repo.
- */
-export function validateWorktreeRootPlacement(options: {
-  worktreeRoot: string;
-  controlRoot: string;
-  /** When true, require exact sibling `<name>-worktrees` (no override). */
-  requireDerivedSibling?: boolean;
-  /** Optional configured override that is permitted instead of the sibling. */
-  configuredOverride?: string;
-}): { canonicalWorktreeRoot: string; derivedSibling: string } {
-  const controlRoot = path.resolve(options.controlRoot);
-  const worktreeRoot = path.resolve(options.worktreeRoot);
-  const derivedSibling = deriveSiblingWorktreeRoot(controlRoot);
-  const override = options.configuredOverride?.trim()
-    ? path.resolve(options.configuredOverride)
-    : undefined;
-
-  assertWorktreeRootOutsideControlRoot(worktreeRoot, controlRoot);
-
-  const canonicalWorktreeRoot = canonicalizeExistingPath(worktreeRoot);
-  const canonicalControl = canonicalizeExistingPath(controlRoot);
-  assertWorktreeRootOutsideControlRoot(canonicalWorktreeRoot, canonicalControl);
-
-  const matchesSibling = pathsEqual(canonicalWorktreeRoot, canonicalizeExistingPath(derivedSibling));
-  const matchesOverride =
-    override != null && pathsEqual(canonicalWorktreeRoot, canonicalizeExistingPath(override));
-
-  if (options.requireDerivedSibling && !matchesSibling) {
-    throw new HarnessFailure(
-      `Worktree root must be the derived sibling path ${canonicalizeWorkspacePath(derivedSibling)}`,
-      "workspace",
-      false,
-    );
-  }
-  if (!matchesSibling && !matchesOverride) {
-    throw new HarnessFailure(
-      `Worktree root ${canonicalizeWorkspacePath(worktreeRoot)} is neither the derived sibling ` +
-        `${canonicalizeWorkspacePath(derivedSibling)}` +
-        (override ? ` nor the configured override ${canonicalizeWorkspacePath(override)}` : "") +
-        ".",
-      "workspace",
-      false,
-    );
-  }
-
-  return { canonicalWorktreeRoot, derivedSibling };
 }
 
 export function generateProjectKey(): string {
@@ -234,11 +131,3 @@ export function pathsEqual(left: string, right: string): boolean {
   return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
-function canonicalizeExistingPath(value: string): string {
-  const resolved = path.resolve(value);
-  try {
-    return path.resolve(realpathSync(resolved));
-  } catch {
-    return resolved;
-  }
-}

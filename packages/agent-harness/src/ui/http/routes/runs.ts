@@ -1,17 +1,15 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { HarnessConfigSchema, ProjectSettingsPatchSchema, type HarnessConfig } from "../../../config/schema.js";
+import { HarnessConfigSchema, type HarnessConfig } from "../../../config/schema.js";
 import { loadRunConfig, loadRunWorkspace, writeProjectSettings } from "../../../config/io.js";
 import { loadExternalProjectConfig } from "../../../application/external-config.js";
-import { openRunHarness } from "../../../application/run-engine-factory.js";
-import { WorkerHarnessRuntime } from "../../../application/harness-engine.js";
+import { openHostRunControl } from "../../../application/run-engine-factory.js";
 import {
   mapHostActionToWorkerRpc,
   resolveDockerMutationProxy,
 } from "../../../application/docker-run-proxy.js";
 import { resolveRunBaseBranch } from "../../../application/run-base-branch.js";
-import { HighLevelPlanSchema, VerificationSettingsPatchSchema } from "../../../domain.js";
 import { HarnessFailure } from "../../../errors.js";
 import { GitService, pathToIgnoredArtifactGlob } from "../../../git.js";
 import type { UiAppContext } from "../context.js";
@@ -19,11 +17,8 @@ import {
   HttpError,
   json,
   optionalBoolean,
-  optionalEnum,
-  optionalNonNegativeNumber,
   optionalString,
   optionalStringArray,
-  parseAnswerBody,
   readJsonBody,
   requiredString,
 } from "../request.js";
@@ -39,7 +34,7 @@ import {
   runSignature,
   summarizeRun,
 } from "../run-reads.js";
-import { PREFLIGHT_COMMIT_ORDER_VALUES, projectSettings } from "./settings.js";
+import { projectSettings } from "./settings.js";
 
 function runArtifactOptions(ctx: UiAppContext, runId: string) {
   return { runDirectory: ctx.store.runDirectory(runId) };
@@ -67,7 +62,6 @@ async function applyWrittenProjectSettings(
       ...written.config,
       repositoryRoot: previous.repositoryRoot,
       stateDirectory: previous.stateDirectory,
-      worktreeRoot: previous.worktreeRoot ?? written.config.worktreeRoot,
       knowledge: {
         ...written.config.knowledge,
         guidance: {
@@ -303,13 +297,12 @@ export async function handleRunsRoutes(
     const deliveryWorkspace = workspace
       ? {
           kind: workspace.kind,
-          worktreePath: workspace.kind === "git-worktree" ? workspace.worktreePath : undefined,
           containerName: workspace.kind === "docker-clone" ? workspace.containerName : undefined,
           workspaceVolumeName:
             workspace.kind === "docker-clone" ? workspace.workspaceVolumeName : undefined,
           imageDigest: workspace.kind === "docker-clone" ? workspace.imageDigest : undefined,
           workspacePath: workspace.kind === "docker-clone" ? workspace.workspacePath : undefined,
-          baseBranch: workspace.kind === "git-worktree" ? workspace.baseBranch : undefined,
+          baseBranch: workspace.baseBranch,
           baseSha: workspace.baseSha,
           branchName: workspace.branchName ?? state.branchName,
           removedAt: workspace.removedAt,
@@ -351,7 +344,6 @@ export async function handleRunsRoutes(
         "apply_fix",
         "cancel",
         "cleanup",
-        "commit_preflight",
         "confirm_grill",
         "confirm_plan",
         "confirm_verification",
@@ -388,7 +380,7 @@ export async function handleRunsRoutes(
       throw new HttpError(503, ctx.agentReadiness.message ?? "The configured agent backend is unavailable");
     }
     const workspaceMissing = await isRunWorkspaceMissing(ctx, runId);
-    const opened = await openRunHarness(
+    const opened = await openHostRunControl(
       projectConfig,
       runId,
       {
@@ -398,7 +390,7 @@ export async function handleRunsRoutes(
         docker: ctx.docker,
       },
       {
-        validateWorktree:
+        validateWorkspace:
           action !== "cancel" &&
           action !== "note" &&
           action !== "stop" &&
@@ -406,16 +398,7 @@ export async function handleRunsRoutes(
         allowMissingWorkspace: workspaceMissing,
       },
     );
-    // Analysis generation is tool-free and must remain available after a completed
-    // run's disposable worktree has been cleaned up. Use the durable control root.
-    const engine =
-      action === "generate_analysis_prompt"
-        ? new WorkerHarnessRuntime(opened.config, {
-            backend: ctx.backend,
-            store: ctx.store,
-            repositoryIntelligenceRunner: ctx.repositoryIntelligenceRunner,
-          })
-        : opened.engine;
+    const control = opened.control;
 
     // No worker/container until Approve & build creates the Docker clone.
     // Phase `new` Docker runs must start the worker and run initial_setup there —
@@ -430,6 +413,7 @@ export async function handleRunsRoutes(
       (action === "resume" || action === "retry" || action === "continue");
     const skipDockerProxy =
       action === "generate_analysis_prompt" ||
+      action === "cleanup" ||
       workspaceMissing ||
       dockerNeedsInitialSetup;
     const dockerProxy =
@@ -454,14 +438,14 @@ export async function handleRunsRoutes(
         json(response, 200, { accepted: true, state });
         return true;
       }
-      const state = await engine.requestStop(runId);
+      const state = await control.requestStop(runId);
       json(response, 200, { accepted: true, state });
       return true;
     }
 
     if (action === "cancel") {
       // Durable host cancellation first, then RPC for immediate in-process abort.
-      await engine.writeCancelRequest(runId);
+      await control.writeCancelRequest(runId);
       if (dockerProxy) {
         const result = (await dockerProxy.invoke("cancel", {})) as {
           pending?: boolean;
@@ -475,7 +459,7 @@ export async function handleRunsRoutes(
         });
         return true;
       }
-      const result = await engine.cancel(runId);
+      const result = await control.cancel(runId);
       json(response, result.pending ? 202 : 200, {
         accepted: true,
         pending: result.pending,
@@ -511,90 +495,32 @@ export async function handleRunsRoutes(
     } else if (action === "generate_analysis_prompt") {
       ctx.jobs.enqueue(runId, "generate analysis prompt", async () => {
         ctx.jobs.setDetail(runId, "Generating a portable run-analysis prompt");
-        await engine.generateRunAnalysisPrompt(runId);
+        await control.generateRunAnalysisPrompt(runId);
       });
     } else if (action === "resume") {
       // Jobs are intentionally process-local. A dashboard restart keeps the
       // durable run state but cannot safely assume that an interrupted
       // provider call should be retried. Make recovery an explicit action.
       ctx.jobs.enqueue(runId, "resume run", () => ctx.runLifecycle.enqueue(runId));
-    } else if (action === "answer") {
-      const { answers, parked, clarifications } = parseAnswerBody(body);
-      ctx.jobs.enqueue(runId, action, async () => {
-        await engine.answerMany(runId, answers, parked, clarifications);
-        await engine.advance(runId);
-      });
-    } else if (action === "note") {
-      const text = requiredString(body.text, "text", 20_000);
-      const asUnknown = optionalBoolean(body.asUnknown, "asUnknown") ?? false;
-      ctx.jobs.enqueue(runId, action, () => engine.addNote(runId, text, asUnknown));
-    } else if (action === "propose_fix") {
-      const guidance = requiredString(body.guidance, "guidance", 20_000);
-      ctx.jobs.enqueue(runId, action, () => engine.proposeFix(runId, guidance));
-    } else if (action === "apply_fix") {
-      const persistProjectDefaults =
-        optionalBoolean(body.persistProjectDefaults, "persistProjectDefaults") ?? false;
-      if (persistProjectDefaults && !ctx.configPath) {
-        throw new HttpError(400, "Cannot persist project defaults without a config file path");
-      }
-      ctx.jobs.enqueue(runId, action, async () => {
-        let reportPaths: string[] = [];
-        const patchForPersist =
-          stateForGate?.fixerRecovery?.role === "config-fixer"
-            ? ProjectSettingsPatchSchema.parse(stateForGate.fixerRecovery.plan.configPatch)
-            : undefined;
-        if (persistProjectDefaults && ctx.configPath && patchForPersist) {
-          const updated = await writeProjectSettings(ctx.configPath, patchForPersist);
-          const config = await applyWrittenProjectSettings(ctx, updated);
-          const relative = path
-            .relative(config.repositoryRoot, ctx.configPath)
-            .replaceAll("\\", "/");
-          if (relative && !relative.startsWith("..")) reportPaths = [relative];
-        }
-        await engine.applyApprovedFix(runId, {
-          persistedProjectDefaults: persistProjectDefaults,
-          reportPaths,
-        });
-        // Reload frozen config so the resumed transition sees the applied repair.
-        const refreshed = await loadRunConfig(
-          ctx.getProjectConfig(),
-          runId,
-          runArtifactOptions(ctx, runId),
-        );
-        await new WorkerHarnessRuntime(refreshed, { backend: ctx.backend }).advance(runId);
-      });
     } else if (action === "retry") {
-      const force = optionalBoolean(body.force, "force") ?? false;
-      const maxRunTokens = optionalNonNegativeNumber(body.maxRunTokens, "maxRunTokens");
-      const maxRunCostUsd = optionalNonNegativeNumber(body.maxRunCostUsd, "maxRunCostUsd");
-      ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, "Retrying the blocked transition");
-        await engine.retry(runId, { force, maxRunTokens, maxRunCostUsd });
-        await ctx.runLifecycle.enqueue(runId);
-      });
-    } else if (action === "commit_preflight") {
-      throw new HttpError(
-        400,
-        "Preflight commit-order controls have been removed. " +
-          "Worktree runs start from the committed base and never import control-checkout dirt.",
-      );
+      if (!dockerProxy) {
+        ctx.jobs.enqueue(runId, action, async () => {
+          ctx.jobs.setDetail(runId, "Retrying through host lifecycle");
+          await ctx.runLifecycle.enqueue(runId);
+        });
+      } else {
+        throw new HttpError(503, "Docker worker RPC is unavailable for retry");
+      }
     } else if (action === "cleanup") {
       const discard = optionalBoolean(body.discard, "discard") ?? false;
       ctx.jobs.enqueue(runId, action, async () => {
         ctx.jobs.setDetail(runId, "Cleaning up run workspace");
-        await engine.cleanup(runId, { discard });
+        await control.cleanup(runId, { discard });
       });
     } else if (action === "recover_container") {
       ctx.jobs.enqueue(runId, action, async () => {
         ctx.jobs.setDetail(runId, "Recovering Docker worker against retained volume");
         await ctx.runLifecycle.enqueue(runId);
-      });
-    } else if (action === "accept_tree") {
-      ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, "Accepting the current tree");
-        await engine.acceptTree(runId);
-        ctx.jobs.setDetail(runId, "Resuming the run");
-        await engine.advance(runId);
       });
     } else if (action === "ignore_artifacts") {
       if (!ctx.configPath) {
@@ -616,85 +542,19 @@ export async function handleRunsRoutes(
         .relative(config.repositoryRoot, ctx.configPath)
         .replaceAll("\\", "/");
       ctx.jobs.enqueue(runId, action, async () => {
-        await engine.setIgnoredArtifactPatterns(runId, merged);
-        // Persist the config edit as a reported path on the active task so later
-        // commitTask / divergence checks treat it as intentional harness work.
-        await engine.acceptTree(runId, {
-          reportPaths: configRelative && !configRelative.startsWith("..") ? [configRelative] : [],
-        });
-        await engine.advance(runId);
+        await control.setIgnoredArtifactPatterns(runId, merged);
+        if (dockerProxy) {
+          await dockerProxy.invoke("accept_tree", {
+            reportPaths:
+              configRelative && !configRelative.startsWith("..") ? [configRelative] : [],
+          });
+        }
       });
-    } else if (action === "resolve_installs") {
-      const accepted = optionalStringArray(body.accepted, "accepted", 200) ?? [];
-      const denied = optionalStringArray(body.denied, "denied", 200) ?? [];
-      ctx.jobs.enqueue(runId, action, async () => {
-        await engine.resolveInstalls(runId, { accepted, denied });
-        await engine.advance(runId);
-      });
-    } else if (action === "confirm_grill") {
-      const feedback = optionalString(body.feedback, "feedback", 20_000);
-      ctx.jobs.enqueue(runId, action, async () => {
-        await engine.confirmGrill(runId, { feedback });
-        await engine.advance(runId);
-      });
-    } else if (action === "confirm_plan") {
-      const feedback = optionalString(body.feedback, "feedback", 20_000);
-      let plan: ReturnType<typeof HighLevelPlanSchema.parse> | undefined;
-      if (body.plan != null) {
-        plan = HighLevelPlanSchema.parse(body.plan);
-      }
-      ctx.jobs.enqueue(runId, action, async () => {
-        await engine.confirmPlan(runId, { feedback, plan });
-        await engine.advance(runId);
-      });
-    } else if (action === "confirm_verification") {
-      const keepCurrent = optionalBoolean(body.keepCurrent, "keepCurrent") ?? false;
-      const persistProjectDefaults =
-        optionalBoolean(body.persistProjectDefaults, "persistProjectDefaults") ?? false;
-      if (persistProjectDefaults && !ctx.configPath) {
-        throw new HttpError(400, "Cannot persist project defaults without a config file path");
-      }
-      let patch: ReturnType<typeof VerificationSettingsPatchSchema.parse> | undefined;
-      if (!keepCurrent && body.patch != null) {
-        patch = VerificationSettingsPatchSchema.parse(body.patch);
-      }
-      ctx.jobs.enqueue(runId, action, async () => {
-        await engine.confirmVerification(runId, {
-          keepCurrent,
-          patch,
-          persistProjectDefaults,
-          configPath: ctx.configPath,
-        });
-        // Reload frozen config so the planner sees updated verification policy.
-        const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId, runArtifactOptions(ctx, runId));
-        await new WorkerHarnessRuntime(refreshed, { backend: ctx.backend }).advance(runId);
-      });
-    } else if (action === "retry_verification_baseline") {
-      const persistProjectDefaults =
-        optionalBoolean(body.persistProjectDefaults, "persistProjectDefaults") ?? false;
-      if (persistProjectDefaults && !ctx.configPath) {
-        throw new HttpError(400, "Cannot persist project defaults without a config file path");
-      }
-      const verificationCommand = optionalString(body.verificationCommand, "verificationCommand", 2_000);
-      ctx.jobs.enqueue(runId, action, async () => {
-        ctx.jobs.setDetail(runId, "Retrying the verification baseline");
-        await engine.retryVerificationBaseline(runId, {
-          verificationCommand,
-          persistProjectDefaults,
-          configPath: ctx.configPath,
-        });
-        // Reload frozen config in case the operator edited verification commands.
-        const refreshed = await loadRunConfig(ctx.getProjectConfig(), runId, runArtifactOptions(ctx, runId));
-        await new WorkerHarnessRuntime(refreshed, { backend: ctx.backend }).advance(runId);
-      });
-    } else if (action === "set_rag") {
-      const rag = optionalBoolean(body.rag, "rag");
-      if (rag == null) throw new HttpError(400, "rag must be a boolean");
-      ctx.jobs.enqueue(runId, action, () => engine.setRag(runId, rag));
-    } else if (action === "set_repository_intelligence") {
-      const enabled = optionalBoolean(body.repositoryIntelligence, "repositoryIntelligence");
-      if (enabled == null) throw new HttpError(400, "repositoryIntelligence must be a boolean");
-      ctx.jobs.enqueue(runId, action, () => engine.setRepositoryIntelligence(runId, enabled));
+    } else if (workerAction) {
+      throw new HttpError(
+        503,
+        `Docker worker is required for action "${action}". Use recover_container if the retained volume still exists.`,
+      );
     } else {
       throw new HttpError(400, `Unsupported action: ${action}`);
     }

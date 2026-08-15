@@ -22,7 +22,7 @@ export type GitNexusAdapterSettings = {
 
 /**
  * Direct GitNexus CLI adapter. Queries use the absolute workspace path as `--repo`,
- * not a basename/registry alias, so detached concurrent worktrees and duplicate
+ * not a basename/registry alias, so concurrent workspaces and duplicate
  * repository names resolve to the index belonging to this exact workspace.
  */
 export class GitNexusAdapter implements RepositoryIntelligenceAdapter {

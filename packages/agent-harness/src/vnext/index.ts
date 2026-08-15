@@ -5,7 +5,6 @@ export * from "./plugins/control-server.js";
 export * from "./plugins/docker-runtime.js";
 export * from "./plugins/immutable-environment.js";
 export * from "./plugins/registries.js";
-export * from "./plugins/run-lifecycle.js";
 export * from "./plugins/security-policy.js";
 export * from "./plugins/secured-container-runtime.js";
 export * from "./plugins/state-providers.js";

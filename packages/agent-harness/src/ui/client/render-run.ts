@@ -144,12 +144,12 @@ export const renderRunScript = `    function renderSidebar() {
       };
       if (/Working tree diverged|Workspace diverged|Diverging paths/i.test(text)) {
         var componentHint = /HEAD|index|working files/i.test(text)
-          ? " The failure names whether HEAD, the index, or working files changed inside this run's worktree."
+          ? " The failure names whether HEAD, the index, or working files changed inside this run's Docker workspace."
           : "";
         return {
           id: "tree-divergence",
-          title: "This run's worktree diverged from the harness's last known state",
-          hint: "Inspect the unexpected changes in this run's worktree. Accept the current tree to continue from here, or restore the tree and retry." + componentHint,
+          title: "This run's workspace diverged from the harness's last known state",
+          hint: "Inspect the unexpected changes in this run's Docker workspace. Accept the current tree to continue from here, or restore the tree and retry." + componentHint,
         };
       }
       if (/not a git repository/i.test(text)) {
@@ -194,8 +194,6 @@ export const renderRunScript = `    function renderSidebar() {
       if (workflow.maxGrillQuestionsPerEpisode != null) rows.push('<li>Set the grill-question limit to <code>' + esc(workflow.maxGrillQuestionsPerEpisode) + '</code></li>');
       if (workflow.staleAnswerMinutes != null) rows.push('<li>Set stale-answer timeout to <code>' + esc(workflow.staleAnswerMinutes) + ' minutes</code></li>');
       if (workflow.grillQuestionsPerBatch != null) rows.push('<li>Set grill questions per batch to <code>' + esc(workflow.grillQuestionsPerBatch) + '</code></li>');
-      if (git.autoCommitPreflight != null) rows.push('<li>' + (git.autoCommitPreflight ? 'Enable' : 'Disable') + ' automatic preflight commits</li>');
-      if (git.preflightCommitOrder) rows.push('<li>Use <code>' + esc(git.preflightCommitOrder) + '</code> for preflight commits</li>');
       if (git.ignoredArtifactPatterns) rows.push('<li>Update ignored generated-artifact paths</li>');
       return rows.length
         ? '<ul class="faint" style="margin:10px 0 0;padding-left:20px">' + rows.join('') + '</ul>'
@@ -546,9 +544,7 @@ export const renderRunScript = `    function renderSidebar() {
           ? "Waiting for the current transition to start"
           : jobAction === "index knowledge and reflect"
             ? "Indexing knowledge before the reflector starts"
-            : jobAction === "commit_preflight"
-              ? "Committing the working tree and retrying"
-              : jobAction === "accept_tree"
+            : jobAction === "accept_tree"
                 ? "Accepting the current tree and continuing"
                 : jobAction === "retry"
                   ? "Retrying the blocked transition"
@@ -593,8 +589,8 @@ export const renderRunScript = `    function renderSidebar() {
         html += '<div class="card"><div class="alert"><div><strong>This run is paused</strong><div class="muted" style="margin-top:5px">' + pauseHint + '</div></div><button class="btn primary" data-action="resume">Resume run</button></div></div>';
       }
       var workspaceMeta = state.detail.workspace || {};
-      if (!state.detail.job && ["completed","cancelled"].includes(s.phase) && workspaceMeta.kind === "git-worktree" && workspaceMeta.worktreePath && !workspaceMeta.removedAt) {
-        html += '<div class="card"><div class="alert"><div><strong>Worktree cleanup</strong><div class="muted" style="margin-top:5px">Remove the registered worktree after verifying cleanliness and publication state. State, events, and retained branches stay on disk.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" data-action="cleanup">Clean up worktree</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button></div></div></div>';
+      if (!state.detail.job && ["completed","cancelled"].includes(s.phase) && workspaceMeta.kind === "docker-clone" && workspaceMeta.workspaceVolumeName && !workspaceMeta.removedAt) {
+        html += '<div class="card"><div class="alert"><div><strong>Docker workspace cleanup</strong><div class="muted" style="margin-top:5px">Remove the worker container and, after publication or explicit discard, its workspace volume. State, events, and transport audit stay on disk.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" data-action="cleanup">Clean up workspace</button><button class="btn danger" data-action="cleanup" data-discard="true">Discard unpublished and clean up</button></div></div></div>';
       }
       if (s.phase === "blocked" && !state.detail.job) {
         var remediation = blockedRemediation(s);
@@ -607,7 +603,7 @@ export const renderRunScript = `    function renderSidebar() {
         var commitControls = "";
         if (isDirtyTree) {
           commitControls =
-            '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Committed-base worktree</strong><div class="muted" style="margin-top:3px">Commit or stash changes inside this run\\'s worktree, then retry. Control-checkout dirt is never imported, and preflight commit-order controls are not offered for worktree runs.</div></div></div>';
+            '<div class="alert warning" style="margin-top:10px;padding:10px 12px"><div><strong>Committed-base workspace</strong><div class="muted" style="margin-top:3px">Commit or stash changes in the repository before creating the Docker run, then retry.</div></div></div>';
         }
         var acceptTreeControls = "";
         if (isTreeDivergence) {
@@ -705,7 +701,6 @@ export const renderRunScript = `    function renderSidebar() {
       var baseBranch = delivery.baseBranch || "";
       var fullBaseSha = delivery.baseSha ? String(delivery.baseSha) : "";
       var baseSha = fullBaseSha ? fullBaseSha.slice(0, 12) : "";
-      var worktreePath = delivery.worktreePath || "";
       html += '<div class="card"><div class="card-label">Delivery</div>';
       html += '<div class="muted repo-label">Repository' + copyPathBtn(repoRoot, "Copy repository path") + '</div><div style="margin:4px 0 10px"><code title="' + attr(repoRoot) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(repoRoot || "Unknown") + '</code></div>';
       html += '<div class="muted repo-label">Branch' + copyPathBtn(deliveryBranch, "Copy branch name") + '</div><div style="margin:4px 0 10px"><code>' + esc(deliveryBranchLabel) + '</code></div>';
@@ -714,9 +709,6 @@ export const renderRunScript = `    function renderSidebar() {
       }
       if (baseSha) {
         html += '<div class="muted repo-label">Base SHA' + copyPathBtn(fullBaseSha, "Copy base SHA") + '</div><div style="margin:4px 0 10px"><code title="' + attr(fullBaseSha) + '">' + esc(baseSha) + '</code></div>';
-      }
-      if (worktreePath) {
-        html += '<div class="muted repo-label">Worktree' + copyPathBtn(worktreePath, "Copy worktree path") + '</div><div style="margin:4px 0 10px"><code title="' + attr(worktreePath) + '" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(worktreePath) + '</code></div>';
       }
       html += '<div class="muted" style="margin-top:10px">Retrieval</div>' + renderRunRetrievalToggles() + '</div>';
       html += renderInstallLogPanel();

@@ -17,10 +17,11 @@ import { resolveHarnessHome, HARNESS_HOME_ENV } from "../application/harness-hom
 import { ProjectRegistry } from "../application/project-registry.js";
 import { formatBytes, reportProjectStorage } from "../application/storage-report.js";
 import {
-  openRunHarness,
+  openHostRunControl,
   type OpenRunHarnessOptions,
 } from "../application/run-engine-factory.js";
-import type { WorkerHarnessRuntime } from "../application/harness-engine.js";
+import type { HostRunControl } from "../application/host-run-control.js";
+import { resolveDockerMutationProxy } from "../application/docker-run-proxy.js";
 import { GitService } from "../git.js";
 import { LocalKnowledgeBase } from "../knowledge.js";
 import { startUiServer, type UiServer } from "../ui/server.js";
@@ -31,6 +32,7 @@ import { resolveRunBaseBranch } from "../application/run-base-branch.js";
 import type { OperatorRunRepository } from "../application/run-repository.js";
 import { dumpProfileConfig } from "../vnext/boot/boot-profile.js";
 import { profileForDump } from "../vnext/profiles/index.js";
+import type { WorkerRpcAction } from "../worker/protocol.js";
 
 export type CliDependencies = {
   createBackend: (apiKey?: string) => AgentBackend;
@@ -160,12 +162,10 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .description("Register a repository in the external harness home (no repo-local files)")
     .requiredOption("--repository <path>", "target repository path")
     .option("--name <name>", "display name")
-    .option("--worktree-root <path>", "override sibling worktree root")
     .option("--home <path>", "harness home override")
     .action(async (options: {
       repository: string;
       name?: string;
-      worktreeRoot?: string;
       home?: string;
     }) => {
       const home = resolveHarnessHome({ homeRoot: options.home });
@@ -174,7 +174,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       const lookup = await registry.add({
         repository: options.repository,
         name: options.name,
-        worktreeRoot: options.worktreeRoot,
         home,
       });
       // Write initial external project config without touching the repository.
@@ -186,7 +185,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       console.log(`  displayName: ${lookup.registration.displayName}`);
       console.log(`  controlRoot: ${lookup.paths.controlRoot}`);
       console.log(`  stateRoot: ${lookup.paths.projectStateRoot}`);
-      console.log(`  worktreeRoot: ${lookup.paths.worktreeRoot}`);
       console.log(`  config: ${lookup.paths.projectConfigPath}`);
       console.log(
         `  guidance: ${guidance.sourcePath}${guidance.copied ? " (seeded)" : " (reused)"}`,
@@ -284,7 +282,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       const report = await reportProjectStorage(lookup.paths);
       console.log(`Project ${report.projectKey}`);
       console.log(`  controlRoot: ${report.controlRoot}`);
-      console.log(`  worktreeRoot: ${report.worktreeRoot}`);
       console.log(`  stateRoot: ${report.projectStateRoot}`);
       console.log(`  total: ${formatBytes(report.totalBytes)}`);
       for (const category of report.categories) {
@@ -376,14 +373,35 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         config?: string;
         advance: boolean;
       }) => {
-        const engine = await openRunEngine(
+        const loaded = await loadConfig(options.config);
+        const docker = dependencies.createDockerClient();
+        const runConfig = await loadRunConfig(loaded.config, options.runId);
+        await invokeDockerWorkerAction({
+          projectConfig: loaded.config,
+          runConfig,
+          runId: options.runId,
+          docker,
+          action: "answer",
+          body: {
+            answers: [{ questionId: options.question, answer: options.text }],
+          },
+        });
+        if (options.advance) {
+          await invokeDockerWorkerAction({
+            projectConfig: loaded.config,
+            runConfig,
+            runId: options.runId,
+            docker,
+            action: "advance",
+          });
+        }
+        const control = await openHostControl(
           options.config,
           options.runId,
-          dependencies.createBackend,
+          () => dependencies.createBackend("unused"),
+          { validateWorkspace: false },
         );
-        let state = await engine.answer(options.runId, options.question, options.text);
-        if (options.advance) state = await engine.advance(options.runId);
-        printState(state);
+        printState(await control.status(options.runId));
       },
     );
 
@@ -401,14 +419,33 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         config?: string;
         advance: boolean;
       }) => {
-        const engine = await openRunEngine(
+        const loaded = await loadConfig(options.config);
+        const docker = dependencies.createDockerClient();
+        const runConfig = await loadRunConfig(loaded.config, options.runId);
+        await invokeDockerWorkerAction({
+          projectConfig: loaded.config,
+          runConfig,
+          runId: options.runId,
+          docker,
+          action: "confirm_grill",
+          body: { feedback: options.feedback },
+        });
+        if (options.advance) {
+          await invokeDockerWorkerAction({
+            projectConfig: loaded.config,
+            runConfig,
+            runId: options.runId,
+            docker,
+            action: "advance",
+          });
+        }
+        const control = await openHostControl(
           options.config,
           options.runId,
-          dependencies.createBackend,
+          () => dependencies.createBackend("unused"),
+          { validateWorkspace: false },
         );
-        let state = await engine.confirmGrill(options.runId, { feedback: options.feedback });
-        if (options.advance) state = await engine.advance(options.runId);
-        printState(state);
+        printState(await control.status(options.runId));
       },
     );
 
@@ -426,14 +463,33 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         config?: string;
         advance: boolean;
       }) => {
-        const engine = await openRunEngine(
+        const loaded = await loadConfig(options.config);
+        const docker = dependencies.createDockerClient();
+        const runConfig = await loadRunConfig(loaded.config, options.runId);
+        await invokeDockerWorkerAction({
+          projectConfig: loaded.config,
+          runConfig,
+          runId: options.runId,
+          docker,
+          action: "confirm_plan",
+          body: { feedback: options.feedback },
+        });
+        if (options.advance) {
+          await invokeDockerWorkerAction({
+            projectConfig: loaded.config,
+            runConfig,
+            runId: options.runId,
+            docker,
+            action: "advance",
+          });
+        }
+        const control = await openHostControl(
           options.config,
           options.runId,
-          dependencies.createBackend,
+          () => dependencies.createBackend("unused"),
+          { validateWorkspace: false },
         );
-        let state = await engine.confirmPlan(options.runId, { feedback: options.feedback });
-        if (options.advance) state = await engine.advance(options.runId);
-        printState(state);
+        printState(await control.status(options.runId));
       },
     );
 
@@ -467,9 +523,8 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         advance: boolean;
       }) => {
         const loaded = await loadConfig(options.config);
-        let opened = await openRunHarness(loaded.config, options.runId, {
-          backend: dependencies.createBackend(),
-        });
+        const docker = dependencies.createDockerClient();
+        const runConfig = await loadRunConfig(loaded.config, options.runId);
         const hasOverrides =
           options.verificationCommand != null || options.testPathPattern.length > 0;
         if (options.keepCurrent && hasOverrides) {
@@ -494,19 +549,34 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
                   ? { workflow: { testPathPatterns: options.testPathPattern } }
                   : {}),
               };
-        let state = await opened.engine.confirmVerification(options.runId, {
-          keepCurrent: options.keepCurrent,
-          patch,
-          persistProjectDefaults: options.persistProjectDefaults,
-          configPath: loaded.path,
+        await invokeDockerWorkerAction({
+          projectConfig: loaded.config,
+          runConfig,
+          runId: options.runId,
+          docker,
+          action: "confirm_verification",
+          body: {
+            keepCurrent: options.keepCurrent,
+            patch,
+            persistProjectDefaults: options.persistProjectDefaults,
+          },
         });
         if (options.advance) {
-          opened = await openRunHarness(loaded.config, options.runId, {
-            backend: dependencies.createBackend(),
+          await invokeDockerWorkerAction({
+            projectConfig: loaded.config,
+            runConfig: await loadRunConfig(loaded.config, options.runId),
+            runId: options.runId,
+            docker,
+            action: "advance",
           });
-          state = await opened.engine.advance(options.runId);
         }
-        printState(state);
+        const control = await openHostControl(
+          options.config,
+          options.runId,
+          () => dependencies.createBackend("unused"),
+          { validateWorkspace: false },
+        );
+        printState(await control.status(options.runId));
       },
     );
 
@@ -531,22 +601,37 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         advance: boolean;
       }) => {
         const loaded = await loadConfig(options.config);
-        let opened = await openRunHarness(loaded.config, options.runId, {
-          backend: dependencies.createBackend(),
-        });
+        const docker = dependencies.createDockerClient();
         if (options.persistProjectDefaults && !options.verificationCommand) {
           throw new Error("--persist-project-defaults requires --verification-command");
         }
-        let state = await opened.engine.retryVerificationBaseline(options.runId, {
-          verificationCommand: options.verificationCommand,
-          persistProjectDefaults: options.persistProjectDefaults,
-          configPath: loaded.path,
+        await invokeDockerWorkerAction({
+          projectConfig: loaded.config,
+          runConfig: await loadRunConfig(loaded.config, options.runId),
+          runId: options.runId,
+          docker,
+          action: "retry_verification_baseline",
+          body: {
+            verificationCommand: options.verificationCommand,
+            persistProjectDefaults: options.persistProjectDefaults,
+          },
         });
+        const control = await openHostControl(
+          options.config,
+          options.runId,
+          () => dependencies.createBackend("unused"),
+          { validateWorkspace: false },
+        );
+        let state = await control.status(options.runId);
         if (options.advance && !state.verificationBaselineReady) {
-          opened = await openRunHarness(loaded.config, options.runId, {
-            backend: dependencies.createBackend(),
+          await invokeDockerWorkerAction({
+            projectConfig: loaded.config,
+            runConfig: await loadRunConfig(loaded.config, options.runId),
+            runId: options.runId,
+            docker,
+            action: "advance",
           });
-          state = await opened.engine.advance(options.runId);
+          state = await control.status(options.runId);
         }
         printState(state);
       },
@@ -592,12 +677,11 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       commitDirty?: string | boolean;
       acceptTree: boolean;
     }) => {
-      const opened = await openResolvedRunHarness(
+      const opened = await openResolvedHostControl(
         options,
         dependencies,
         { allowMissingWorkspace: true },
       );
-      const engine = opened.engine;
       if (options.maxRunTokens != null && (!Number.isFinite(options.maxRunTokens) || options.maxRunTokens < 0)) {
         throw new Error("--max-run-tokens must be a non-negative number");
       }
@@ -608,17 +692,30 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         throw new Error("--accept-tree and --commit-dirty cannot be used together");
       }
       if (options.acceptTree) {
-        await engine.acceptTree(options.runId);
+        await invokeDockerWorkerAction({
+          projectConfig: opened.projectConfig,
+          runConfig: opened.config,
+          runId: options.runId,
+          docker: opened.docker,
+          action: "accept_tree",
+        });
       } else if (options.commitDirty) {
         throw new Error(
           "Preflight commit-order controls have been removed. " +
-            "Worktree runs start from the committed base and never import control-checkout dirt.",
+            "Docker workspaces start from the committed base and never import control-checkout dirt.",
         );
       } else {
-        await engine.retry(options.runId, {
-          force: options.force,
-          maxRunTokens: options.maxRunTokens,
-          maxRunCostUsd: options.maxRunCostUsd,
+        await invokeDockerWorkerAction({
+          projectConfig: opened.projectConfig,
+          runConfig: opened.config,
+          runId: options.runId,
+          docker: opened.docker,
+          action: "retry",
+          body: {
+            force: options.force,
+            maxRunTokens: options.maxRunTokens,
+            maxRunCostUsd: options.maxRunCostUsd,
+          },
         });
       }
       const resolved = await resolvedProjectConfig(options);
@@ -627,9 +724,9 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
         opened.projectConfig,
         resolved.path,
         dependencies,
-        async (control) => {
-          await control.runLifecycle.enqueue(options.runId);
-          state = await control.runLifecycle.productState(options.runId);
+        async (server) => {
+          await server.runLifecycle.enqueue(options.runId);
+          state = await server.runLifecycle.productState(options.runId);
         },
       );
       printState(state);
@@ -645,18 +742,18 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .option("--home <path>", "harness home override")
     .option("--json", "print the full state", false)
     .action(async (options: RunCommandOptions & { json: boolean }) => {
-      const opened = await openResolvedRunHarness(
+      const opened = await openResolvedHostControl(
         options,
         {
           ...dependencies,
           createBackend: () => dependencies.createBackend("unused"),
         },
-        { validateWorktree: false, allowMissingWorkspace: true },
+        { validateWorkspace: false, allowMissingWorkspace: true },
       );
-      const engine = opened.engine;
-      const state = await engine.status(options.runId);
+      const control = opened.control;
+      const state = await control.status(options.runId);
       if (options.json) {
-        const usage = await aggregateSessionUsage(engine, options.runId);
+        const usage = await aggregateSessionUsage(control, options.runId);
         console.log(JSON.stringify({ ...state, usage }, null, 2));
         return;
       }
@@ -669,13 +766,13 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
     .action(async (options: { runId: string; config?: string }) => {
-      const engine = await openRunEngine(
+      const control = await openHostControl(
         options.config,
         options.runId,
         () => dependencies.createBackend("unused"),
-        { validateWorktree: false },
+        { validateWorkspace: false },
       );
-      const result = await engine.cancel(options.runId);
+      const result = await control.cancel(options.runId);
       if (result.pending) {
         console.log(`Cancellation pending for ${options.runId}; the advancing process will finish it.`);
       }
@@ -685,7 +782,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
   program
     .command("cleanup")
     .description(
-      "Remove a settled run workspace after conservative safety checks (worktree or Docker clone/volume)",
+      "Remove a settled Docker workspace after conservative safety checks",
     )
     .requiredOption("--run-id <id>", "run id")
     .option("--config <path>", "config path")
@@ -695,13 +792,13 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       false,
     )
     .action(async (options: { runId: string; config?: string; discard: boolean }) => {
-      const engine = await openRunEngine(
+      const control = await openHostControl(
         options.config,
         options.runId,
         () => dependencies.createBackend("unused"),
-        { validateWorktree: false },
+        { validateWorkspace: false },
       );
-      const result = await engine.cleanup(options.runId, { discard: options.discard });
+      const result = await control.cleanup(options.runId, { discard: options.discard });
       if (result.removed) {
         console.log(
           `Removed workspace for ${options.runId} (${result.reason}` +
@@ -842,11 +939,40 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           },
         };
 
+        const { resolveHarnessPaths } = await import("../application/paths.js");
+        const projectPaths = resolveHarnessPaths(statusConfig);
+
+        // Preparing an image is only complete when its digest also has a passing
+        // isolation probe: run creation and `execution status` both read that cache.
+        let probe:
+          | import("../application/sandbox-isolation-probe.js").SandboxIsolationProbeReport
+          | undefined;
+        if (statusConfig.execution.docker.sandboxRequired !== false) {
+          const { ensureSandboxIsolationProbe } = await import(
+            "../application/sandbox-isolation-probe.js"
+          );
+          const { mkdtemp, rm } = await import("node:fs/promises");
+          const { tmpdir } = await import("node:os");
+          const probeHostPath = await mkdtemp(path.join(tmpdir(), "agent-harness-probe-"));
+          try {
+            probe = await ensureSandboxIsolationProbe({
+              imageDigest: prepared.workerImageDigest,
+              docker: createDockerClient(),
+              dockerPolicy: statusConfig.execution.docker,
+              projectStateRoot: projectPaths.stateRoot,
+              probeRunStateHostPath: probeHostPath,
+            });
+          } finally {
+            await rm(probeHostPath, { recursive: true, force: true }).catch(() => undefined);
+          }
+        }
+
         const status = await evaluateExecutionRuntimeStatus({
           config: statusConfig,
           docker: createDockerClient(),
-          repositoryRoot: config.repositoryRoot,
-          projectStateRoot: config.stateDirectory,
+          repositoryRoot: projectPaths.controlRoot,
+          projectStateRoot: projectPaths.stateRoot,
+          imageDigest: prepared.workerImageDigest,
           collectEvidence: true,
           probeDocker: true,
         });
@@ -865,6 +991,14 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           },
           settingsWritten,
           configPath,
+          sandboxIsolationProbe: probe
+            ? {
+                ok: probe.ok,
+                unsupported: probe.unsupported,
+                reason: probe.reason,
+                checks: probe.checks,
+              }
+            : undefined,
           status: {
             runtime: status.runtime,
             ready: status.ready,
@@ -882,6 +1016,15 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           if (settingsWritten) {
             console.log(`Wrote project settings: ${configPath}`);
           }
+          if (probe) {
+            console.log(`Sandbox isolation probe ok=${probe.ok}`);
+            if (!probe.ok) {
+              if (probe.reason) console.log(`  reason: ${probe.reason}`);
+              for (const check of probe.checks.filter((entry) => !entry.ok)) {
+                console.log(`  - ${check.id}: ${check.detail}`);
+              }
+            }
+          }
           console.log(`Execution status ready=${status.ready} (runtime=${status.runtime})`);
           for (const blocker of status.blockers) {
             console.log(`- ${blocker.code}: ${blocker.message}`);
@@ -889,7 +1032,7 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           }
         }
 
-        if (!prepared.readiness.ready) {
+        if (!prepared.readiness.ready || (probe && !probe.ok)) {
           process.exitCode = 1;
         }
       },
@@ -1044,13 +1187,13 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
       inspectOnly: boolean;
       config?: string;
     }) => {
-      const engine = await openRunEngine(
+      const control = await openHostControl(
         options.config,
         options.runId,
         () => dependencies.createBackend("unused"),
-        { validateWorktree: false },
+        { validateWorkspace: false },
       );
-      const store = engine.store as OperatorRunRepository;
+      const store = control.store as OperatorRunRepository;
       const runLock = await store.inspectRunLock(options.runId);
       const workspaceAdminLock = await store.inspectWorkspaceAdminLock();
       const sharedIndexLock = await store.inspectSharedIndexLock();
@@ -1492,14 +1635,14 @@ type RunCommandOptions = {
   home?: string;
 };
 
-async function openResolvedRunHarness(
+async function openResolvedHostControl(
   options: RunCommandOptions,
   dependencies: CliDependencies,
   openOptions: OpenRunHarnessOptions = {},
 ) {
   const resolved = await resolvedProjectConfig(options);
   const docker = dependencies.createDockerClient();
-  const opened = await openRunHarness(
+  const opened = await openHostRunControl(
     resolved.config,
     options.runId,
     {
@@ -1515,7 +1658,6 @@ async function openResolvedRunHarness(
               controlRoot: resolved.lookup.paths.controlRoot,
               stateRoot: resolved.lookup.paths.projectStateRoot,
               workspaceRoot: resolved.lookup.paths.controlRoot,
-              worktreeRoot: resolved.lookup.paths.worktreeRoot,
             },
           }
         : {}),
@@ -1535,24 +1677,46 @@ async function runConfig(configPath: string | undefined, runId: string): Promise
   return loadRunConfig(config, runId);
 }
 
-async function openRunEngine(
+async function openHostControl(
   configPath: string | undefined,
   runId: string,
   createBackend: CliDependencies["createBackend"],
   options?: OpenRunHarnessOptions,
-): Promise<WorkerHarnessRuntime> {
+): Promise<HostRunControl> {
   const { config } = await loadConfig(configPath);
-  const opened = await openRunHarness(
+  const opened = await openHostRunControl(
     config,
     runId,
     { backend: createBackend() },
     options,
   );
-  return opened.engine;
+  return opened.control;
+}
+
+async function invokeDockerWorkerAction(input: {
+  projectConfig: HarnessConfig;
+  runConfig: HarnessConfig;
+  runId: string;
+  docker: DockerClient;
+  action: WorkerRpcAction;
+  body?: Record<string, unknown>;
+}): Promise<unknown> {
+  const proxy = await resolveDockerMutationProxy({
+    projectConfig: input.projectConfig,
+    runConfig: input.runConfig,
+    runId: input.runId,
+    docker: input.docker,
+  });
+  if (!proxy) {
+    throw new Error(
+      `Docker worker is not running for ${input.runId}. Start/continue the run so the worker is ready, then retry.`,
+    );
+  }
+  return proxy.invoke(input.action, input.body ?? {});
 }
 
 async function aggregateSessionUsage(
-  engine: WorkerHarnessRuntime,
+  control: HostRunControl,
   runId: string,
 ): Promise<{
   inputTokens: number;
@@ -1560,14 +1724,14 @@ async function aggregateSessionUsage(
   totalTokens: number;
   sessions: number;
 }> {
-  const files = (await engine.store.listFiles(runId, "sessions")).filter((file) =>
+  const files = (await control.store.listFiles(runId, "sessions")).filter((file) =>
     file.endsWith(".json"),
   );
   let inputTokens = 0;
   let outputTokens = 0;
   let totalTokens = 0;
   for (const file of files) {
-    const session = (await engine.store.readJson(runId, file)) as {
+    const session = (await control.store.readJson(runId, file)) as {
       usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
     };
     const usage = session.usage ?? {};
@@ -1616,7 +1780,7 @@ function printLockRemoval(
   }
 }
 
-function printState(state: Awaited<ReturnType<WorkerHarnessRuntime["status"]>>): void {
+function printState(state: RunState): void {
   console.log(`Run ${state.runId}: ${state.phase}`);
   console.log(`Artifacts: ${state.runId}/state.json (under the configured state directory)`);
   if (state.phase === "awaiting_input" && state.grillReady) {
@@ -1734,9 +1898,6 @@ async function warnIfDeployedFilesUntracked(project: string, absolutePaths: stri
   for (const file of untracked) console.log(`  ${file}`);
   console.log("Runs will refuse to start until the working tree is clean.");
   console.log(`Commit them: git add ${untracked.map((file) => `"${file}"`).join(" ")} && git commit -m "chore: deploy agent-harness"`);
-  console.log(
-    "Alternative: set git.autoCommitPreflight: true in the config so a dirty tree is committed automatically instead of blocking new runs.",
-  );
 }
 
 async function isGitRepository(project: string): Promise<boolean> {

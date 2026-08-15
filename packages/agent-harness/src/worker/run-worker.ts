@@ -103,7 +103,6 @@ export async function runWorker(options: RunWorkerOptions): Promise<RunningWorke
     controlRoot: config.repositoryRoot,
     stateRoot: "/tmp/agent-harness-state",
     workspaceRoot: WORKER_WORKSPACE_PATH,
-    worktreeRoot: WORKER_WORKSPACE_PATH,
   };
   const profile = await bootProfile(
     createWorkerProfile({

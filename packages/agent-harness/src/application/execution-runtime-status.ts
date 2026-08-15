@@ -13,8 +13,7 @@ function isDigestPinnedImageRef(reference: string): boolean {
 }
 
 /**
- * Operator/UI-facing execution runtime status (slice 2 service API).
- * Full UI cards land in slice 7; this is enough to block Docker run creation.
+ * Operator/UI-facing Docker execution status.
  */
 export type ExecutionRuntimeStatus = {
   runtime: "docker";
@@ -41,7 +40,7 @@ export type ExecutionRuntimeStatus = {
 export type EvaluateExecutionRuntimeStatusOptions = {
   config: HarnessConfig;
   docker?: DockerClient;
-  /** When false, skip Docker daemon probes (e.g. local runtime). Default: probe only for docker. */
+  /** When false, skip Docker daemon probes. */
   probeDocker?: boolean;
   /**
    * When probing Docker, whether to spawn the ephemeral alpine port-publish check.
@@ -58,9 +57,8 @@ export type EvaluateExecutionRuntimeStatusOptions = {
 };
 
 /**
- * Evaluate whether new runs may use the configured execution runtime.
- * Local mode is always ready from this gate; Docker mode requires CLI/daemon
- * readiness plus one available immutable worker/toolchain image.
+ * Evaluate whether new runs may use Docker. Requires CLI/daemon readiness plus
+ * one available immutable worker/toolchain image.
  */
 export async function evaluateExecutionRuntimeStatus(
   options: EvaluateExecutionRuntimeStatusOptions,
@@ -168,7 +166,7 @@ export async function evaluateExecutionRuntimeStatus(
   };
 }
 
-/** Fail closed before creating a Docker-mode run when Docker/image policy is unhealthy. */
+/** Fail closed before creating a Docker run when Docker/image policy is unhealthy. */
 export async function assertDockerExecutionReady(
   options: EvaluateExecutionRuntimeStatusOptions,
 ): Promise<ExecutionRuntimeStatus> {

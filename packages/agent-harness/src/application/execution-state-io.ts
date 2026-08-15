@@ -15,7 +15,7 @@ export async function loadRunExecutionState(
   const filePath = runExecutionJsonPath(projectConfig, runId);
   try {
     const raw: unknown = JSON.parse(await readFile(filePath, "utf8"));
-    return RunExecutionStateSchema.parse(raw);
+    return RunExecutionStateSchema.parse(withoutRetiredBootstrapMetadata(raw));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
@@ -47,9 +47,28 @@ export function createPendingDockerExecutionState(input?: {
 }): RunExecutionState {
   return RunExecutionStateSchema.parse({
     version: 1,
-    runtime: "docker",
     lifecycle: "pending",
     ...(input?.containerName ? { containerName: input.containerName } : {}),
     updatedAt: new Date().toISOString(),
   });
+}
+
+/**
+ * Current post-cutover execution.json files may contain metadata written before
+ * worker bootstrap secrets moved outside the run directory. It never selects a
+ * secret path or runtime; discard it before strict validation.
+ */
+function withoutRetiredBootstrapMetadata(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  if ("runtime" in raw && (raw as Record<string, unknown>).runtime !== "docker") {
+    throw new Error(
+      "This run uses retired local execution metadata and cannot be resumed as a Docker worker.",
+    );
+  }
+  const {
+    runtime: _runtime,
+    rpcSecretRelativePath: _rpcSecretRelativePath,
+    ...current
+  } = raw as Record<string, unknown>;
+  return current;
 }

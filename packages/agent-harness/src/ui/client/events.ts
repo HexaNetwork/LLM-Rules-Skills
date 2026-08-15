@@ -38,7 +38,7 @@ export const eventsScript = `    async function waitForJob(runId) {
         // waiting so the thinking strip at the top is visible while it works.
         if (action === 'answer') scrollMainToTop();
         if (action === 'resolve_installs' || action === 'confirm_grill' || action === 'confirm_plan') scrollMainToTop();
-        if (action === 'commit_preflight' || action === 'accept_tree' || action === 'retry') scrollMainToTop();
+        if (action === 'accept_tree' || action === 'retry') scrollMainToTop();
         var result = await waitForJob(state.selected);
         await bootstrap(true);
         if (action === 'answer') scrollMainToTop();
@@ -91,9 +91,8 @@ export const eventsScript = `    async function waitForJob(runId) {
                   : 'Baseline passed — planning'))
             : (action === 'set_rag' ? 'RAG updated'
             : (action === 'set_repository_intelligence' ? 'Repository intelligence updated'
-            : (action === 'commit_preflight' ? 'Working tree committed — continuing'
             : (action === 'accept_tree' ? 'Current tree accepted — continuing'
-            : (action === 'retry' ? 'Retry started' : 'Action completed')))))))))));
+            : (action === 'retry' ? 'Retry started' : 'Action completed'))))))))));
         toast(doneMsg);
       } catch (error) {
         state.pinScrollTop = false;
@@ -239,14 +238,9 @@ export const eventsScript = `    async function waitForJob(runId) {
         if (target.dataset.action === 'stop' && !confirm('Finish the current task, then stop before starting the next one?')) return;
         if (target.dataset.action === 'cleanup') {
           var discardCleanup = target.dataset.discard === 'true';
-          var isDockerCleanup = state.detail && state.detail.workspace && state.detail.workspace.kind === 'docker-clone';
           var cleanupPrompt = discardCleanup
-            ? (isDockerCleanup
-              ? 'Discard unpublished Docker volume commits, then remove the container and volume?'
-              : 'Discard unpublished commits that are not on a retained named ref, then remove the worktree?')
-            : (isDockerCleanup
-              ? 'Remove this Docker container (and volume after import/publish durability)? State, events, and transport audit stay on disk.'
-              : 'Remove this run worktree after safety checks? State, events, and retained branches stay on disk.');
+            ? 'Discard unpublished Docker volume commits, then remove the container and volume?'
+            : 'Remove this Docker container (and volume after import/publish durability)? State, events, and transport audit stay on disk.';
           if (!confirm(cleanupPrompt)) return;
           runAction('cleanup', { discard: discardCleanup });
           return;
@@ -255,9 +249,7 @@ export const eventsScript = `    async function waitForJob(runId) {
           runAction(target.dataset.action);
           return;
         }
-        if (target.dataset.action === 'commit_preflight') {
-          runAction(target.dataset.action, { order: target.dataset.preflightOrder });
-        } else if (target.dataset.action === 'ignore_artifacts') {
+        if (target.dataset.action === 'ignore_artifacts') {
           var ignorePaths = [];
           if (target.dataset.ignorePath) {
             ignorePaths = [target.dataset.ignorePath];

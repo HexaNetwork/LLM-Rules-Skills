@@ -1,5 +1,4 @@
 import { detectInstallFromCommand } from "../../commands.js";
-import path from "node:path";
 import type { AgentStepEvent } from "./types.js";
 
 /** Derive a bounded, args-free step summary for persistence and UI. */
@@ -71,22 +70,6 @@ export function prohibitedAgentPathAccess(args: unknown, cwd: string): string | 
   // Docker + Cursor sandbox are the boundary. Do not parse arbitrary argument
   // text as a path: slash-prefixed domain content such as `/t claim` is valid.
   if (containerWorkspace) return undefined;
-
-  const resolvedCwd = path.resolve(cwd);
-  const worktreeRoot = path.dirname(resolvedCwd);
-  if (!/-worktrees$/i.test(path.basename(worktreeRoot))) return undefined;
-  const normalizedRoot = worktreeRoot.replaceAll("\\", "/").toLocaleLowerCase();
-  const hostCwd = resolvedCwd.replaceAll("\\", "/").toLocaleLowerCase();
-  const rootPrefix = `${normalizedRoot}/`;
-  let offset = text.indexOf(rootPrefix);
-  while (offset >= 0) {
-    const referenced = text.slice(offset).split(/[\s"']/u, 1)[0] ?? "";
-    if (referenced && referenced !== hostCwd && !referenced.startsWith(`${hostCwd}/`)) {
-      return "sibling-worktree";
-    }
-    offset = text.indexOf(rootPrefix, offset + rootPrefix.length);
-  }
-  if (/(^|[\s"'])\.\.\//m.test(text)) return "outside-worktree";
   return undefined;
 }
 

@@ -1,11 +1,6 @@
-import type { Context } from "@deepseek-ai/cordis";
 import { hardenedSpecToRunArgv } from "../../infrastructure/container/container-spec.js";
 import type { DockerClient } from "../../infrastructure/container/types.js";
 import type { ContainerRuntimeService } from "../services/contracts.js";
-
-export type DockerRuntimePluginConfig = {
-  docker: DockerClient;
-};
 
 export function createDockerRuntimeService(docker: DockerClient): ContainerRuntimeService {
   return {
@@ -64,13 +59,4 @@ export function createDockerRuntimeService(docker: DockerClient): ContainerRunti
       }
     },
   };
-}
-
-/**
- * Raw Docker adapter. Production profiles expose it only through
- * securedContainerRuntimePlugin so container creation cannot bypass policy.
- */
-export function dockerRuntimePlugin(ctx: Context, config: DockerRuntimePluginConfig): void {
-  if (!config.docker) throw new Error("Docker runtime plugin requires a Docker client");
-  ctx.provide("containerRuntime", createDockerRuntimeService(config.docker));
 }

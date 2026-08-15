@@ -1,10 +1,10 @@
 /**
  * Versioned worker-facing host state API contract (ADR 0016, plan Phase 3).
  *
- * This protocol is versioned INDEPENDENTLY from the old worker RPC contract
- * (`WORKER_RPC_PROTOCOL_VERSION` in ./protocol.ts). The host fails closed on
- * a protocol mismatch, and every credential is bound to exactly one run ID
- * and one protocol version.
+ * This durable-state protocol is versioned independently from the worker
+ * control contract (`WORKER_RPC_PROTOCOL_VERSION` in ./protocol.ts). The host
+ * fails closed on a protocol mismatch, and every credential is bound to
+ * exactly one run ID and one protocol version.
  */
 
 export const RUN_STATE_API_PROTOCOL_VERSION = 1 as const;
@@ -62,7 +62,7 @@ export type RunStateApiOkBody<T = unknown> = {
 
 export type RunStateApiResponse<T = unknown> = RunStateApiOkBody<T> | RunStateApiErrorBody;
 
-/** Route path for one state-API operation on a run (helper for future clients). */
+/** Route path for one durable-state operation on a run. */
 export function runStateApiPath(runId: string, operation: string): string {
   return `${RUN_STATE_API_PREFIX}/v1/runs/${encodeURIComponent(runId)}/${operation}`;
 }

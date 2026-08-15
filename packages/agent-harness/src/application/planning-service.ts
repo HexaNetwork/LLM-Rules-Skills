@@ -45,10 +45,10 @@ export class PlanningService {
   constructor(private readonly ctx: ApplicationContext) {}
 
   async plan(state: RunState): Promise<RunState> {
-    // Worktree runs stay detached until publication (Slice 4). Legacy shared-tree
-    // runs still ensure `git.branchPrefix/<runId>` before planning.
+    // Docker workspaces stay detached until publication. Git-disabled setup
+    // retains the existing branch behavior for its narrow non-Git path.
     let branchName = state.branchName;
-    if (this.ctx.usesGitWorktree()) {
+    if (this.ctx.usesDockerWorkspace()) {
       branchName = this.ctx.workspace.branchName ?? state.branchName;
       const dirty = await this.ctx.git.changedFiles();
       if (dirty.length > 0) {

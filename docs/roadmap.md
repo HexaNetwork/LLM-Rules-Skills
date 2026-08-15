@@ -17,13 +17,18 @@
 - Clean-tree, branch, commit, push, and optional `gh pr create` ownership
 - Frozen per-run configuration and non-waiting run locks
 - Authenticated loopback dashboard for runs, questions, evidence, artifacts, and local knowledge
-- Opt-in Docker execution runtime (ADR 0015): generated reviewed images, per-run worker RPC, seed-bundle clones, quarantine import, host-only push/PR, recovery/cleanup, and installer/docs
+- Docker-only Cordis runtime (ADRs 0016/0017): one maintained digest-pinned
+  worker image, per-run named-volume workspaces, authenticated host-owned state
+  RPC, seed/result bundles, quarantine import, host-only publication, and
+  conservative recovery/cleanup
 
 ## Deliberately deferred
 
 ### Docker networking hardening
 
-MVP Docker runtime uses explicit `bridge` networking (filesystem isolation, **not** exfiltration-proof). Provider/package-registry allowlisted egress remains deferred and must land before any default flip away from local worktrees.
+The Docker-only runtime uses explicit `bridge` networking (filesystem
+isolation, **not** exfiltration-proof). Provider/package-registry allowlisted
+egress remains deferred as a separate hardening step.
 
 ### External tracker adapters
 
@@ -31,7 +36,12 @@ Implement GitHub, Linear, and Jira behind `TrackerPort`. Preserve the map-as-ind
 
 ### Parallel task execution
 
-Per-run isolated worktrees (control root vs execution root, late delivery branches, narrowed locks) shipped under [ADR 0010](./adr/0010-per-run-worktrees.md). What remains deferred is **parallel frontier tasks inside one run** — multiple task worktrees/patch sandboxes with explicit conflict detection and an integration gate. Sequential task execution inside a run remains the safe default.
+Per-run named-volume workspaces and late host-owned publication shipped under
+[ADRs 0016](./adr/0016-docker-only-host-owned-state.md) and
+[0017](./adr/0017-cordis-composed-docker-runtime.md). What remains deferred is
+**parallel frontier tasks inside one run**—multiple isolated task sandboxes with
+explicit conflict detection and an integration gate. Sequential task execution
+inside a run remains the safe default.
 
 ### Semantic retrieval
 

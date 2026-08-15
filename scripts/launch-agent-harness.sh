@@ -169,7 +169,8 @@ if ! printf '%s' "$STATUS_JSON" | node -e \
     printf 'Prepare/repair the maintained worker now? [Y/n] '
     read -r reply || true
     if [[ ! "${reply:-}" =~ ^[Nn] ]]; then
-      node "$CLI" execution prepare-worker --repository "$PROJECT_PATH" --force-rebuild --write-settings
+      PACKAGE_ROOT="$HARNESS_ROOT/packages/agent-harness"
+      node "$CLI" execution prepare-worker --repository "$PROJECT_PATH" --package-root "$PACKAGE_ROOT" --force-rebuild --write-settings
       STATUS_JSON="$(node "$CLI" execution status --repository "$PROJECT_PATH" --json)"
     fi
   fi

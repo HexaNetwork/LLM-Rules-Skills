@@ -2,7 +2,16 @@
 
 ## Status
 
-Accepted; supersedes the shared-working-tree portion of [ADR 0009](0009-operational-intervention-and-budgets.md). Local linked worktrees remain the default execution runtime; the deferred container isolation boundary is recorded in [ADR 0015](0015-docker-isolated-runs.md).
+**Superseded** by [ADR 0016](0016-docker-only-host-owned-state.md) and the
+[ADR 0017](0017-cordis-composed-docker-runtime.md) production topology. The
+control/execution-root separation and late host-owned publication principles
+continue through the named-volume design, but linked worktrees are no longer a
+supported runtime. Kept for decision history.
+
+Was: Accepted; superseded the shared-working-tree portion of
+[ADR 0009](0009-operational-intervention-and-budgets.md). Local linked
+worktrees were the default execution runtime; the then-deferred container
+isolation boundary was recorded in [ADR 0015](0015-docker-isolated-runs.md).
 
 ## Context
 

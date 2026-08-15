@@ -282,8 +282,8 @@ ah_select_project_interactive() {
   default_path="$(ah_get_last_project || true)"
 
   if [[ ${#projects[@]} -eq 0 ]]; then
-    echo "No target project. Pass a path, set AGENT_HARNESS_PROJECT, or cd into a deployed project." >&2
-    printf 'Absolute path to the deployed project: ' >&2
+    echo "No target project. Pass a path, set AGENT_HARNESS_PROJECT, or cd into a registered project." >&2
+    printf 'Absolute path to the target project: ' >&2
     local typed=""
     read -r typed || true
     typed="${typed/#\~/$HOME}"
@@ -329,7 +329,7 @@ ah_select_project_interactive() {
       return 0
     fi
     if [[ "$reply" -eq $(( ${#projects[@]} + 1 )) ]]; then
-      printf 'Absolute path to the deployed project: ' >&2
+      printf 'Absolute path to the target project: ' >&2
       local typed=""
       read -r typed || true
       typed="${typed/#\~/$HOME}"

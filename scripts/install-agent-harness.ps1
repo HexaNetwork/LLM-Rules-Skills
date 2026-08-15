@@ -451,7 +451,7 @@ try {
   Pop-Location
 }
 if (-not (Test-Path -LiteralPath $Cli)) {
-  Write-WarnLine "Build finished but $Cli is missing - deploy will fail."
+  Write-WarnLine "Build finished but $Cli is missing - registration will fail."
   exit 1
 }
 Write-Ok "built $Cli"

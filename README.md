@@ -21,9 +21,12 @@ set up/repair a project, check the required Docker worker, inspect the trusted
 Cordis composition, or open the dashboard. `scripts\Install-AgentHarness.cmd`
 remains a setup-only shortcut.
 
-The production runtime is Docker-only, with durable state held by the host.
-Real Cursor credential mounting remains fail-closed until its isolation release
-gate passes; the dashboard and deterministic readiness checks can still be used.
+The production runtime is Docker-only. Every run uses a named volume mounted at
+`/workspace` and one maintained digest-pinned worker image. Durable run state
+stays on the host; workers access it only through authenticated, typed state
+RPC. Real Cursor credential mounting remains fail-closed until its isolation
+release gate passes; the dashboard and deterministic readiness checks can still
+be used.
 
 See [INSTALL.md](INSTALL.md) for the guided and scripted paths. Bash alternatives
 are `bash scripts/install-agent-harness.sh` and

@@ -157,7 +157,8 @@ node "C:\path\to\LLM-Rules-Skills\packages\agent-harness\dist\cli.js" deploy `
   --ollama --refresh
 ```
 
-Useful deploy flags: `--force`, `--sources a,b`, `--no-codegraph`.
+Useful deploy flags: `--force`, `--sources a,b`,
+`--no-repository-intelligence`.
 
 ## 5. Start the dashboard
 
@@ -264,12 +265,17 @@ Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`se
 
 ## 7. Docker runtime
 
-Docker is the only production execution runtime. Local linked worktrees and generated per-run images are retired; old active runs must be finished, exported, or discarded before cutover.
+Docker is the only production execution runtime. Each run uses a named volume
+mounted at `/workspace` and the maintained digest-pinned worker image prepared
+during setup. Durable state remains on the host and is available to the worker
+only through authenticated state RPC. Local linked worktrees, generated per-run
+images, and pre-cutover active runs are unsupported; archive or discard old
+runs instead of attempting to resume them.
 
 1. Install Docker yourself (Docker Desktop on Windows with **WSL2 + Linux containers**, or a Linux/macOS daemon with permission to run `docker info`). The install wizard never silently installs Docker Desktop; on Windows it may offer to **start** Desktop if the CLI is present but the daemon is down.
 2. Double-click `scripts\Launch-AgentHarness.cmd`, then choose **Set up or repair a project**. It performs `project add`, rebuilds the one maintained worker with `--force-rebuild --write-settings`, and runs the isolation probe.
 3. Use launcher choice **Check Docker and worker readiness** whenever you want a readable readiness report without opening the dashboard.
-4. Expect disk/CPU/memory cost for the shared image and named volumes. Bridge networking is filesystem isolation, **not** egress-proof.
+4. Expect disk/CPU/memory cost for the maintained image and per-run named volumes. Bridge networking is filesystem isolation, **not** egress-proof.
 
 Launch is fail-closed: if Docker, the maintained worker, or its isolation probe
 is not ready, the dashboard launcher stops or offers repair instead of implying

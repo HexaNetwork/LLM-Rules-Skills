@@ -58,7 +58,7 @@ idea → reflect → grill-me → small docs-writer glossary update → verifica
      → scenario_testing → crystallizing (optional coverage) → final_review → publish
 ```
 
-The process stops at `awaiting_input`, `blocked`, `cancelled`, or `completed`. It never waits indefinitely: agent calls, shell commands, locks, schema repair, implementation repair, review repair, grill episodes, and per-command advancement are all bounded. Pre-redesign TDD runs remain readable but cannot be resumed.
+The process stops at `awaiting_input`, `blocked`, `cancelled`, or `completed`. It never waits indefinitely: agent calls, shell commands, locks, schema repair, implementation repair, review repair, grill episodes, and per-command advancement are all bounded. Pre-cutover run formats are unsupported and cannot be resumed.
 
 ## Commands
 
@@ -98,7 +98,12 @@ Answering a batch is keyboard-driven: `1`–`4` pick an option for the focused q
 
 Blocked runs key remediation on `blockedKind` (dirty tree, missing agent credential, missing repository-intelligence index, changed configuration, workspace divergence, provider, budget) with the raw failure kept in a collapsed section. Token/cost ceilings surface a raise-and-retry control. While an agent step is in flight, the header shows live activity from `activity.json` (role, model, elapsed, last step summary). The **Agent activity** tab defaults to a chronological **Execution sequence** (invocations interleaved with verification and routing transitions) and keeps **Provider contexts** as a secondary view for context reuse and token analysis. The Overview Usage card shows accrued tokens, cached total, and cost against any configured ceiling.
 
-Local Cursor workers run with `agent.sandbox: true` by default. Cursor applies its OS sandbox on **macOS and Linux** SDK hosts (Seatbelt / Landlock+seccomp). On **Windows**, the local SDK does not enable sandboxing in a native `node.exe` process — install **WSL2** and run the harness under Linux/WSL for that boundary. Worker prompts also prohibit reading `.cursor`, `agent-transcripts`, raw `.gitnexus` / `.codegraph`, and sibling worktrees; conspicuous path-bearing tool calls are cancelled as defense in depth. Set `agent.sandbox: false` only when the OS sandbox is unavailable and the weaker prompt/detection boundary is acceptable.
+Cursor workers run only in per-run Linux containers. The container receives one
+named read-write volume at `/workspace`; the control checkout and durable state
+are never mounted. The host owns durable state, publication credentials, and
+container lifecycle, while the worker uses authenticated typed state RPC.
+Container hardening is the primary filesystem/process boundary; bridge
+networking is not an egress-proof boundary.
 
 Background polling (~1.8s while the tab is visible) must not feel like a page reload. The server returns a cheap change `signature`, and an unchanged poll short-circuits before any payload is serialized. Focused HITL editors — and half-filled batch cards with no control currently focused — block silent rewrites, and scroll / `<details>` chrome is restored when a silent poll does rewrite the DOM. The full checklist lives in [docs/ui-polling.md](./docs/ui-polling.md).
 
@@ -106,7 +111,8 @@ The server binds only to `127.0.0.1`, generates a fresh access token, rejects un
 
 ## Durable artifacts
 
-Each run lives under `.agent-harness/runs/<runId>/`:
+Each run's durable artifacts live in its registered project directory under the
+external harness home. They are host-owned and are not mounted into the worker:
 
 | Artifact | Purpose |
 | --- | --- |
@@ -192,7 +198,11 @@ Rules (`.mdc`) and skill roots (`SKILL.md`) are classified as guidance and injec
 
 Assigned entries are compiled into one lean **guidance pack** per role: YAML frontmatter is stripped, bodies are joined with a blank line (no per-file headers, reasons, or source paths), and the pack is injected under a `GUIDANCE` heading in worker prompts. Inspect the same pack in the dashboard **Agent guidance** view (`GET /api/guidance/packs`). Selection/audit detail (resolved sources, missing assignments, overrides, truncation) stays in the sibling `packets/<id>.guidance.json` file — not in the model-facing prompt.
 
-Configurations without `assignments` retain the legacy relevance selector for compatibility. It uses the worker role, objective, known paths, rule `globs`, optional front-matter `roles`, and lexical relevance. In legacy mode, `alwaysApply: true` is a ranking priority rather than unconditional prompt injection. Selected excerpts and reasons are persisted in the work packet, and omitted `alwaysApply` rules are recorded in the sibling guidance audit. Guidance is loaded from filesystem roots rather than the document index, so it never appears in generic retrieval.
+Current configurations use an explicit `assignments` entry for every agent role.
+Each role receives only its named rules and skills. Selection and truncation
+details are persisted in the sibling guidance audit; guidance is loaded from
+filesystem roots rather than the document index, so it never appears in generic
+retrieval.
 
 New runs enable this behavior by default with separate packet budgets: guidance+context, serialized `input`, and a repository-intelligence sub-budget. Guidance itself is capped at 6,000 characters and six entries:
 
@@ -276,9 +286,9 @@ the primary route provider (GitNexus `analyze … --index-only --skip-agents-md
 (`.codegraph/`) refresh lazily when traversal reaches them. After each verified
 task commit that includes a source-file path, primary indexes refresh again so
 the next task sees fresh structure. Queries use argument arrays only (no shell).
-GitNexus always passes the absolute workspace root as `--repo` so detached
-concurrent worktrees and duplicate repository names resolve to this checkout,
-not a basename registry alias.
+GitNexus always passes the absolute `/workspace` root as `--repo` so concurrent
+named-volume workspaces and duplicate repository names resolve to the current
+run checkout, not a basename registry alias.
 
 Generated indexes must stay Git-ignored. The harness installs repository-local
 exclude rules for `.gitnexus/` and `.codegraph/` when needed and refuses tracked
@@ -356,12 +366,14 @@ The worker completes reflection through final review, then sends a hashed result
 
 ### Dirty control checkout
 
-A dirty operator checkout is **not** a blocker for ordinary new worktree runs. The run starts from the **committed** base only; uncommitted control-checkout changes are never imported and are **not** warned about at start. Commit changes yourself only if you need those edits in a *future* base (an import-uncommitted operation is deliberately not implemented yet).
+A dirty operator checkout is **not** imported into a new Docker run. The named
+volume is seeded from the selected branch's **committed** base only; uncommitted
+control-checkout changes remain on the host. Commit changes yourself only if you
+need those edits in a future run.
 
 ### Locking and concurrency
 
 - **Per-run lock** — state/config/workspace mutation for one run.
-- **Workspace-admin lock** — short lock around shared Git worktree metadata (add/remove/rename branch refs).
 - **Shared-index lock** — knowledge / repository-intelligence refresh coordination.
 
 Independent container runs can advance concurrently. Inspect durable run locks with `agent-harness unlock --run-id <id> --inspect-only`.
@@ -385,7 +397,7 @@ A missing worker container is recreated against the retained named volume (`exec
 
 ### Unsupported legacy installs
 
-`legacy-shared` workspaces, repo-local `allowLegacy` discovery, `migrate-home`, and `migrate-workspace` have been removed. Archive old shared-checkout runs or recreate them under a registered external harness home (`agent-harness projects add`). Explicit `--config <path>` remains available as a path override for already-registered workflows.
+`legacy-shared` workspaces, repo-local `allowLegacy` discovery, `migrate-home`, and `migrate-workspace` have been removed. Archive old shared-checkout runs or recreate them under a registered external harness home (`agent-harness project add`). Explicit `--config <path>` remains available as a path override for already-registered workflows.
 
 ## Git ownership
 
@@ -398,7 +410,7 @@ Agents never run git. The harness:
 - optionally pushes and opens a pull request with `gh`;
 - never auto-merges.
 
-New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI `--base-branch`) can override the base branch for that run only; the project default remains `git.baseBranch`. The worktree is created immediately when the run starts — the delivery branch is not.
+New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI `--base-branch`) can override the base branch for that run only; the project default remains `git.baseBranch`. The named-volume workspace is seeded immediately when the run starts; the delivery branch is created only when publication needs it.
 
 ## Trust boundary
 
@@ -424,9 +436,9 @@ npm run test:acceptance    # CLI acceptance via createCli injection + compiled b
 npm run test:all           # unit + integration + required Docker + e2e + build + acceptance
 ```
 
-Docker is the only production runtime. `execution.runtime`, local worktrees, per-run Dockerfiles, generated images, and manual base/image approvals are no longer configuration or runtime paths. Loading a pre-cutover project config fails with migration guidance; the install flow prepares one digest-pinned maintained worker image that every run reuses. Bridge networking is filesystem isolation, not an exfiltration boundary. See [ADR 0017](../../docs/adr/0017-cordis-composed-docker-runtime.md) and [INSTALL.md](../../INSTALL.md#7-docker-runtime).
+Docker is the only production runtime. The retired runtime selector, host-local execution, per-run Dockerfiles, generated images, and manual base/image approvals are no longer configuration or runtime paths. Loading a pre-cutover project config fails with archive/discard guidance; the install flow prepares one digest-pinned maintained worker image that every run reuses. Each run gets a named volume at `/workspace`, while durable state stays on the host behind authenticated typed state RPC. Bridge networking is filesystem isolation, not an exfiltration boundary. See [ADR 0017](../../docs/adr/0017-cordis-composed-docker-runtime.md) and [INSTALL.md](../../INSTALL.md#7-docker-runtime).
 
-The non-provider Docker probe mounts an actual mode-`000` fixture at the production `/run/secrets/*` layout and fails if the file is absent or readable; it also verifies `/workspace` writes and host-state absence. Real Cursor credentials remain a release gate: the host refuses to mount `CURSOR_API_KEY` until a credential-gated smoke test demonstrates denial through both Cursor filesystem tools and delegated tasks. That proof requires a real Cursor credential and cannot be established by the deterministic provider.
+The non-provider Docker probe mounts an actual mode-`000` fixture at the production `/run/secrets/*` layout and fails if the file is absent or readable; it also verifies `/workspace` writes and host-state absence. The fixture is staged into a disposable volume rather than bind-mounted from the host, because Docker Desktop surfaces host bind mounts as world-readable regardless of their host mode and could not prove the denial. `execution prepare-worker` runs this probe and caches a pass per image digest under the project state root; run creation and `execution status` both fail closed on that cache. Real Cursor credentials remain a release gate: the host refuses to mount `CURSOR_API_KEY` until a credential-gated smoke test demonstrates denial through both Cursor filesystem tools and delegated tasks. That proof requires a real Cursor credential and cannot be established by the deterministic provider.
 
 E2E tests live in `tests/e2e/`. They do **not** launch the production CLI: each test builds a `ProjectFixture`, injects a `ScriptedBackend`, starts `startUiServer({ port: 0, openBrowser: false })`, and opens the authenticated dashboard URL. Failure artifacts land under Git-ignored `test-results/` (Playwright traces under `test-results/playwright/`).
 

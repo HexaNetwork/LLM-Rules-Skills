@@ -190,7 +190,8 @@ if (-not (Invoke-ReadinessCheck -Repository $Project)) {
   if ($answer -match '^[Nn]') {
     throw "Worker readiness is required before the Docker-only harness can run."
   }
-  & node $Cli execution prepare-worker --repository $Project --force-rebuild --write-settings
+  $PackageRoot = Join-Path $HarnessRoot "packages\agent-harness"
+  & node $Cli execution prepare-worker --repository $Project --package-root $PackageRoot --force-rebuild --write-settings
   if ($LASTEXITCODE -ne 0) { throw "Worker preparation failed (exit $LASTEXITCODE)." }
   if (-not (Invoke-ReadinessCheck -Repository $Project)) {
     throw "Worker preparation completed, but readiness is still blocked. Review the blockers above."

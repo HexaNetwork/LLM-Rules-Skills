@@ -289,7 +289,7 @@ function Select-AgentHarnessProjectInteractive {
       return $projects[$asInt - 1]
     }
     if ($asInt -eq ($projects.Count + 1)) {
-      Write-Host -NoNewline "Absolute path to the deployed project: "
+      Write-Host -NoNewline "Absolute path to the target project: "
       $typed = Read-Host
       if ([string]::IsNullOrWhiteSpace($typed)) { return $null }
       return (Resolve-AgentHarnessProjectPath -Path $typed)

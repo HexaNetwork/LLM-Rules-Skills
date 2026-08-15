@@ -23,7 +23,6 @@ import {
   resolveBaseSha,
   verifySeedBundle,
 } from "../git/bundle-transport.js";
-import type { WorktreeInspection } from "../git/worktree-manager.js";
 import {
   HARNESS_CONTAINER_LABEL_PREFIX,
 } from "../infrastructure/container/container-spec.js";
@@ -31,6 +30,7 @@ import type { DockerClient } from "../infrastructure/container/types.js";
 import type { RunRepository } from "../application/run-repository.js";
 import type {
   CreateWorkspaceInput,
+  WorkspaceInspection,
   WorkspaceCleanupInspection,
   WorkspaceProvisioner,
 } from "./types.js";
@@ -63,11 +63,9 @@ export type DockerCloneProvisionerOptions = {
 };
 
 /**
- * Docker execution runtime: seed-bundle → named volume clone at exact baseSha (ADR 0015).
+ * Seed-bundle → named volume clone at the exact base SHA.
  */
 export class DockerCloneProvisioner implements WorkspaceProvisioner {
-  readonly runtime = "docker" as const;
-
   constructor(private readonly options: DockerCloneProvisionerOptions) {}
 
   async create(input: CreateWorkspaceInput): Promise<RunWorkspace> {
@@ -222,7 +220,7 @@ export class DockerCloneProvisioner implements WorkspaceProvisioner {
     return workspace;
   }
 
-  async inspect(workspace: RunWorkspace): Promise<WorktreeInspection> {
+  async inspect(workspace: RunWorkspace): Promise<WorkspaceInspection> {
     if (workspace.kind !== "docker-clone") {
       throw new HarnessFailure("Cannot inspect a non-docker-clone workspace", "workspace", false);
     }

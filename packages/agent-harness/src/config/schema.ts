@@ -31,13 +31,11 @@ export type VerificationCommand = z.infer<typeof VerificationCommandSchema>;
 const CONFIG_HASH_OMIT_PATHS = new Set([
   "repositoryRoot",
   "stateDirectory",
-  "worktreeRoot",
   "knowledge.sharedIndexDirectory",
   // Machine-local guidance trees (resolved from harness home / project registration).
   "knowledge.guidance.projectRoot",
   "knowledge.guidance.sharedRoot",
   // Runtime workspace metadata (lives in workspace.json; omitted if present on a snapshot).
-  "worktreePath",
   "controlRoot",
   "gitCommonDir",
   "baseSha",
@@ -193,9 +191,6 @@ export const KnowledgeSourceSchema = z
   );
 export type KnowledgeSource = z.infer<typeof KnowledgeSourceSchema>;
 
-export const ExecutionRuntimeSchema = z.enum(["local", "docker"]);
-export type ExecutionRuntime = z.infer<typeof ExecutionRuntimeSchema>;
-
 const DockerResourceLimitsSchema = z
   .object({
     cpus: z.number().positive().default(2),
@@ -272,12 +267,6 @@ export const HarnessConfigSchema = z.object({
   version: z.literal(2).default(2),
   repositoryRoot: z.string().default("."),
   stateDirectory: z.string().default(".agent-harness"),
-  /**
-   * Optional external worktree parent. When omitted, external state uses the
-   * sibling `<repository-name>-worktrees` convention; legacy state nests under
-   * `<stateRoot>/worktrees`.
-   */
-  worktreeRoot: z.string().min(1).optional(),
   /** Docker execution policy. Not an LLM provider. */
   execution: ExecutionConfigSchema.default({}),
   models: z
@@ -308,7 +297,7 @@ export const HarnessConfigSchema = z.object({
       sandbox: z.boolean().default(true),
       /**
        * When true, refuse providers that cannot restrict the writable workspace
-       * to the run worktree (see workspaceCapabilities).
+       * to the run workspace (see workspaceCapabilities).
        */
       strictIsolation: z.boolean().default(false),
     })
@@ -406,13 +395,6 @@ export const HarnessConfigSchema = z.object({
       remote: z.string().min(1).default("origin"),
       push: z.boolean().default(false),
       openPullRequest: z.boolean().default(false),
-      // Explicit action (dashboard/CLI) is the default path; this makes start() sweep a dirty tree itself.
-      autoCommitPreflight: z.boolean().default(false),
-      // branch-then-commit deviates from baseBranch branching: the run branch is cut from
-      // current HEAD so the dirty tree rides onto it, not from config.git.baseBranch.
-      // commit-then-branch commits on the current checkout; start()/preflight then cuts
-      // the run branch from baseBranch before indexing and interview.
-      preflightCommitOrder: PreflightCommitOrderSchema.default("branch-then-commit"),
       // Globs ignored when deciding whether the tree is dirty / a path is unreported.
       ignoredArtifactPatterns: z
         .array(z.string().min(1))
@@ -503,8 +485,6 @@ export const ProjectSettingsPatchSchema = z
       .optional(),
     git: z
       .object({
-        autoCommitPreflight: z.boolean().optional(),
-        preflightCommitOrder: PreflightCommitOrderSchema.optional(),
         ignoredArtifactPatterns: z.array(z.string().min(1)).optional(),
       })
       .strict()
@@ -640,8 +620,6 @@ export const RunPolicyPatchSchema = z
       .optional(),
     git: z
       .object({
-        autoCommitPreflight: z.boolean().optional(),
-        preflightCommitOrder: PreflightCommitOrderSchema.optional(),
         ignoredArtifactPatterns: z.array(z.string().min(1)).optional(),
       })
       .strict()

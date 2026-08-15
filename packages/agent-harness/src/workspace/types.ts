@@ -1,8 +1,21 @@
 import type { RunWorkspace } from "../domain/workspace.js";
-import type {
-  CreateWorktreeInput,
-  WorktreeInspection,
-} from "../git/worktree-manager.js";
+
+export type CreateWorkspaceInput = {
+  runId: string;
+  baseBranch: string;
+  baseSha?: string;
+  branchName?: string;
+  createdAt?: string;
+};
+
+export type WorkspaceInspection = {
+  path: string;
+  toplevel: string;
+  headSha: string;
+  gitCommonDir: string;
+  detached: boolean;
+  registered: boolean;
+};
 
 /** Facts gathered for conservative workspace cleanup without mutation. */
 export type WorkspaceCleanupInspection = {
@@ -19,17 +32,14 @@ export type WorkspaceRemoveOptions = {
   removeVolume?: boolean;
 };
 
-export type CreateWorkspaceInput = CreateWorktreeInput;
-
 /**
  * Port for creating, reopening, inspecting, and removing run execution workspaces.
- * Local mode wraps WorktreeManager; Docker mode uses seed-bundle clones (ADR 0015).
+ * Production implementations provision a seed-bundle clone in a Docker volume.
  */
 export type WorkspaceProvisioner = {
-  readonly runtime: "local" | "docker";
   create(input: CreateWorkspaceInput): Promise<RunWorkspace>;
   open(workspace: RunWorkspace): Promise<RunWorkspace>;
-  inspect(workspace: RunWorkspace): Promise<WorktreeInspection>;
+  inspect(workspace: RunWorkspace): Promise<WorkspaceInspection>;
   inspectCleanupTarget(workspace: RunWorkspace): Promise<WorkspaceCleanupInspection>;
   remove(workspace: RunWorkspace, runId: string, options?: WorkspaceRemoveOptions): Promise<void>;
 };

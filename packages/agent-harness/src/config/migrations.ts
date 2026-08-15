@@ -96,10 +96,9 @@ function mapCodegraphSettings(codegraph: Record<string, unknown>): Record<string
 }
 
 /**
- * Normalize a frozen per-run config snapshot into a HarnessConfig.
+ * Normalize a supported frozen per-run config snapshot into a HarnessConfig.
  * Snapshots without knowledge.guidance keep guidance disabled so
  * in-progress deliveries do not silently change retrieval behavior (ADR 0006).
- * Older snapshots without `execution` receive the default local runtime.
  */
 export function normalizeFrozenRunConfig(raw: unknown): HarnessConfig {
   const rewritten = rewriteGraphifyConfigKeys(raw);
@@ -110,9 +109,18 @@ export function normalizeFrozenRunConfig(raw: unknown): HarnessConfig {
     ? { ...withoutVersion }
     : {};
 
-  // Pre-CONFIG_VERSION 16 snapshots omit execution; default local preserves behavior.
   if (!Object.hasOwn(candidate, "execution")) {
-    candidate.execution = { runtime: "local" };
+    throw new Error(
+      "This run uses a pre-cutover configuration without execution.docker and cannot be resumed. Finish/export/discard it with the pre-cutover harness, then create a new Docker run.",
+    );
+  }
+  if (
+    isRecord(candidate.execution) &&
+    Object.prototype.hasOwnProperty.call(candidate.execution, "runtime")
+  ) {
+    throw new Error(
+      "This run uses retired execution.runtime configuration and cannot be resumed. Finish/export/discard it with the pre-cutover harness, then create a new Docker run.",
+    );
   }
 
   if (

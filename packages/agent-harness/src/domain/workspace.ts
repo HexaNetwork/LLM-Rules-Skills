@@ -34,32 +34,17 @@ const WINDOWS_RESERVED_NAMES = new Set([
   "lpt9",
 ]);
 
-export const RunWorkspaceKindSchema = z.enum(["git-worktree", "git-disabled", "docker-clone"]);
+export const RunWorkspaceKindSchema = z.enum(["git-disabled", "docker-clone"]);
 export type RunWorkspaceKind = z.infer<typeof RunWorkspaceKindSchema>;
 
-const GitWorktreeWorkspaceSchema = z.object({
-  version: z.literal(WORKSPACE_SCHEMA_VERSION),
-  kind: z.literal("git-worktree"),
-  controlRoot: z.string().min(1),
-  worktreePath: z.string().min(1).optional(),
-  gitCommonDir: z.string().min(1).optional(),
-  baseBranch: z.string().min(1).optional(),
-  baseSha: z.string().min(1).optional(),
-  branchName: z.string().min(1).optional(),
-  createdAt: z.string().min(1),
-  removedAt: z.string().min(1).optional(),
-});
-
 /**
- * Git-disabled workspaces omit execution roots. Optional identity fields are
- * retained so consumers can read shared optional keys without narrowing.
+ * Git-disabled workspaces omit Git identity while retaining explicit run
+ * workspace metadata for the non-Git execution path.
  */
 const GitDisabledWorkspaceSchema = z.object({
   version: z.literal(WORKSPACE_SCHEMA_VERSION),
   kind: z.literal("git-disabled"),
   controlRoot: z.string().min(1),
-  worktreePath: z.string().min(1).optional(),
-  gitCommonDir: z.string().min(1).optional(),
   baseBranch: z.string().min(1).optional(),
   baseSha: z.string().min(1).optional(),
   branchName: z.string().min(1).optional(),
@@ -68,9 +53,8 @@ const GitDisabledWorkspaceSchema = z.object({
 });
 
 /**
- * Stable Docker-clone identity (ADR 0015). Ephemeral container IDs and host ports
+ * Stable Docker-clone identity. Ephemeral container IDs and host ports
  * are discovered at runtime and stored in execution.json — not here.
- * Optional worktreePath/gitCommonDir stay unset (local-worktree fields).
  */
 const DockerCloneWorkspaceSchema = z.object({
   version: z.literal(WORKSPACE_SCHEMA_VERSION),
@@ -87,19 +71,15 @@ const DockerCloneWorkspaceSchema = z.object({
   generation: z.number().int().nonnegative(),
   baseBranch: z.string().min(1).optional(),
   branchName: z.string().min(1).optional(),
-  worktreePath: z.string().min(1).optional(),
-  gitCommonDir: z.string().min(1).optional(),
   createdAt: z.string().min(1),
   removedAt: z.string().min(1).optional(),
 });
 
 export const RunWorkspaceSchema = z.discriminatedUnion("kind", [
-  GitWorktreeWorkspaceSchema,
   GitDisabledWorkspaceSchema,
   DockerCloneWorkspaceSchema,
 ]);
 export type RunWorkspace = z.infer<typeof RunWorkspaceSchema>;
-export type GitWorktreeWorkspace = z.infer<typeof GitWorktreeWorkspaceSchema>;
 export type GitDisabledWorkspace = z.infer<typeof GitDisabledWorkspaceSchema>;
 export type DockerCloneWorkspace = z.infer<typeof DockerCloneWorkspaceSchema>;
 
@@ -119,57 +99,6 @@ export function canonicalizeWorkspacePath(value: string): string {
   const resolved = path.resolve(value);
   // Prefer forward slashes in persisted metadata for cross-platform readability.
   return resolved.replaceAll("\\", "/");
-}
-
-function compareKey(value: string): string {
-  const canonical = canonicalizeWorkspacePath(value);
-  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
-}
-
-/**
- * True when `child` is exactly `parent` or a path beneath it.
- * Rejects sibling prefixes such as `worktrees` vs `worktrees-evil`.
- */
-export function isWorktreePathContained(child: string, parent: string): boolean {
-  const childKey = compareKey(child);
-  const parentKey = compareKey(parent).replace(/\/+$/, "");
-  if (childKey === parentKey) return true;
-  const prefix = parentKey.endsWith("/") ? parentKey : `${parentKey}/`;
-  return childKey.startsWith(prefix);
-}
-
-export function assertWorktreePathContained(child: string, parent: string): void {
-  if (!isWorktreePathContained(child, parent)) {
-    throw new HarnessFailure(
-      `Worktree path is not contained in the configured worktree parent (${canonicalizeWorkspacePath(parent)}): ${canonicalizeWorkspacePath(child)}`,
-      "workspace",
-      false,
-    );
-  }
-}
-
-/**
- * Filesystem-safe run directory segment for `<stateRoot>/worktrees/<id>`.
- * Lowercases, replaces unsafe characters, and avoids Windows reserved names.
- */
-export function sanitizeWorktreeRunId(runId: string): string {
-  let safe = runId
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/^\.+|\.+$/g, "")
-    .slice(0, 80);
-  if (!safe) safe = "run";
-  if (safe === "." || safe === ".." || safe.includes("..")) {
-    safe = "run";
-  }
-  const base = safe.split(".")[0] ?? safe;
-  if (WINDOWS_RESERVED_NAMES.has(base) || WINDOWS_RESERVED_NAMES.has(safe)) {
-    const rest = safe.slice(base.length).replace(/^\./, "-");
-    safe = `${base}-run${rest}`;
-  }
-  return safe;
 }
 
 /** Max characters retained from a feature title when building a delivery branch slug. */
@@ -223,8 +152,8 @@ export type MigrateRunWorkspaceOptions = {
 };
 
 /**
- * Parse workspace metadata. Missing records are rejected — every resumable run
- * must have an explicit git-worktree or git-disabled workspace.json.
+ * Parse workspace metadata. Missing and pre-cutover records are rejected —
+ * every resumable run must have explicit Docker or git-disabled metadata.
  */
 export function migrateRunWorkspace(
   value: unknown,
@@ -242,28 +171,18 @@ export function migrateRunWorkspace(
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    (value as { kind?: unknown }).kind === "legacy-shared"
+    ["legacy-shared", "git-worktree"].includes(
+      String((value as { kind?: unknown }).kind),
+    )
   ) {
     throw new HarnessFailure(
-      "legacy-shared workspaces are no longer supported. Archive the run or recreate it as a git-worktree run.",
+      "Pre-cutover local workspaces are no longer supported. Finish/export/discard the run with the pre-cutover harness, then recreate it as a Docker run.",
       "workspace",
       false,
     );
   }
 
   const parsed = RunWorkspaceSchema.parse(value);
-  if (parsed.kind === "git-worktree") {
-    return RunWorkspaceSchema.parse({
-      ...parsed,
-      controlRoot: canonicalizeWorkspacePath(parsed.controlRoot),
-      worktreePath: parsed.worktreePath
-        ? canonicalizeWorkspacePath(parsed.worktreePath)
-        : undefined,
-      gitCommonDir: parsed.gitCommonDir
-        ? canonicalizeWorkspacePath(parsed.gitCommonDir)
-        : undefined,
-    });
-  }
   if (parsed.kind === "docker-clone") {
     return RunWorkspaceSchema.parse({
       ...parsed,
@@ -381,7 +300,7 @@ export function formatWorkspaceDivergenceMessage(
         (bounded.omittedCount > 0 ? ` (+${bounded.omittedCount} more)` : "")
       : "(HEAD or index changed with no dirty paths)";
   return (
-    `Workspace diverged in this run's worktree (${components}). ` +
+    `Workspace diverged in this run's Docker workspace (${components}). ` +
     `Diverging paths: ${pathText}`
   );
 }

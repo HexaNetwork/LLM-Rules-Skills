@@ -13,25 +13,6 @@ import { buildWorkspaceEvidence, type WorkspaceEvidence } from "./domain/workspa
 import { HarnessFailure } from "./errors.js";
 import { matchesGlob } from "./knowledge.js";
 
-export {
-  MIN_GIT_WORKTREE_VERSION,
-  assertGitWorktreeCapability,
-  evaluateGitWorktreeSupport,
-  parseGitVersionOutput,
-  probeGitCapabilities,
-  type GitCapabilities,
-  type GitVersion,
-  type GitWorktreeSupportEvaluation,
-} from "./git/capabilities.js";
-
-export {
-  WorktreeManager,
-  type CreateWorktreeInput,
-  type WorktreeInspection,
-  type WorktreeManagerOptions,
-} from "./git/worktree-manager.js";
-
-
 export class GitService {
   constructor(
     private readonly config: HarnessConfig,
@@ -118,10 +99,9 @@ export class GitService {
   /**
    * Keep repository-intelligence indexes out of run-local Git evidence.
    *
-   * A run worktree is created from a committed base, so an uncommitted
+   * A Docker workspace is created from a committed base, so an uncommitted
    * `.gitignore` rule in the control checkout cannot protect it. Install the
-   * invariant in Git's repository-local exclude file instead; that metadata is
-   * shared by linked worktrees and does not dirty any checkout.
+   * invariant in Git's repository-local exclude file instead.
    */
   async ensureRepositoryIntelligenceArtifactsIgnored(
     directories: string[] = [".gitnexus", ".codegraph"],
@@ -198,8 +178,8 @@ export class GitService {
   }
 
   /**
-   * Paths that differ between `baseRef` and the worktree (committed + dirty + untracked).
-   * Used for task review over `workspace.baseSha..worktree`.
+   * Paths that differ between `baseRef` and the workspace (committed + dirty + untracked).
+   * Used for task review over `workspace.baseSha..HEAD`.
    */
   async changedFilesVersusRef(baseRef: string): Promise<string[]> {
     if (!this.config.git.enabled) return [];

@@ -2,24 +2,22 @@ import { z } from "zod";
 import {
   HARNESS_PACKAGE_VERSION,
   WORKER_RPC_PROTOCOL_VERSION,
-  WORKER_RPC_SECRET_RELATIVE_PATH,
   WORKER_RPC_CONTAINER_PORT,
 } from "../worker/protocol.js";
 
 export const RUN_EXECUTION_SCHEMA_VERSION = 1 as const;
 
 /**
- * Restartable Docker/local execution lifecycle metadata for a single run.
+ * Restartable Docker execution lifecycle metadata for a single run.
  * Durable under `<runDir>/execution.json`. Ephemeral container IDs and host ports
  * are discovered here and must not be treated as sole workspace identity
- * (see workspace.json `docker-clone` fields and ADR 0015).
+ * (see workspace.json `docker-clone` fields and ADR 0016).
  *
- * Secrets: store only relative path + fingerprint — never the raw RPC token.
+ * Secrets: store only non-reversible fingerprints — never paths or raw tokens.
  */
 export const RunExecutionStateSchema = z
   .object({
     version: z.literal(RUN_EXECUTION_SCHEMA_VERSION),
-    runtime: z.enum(["local", "docker"]),
     lifecycle: z
       .enum([
         "pending",
@@ -44,8 +42,6 @@ export const RunExecutionStateSchema = z
     containerPort: z.number().int().positive().default(WORKER_RPC_CONTAINER_PORT),
     imageId: z.string().min(1).optional(),
     discoveredImageDigest: z.string().min(1).optional(),
-    /** Relative to the run directory; never absolute host paths in logs as secrets. */
-    rpcSecretRelativePath: z.string().min(1).default(WORKER_RPC_SECRET_RELATIVE_PATH),
     /** Non-reversible token fingerprint for diagnostics (not the secret). */
     rpcTokenFingerprint: z.string().min(1).optional(),
     rpcProtocolVersion: z.number().int().positive().default(WORKER_RPC_PROTOCOL_VERSION),

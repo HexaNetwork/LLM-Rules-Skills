@@ -1,4 +1,9 @@
-export type { WorkspaceProvisioner, WorkspaceCleanupInspection, CreateWorkspaceInput } from "./types.js";
+export type {
+  WorkspaceProvisioner,
+  WorkspaceCleanupInspection,
+  CreateWorkspaceInput,
+  WorkspaceInspection,
+} from "./types.js";
 export {
   DockerCloneProvisioner,
   defaultWorkspaceVolumeName,
@@ -9,3 +14,7 @@ export {
   resolveWorkspaceProvisioner,
   type ResolveWorkspaceProvisionerOptions,
 } from "./resolve-workspace-provisioner.js";
+export {
+  WorkerWorkspaceProvisioner,
+  type WorkerWorkspaceProvisionerOptions,
+} from "./worker-workspace-provisioner.js";

@@ -2,7 +2,14 @@
 
 ## Status
 
-Accepted; **supersedes [ADR 0015](0015-docker-isolated-runs.md)**. Extends the per-run workspace identity of [ADR 0010](0010-per-run-worktrees.md) and the external control plane of [ADR 0011](0011-external-harness-home.md). Implementation follows the [Docker-only state service plan](../plans/docker-only-state-service.md).
+**Superseded** by [ADR 0018](0018-fresh-modular-harness.md). The fresh harness
+keeps host-owned durable state and host-owned Git, but replaces
+disposable-per-invocation sandboxes, provider-proxy credential custody, and
+state RPC with one container per run and `CURSOR_API_KEY` in the container
+environment. Kept for decision history.
+
+Was: Accepted; superseded [ADR 0015](0015-docker-isolated-runs.md). Extended
+[ADR 0010](0010-per-run-worktrees.md) and [ADR 0011](0011-external-harness-home.md).
 
 ## Context
 

@@ -1,0 +1,171 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
+import type { Context } from "@deepseek-ai/cordis";
+import type { ProfileRow } from "../boot.js";
+import { renderDashboardPage } from "../ui/page.js";
+
+export type DashboardService = {
+  start(): Promise<string>;
+  stop(): Promise<void>;
+  readonly token: string;
+};
+
+export type DashboardConfig = {
+  port?: number;
+  host?: string;
+};
+
+export function createDashboardService(ctx: Context, config: DashboardConfig = {}): DashboardService {
+  const token = randomBytes(24).toString("hex");
+  const host = config.host ?? "127.0.0.1";
+  if (!["127.0.0.1", "::1", "localhost"].includes(host)) {
+    throw new Error(`Dashboard host must be loopback, received "${host}"`);
+  }
+  const port = config.port ?? 8787;
+  const urlHost = host === "::1" ? "[::1]" : host;
+  let server: ReturnType<typeof createServer> | undefined;
+
+  const service: DashboardService = {
+    token,
+    async start() {
+      if (server) return `http://${urlHost}:${port}/?token=${token}`;
+      server = createServer((req, res) => {
+        void handle(ctx, token, req, res);
+      });
+      await new Promise<void>((resolve, reject) => {
+        server!.listen(port, host, () => resolve());
+        server!.on("error", reject);
+      });
+      const address = server.address();
+      const bound = typeof address === "object" && address ? address.port : port;
+      return `http://${urlHost}:${bound}/?token=${token}`;
+    },
+    async stop() {
+      if (!server) return;
+      await new Promise<void>((resolve, reject) => {
+        server!.close((error) => (error ? reject(error) : resolve()));
+      });
+      server = undefined;
+    },
+  };
+  return service;
+}
+
+async function handle(
+  ctx: Context,
+  token: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const url = new URL(req.url ?? "/", "http://127.0.0.1");
+  if (url.pathname === "/" || url.pathname === "/index.html") {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end(renderDashboardPage());
+    return;
+  }
+  const auth = req.headers.authorization ?? "";
+  const queryToken = url.searchParams.get("token") ?? "";
+  if (auth !== `Bearer ${token}` && queryToken !== token) {
+    res.writeHead(401, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "unauthorized" }));
+    return;
+  }
+  try {
+    const body = req.method === "POST" ? await readBody(req) : undefined;
+    const payload = await route(ctx, req.method ?? "GET", url, body);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(payload));
+  } catch (error) {
+    res.writeHead(400, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+  }
+}
+
+async function route(
+  ctx: Context,
+  method: string,
+  url: URL,
+  body?: unknown,
+): Promise<unknown> {
+  if (method === "GET" && url.pathname === "/api/projects") {
+    return ctx.runLifecycle.listProjects();
+  }
+  if (method === "POST" && url.pathname === "/api/projects") {
+    const input = (body ?? {}) as { controlRoot?: string };
+    const controlRoot = String(input.controlRoot ?? "").trim();
+    if (!controlRoot) throw new Error("Project path is required");
+    return ctx.runLifecycle.addProject(controlRoot);
+  }
+  if (method === "GET" && url.pathname === "/api/runs") {
+    return ctx.runLifecycle.list();
+  }
+  const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)(?:\/([^/]+))?$/);
+  if (method === "GET" && runMatch && !runMatch[2]) {
+    return ctx.runLifecycle.status(decodeURIComponent(runMatch[1]!));
+  }
+  if (method === "GET" && runMatch?.[2] === "activity") {
+    return ctx.runLifecycle.activity(decodeURIComponent(runMatch[1]!));
+  }
+  if (method === "GET" && runMatch?.[2] === "sessions") {
+    return ctx.runLifecycle.sessions(decodeURIComponent(runMatch[1]!));
+  }
+  if (method === "POST" && url.pathname === "/api/runs") {
+    const input = (body ?? {}) as { idea?: string; workflowBundleId?: string; repository?: string; projectKey?: string };
+    return ctx.runLifecycle.start({
+      idea: String(input.idea ?? ""),
+      workflowBundleId: input.workflowBundleId,
+      repository: input.repository,
+      projectKey: input.projectKey,
+    });
+  }
+  if (method === "POST" && runMatch?.[2] === "continue") {
+    return ctx.runLifecycle.continue(decodeURIComponent(runMatch[1]!));
+  }
+  if (method === "POST" && runMatch?.[2] === "retry") {
+    return ctx.runLifecycle.retry(decodeURIComponent(runMatch[1]!));
+  }
+  if (method === "POST" && runMatch?.[2] === "cancel") {
+    return ctx.runLifecycle.cancel(decodeURIComponent(runMatch[1]!));
+  }
+  if (method === "POST" && runMatch?.[2] === "answer") {
+    const batch = (body ?? {}) as { answers?: Record<string, string>; parked?: string[]; notes?: string };
+    return ctx.runLifecycle.answer(decodeURIComponent(runMatch[1]!), {
+      answers: batch.answers ?? {},
+      parked: batch.parked,
+      notes: batch.notes,
+    });
+  }
+  throw new Error(`Unknown route ${method} ${url.pathname}`);
+}
+
+function readBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      if (!text) return resolve({});
+      try {
+        resolve(JSON.parse(text));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+export function dashboardPlugin(ctx: Context, config: DashboardConfig = {}): void {
+  ctx.provide("dashboard", createDashboardService(ctx, config));
+}
+
+Object.assign(dashboardPlugin, { inject: ["runLifecycle"] });
+
+export function dashboardRow(config: DashboardConfig = {}): ProfileRow {
+  return {
+    id: "host.dashboard",
+    plugin: dashboardPlugin,
+    config,
+    trusted: true,
+  };
+}

@@ -12,21 +12,16 @@ Shared engineering skills and rules, plus a durable Agent Harness for turning an
 
 ## Agent Harness
 
-The harness uses Wayfinder-style decision maps, local Markdown issues, offline lexical retrieval with optional GitNexus/CodeGraph repository intelligence, bounded fresh agent sessions, optional TDD, deterministic command evidence, harness-owned git publication, and an authenticated local dashboard.
-
-Its knowledge index supports a scope gate: `General/` is indexed as universal guidance and `E&E/` as `exploration-and-empire` project guidance. For each worker step, the harness deterministically selects only relevant rules and skills by role, known paths, and lexical relevance, then uses the remaining context budget for repository documents. A normal query searches only global material plus the active project's documents; a different project's shared material must be named explicitly.
+The harness uses a Cordis-composed host, live project settings, bounded work
+packets, optional TDD, deterministic command evidence, host-owned git
+publication, and an authenticated local dashboard. One Linux container per run
+bind-mounts the run worktree at `/workspace` and may receive `CURSOR_API_KEY`
+in its environment. Host secrets, the control checkout, and harness home stay
+off that mount list.
 
 On Windows, double-click `scripts\Launch-AgentHarness.cmd`. Its guided menu can
-set up/repair a project, check the required Docker worker, inspect the trusted
-Cordis composition, or open the dashboard. `scripts\Install-AgentHarness.cmd`
-remains a setup-only shortcut.
-
-The production runtime is Docker-only. Every run uses a named volume mounted at
-`/workspace` and one maintained digest-pinned worker image. Durable run state
-stays on the host; workers access it only through authenticated, typed state
-RPC. Real Cursor credential mounting remains fail-closed until its isolation
-release gate passes; the dashboard and deterministic readiness checks can still
-be used.
+register a project, check Docker, inspect the host composition, or open the
+dashboard.
 
 See [INSTALL.md](INSTALL.md) for the guided and scripted paths. Bash alternatives
 are `bash scripts/install-agent-harness.sh` and

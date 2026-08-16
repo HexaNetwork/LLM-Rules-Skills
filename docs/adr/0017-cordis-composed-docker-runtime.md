@@ -2,9 +2,13 @@
 
 ## Status
 
-Accepted. Supersedes the implementation topology in
-[ADR 0016](0016-docker-only-host-owned-state.md); ADR 0016 remains the state,
-fencing, and isolation contract.
+**Superseded** by [ADR 0018](0018-fresh-modular-harness.md). Cordis composition
+and a trusted host profile remain; the worker-as-second-harness, provider
+proxy, proof-tuple launch gate, and disposable-per-invocation sandbox topology
+do not. Kept for decision history.
+
+Was: Accepted. Superseded the implementation topology in
+[ADR 0016](0016-docker-only-host-owned-state.md).
 
 ## Decision
 

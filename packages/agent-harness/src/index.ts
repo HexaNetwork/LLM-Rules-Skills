@@ -1,89 +1,15 @@
+export { bootHost, bootProfile, createHostProfile, validateProfileDefinition } from "./boot.js";
+export { dumpHostConfig, dumpProfileConfig, redact } from "./dump-config.js";
+export { defaultHarnessHome, projectKeyFor } from "./home.js";
+export { createCli, main } from "./cli.js";
+export { DEFAULT_SETTINGS, mergeSettings, ProjectSettingsSchema } from "./domain/settings.js";
+export type { ProjectSettings, SettingsAuditEntry } from "./domain/settings.js";
 export type {
-  AgentBackend,
-  AgentBackendResult,
-  AgentInvocation,
-  AgentRequest,
-  AgentStepEvent,
-  InvokeInput,
-  ObservedInstallEvent,
-} from "./infrastructure/agents/types.js";
-export { AgentBackendRunError } from "./infrastructure/agents/types.js";
-export { AgentCoordinator } from "./infrastructure/agents/agent-coordinator.js";
-export { createCursorBackend } from "./infrastructure/agents/cursor-backend.js";
-export {
-  createFakeBackend,
-  emitFakeToolCallSteps,
-} from "./infrastructure/agents/fake-backend.js";
-export type { FakeBackendHandler } from "./infrastructure/agents/fake-backend.js";
-export {
-  parseOutput,
-  resolveAgentOutput,
-} from "./infrastructure/agents/output-parser.js";
-export { stepPersistenceLimits } from "./infrastructure/agents/activity-tracker.js";
-export {
-  detectInstallFromToolStep,
-  isShellToolName,
-  SHELL_TOOL_NAMES,
-  summarizeAgentStep,
-} from "./infrastructure/agents/step-utils.js";
-export { reportedTotal } from "./infrastructure/agents/usage.js";
-export * from "./commands.js";
-export {
-  CONFIG_NAMES,
-  CONFIG_VERSION,
-  DEFAULT_GUIDANCE_ASSIGNMENTS,
-  DEFAULT_IGNORED_ARTIFACT_PATTERNS,
-  HarnessConfigSchema,
-  KnowledgeScopeSchema,
-  KnowledgeSourceSchema,
-  KnowledgeVisibilitySchema,
-  ProjectSettingsPatchSchema,
-  RunPolicyPatchSchema,
-  configurationHash,
-  configurationPolicyDiff,
-  type HarnessConfig,
-  type KnowledgeScope,
-  type KnowledgeSource,
-  type KnowledgeVisibility,
-  type ProjectSettingsPatch,
-  type RunPolicyPatch,
-} from "./config/schema.js";
-export {
-  defaultConfigYaml,
-  deploymentConfigYaml,
-  modelForRole,
-} from "./config/defaults.js";
-export {
-  loadConfig,
-  loadRunConfig,
-  loadRunWorkspace,
-  runWorkspacePath,
-  writeProjectSettings,
-  writeRunWorkspace,
-} from "./config/io.js";
-export {
-  normalizeFrozenRunConfig,
-} from "./config/migrations.js";
-export * from "./domain.js";
-export * from "./embeddings.js";
-export { WorkerHarnessRuntime } from "./application/harness-engine.js";
-export type { HarnessDependencies } from "./application/dependencies.js";
-export type { CancelResult, CleanupResult } from "./application/helpers.js";
-export { pendingGrillReady, pendingPlanReady, taskForPacket } from "./application/helpers.js";
-export {
-  openHostRunControl,
-  openWorkerRunRuntime,
-} from "./application/run-engine-factory.js";
-export { HostRunBootstrap, createHostRunBootstrap } from "./application/host-run-bootstrap.js";
-export { HostRunControl } from "./application/host-run-control.js";
-export { RetrievalOrchestrator } from "./application/retrieval-orchestrator.js";
-export * from "./errors.js";
-export * from "./git.js";
-export * from "./knowledge.js";
-export * from "./infrastructure/repository-intelligence/index.js";
-export * from "./codegraph.js";
-export * from "./packet.js";
-export * from "./store.js";
-export * from "./tracker.js";
-export * from "./ui/server.js";
-export * from "./vnext/index.js";
+  AnswerBatch,
+  Phase,
+  PhaseResult,
+  Run,
+  RunIdentity,
+  RunState,
+  WorkflowBundle,
+} from "./domain/types.js";

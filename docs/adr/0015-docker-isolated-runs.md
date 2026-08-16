@@ -2,12 +2,14 @@
 
 ## Status
 
-**Superseded** by [ADR 0016](0016-docker-only-host-owned-state.md), with the
-production composition finalized by
-[ADR 0017](0017-cordis-composed-docker-runtime.md): the dual local/Docker
-runtime, generated per-run image pipeline, and `/run-state` mount are replaced
-by a Docker-only runtime using one maintained digest-pinned worker image,
-named-volume workspaces, and host-owned state RPC. Kept for decision history.
+**Superseded** by [ADR 0018](0018-fresh-modular-harness.md). Isolation and
+topology are now: one host process, one Linux container per run, worktree bind
+at `/workspace`, `CURSOR_API_KEY` in the container env, no frozen run settings,
+no `/run-state` mount, no dual local/Docker runtime. Kept for decision history.
+
+Was previously superseded by [ADR 0016](0016-docker-only-host-owned-state.md)
+and [ADR 0017](0017-cordis-composed-docker-runtime.md), which 0018 also
+supersedes.
 
 Was: Accepted; extends [ADR 0010](0010-per-run-worktrees.md) and [ADR 0011](0011-external-harness-home.md). Local linked worktrees remain the default runtime.
 

@@ -430,9 +430,8 @@ printf '  %s✓ built%s %s\n' "$GREEN" "$RESET" "$CLI"
 
 # ── 4. Cursor API key (Windows User env — never .env) ─────────────────────
 stage "Cursor API key"
-say "The dashboard does not need a key. Real Cursor runs use host-only CURSOR_API_KEY."
-note "The host provider proxy keeps the key; workers receive only HARNESS_RPC_URL and HARNESS_WORKER_TOKEN."
-note "Provider proof is cached by release tuple and remains valid across launches and key rotation."
+say "The dashboard does not need a key. Real Cursor runs use CURSOR_API_KEY."
+note "The key is passed into the isolated run container. GITHUB_TOKEN and harness state remain host-only."
 EXISTING_KEY="${CURSOR_API_KEY:-}"
 if [[ -z "$EXISTING_KEY" ]] && _is_windows; then
   EXISTING_KEY="$(_read_windows_user_env CURSOR_API_KEY || true)"
@@ -543,47 +542,12 @@ if [[ "$INITIALIZED_GIT_REPO" -eq 1 ]]; then
   fi
 fi
 
-# ── 6. Docker worker image prepare ─────────────────────────────────────────
-stage "Prepare Docker worker"
-PACKAGE_ROOT="$HARNESS_ROOT/packages/agent-harness"
-if ! _docker_ready; then
-  warn "Docker is no longer ready; cannot prepare the worker image."
-  note "Restart Docker in Linux-container mode, then re-run setup."
-  exit 1
+# ── 6. Docker (optional; not a launch gate) ────────────────────────────────
+stage "Docker"
+if _docker_ready; then
+  printf '  %s✓ Docker is ready (Linux containers). Runs use one container each.%s\n' "$GREEN" "$RESET"
 else
-  say "Rebuilding the maintained worker image, writing its digest, and running the isolation probe."
-  note "Package root: $PACKAGE_ROOT"
-  PREPARE_WORKER_ARGS=(
-    "$CLI"
-    execution
-    prepare-worker
-    --repository "$PROJECT_PATH"
-    --package-root "$PACKAGE_ROOT"
-    --force-rebuild
-    --write-settings
-  )
-  if ! node "${PREPARE_WORKER_ARGS[@]}"; then
-    warn "Worker preparation failed. Setup is not ready."
-    note "Fix the reported Docker/probe blocker, then re-run setup."
-    exit 1
-  fi
-  printf '  %s✓ worker image rebuilt and digest written%s\n' "$GREEN" "$RESET"
-  STATUS_JSON="$(node "$CLI" execution status --repository "$PROJECT_PATH" --json)"
-  if ! printf '%s' "$STATUS_JSON" | node -e \
-    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const v=JSON.parse(s);process.exit(v.blockers.some(b=>b.code!=='cursor-credential-delivery-unsupported')?1:0)})"; then
-    node "$CLI" execution status --repository "$PROJECT_PATH"
-    warn "The Docker-only sandbox runtime is still blocked after worker preparation."
-    exit 1
-  fi
-  printf '  %s✓ Docker worker and disposable-sandbox isolation probe are ready%s\n' "$GREEN" "$RESET"
-  if printf '%s' "$STATUS_JSON" | node -e \
-    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.exit(JSON.parse(s).cursorCredential?.passed?0:1))"; then
-    printf '  %s✓ cached host provider-proxy proof matches this release%s\n' "$GREEN" "$RESET"
-  elif [[ -n "${CURSOR_API_KEY:-}" ]]; then
-    warn "Real Cursor runs remain fail-closed because no matching provider proof exists."
-    note "Setup will not run the multi-minute live smoke automatically."
-    note "Opt in later: node \"$CLI\" execution cursor-provider-smoke --repository \"$PROJECT_PATH\""
-  fi
+  warn "Docker is not ready. Fake-agent flows still work; isolated Cursor runs will not."
 fi
 
 # ── 7. Repository intelligence ────────────────────────────────────────────

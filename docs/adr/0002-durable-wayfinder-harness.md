@@ -2,7 +2,12 @@
 
 ## Status
 
-Accepted; session-isolation decision amended by ADR 0004
+Accepted; session-isolation decision amended by [ADR 0004](0004-bounded-resumable-wayfinding-episodes.md).
+Run-configuration freeze amended by [ADR 0018](0018-fresh-modular-harness.md):
+a run pins identity only (`runId`, workflow bundle id, worktree / `baseSha`);
+project and profile settings are re-read on every advance and audited per
+session. There is no `configurationHash`, frozen-components snapshot, or
+config-fixer.
 
 ## Context
 
@@ -17,7 +22,12 @@ Replace the prototype with a durable state machine centered on filesystem artifa
 - Use a Wayfinder-style map to name the destination and separate precise decision tickets from fog and out-of-scope work.
 - Use local Markdown as the default tracker. Keep the map as an index; store each resolution in exactly one issue.
 - Launch every agent as a fresh, bounded session over a complete persisted work packet. Never require a provider session ID to resume. ADR 0004 later replaces fresh-per-decision execution with bounded resumable wayfinding episodes while preserving the complete packet as fallback.
-- Freeze the run configuration beside state and reject a mismatched resume.
+- Pin only run identity beside state (`runId`, workflow bundle id, worktree /
+  `baseSha`). Re-read live project and profile settings on every advance and
+  append the effective snapshot to the run audit log. Do not freeze
+  verification commands, budgets, models, or guidance, and do not reject a
+  continue because those knobs changed. (Amended by ADR 0018; the original
+  freeze-and-reject-mismatch rule is withdrawn.)
 - Persist human questions and exact answers, returning control instead of polling or simulating the human.
 - Generate tracer-bullet implementation tasks after the decision route is clear.
 - Let the harness execute targeted tests and configured gates, then pass recorded output into bounded repair sessions.

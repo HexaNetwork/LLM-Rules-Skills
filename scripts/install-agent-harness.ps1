@@ -458,9 +458,8 @@ Write-Ok "built $Cli"
 
 # -- 5. Cursor API key (Windows User env - never .env) ---------------------
 Write-Stage "Cursor API key"
-Write-Say "The dashboard does not need a key. Real Cursor runs use host-only CURSOR_API_KEY (Windows User env or this session, never .env)."
-Write-Note "The key is held by the host provider proxy. Docker workers receive only HARNESS_RPC_URL and HARNESS_WORKER_TOKEN."
-Write-Note "Provider proof is cached by release tuple and remains valid across launches and key rotation."
+Write-Say "The dashboard does not need a key. Real Cursor runs use CURSOR_API_KEY (Windows User env or this session, never .env)."
+Write-Note "The key is passed into the isolated run container. GITHUB_TOKEN and harness state remain host-only."
 $ExistingKey = $env:CURSOR_API_KEY
 if ([string]::IsNullOrWhiteSpace($ExistingKey)) {
   $ExistingKey = Get-WindowsUserEnv "CURSOR_API_KEY"
@@ -590,58 +589,12 @@ if ($script:InitializedGitRepo) {
   }
 }
 
-# -- 7. Docker worker image prepare -----------------------------------------
-Write-Stage "Prepare Docker worker"
-$PackageRoot = Join-Path $HarnessRoot "packages\agent-harness"
-if (-not (Test-AgentHarnessDockerReady)) {
-  Write-WarnLine "Docker is no longer ready; cannot prepare the worker image."
-  Write-Note "Restart Docker Desktop in Linux-container mode, then choose setup/repair again."
-  exit 1
+# -- 7. Docker (optional; not a launch gate) --------------------------------
+Write-Stage "Docker"
+if (Test-AgentHarnessDockerReady) {
+  Write-Ok "Docker is ready (Linux containers). Runs use one container each."
 } else {
-  Write-Say "Rebuilding the maintained worker image, writing its digest, and running the isolation probe."
-  Write-Note "Package root: $PackageRoot"
-  $PrepareWorkerArgs = @(
-    $Cli,
-    "execution",
-    "prepare-worker",
-    "--repository",
-    $ProjectPath,
-    "--package-root",
-    $PackageRoot,
-    "--force-rebuild",
-    "--write-settings"
-  )
-  & node @PrepareWorkerArgs
-  if ($LASTEXITCODE -ne 0) {
-    Write-WarnLine "Worker preparation failed (exit $LASTEXITCODE). Setup is not ready."
-    Write-Note "Fix the reported Docker/probe blocker, then choose setup/repair again."
-    exit 1
-  }
-  Write-Ok "worker image rebuilt and digest written"
-  $statusJson = (& node $Cli execution status --repository $ProjectPath --json | Out-String)
-  if ($LASTEXITCODE -ne 0) {
-    Write-WarnLine "The readiness check command failed after worker preparation."
-    exit 1
-  }
-  $runtimeStatus = $statusJson | ConvertFrom-Json
-  $runtimeBlockers = @($runtimeStatus.blockers | Where-Object {
-    $_.code -ne "cursor-credential-delivery-unsupported"
-  })
-  if ($runtimeBlockers.Count -gt 0) {
-    Write-WarnLine "The Docker-only sandbox runtime is still blocked after worker preparation."
-    foreach ($blocker in $runtimeBlockers) {
-      Write-Note ("- " + $blocker.message)
-    }
-    exit 1
-  }
-  Write-Ok "Docker worker and disposable-sandbox isolation probe are ready"
-  if ([bool]$runtimeStatus.cursorCredential.passed) {
-    Write-Ok "cached host provider-proxy proof matches this release"
-  } elseif ([bool]$runtimeStatus.cursorCredential.configured) {
-    Write-WarnLine "Real Cursor runs remain fail-closed because no matching provider proof exists."
-    Write-Note "Setup will not run the multi-minute live smoke automatically."
-    Write-Note "Opt in later: .\scripts\run-cursor-provider-smoke.ps1 -Repository `"$ProjectPath`""
-  }
+  Write-WarnLine "Docker is not ready. Fake-agent flows still work; isolated Cursor runs will not."
 }
 
 # -- 8. Repository intelligence --------------------------------------------

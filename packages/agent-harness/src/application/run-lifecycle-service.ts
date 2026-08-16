@@ -69,6 +69,8 @@ export class RunLifecycleService {
           config: this.ctx.config,
           docker: this.ctx.docker,
           repositoryRoot: this.ctx.paths.controlRoot,
+          projectStateRoot: this.ctx.paths.stateRoot,
+          imageDigest: this.ctx.config.execution.docker.workerImageDigest,
           collectEvidence: true,
         });
         await this.assertExecutionImageReady();

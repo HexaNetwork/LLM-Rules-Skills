@@ -172,6 +172,16 @@ describe("architecture: Cordis production ownership", () => {
     );
   });
 
+  it("threads projectStateRoot into Docker readiness before run prepare", async () => {
+    const lifecycle = await readSrc("application/run-lifecycle-service.ts");
+    const assertCall = lifecycle.slice(
+      lifecycle.indexOf("await assertDockerExecutionReady({"),
+      lifecycle.indexOf("});", lifecycle.indexOf("await assertDockerExecutionReady({")) + 3,
+    );
+    expect(assertCall).toContain("projectStateRoot: this.ctx.paths.stateRoot");
+    expect(assertCall).toContain("imageDigest: this.ctx.config.execution.docker.workerImageDigest");
+  });
+
   it("retires the HarnessEngine facade and keeps Cordis worker composition on WorkerHarnessRuntime", async () => {
     const engine = await readSrc("application/harness-engine.ts");
     const worker = await readSrc("vnext/plugins/worker-runtime.ts");

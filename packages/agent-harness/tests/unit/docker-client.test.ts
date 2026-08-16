@@ -210,26 +210,33 @@ describe("execution runtime status gate", () => {
   });
 
   it("is ready when Docker is healthy and the maintained image is available", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "ah-rt-ok-"));
-    await mkdir(root, { recursive: true });
-    await writeFile(path.join(root, "package.json"), '{"name":"demo"}\n', "utf8");
-    const config = HarnessConfigSchema.parse({
-      repositoryRoot: root,
-      execution: {
-        docker: {
-          workerImageDigest: WORKER,
+    const previous = process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_API_KEY;
+    try {
+      const root = await mkdtemp(path.join(tmpdir(), "ah-rt-ok-"));
+      await mkdir(root, { recursive: true });
+      await writeFile(path.join(root, "package.json"), '{"name":"demo"}\n', "utf8");
+      const config = HarnessConfigSchema.parse({
+        repositoryRoot: root,
+        execution: {
+          docker: {
+            workerImageDigest: WORKER,
+          },
         },
-      },
-    });
-    const client = createFakeDockerClient({ healthy: true, osType: "linux" });
-    client.images.set(WORKER, { id: WORKER, digest: WORKER, repoTags: [] });
-    const status = await evaluateExecutionRuntimeStatus({
-      config,
-      docker: client,
-      repositoryRoot: root,
-    });
-    expect(status.ready).toBe(true);
-    expect(status.image?.available).toBe(true);
+      });
+      const client = createFakeDockerClient({ healthy: true, osType: "linux" });
+      client.images.set(WORKER, { id: WORKER, digest: WORKER, repoTags: [] });
+      const status = await evaluateExecutionRuntimeStatus({
+        config,
+        docker: client,
+        repositoryRoot: root,
+      });
+      expect(status.ready).toBe(true);
+      expect(status.image?.available).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.CURSOR_API_KEY;
+      else process.env.CURSOR_API_KEY = previous;
+    }
   });
 
   it("reports host-proxy custody while matching live proof remains fail-closed", async () => {

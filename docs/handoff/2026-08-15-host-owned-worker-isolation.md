@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15
 **Branch:** `feat/host-owned-worker-isolation`
-**Status:** completed (tests green; commit pending/done in same session)
+**Status:** completed
 
 ## Summary
 
@@ -38,6 +38,8 @@ Rip the container pipeline to disposable sandboxes over host Git worktrees, with
 - Integration: provider broker routes
 - Docker: isolation lane proves bind-mounted worktree + `HARNESS_*` env only + host publish
 - ADRs 0016/0017, plan `docker-only-state-service.md`, and README updated
+- Follow-up commit `2a924a0` routed CLI reopen/resume through disposable sandboxes and added exact production proof revalidation.
+- Live Cursor provider-proxy v9 proof `d3f35ab58153a1ed` is green for the maintained image/model/TLS/SDK/contract/proxy tuple, so missing live proof is no longer a production blocker for that exact host-key fingerprint.
 
 ## Verification (this session)
 
@@ -51,8 +53,10 @@ npm run typecheck          → clean
 
 ## Residual concerns
 
-- Some CLI reopen helpers still default `createBackend` to host `createCursorBackend`; dashboard production start uses `SandboxAgentBackend`.
-- Cursor provider-proxy files from the same-day credential work remain on the branch and are part of enabling brokered model access without putting the API key in the sandbox.
+- The authoritative follow-up state is in `docs/handoff/2026-08-15-host-owned-isolation-cli-reopen.md`; the earlier CLI reopen concern was resolved by `2a924a0`.
+- Some unclassified Dashboard/Analytics/ServerConfig requests received expected allowlist `404 route_not_allowed` responses during the green live smoke.
+- Credential-absence evidence passed with no key-shaped credential observed, despite non-fatal `ConnectError: unimplemented [12]` stream-failure diagnostic noise.
+- Proof matching includes the host-key fingerprint. Revoking or rotating the temporary key correctly requires a fresh proof before another production live run.
 - Pre-cutover `docker-clone` workspace.json records fail closed and must be finished/exported with an older harness.
 
 ## Vision invariants — do not regress

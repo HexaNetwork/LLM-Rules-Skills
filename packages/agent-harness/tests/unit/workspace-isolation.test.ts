@@ -44,6 +44,60 @@ describe("workspace isolation", () => {
     expect(result.issues.join(" ")).toMatch(/Docker agent writable workspace/);
   });
 
+  it("accepts a host worktree under harness home as the writable root", () => {
+    const worktreeRoot = path.join(stateRoot, "worktrees", "run-wt");
+    const result = checkWorkspaceIsolation({
+      paths: {
+        controlRoot,
+        stateRoot,
+        workspaceRoot: worktreeRoot,
+      },
+      homeRoot,
+      strictIsolation: false,
+      capabilities: { canRestrictWritableWorkspace: true, providerId: "cursor" },
+      agentCwd: worktreeRoot,
+      containerExecution: false,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("rejects harness home itself as a host writable root", () => {
+    const result = checkWorkspaceIsolation({
+      paths: {
+        controlRoot,
+        stateRoot,
+        workspaceRoot: homeRoot,
+      },
+      homeRoot,
+      strictIsolation: false,
+      capabilities: { canRestrictWritableWorkspace: true, providerId: "cursor" },
+      agentCwd: homeRoot,
+      containerExecution: false,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.issues.join(" ")).toMatch(/must not be the harness home/);
+  });
+
+  it("rejects a harness-home path outside the configured host workspace", () => {
+    const worktreeRoot = path.join(stateRoot, "worktrees", "run-wt");
+    const otherUnderHome = path.join(homeRoot, "guidance");
+    const result = checkWorkspaceIsolation({
+      paths: {
+        controlRoot,
+        stateRoot,
+        workspaceRoot: worktreeRoot,
+      },
+      homeRoot,
+      strictIsolation: false,
+      capabilities: { canRestrictWritableWorkspace: true, providerId: "cursor" },
+      agentCwd: otherUnderHome,
+      containerExecution: false,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.issues.join(" ")).toMatch(/harness home|outside the configured workspace/);
+  });
+
   it("refuses strict isolation when the provider cannot restrict the workspace", () => {
     expect(() =>
       assertWorkspaceIsolation({

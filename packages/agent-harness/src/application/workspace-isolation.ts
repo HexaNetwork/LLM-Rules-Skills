@@ -17,7 +17,7 @@ export type WorkspaceCapabilities = {
 
 export type IsolationCheckInput = {
   paths: HarnessPaths;
-  /** Harness home root that must never be a writable agent mount. */
+  /** Harness home root; must never equal the writable agent mount (worktrees under it are OK). */
   homeRoot: string;
   strictIsolation: boolean;
   capabilities: WorkspaceCapabilities;
@@ -78,7 +78,9 @@ function isUnderExecutionRoot(child: string, parent: string): boolean {
 
 /**
  * Enforce the agent isolation boundary: writable root is `/workspace` in Docker;
- * harness home and secret mounts are never writable.
+ * the harness home root itself is never writable. Host worktrees may live under
+ * home (`projects/<key>/worktrees/<id>`) and are allowed when they match the
+ * configured workspace root.
  */
 export function checkWorkspaceIsolation(input: IsolationCheckInput): IsolationCheckResult {
   const issues: string[] = [];
@@ -89,9 +91,18 @@ export function checkWorkspaceIsolation(input: IsolationCheckInput): IsolationCh
   const writable = normalizeExecutionPath(input.agentCwd ?? input.paths.workspaceRoot);
   const homeRoot = path.resolve(input.homeRoot);
 
-  if (!container && (isUnderExecutionRoot(writable, homeRoot) || pathsEqual(writable, homeRoot))) {
+  if (!container && pathsEqual(writable, homeRoot)) {
     issues.push(
       `Agent writable workspace must not be the harness home (${homeRoot}); got ${writable}`,
+    );
+  } else if (
+    !container &&
+    isUnderExecutionRoot(writable, homeRoot) &&
+    !executionPathsEqual(writable, input.paths.workspaceRoot) &&
+    !isUnderExecutionRoot(writable, input.paths.workspaceRoot)
+  ) {
+    issues.push(
+      `Agent writable workspace must not be under the harness home outside the configured workspace (${input.paths.workspaceRoot}); got ${writable}`,
     );
   }
 

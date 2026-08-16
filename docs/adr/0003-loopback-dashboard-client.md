@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted; storage location and lifecycle wording amended by
+[ADR 0018](0018-fresh-modular-harness.md). The dashboard remains a client of
+the host run lifecycle.
 
 ## Context
 
@@ -12,8 +14,9 @@ Operators need one place to create and observe runs, answer human questions, ins
 
 - Ship a dependency-free dashboard from the harness process and bind it only to `127.0.0.1`.
 - Generate a fresh bearer token for each server process and require it for every API request.
-- Treat `.agent-harness/runs/<runId>/state.json` and its companion artifacts as authoritative; the UI owns no durable lifecycle state.
-- Route mutations through the same engine methods used by the CLI and serialize them in one bounded queue.
+- Treat `$AGENT_HARNESS_HOME/runs/<runId>/state.json` and its companion
+  artifacts as authoritative; the UI owns no durable lifecycle state.
+- Route mutations through the same `runLifecycle` methods used by the CLI.
 - Allow the UI to read only whitelisted run artifacts and add knowledge only from paths contained by the configured workspace.
 - Keep the CLI as an equivalent headless and automation interface.
 

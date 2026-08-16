@@ -1,9 +1,16 @@
 # External harness home and zero-footprint target repositories
 
-**Status:** implemented (slices 0–5)  
+**Status:** implemented foundation; topology amended by [ADR 0018](../adr/0018-fresh-modular-harness.md)
 **Scope:** `packages/agent-harness`  
 **Origin:** external control-plane design discussion, 2026-08-10  
-**Depends on:** `docs/plans/per-run-worktrees.md` path separation and workspace metadata  
+**Depends on:** [ADR 0010](../adr/0010-per-run-worktrees.md) path separation and [ADR 0011](../adr/0011-external-harness-home.md)
+
+> **Current reading:** the external harness home, project registration,
+> zero-footprint target, and sibling linked-worktree placement remain in force.
+> ADR 0018 supersedes this plan's frozen configuration/component snapshots,
+> legacy-run migration, local execution, and provider-capability isolation.
+> Current settings are live, old runs are unsupported, and each linked
+> worktree is bound into one run-owned Linux container.
 
 ## Outcome
 

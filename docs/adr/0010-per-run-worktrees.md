@@ -2,11 +2,13 @@
 
 ## Status
 
-**Superseded** by [ADR 0016](0016-docker-only-host-owned-state.md) and the
-[ADR 0017](0017-cordis-composed-docker-runtime.md) production topology. The
-control/execution-root separation and late host-owned publication principles
-continue through the named-volume design, but linked worktrees are no longer a
-supported runtime. Kept for decision history.
+**Superseded** first by [ADR 0016](0016-docker-only-host-owned-state.md) and
+[ADR 0017](0017-cordis-composed-docker-runtime.md), then by the current
+[ADR 0018](0018-fresh-modular-harness.md) production topology. ADR 0018 restores
+host-created linked worktrees as the run workspace and binds one into each
+run-owned container. The control/execution-root separation and late host-owned
+publication principles remain in force; the migration and dual-runtime clauses
+below are decision history only.
 
 Was: Accepted; superseded the shared-working-tree portion of
 [ADR 0009](0009-operational-intervention-and-budgets.md). Local linked

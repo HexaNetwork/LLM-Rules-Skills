@@ -1,8 +1,12 @@
 # Intent-first workflow
 
-**Status:** implemented (slices 1–5 on `redesign/intent-first-workflow`)  
+**Status:** implemented product behavior; preserved by [ADR 0018](../adr/0018-fresh-modular-harness.md)
 **Scope:** `packages/agent-harness`  
-**Supersedes:** [agent-activity-and-self-recovering-tdd.md](./agent-activity-and-self-recovering-tdd.md) (RED-first TDD loop)
+**Supersedes:** the removed RED-first per-task TDD design
+
+> The implementation details and phase names below describe the pre-rewrite
+> harness. ADR 0018 keeps the intent-first product sequence while replacing its
+> runtime with real phase plugins, live settings, and one container per run.
 
 ## Intent
 
@@ -36,8 +40,7 @@ executing → scenario_testing → crystallizing → final_review → publishing
 - **crystallizing:** when `workflow.coverage.enabled`, run `commands.coverage`, parse lcov/cobertura/clover, optionally invoke unit-test-writer until threshold or no-progress. When disabled, skip to final review.
 - **final_review:** holistic reviewer over `baseSha..HEAD`. Routes: `production` → re-enter executing; `scenario-intent` → scenario_testing; `test-design` / `test-coverage` → crystallizing; approved → publishing.
 
-## Config notes
+## Configuration note
 
-- `CONFIG_VERSION` 14 introduces `workflow.coverage`, `workflow.maxFinalReviewAttempts`, and optional `commands.coverage`.
-- Historical runs with TDD steps remain readable; they cannot be resumed.
-- Pre-redesign TDD plan docs remain for history and are marked superseded.
+Coverage remains an optional live project setting in the fresh harness.
+Pre-rewrite runs and frozen configuration versions are unsupported.

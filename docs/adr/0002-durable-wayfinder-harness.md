@@ -37,9 +37,14 @@ Replace the prototype with a durable state machine centered on filesystem artifa
 
 ## Consequences
 
-- A run is recoverable from `.agent-harness/runs/<runId>/` without chat history.
+- A run is recoverable from
+  `$AGENT_HARNESS_HOME/runs/<runId>/` without chat history. The exact
+  platform-default home is resolved by the harness and may be overridden with
+  `AGENT_HARNESS_HOME`.
 - Hangs become bounded failures with an explicit retry point.
 - Operators can inspect every model input and output contract.
-- v2 initially favors sequential execution, a local tracker, and one Cursor backend. External trackers, isolated parallel worktrees, and semantic embeddings remain replaceable extensions rather than core state.
+- The default workflow favors sequential execution, a local tracker, and one
+  Cursor backend. External trackers, parallel tasks within a run, and semantic
+  embeddings remain replaceable extensions rather than core state.
 - ADR 0003 adds a loopback dashboard as a client of these artifacts without changing their authority.
 - Exact source output is not reproducible because model output is stochastic; transition order, budgets, commands, evidence, and artifact contracts are deterministic.

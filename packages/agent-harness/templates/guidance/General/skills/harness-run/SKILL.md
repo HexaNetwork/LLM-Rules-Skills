@@ -1,69 +1,87 @@
 ---
 name: harness-run
-description: Run or resume the durable Agent Harness idea-to-feature workflow, including reflect confirmation, grill-me interviews, persisted human questions, local retrieval, optional TDD, deterministic test repairs, and harness-owned commits or pull requests. Use when the user explicitly asks to use the harness, continue a harness run, answer a harness question, inspect a blocked run, or launch autonomous feature delivery.
+description: Operate the fresh modular Agent Harness from an idea through an intent-first workflow and host-owned pull request. Use when the user asks to start, continue, answer, retry, inspect, cancel, or observe a harness run.
 ---
 
 # Harness Run
 
-Treat the CLI and `.agent-harness/runs/<runId>/state.json` as authoritative. Use chat only as an operator client.
+Treat the CLI, dashboard, and external harness home as authoritative. Use chat
+only as an operator client. The target repository does not contain harness
+configuration or run state.
+
+The topology follows ADR 0018: one host process, one Linux container per run,
+the run worktree at `/workspace`, and `CURSOR_API_KEY` in the container
+environment. There is no provider proxy, proof-tuple gate, frozen run
+configuration, worker preparation command, or pre-rewrite run migration.
 
 ## Open the control plane
 
-Prefer the centralized local dashboard when the user wants to operate or observe the workflow in one place:
+Prefer the authenticated loopback dashboard for interactive operation:
 
 ```bash
-npx agent-harness ui
+npx agent-harness ui --repository "/path/to/project"
 ```
 
-Use the tokenized loopback URL printed by the command. The dashboard can create runs, confirm editable reflect briefs, answer grill questions, inspect deterministic command evidence and session handoffs, retry or cancel work, read artifacts, and manage local knowledge. It is a client of the same durable engine as the CLI, not a separate state owner.
+Use the tokenized URL printed by the command. The dashboard is a client of the
+same run lifecycle as the CLI, not a separate state owner.
 
-## Start
+Use `--home <path>` or `AGENT_HARNESS_HOME` only when the operator wants to
+override the platform-default external harness home.
 
-Require a clean git working tree, an initialized `agent-harness.config.yaml`, and `CURSOR_API_KEY` for real agents.
+## Register and start
+
+Register the repository once. Real Cursor execution requires Docker and
+`CURSOR_API_KEY`; fake-agent workflows do not.
 
 ```bash
+npx agent-harness project add --repository "/path/to/project"
 npx agent-harness start --idea "<idea>"
-npx agent-harness start --idea @idea.md --tdd on
+npx agent-harness start --idea @idea.md --repository "/path/to/project"
+npx agent-harness start --idea "<idea>" --workflow ticket --repository "/path/to/project"
 ```
 
-These CLI commands remain useful for automation and headless operation; the dashboard exposes the same start controls, including the per-run TDD choice and model overrides.
-
-Use `--tdd off` only when the user chooses implementation-first. Do not reinterpret the toggle during a resumed run; the harness freezes it in `config.json`.
+The default workflow is intent-first. There is no per-run TDD toggle. A run
+pins identity only; project/profile settings remain live.
 
 ## Handle human questions
 
-When the run returns `awaiting_input`, present only the open question:
+When a run returns `awaiting_input`, present only its current gate:
 
 - **Reflect** questions include a draft restatement. Let the operator edit it before confirming; the confirmed text becomes the grill brief.
 - **Grill** questions include context, options, tradeoffs, and a recommendation. Leave room for a custom answer.
+- **Operator gate** presents the planning artifacts for explicit approval.
 
 Never answer a HITL question for the user.
 
-Record the answer exactly, then let the bounded grill episode continue:
+Record answers exactly as a question-id-to-answer JSON object:
 
 ```bash
-npx agent-harness answer --run-id <id> --question <question-id> --text "<answer>"
+npx agent-harness answer --run-id <id> --answers '{"<question-id>":"<answer>"}'
+npx agent-harness answer --run-id <id> --answers '{"approve":"yes"}' --notes "<optional notes>"
 ```
-
-Answers older than `workflow.staleAnswerMinutes` (30 by default) force a fresh agent with only the question and answer. Grill episodes also roll after `workflow.maxGrillQuestionsPerEpisode` answered questions.
 
 ## Resume and inspect
 
 ```bash
-npx agent-harness status --run-id <id> --json
+npx agent-harness status --run-id <id>
 npx agent-harness continue --run-id <id>
+npx agent-harness retry --run-id <id>
+npx agent-harness cancel --run-id <id>
 ```
 
-If the run is blocked, inspect `state.json`, `events.jsonl`, the current task, and the latest failed session. Correct external state or configuration before running `retry`. Do not create an unbounded manual retry loop.
+If a run is blocked, inspect its dashboard activity, artifacts, and latest
+session under the external harness home. Correct the reported external state
+or live project settings before `retry`. The next advance re-reads settings and
+records the effective snapshot. Do not create an unbounded retry loop.
 
 ## Preserve orchestration boundaries
 
-- Do not reproduce reflect, grill, retries, testing, review, or git steps in chat.
-- Let the harness resume its persisted grill episode; do not resume or invent provider sessions manually. Every turn still has a complete persisted packet for recovery.
-- Do not run tests or git on behalf of an active harness transition.
+- Do not reproduce phases, retries, verification, review, or Git steps in chat.
+- Do not resume or invent provider sessions manually; persisted packets and the
+  worktree are the recovery boundary.
+- Do not run tests or Git on behalf of an active transition.
 - Do not edit `state.json` manually.
 - Do not auto-merge a pull request.
 
-Use `brief.md` and `grill.md` for orientation, then open only the relevant task. Treat the confirmed brief plus grill resolutions as the planning source of truth.
-
-The run is finished only when its phase is `completed` and every implementation task is `done`.
+The run is finished only when its status is `completed`. Host-owned publication
+may push and open a pull request; it never auto-merges.

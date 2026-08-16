@@ -419,9 +419,15 @@ provider-boundary smoke whose cache key includes:
 - provider protocol and compatibility-manifest versions;
 - proxy implementation version;
 - model;
-- TLS trust identity;
-- hash/fingerprint of the host key only for invalidating proof after rotation
-  (never expose it to the container or provider output).
+- TLS trust identity.
+
+The proof identity deliberately excludes the host API key. The proof establishes
+the worker image, sandbox, SDK, proxy, TLS, and contract boundary; changing the
+host-held credential does not change those properties. Authentication remains
+part of the live smoke so a green proof demonstrates one successful upstream
+hop, but a later invalid, expired, or revoked key is an ordinary runtime
+authentication failure rather than an isolation failure. Neither raw key bytes
+nor a key fingerprint are persisted.
 
 The smoke passes only when all of these are observed:
 
@@ -460,8 +466,9 @@ token, real key, or authorization header is retained.
 4. Add `cursor-provider-smoke`. It may consume the host `CURSOR_API_KEY`, but
    only the host proxy process can read it.
 5. Gate real Docker workers on a matching green proxy proof. Missing,
-   malformed, stale, wrong-image, wrong-SDK, wrong-TLS, or skipped real-provider
-   evidence blocks the run.
+   malformed, wrong-image, wrong-SDK, wrong-protocol, wrong-contract,
+   wrong-proxy, wrong-model, wrong-TLS, or skipped real-provider evidence blocks
+   the run. Proofs do not expire by age and survive host key rotation.
 6. After the required Docker and provider-contract lanes pass, switch Docker
    production from “unsupported credential delivery” to “host proxy ready.”
 7. Remove key mounts, worker key readers, `--cursor-secret-file`, and the old
@@ -647,8 +654,10 @@ operators receive one unambiguous remediation path.
 - **Prompt visibility:** The trusted host proxy sees provider request and
   response bytes. It must stream without persistence and exclude bodies from
   logs.
-- **Key rotation:** Rotation must invalidate proof identity and active upstream
-  sessions without ever comparing/logging plaintext outside host memory.
+- **Key rotation:** Rotation must revoke active upstream sessions without ever
+  comparing or logging plaintext outside host memory. It does not invalidate
+  the isolation proof; an unusable replacement key fails normal upstream
+  authentication.
 - **Operational availability:** The host proxy becomes required for the life
   of each real run. Recovery must distinguish retryable proxy interruption
   from protocol incompatibility and credential revocation.

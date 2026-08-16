@@ -24,7 +24,6 @@ export type CursorProviderProofTuple = {
   proxyVersion: string;
   model: string;
   tlsIdentity: string;
-  keyFingerprint: string;
 };
 
 export type CursorProviderProofReport = {
@@ -67,15 +66,10 @@ export type CursorProviderProofCache = {
   entries: CursorProviderProofReport[];
 };
 
-export function cursorProviderKeyFingerprint(apiKey: string): string {
-  return createHash("sha256").update(apiKey.trim()).digest("hex").slice(0, 16);
-}
-
 export function currentCursorProviderProofTuple(input: {
   imageDigest: string;
   model: string;
   tlsIdentity: string;
-  apiKey: string;
 }): CursorProviderProofTuple {
   return {
     imageDigest: input.imageDigest.trim(),
@@ -85,12 +79,20 @@ export function currentCursorProviderProofTuple(input: {
     proxyVersion: CURSOR_PROVIDER_PROXY_VERSION,
     model: input.model.trim(),
     tlsIdentity: input.tlsIdentity,
-    keyFingerprint: cursorProviderKeyFingerprint(input.apiKey),
   };
 }
 
 export function cursorProviderProofCacheKey(tuple: CursorProviderProofTuple): string {
-  return createHash("sha256").update(JSON.stringify(tuple)).digest("hex");
+  const identity: CursorProviderProofTuple = {
+    imageDigest: tuple.imageDigest,
+    sdkVersion: tuple.sdkVersion,
+    providerProtocolVersion: tuple.providerProtocolVersion,
+    contractVersion: tuple.contractVersion,
+    proxyVersion: tuple.proxyVersion,
+    model: tuple.model,
+    tlsIdentity: tuple.tlsIdentity,
+  };
+  return createHash("sha256").update(JSON.stringify(identity)).digest("hex");
 }
 
 export async function loadCursorProviderProofCache(

@@ -954,7 +954,6 @@ export function createCli(dependencies: CliDependencies = productionCliDependenc
           imageDigest,
           model: loaded.config.models.capable,
           tlsIdentity: tls.tlsIdentity,
-          apiKey,
         });
         const cached = options.force
           ? undefined

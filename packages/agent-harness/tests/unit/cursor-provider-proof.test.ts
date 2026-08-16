@@ -13,7 +13,6 @@ describe("Cursor provider proof gate", () => {
     imageDigest: "sha256:image",
     model: "cursor-model",
     tlsIdentity: "sha256:tls",
-    apiKey: "host-key",
   });
   const report: CursorProviderProofReport = {
     version: 1,
@@ -32,23 +31,42 @@ describe("Cursor provider proof gate", () => {
   it("accepts only an exact green compatibility tuple", () => {
     expect(findMatchingCursorProviderProof(cache, tuple)).toBe(report);
     expect(assertCursorProviderProofPassed(report, tuple)).toBe(report);
-    expect(
-      findMatchingCursorProviderProof(cache, { ...tuple, imageDigest: "sha256:other" }),
-    ).toBeUndefined();
-    expect(() =>
-      assertCursorProviderProofPassed(report, { ...tuple, tlsIdentity: "sha256:rotated" }),
-    ).toThrow(/cursor-provider-smoke/);
+    for (const changed of [
+      { ...tuple, imageDigest: "sha256:other" },
+      { ...tuple, sdkVersion: "other-sdk" },
+      { ...tuple, providerProtocolVersion: tuple.providerProtocolVersion + 1 },
+      { ...tuple, contractVersion: "other-contract" },
+      { ...tuple, proxyVersion: "other-proxy" },
+      { ...tuple, model: "other-model" },
+      { ...tuple, tlsIdentity: "sha256:rotated" },
+    ]) {
+      expect(findMatchingCursorProviderProof(cache, changed)).toBeUndefined();
+      expect(() => assertCursorProviderProofPassed(report, changed)).toThrow(
+        /cursor-provider-smoke/,
+      );
+    }
   });
 
-  it("invalidates evidence on key rotation without exposing key bytes", () => {
-    const rotated = currentCursorProviderProofTuple({
-      imageDigest: tuple.imageDigest,
-      model: tuple.model,
-      tlsIdentity: tuple.tlsIdentity,
-      apiKey: "rotated-host-key",
-    });
-    expect(cursorProviderProofCacheKey(rotated)).not.toBe(cursorProviderProofCacheKey(tuple));
-    expect(JSON.stringify(tuple)).not.toContain("host-key");
+  it("reuses proof across key rotation and harness launches without storing key identity", () => {
+    const historicalTuple = {
+      ...tuple,
+      keyFingerprint: "0123456789abcdef",
+    };
+    const historicalReport = {
+      ...report,
+      tuple: historicalTuple,
+      provedAt: "2020-01-01T00:00:00.000Z",
+    };
+    const reloadedCache = {
+      ...cache,
+      entries: [historicalReport],
+    };
+
+    expect(cursorProviderProofCacheKey(historicalTuple)).toBe(
+      cursorProviderProofCacheKey(tuple),
+    );
+    expect(findMatchingCursorProviderProof(reloadedCache, tuple)).toBe(historicalReport);
+    expect(JSON.stringify(tuple)).not.toContain("keyFingerprint");
   });
 
   it("rejects missing, failed, and unsupported reports", () => {

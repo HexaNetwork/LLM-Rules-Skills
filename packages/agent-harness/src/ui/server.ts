@@ -322,7 +322,6 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
               imageDigest,
               model: config.models.capable,
               tlsIdentity: cursorProviderTls.tlsIdentity,
-              apiKey: cursorProviderProduction.apiKey,
             });
             assertCursorProviderProofPassed(
               findMatchingCursorProviderProof(

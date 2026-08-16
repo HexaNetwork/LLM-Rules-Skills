@@ -198,7 +198,6 @@ export async function evaluateExecutionRuntimeStatus(
             imageDigest: credentialImage,
             model: options.config.models.capable,
             tlsIdentity,
-            apiKey: configuredApiKey,
           }),
         )
       : undefined;

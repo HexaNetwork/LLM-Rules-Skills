@@ -55,6 +55,15 @@ host-state absence, and credential-mount absence. It is not evidence about
 Cursor filesystem tools or delegated tasks; the separate real-provider smoke
 must prove those without ever mounting `CURSOR_API_KEY`.
 
+The real-provider proof identity is the worker image digest, pinned SDK version,
+provider protocol version, compatibility-contract version, proxy version,
+model, and TLS identity. It is intentionally not bound to the host API key.
+Those fields determine the sandbox, transport, and credential-custody behavior
+the proof establishes; rotating the host-held key cannot alter that boundary.
+An invalid, expired, or revoked key fails as an ordinary upstream
+authentication error at runtime. It does not invalidate isolation evidence or
+authorize fallback credential delivery.
+
 The August 2026 real-provider smoke observed delegated denial, no conclusive
 direct-parent denial, and exact credential bytes in provider-observed output.
 The old report did not retain enough redacted event metadata to prove whether
@@ -74,3 +83,6 @@ with secret redaction without starting Docker. Plugin listeners, registrations,
 servers, intervals, and workers are effect-owned and have awaited disposal.
 Pre-cutover runs are not reinterpreted: operators must finish/export or
 explicitly discard them before the final default switch.
+
+A green provider proof is reusable across host key rotation and harness
+launches while its exact non-secret compatibility tuple remains unchanged.

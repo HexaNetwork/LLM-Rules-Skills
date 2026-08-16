@@ -46,7 +46,6 @@ describe("live Cursor provider contract recorder", () => {
       imageDigest: "sha256:worker",
       model: "cursor-model",
       tlsIdentity: tls.tlsIdentity,
-      apiKey: "cursor_host_key_never_log",
     });
     const upstreamSession = "upstream_session_never_deliver";
     const upstream = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -172,7 +171,6 @@ describe("live Cursor provider contract recorder", () => {
       imageDigest: "sha256:worker",
       model: "cursor-model",
       tlsIdentity: tls.tlsIdentity,
-      apiKey: "cursor_host_key_never_log",
     });
 
     let observedBrokerToken = "";
@@ -266,7 +264,6 @@ describe("live Cursor provider contract recorder", () => {
       imageDigest: "sha256:worker",
       model: "cursor-model",
       tlsIdentity: tls.tlsIdentity,
-      apiKey: "cursor_host_key_never_log",
     });
     const report = await recordLiveCursorProviderContract({
       apiKey: "cursor_host_key_never_log",
@@ -393,7 +390,6 @@ describe("live Cursor provider contract recorder", () => {
       imageDigest: "sha256:worker",
       model: "cursor-model",
       tlsIdentity: tls.tlsIdentity,
-      apiKey: "cursor_host_key_never_log",
     });
     const stdout =
       'CURSOR_PROVIDER_SMOKE_PROGRESS={"stage":"absence-create","status":"completed"}\n' +
@@ -440,7 +436,6 @@ describe("live Cursor provider contract recorder", () => {
       imageDigest: "sha256:worker",
       model: "cursor-model",
       tlsIdentity: tls.tlsIdentity,
-      apiKey: "cursor_host_key_never_log",
     });
     const report = await recordLiveCursorProviderContract({
       apiKey: "cursor_host_key_never_log",

@@ -100,20 +100,20 @@ Clone or copy the repo, then from its root:
 
 ```powershell
 cd "C:\path\to\LLM-Rules-Skills"
+git switch feat/host-owned-worker-isolation
 npm install
 npm run build
 ```
 
 This creates `packages/agent-harness/dist/cli.js`. If that file is missing, registration will fail with `MODULE_NOT_FOUND`.
 
-## 3. Optionally set the Cursor API key
+## 3. Optionally set the host Cursor API key
 
 The setup wizard can save this as a Windows User environment variable. The
-dashboard can be explored without it. The host provider broker foundation now
-uses an independently scoped, short-lived worker capability and keeps the real
-key in host memory. Production is still fail-closed: pinned SDK 1.0.27 has no
-recorded green backend-URL/TLS contract and the host listener is not yet HTTPS.
-Secret-file delivery remains disabled and is not a fallback.
+dashboard can be explored without it. The host provider proxy keeps the real
+key on the host and gives each disposable worker only `HARNESS_RPC_URL` and
+`HARNESS_WORKER_TOKEN`. `CURSOR_API_KEY` is never copied into Docker
+environment variables, files, or mounts.
 
 Current PowerShell session:
 
@@ -127,20 +127,35 @@ Persist for your Windows user (new terminals pick it up):
 [System.Environment]::SetEnvironmentVariable("CURSOR_API_KEY", "your-key-here", "User")
 ```
 
-Restart any running harness/`ui` process after changing the key. The install wizard can set the User env variable for you — it never writes the key to `.env`.
+Restart any running harness/`ui` process after changing the key. The install
+wizard can set the User env variable for you — it never writes the key to
+`.env` or a harness settings file.
 
-With the key set in the current shell, run the replacement-proof preflight:
+Provider proof is cached and reused across Dashboard launches and host key
+rotation. A fresh smoke is needed only when the maintained image digest,
+pinned SDK, provider protocol, contract, proxy, capable model, or TLS identity
+changes. Ordinary key rotation does not change that tuple; an invalid or
+revoked replacement key fails normal upstream authentication.
+
+Check current proof/readiness without running a live smoke:
 
 ```powershell
-node ".\packages\agent-harness\dist\cli.js" execution cursor-provider-smoke `
+node ".\packages\agent-harness\dist\cli.js" execution status `
   --repository "C:\path\to\your-project"
 ```
 
-Use `--force` to require fresh evidence and `--json` for machine-readable,
-redacted status. Until the SDK/TLS recording spike is complete this command
-reports `unsupported`, sends no live provider request, and leaves real runs
-blocked. The historical `cursor-credential-smoke` remains diagnostic evidence
-for why `/run/secrets` key delivery is forbidden; it cannot enable mounting.
+If status reports no matching proof, real runs fail closed but the Dashboard
+can still open. The launch/install scripts never start the multi-minute smoke
+automatically. Opt in explicitly:
+
+```powershell
+.\scripts\run-cursor-provider-smoke.ps1 `
+  -Repository "C:\path\to\your-project"
+```
+
+The script reuses matching cached evidence by default. Add `-Force` only to
+deliberately record fresh evidence for an unchanged tuple, and `-Json` for
+redacted machine-readable output.
 
 ## 4. Register a project
 
@@ -192,10 +207,16 @@ to repair it in place.
 Scripted/advanced use remains available:
 
 ```powershell
-.\scripts\launch-agent-harness.ps1 -Action Dashboard -Project "C:\path\to\your-project"
-.\scripts\launch-agent-harness.ps1 -Action Check -Project "C:\path\to\your-project"
+.\scripts\launch-agent-harness.ps1 -Action Dashboard -Project "D:\Dev\LLM\Emperor-Test-Harness"
+.\scripts\launch-agent-harness.ps1 -Action Check -Project "D:\Dev\LLM\Emperor-Test-Harness"
 .\scripts\launch-agent-harness.ps1 -Action Config
 ```
+
+`-Action Check` reports Docker/sandbox and provider-proof readiness without
+starting the Dashboard or smoke. Dashboard launch repairs only Docker/sandbox
+blockers; a missing provider proof is reported and real runs stay fail-closed.
+Use `-RunProviderSmoke` only when you intentionally want the launcher to run
+the live smoke before opening the Dashboard.
 
 ```bash
 bash scripts/launch-agent-harness.sh "/path/to/your-project"
@@ -280,24 +301,26 @@ Local embeddings setup scripts live under `packages/agent-harness/scripts/` (`se
 
 ## 7. Docker runtime
 
-Docker is the only production execution runtime. Each run uses a named volume
-mounted at `/workspace` and the maintained digest-pinned worker image prepared
-during setup. Durable state remains on the host and is available to the worker
-only through authenticated state RPC. Local linked worktrees, generated per-run
-images, and pre-cutover active runs are unsupported; archive or discard old
-runs instead of attempting to resume them.
+Docker is the only production execution runtime. The host owns each run
+worktree, durable state, Git operations, and publication. Every bounded agent
+invocation creates a disposable sandbox from the maintained digest-pinned
+worker image, bind-mounts that host worktree at `/workspace`, passes only
+`HARNESS_RPC_URL` and `HARNESS_WORKER_TOKEN`, then destroys the sandbox and
+revokes its capability. Containers are not long-lived sessions and are never
+reattached. Pre-cutover `docker-clone` runs are unsupported; archive or discard
+them instead of attempting to resume them.
 
 1. Install Docker yourself (Docker Desktop on Windows with **WSL2 + Linux containers**, or a Linux/macOS daemon with permission to run `docker info`). The install wizard never silently installs Docker Desktop; on Windows it may offer to **start** Desktop if the CLI is present but the daemon is down.
 2. Double-click `scripts\Launch-AgentHarness.cmd`, then choose **Set up or repair a project**. It performs `project add`, rebuilds the one maintained worker with `--force-rebuild --write-settings`, and runs the isolation probe.
 3. Use launcher choice **Check Docker and worker readiness** whenever you want a readable readiness report without opening the dashboard.
-4. Expect disk/CPU/memory cost for the maintained image and per-run named volumes. Bridge networking is filesystem isolation, **not** egress-proof.
+4. Expect disk/CPU/memory cost for the maintained image, host worktrees, and disposable sandboxes. Bridge networking is filesystem isolation, **not** egress-proof.
 
 Launch is fail-closed: if Docker, the maintained worker, or its deterministic
 sandbox probe is not ready, the dashboard launcher stops or offers repair.
-Docker setup readiness and real-Cursor readiness are reported separately. When
-a key is configured, status reports the unsupported secret-file delivery
-mechanism and blocks real execution. Use the smoke only to collect redacted
-diagnostic evidence while a non-filesystem broker is developed.
+Docker setup readiness and real-Cursor readiness are reported separately. A
+missing provider proof blocks real Cursor runs, not Dashboard startup, and the
+launcher prints the explicit opt-in smoke command. No secret-mount or
+host-created direct backend compatibility path exists.
 
 ## Troubleshooting
 
@@ -307,7 +330,7 @@ diagnostic evidence while a non-filesystem broker is developed.
 | `node` / `npm` not recognized | Install Node 20.3+, then open a new terminal |
 | `npm.ps1 cannot be loaded` / ExecutionPolicy | Use `scripts\Install-AgentHarness.cmd`, or `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or `npm.cmd` |
 | Dashboard access denied / `Invalid or missing dashboard token` | Close the tab, copy the **full** URL printed by the current `ui` process (including `?token=...`), and open that. Restarting `ui` invalidates the old token; an old tab or a bookmark without `?token=` will fail on Start reflect. |
-| Cursor credential delivery unsupported | The dashboard and deterministic Docker setup still work. Keep `CURSOR_API_KEY` unset for those paths. Real Cursor runs require a host provider proxy or equivalent non-filesystem broker; the smoke is diagnostic only. |
+| No matching Cursor provider proof | The Dashboard and deterministic Docker setup still work. Keep `CURSOR_API_KEY` host-only, then explicitly run `.\scripts\run-cursor-provider-smoke.ps1 -Repository "<project>"` if the release tuple changed. Key rotation alone does not require re-smoke. |
 | Leftover `agent-harness.config.yaml` / `.agent-harness/` in the target | Pre-cutover repo-local state is unsupported. Archive or remove it after confirming the external project registration. |
 | `not a git repository` / `git status failed (128)` on Start reflect | The target folder is not a git repo but `git.enabled` is true. The install wizard auto-inits git and commits after registration; otherwise `git init` + initial commit, or set `git.enabled: false` in the harness-home project config |
 

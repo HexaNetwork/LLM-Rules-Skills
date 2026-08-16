@@ -7,13 +7,15 @@
   The no-argument experience is a small menu for opening the dashboard,
   setting up or repairing a project, checking Docker readiness, or inspecting
   the trusted vNext composition. Advanced callers can choose an action without
-  prompts. Production execution is Docker-only.
+  prompts. Production execution uses disposable Docker sandboxes over a
+  host-owned worktree. Cursor credentials remain host-only.
 #>
 [CmdletBinding()]
 param(
   [string]$Project = $env:AGENT_HARNESS_PROJECT,
   [switch]$NoPull,
   [switch]$NoBuild,
+  [switch]$RunProviderSmoke,
   [ValidateSet("Menu", "Dashboard", "Setup", "Check", "Config")]
   [string]$Action = "Menu"
 )
@@ -134,11 +136,11 @@ function Invoke-ReadinessCheck {
   $status = $json | ConvertFrom-Json
   $script:LastReadinessStatus = $status
   if ([bool]$status.ready) {
-    Write-Host "  Docker setup ready: maintained worker and sandbox checks passed." -ForegroundColor Green
+    Write-Host "  Docker setup ready: maintained worker and disposable-sandbox checks passed." -ForegroundColor Green
     if ([bool]$status.cursorCredential.passed) {
-      Write-Host "  Real Cursor ready: credential isolation smoke passed." -ForegroundColor Green
+      Write-Host "  Real Cursor ready: cached host provider-proxy proof matches this release." -ForegroundColor Green
     } elseif (-not [bool]$status.cursorCredential.configured) {
-      Write-Host "  Real Cursor not configured: set CURSOR_API_KEY and run the credential smoke when needed." -ForegroundColor DarkGray
+      Write-Host "  Real Cursor not configured: set host-only CURSOR_API_KEY when needed." -ForegroundColor DarkGray
     }
     return $true
   }
@@ -148,6 +150,12 @@ function Invoke-ReadinessCheck {
     if ($blocker.remediation) { Write-Host ("      " + $blocker.remediation) -ForegroundColor DarkGray }
   }
   return $false
+}
+
+function Get-NonProviderBlockers {
+  return @($script:LastReadinessStatus.blockers | Where-Object {
+    $_.code -ne "cursor-credential-delivery-unsupported"
+  })
 }
 
 if ($Action -eq "Menu") {
@@ -183,6 +191,10 @@ if (-not (Test-Path -LiteralPath $Project)) {
 }
 [void](Remember-AgentHarnessProject -Path $Project)
 
+if ([string]::IsNullOrWhiteSpace($env:CURSOR_API_KEY)) {
+  $env:CURSOR_API_KEY = [Environment]::GetEnvironmentVariable("CURSOR_API_KEY", "User")
+}
+
 if ($Action -eq "Check") {
   $ready = Invoke-ReadinessCheck -Repository $Project
   if ($ready) { exit 0 }
@@ -190,28 +202,42 @@ if ($Action -eq "Check") {
 }
 
 if (-not (Invoke-ReadinessCheck -Repository $Project)) {
-  $nonCredentialBlockers = @($script:LastReadinessStatus.blockers | Where-Object {
-    $_.code -ne "cursor-credential-isolation"
-  })
-  if ($nonCredentialBlockers.Count -eq 0 -and [bool]$script:LastReadinessStatus.cursorCredential.configured) {
-    throw "Real Cursor readiness is blocked. Run: node `"$Cli`" execution cursor-credential-smoke --repository `"$Project`""
+  $nonProviderBlockers = @(Get-NonProviderBlockers)
+  if ($nonProviderBlockers.Count -eq 0) {
+    if ($RunProviderSmoke) {
+      Write-Host ""
+      Write-Host "  Running the opted-in host provider-proxy smoke..." -ForegroundColor Cyan
+      & node $Cli execution cursor-provider-smoke --repository $Project
+      if ($LASTEXITCODE -ne 0) { throw "Cursor provider smoke failed (exit $LASTEXITCODE)." }
+      if (-not (Invoke-ReadinessCheck -Repository $Project)) {
+        throw "The provider smoke completed, but real Cursor readiness is still blocked."
+      }
+    } else {
+      Write-Host ""
+      Write-Host "  Dashboard launch will continue, but real Cursor runs remain fail-closed." -ForegroundColor Yellow
+      Write-Host "  No smoke runs automatically. To record proof explicitly, use:" -ForegroundColor DarkGray
+      Write-Host "    .\scripts\run-cursor-provider-smoke.ps1 -Repository `"$Project`"" -ForegroundColor DarkGray
+    }
+  } else {
+    Write-Host ""
+    Write-Host "  Prepare/repair the worker image now? [Y/n] " -ForegroundColor Yellow -NoNewline
+    $answer = Read-Host
+    if ($answer -match '^[Nn]') {
+      throw "Worker readiness is required before the Docker-only harness can run."
+    }
+    $PackageRoot = Join-Path $HarnessRoot "packages\agent-harness"
+    & node $Cli execution prepare-worker --repository $Project --package-root $PackageRoot --force-rebuild --write-settings
+    if ($LASTEXITCODE -ne 0) { throw "Worker preparation failed (exit $LASTEXITCODE)." }
+    [void](Invoke-ReadinessCheck -Repository $Project)
+    $nonProviderBlockers = @(Get-NonProviderBlockers)
+    if ($nonProviderBlockers.Count -gt 0) {
+      throw "Worker preparation completed, but Docker/sandbox readiness is still blocked. Review the blockers above."
+    }
+    if (-not [bool]$script:LastReadinessStatus.cursorCredential.passed -and
+        [bool]$script:LastReadinessStatus.cursorCredential.configured) {
+      Write-Host "  Worker is ready; real Cursor runs remain fail-closed until a matching provider proof exists." -ForegroundColor Yellow
+    }
   }
-  Write-Host ""
-  Write-Host "  Prepare/repair the worker image now? [Y/n] " -ForegroundColor Yellow -NoNewline
-  $answer = Read-Host
-  if ($answer -match '^[Nn]') {
-    throw "Worker readiness is required before the Docker-only harness can run."
-  }
-  $PackageRoot = Join-Path $HarnessRoot "packages\agent-harness"
-  & node $Cli execution prepare-worker --repository $Project --package-root $PackageRoot --force-rebuild --write-settings
-  if ($LASTEXITCODE -ne 0) { throw "Worker preparation failed (exit $LASTEXITCODE)." }
-  if (-not (Invoke-ReadinessCheck -Repository $Project)) {
-    throw "Worker preparation completed, but readiness is still blocked. Review the blockers above."
-  }
-}
-
-if ([string]::IsNullOrWhiteSpace($env:CURSOR_API_KEY)) {
-  $env:CURSOR_API_KEY = [Environment]::GetEnvironmentVariable("CURSOR_API_KEY", "User")
 }
 $uiDefaults = Get-AgentHarnessUiDefaults
 $uiArgs = [System.Collections.Generic.List[string]]::new()
@@ -229,8 +255,10 @@ Write-Host "  Opening dashboard for $Project" -ForegroundColor Green
 Write-Host "  Keep this window open. The browser uses the one-time URL printed below." -ForegroundColor DarkGray
 if ([string]::IsNullOrWhiteSpace($env:CURSOR_API_KEY)) {
   Write-Host "  CURSOR_API_KEY is not set. The dashboard opens, but real agent execution is unavailable." -ForegroundColor Yellow
+} elseif ([bool]$script:LastReadinessStatus.cursorCredential.passed) {
+  Write-Host "  Cached host provider-proxy proof matches; key rotation does not require re-smoke." -ForegroundColor Green
 } else {
-  Write-Host "  Real Cursor credential proof matched the maintained worker image." -ForegroundColor Green
+  Write-Host "  CURSOR_API_KEY stays on the host; workers receive only HARNESS_RPC_URL and HARNESS_WORKER_TOKEN." -ForegroundColor DarkGray
 }
 Set-Location -LiteralPath $Project
 & node $Cli @uiArgs

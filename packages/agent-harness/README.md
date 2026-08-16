@@ -29,11 +29,19 @@ npm install
 npm run build
 npx agent-harness project add --repository "/path/to/your-project"
 npx agent-harness execution prepare-worker --repository "/path/to/your-project" --force-rebuild --write-settings
+# Read-only readiness/proof check; this never launches the live smoke:
 npx agent-harness execution status --repository "/path/to/your-project"
-# With CURSOR_API_KEY set only on the host, run the proxy-proof preflight:
+# Only when status says the release tuple lacks proof, opt in explicitly:
 npx agent-harness execution cursor-provider-smoke --repository "/path/to/your-project"
 npx agent-harness ui --repository "/path/to/your-project"
 ```
+
+`CURSOR_API_KEY` stays in the host process (session or User environment). The
+worker receives only `HARNESS_RPC_URL` and `HARNESS_WORKER_TOKEN`. Matching
+provider proof is cached across launches and key rotation; re-smoke only after
+the image digest, SDK, protocol, contract, proxy, model, or TLS identity changes.
+The Windows launch/install scripts report a missing proof but never run the
+multi-minute smoke unless the operator opts in.
 
 `project add` registers the repository in harness home (guidance lives there too).
 Install structural providers yourself when you want repository intelligence (default on).
@@ -294,8 +302,8 @@ the primary route provider (GitNexus `analyze … --index-only --skip-agents-md
 task commit that includes a source-file path, primary indexes refresh again so
 the next task sees fresh structure. Queries use argument arrays only (no shell).
 GitNexus always passes the absolute `/workspace` root as `--repo` so concurrent
-named-volume workspaces and duplicate repository names resolve to the current
-run checkout, not a basename registry alias.
+host-owned run worktrees and duplicate repository names resolve to the current
+sandbox checkout, not a basename registry alias.
 
 Generated indexes must stay Git-ignored. The harness installs repository-local
 exclude rules for `.gitnexus/` and `.codegraph/` when needed and refuses tracked
@@ -365,29 +373,37 @@ See [intent-first workflow](../../docs/plans/intent-first-workflow.md). Evidence
 
 Agents cannot claim a command passed. The harness owns process execution and records exit code, stdout, stderr, duration, and timestamp.
 
-## Per-run Docker workspaces
+## Host-owned worktrees and disposable sandboxes
 
-Every new run executes in a named Docker volume mounted only at `/workspace`. The host creates a bundle for the exact committed `baseSha`, imports it through a short-lived init container, and starts the long-lived worker from one maintained digest-pinned image. The control checkout and durable run state are never mounted.
+Every new run gets a host-owned Git worktree at the exact committed `baseSha`.
+Each bounded agent invocation creates a disposable sandbox from one maintained
+digest-pinned image and bind-mounts that worktree at `/workspace`. The worker
+gets only `HARNESS_RPC_URL` and `HARNESS_WORKER_TOKEN`; control checkout,
+durable run state, Git credentials, and provider credentials are never mounted
+or injected. The host destroys the sandbox and revokes its capability when the
+invocation settles.
 
-The worker completes reflection through final review, then sends a hashed result bundle to the host over the typed state transport. Host-only publication validates ancestry in quarantine, promotes the delivery ref, and optionally pushes or opens a pull request. The control checkout branch, index, and files remain unchanged.
+The host owns commits, ancestry validation, delivery refs, and optional push or
+pull-request publication. There is no `docker-clone`, long-lived worker session,
+secret-mount, or host direct-Cursor-backend production fallback.
 
 ### Dirty control checkout
 
-A dirty operator checkout is **not** imported into a new Docker run. The named
-volume is seeded from the selected branch's **committed** base only; uncommitted
-control-checkout changes remain on the host. Commit changes yourself only if you
-need those edits in a future run.
+A dirty operator checkout is **not** imported into a new run. The run worktree
+starts from the selected branch's **committed** base only; uncommitted
+control-checkout changes remain in the operator checkout. Commit changes
+yourself only if you need those edits in a future run.
 
 ### Locking and concurrency
 
 - **Per-run lock** — state/config/workspace mutation for one run.
 - **Shared-index lock** — knowledge / repository-intelligence refresh coordination.
 
-Independent container runs can advance concurrently. Inspect durable run locks with `agent-harness unlock --run-id <id> --inspect-only`.
+Independent runs can advance concurrently. Inspect durable run locks with `agent-harness unlock --run-id <id> --inspect-only`.
 
 ### Cleanup, recovery, and disk use
 
-Named volumes can accumulate build artifacts. Cleanup is explicit and conservative:
+Host worktrees can accumulate build artifacts. Cleanup is explicit and conservative:
 
 ```bash
 agent-harness cleanup --run-id <id>
@@ -398,9 +414,12 @@ agent-harness execution recover-container --run-id <id>
 agent-harness execution reconcile-orphans [--apply]
 ```
 
-Cleanup verifies publication/discard state before removing a container or volume. It refuses active/non-settled runs, identity mismatches, running workers/active RPC, and unpublished history without `--discard`. Completed published runs keep `workspace.json`, state, events, transport audit metadata, and the delivery branch.
-
-A missing worker container is recreated against the retained named volume (`execution recover-container`). A missing volume with retained lifecycle state blocks with diagnostics rather than silently reseeding.
+Cleanup verifies publication/discard state before removing a sandbox or
+worktree. It refuses active/non-settled runs, identity mismatches, active RPC,
+and unpublished history without `--discard`. Completed published runs retain
+their state, events, audit metadata, and delivery branch. Sandboxes are never
+reattached or recovered as sessions; retry creates a fresh sandbox over the
+retained host worktree.
 
 ### Unsupported legacy installs
 
@@ -410,14 +429,14 @@ A missing worker container is recreated against the retained named volume (`exec
 
 Agents never run git. The harness:
 
-- starts each new Git-enabled run in an isolated named volume at the committed base SHA;
+- starts each new Git-enabled run in a host-owned worktree at the committed base SHA;
 - creates a delivery branch only when publication needs a named ref;
 - requires every committed path to have been reported by the task worker;
 - asks the small model for commit and pull-request text, with a deterministic fallback;
 - optionally pushes and opens a pull request with `gh`;
 - never auto-merges.
 
-New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI `--base-branch`) can override the base branch for that run only; the project default remains `git.baseBranch`. The named-volume workspace is seeded immediately when the run starts; the delivery branch is created only when publication needs it.
+New runs (dashboard **Start from branch**, `POST /api/runs` `baseBranch`, or CLI `--base-branch`) can override the base branch for that run only; the project default remains `git.baseBranch`. The host worktree is created immediately when the run starts; the delivery branch is created only when publication needs it.
 
 ## Trust boundary
 
@@ -443,9 +462,16 @@ npm run test:acceptance    # CLI acceptance via createCli injection + compiled b
 npm run test:all           # unit + integration + required Docker + e2e + build + acceptance
 ```
 
-Docker is the only production runtime. The retired runtime selector, host-local execution, per-run Dockerfiles, generated images, and manual base/image approvals are no longer configuration or runtime paths. Loading a pre-cutover project config fails with archive/discard guidance; the install flow prepares one digest-pinned maintained worker image that every run reuses. Each run gets a named volume at `/workspace`, while durable state stays on the host behind authenticated typed state RPC. Bridge networking is filesystem isolation, not an exfiltration boundary. See [ADR 0017](../../docs/adr/0017-cordis-composed-docker-runtime.md) and [INSTALL.md](../../INSTALL.md#7-docker-runtime).
+Docker is the only production runtime. The retired runtime selector, host-local execution, per-run Dockerfiles, generated images, and manual base/image approvals are no longer configuration or runtime paths. Loading a pre-cutover project config fails with archive/discard guidance; the install flow prepares one digest-pinned maintained worker image that every run reuses. Each run gets a host-owned worktree bind-mounted at `/workspace` into disposable sandboxes, while durable state stays on the host behind authenticated RPC. Bridge networking is filesystem isolation, not an exfiltration boundary. See [ADR 0017](../../docs/adr/0017-cordis-composed-docker-runtime.md) and [INSTALL.md](../../INSTALL.md#7-docker-runtime).
 
-The non-provider Docker probe mounts an actual mode-`000` fixture at the production `/run/secrets/*` layout and fails if the file is absent or readable; it also verifies `/workspace` writes and host-state absence. The fixture is staged into a disposable volume rather than bind-mounted from the host, because Docker Desktop surfaces host bind mounts as world-readable regardless of their host mode and could not prove the denial. `execution prepare-worker` runs this probe and caches a pass per image digest under the project state root; run creation and `execution status` both fail closed on that cache. This deterministic test is not evidence about Cursor tools. The historical real-provider smoke found exact credential bytes in the direct phase without a conclusive read denial. Production `CURSOR_API_KEY` mounts are disabled unconditionally. The replacement host-proxy gate additionally requires an exact image/SDK/protocol/contract/proxy/model/TLS proof tuple. The cached isolation proof is reused across launches and host key rotation; an invalid or revoked key fails ordinary upstream authentication.
+The non-provider Docker probe verifies `/workspace` writes, host-state absence,
+and the worker environment allowlist. `execution prepare-worker` caches a pass
+per image digest under the project state root; run creation and `execution
+status` both fail closed on that cache. This deterministic test is not evidence
+about Cursor tools. The host-proxy gate separately requires an exact
+image/SDK/protocol/contract/proxy/model/TLS proof tuple. That proof is reused
+across launches and host key rotation; an invalid or revoked key fails ordinary
+upstream authentication.
 
 E2E tests live in `tests/e2e/`. They do **not** launch the production CLI: each test builds a `ProjectFixture`, injects a `ScriptedBackend`, starts `startUiServer({ port: 0, openBrowser: false })`, and opens the authenticated dashboard URL. Failure artifacts land under Git-ignored `test-results/` (Playwright traces under `test-results/playwright/`).
 

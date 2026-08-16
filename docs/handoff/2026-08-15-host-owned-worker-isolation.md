@@ -40,6 +40,7 @@ Rip the container pipeline to disposable sandboxes over host Git worktrees, with
 - ADRs 0016/0017, plan `docker-only-state-service.md`, and README updated
 - Follow-up commit `2a924a0` routed CLI reopen/resume through disposable sandboxes and added exact production proof revalidation.
 - The live Cursor provider-proxy v9 proof is green for the maintained image/model/TLS/SDK/protocol/contract/proxy tuple. The proof is reusable across host key rotation because credential identity is not part of the isolation boundary.
+- Windows install/launch now loads `CURSOR_API_KEY` only from the host session/User environment, checks cached proof without auto-smoking, lets the Dashboard open when only real-provider readiness is blocked, and exposes an explicit opt-in smoke script.
 
 ## Verification (this session)
 
@@ -56,7 +57,7 @@ npm run typecheck          → clean
 - The authoritative follow-up state is in `docs/handoff/2026-08-15-host-owned-isolation-cli-reopen.md`; the earlier CLI reopen concern was resolved by `2a924a0`.
 - Some unclassified Dashboard/Analytics/ServerConfig requests received expected allowlist `404 route_not_allowed` responses during the green live smoke.
 - Credential-absence evidence passed with no key-shaped credential observed, despite non-fatal `ConnectError: unimplemented [12]` stream-failure diagnostic noise.
-- Proof matching excludes host-key identity. Revoking or rotating the temporary key does not require a fresh isolation smoke; an invalid replacement key fails normal upstream authentication.
+- Proof matching excludes host-key identity. Rotating the host key does not require a fresh isolation smoke; an invalid or revoked replacement key fails normal upstream authentication.
 - Pre-cutover `docker-clone` workspace.json records fail closed and must be finished/exported with an older harness.
 
 ## Vision invariants — do not regress

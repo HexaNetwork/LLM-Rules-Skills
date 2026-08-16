@@ -458,8 +458,9 @@ Write-Ok "built $Cli"
 
 # -- 5. Cursor API key (Windows User env - never .env) ---------------------
 Write-Stage "Cursor API key"
-Write-Say "The dashboard does not need a key. Real Cursor runs eventually need CURSOR_API_KEY (Windows User env, never .env)."
-Write-WarnLine "Real Cursor credential mounting into Docker is currently fail-closed until its isolation release gate passes."
+Write-Say "The dashboard does not need a key. Real Cursor runs use host-only CURSOR_API_KEY (Windows User env or this session, never .env)."
+Write-Note "The key is held by the host provider proxy. Docker workers receive only HARNESS_RPC_URL and HARNESS_WORKER_TOKEN."
+Write-Note "Provider proof is cached by release tuple and remains valid across launches and key rotation."
 $ExistingKey = $env:CURSOR_API_KEY
 if ([string]::IsNullOrWhiteSpace($ExistingKey)) {
   $ExistingKey = Get-WindowsUserEnv "CURSOR_API_KEY"
@@ -623,14 +624,24 @@ if (-not (Test-AgentHarnessDockerReady)) {
     exit 1
   }
   $runtimeStatus = $statusJson | ConvertFrom-Json
-  if (-not [bool]$runtimeStatus.ready) {
-    Write-WarnLine "The Docker-only runtime is still blocked after worker preparation."
-    foreach ($blocker in @($runtimeStatus.blockers)) {
+  $runtimeBlockers = @($runtimeStatus.blockers | Where-Object {
+    $_.code -ne "cursor-credential-delivery-unsupported"
+  })
+  if ($runtimeBlockers.Count -gt 0) {
+    Write-WarnLine "The Docker-only sandbox runtime is still blocked after worker preparation."
+    foreach ($blocker in $runtimeBlockers) {
       Write-Note ("- " + $blocker.message)
     }
     exit 1
   }
-  Write-Ok "Docker worker and isolation probe are ready"
+  Write-Ok "Docker worker and disposable-sandbox isolation probe are ready"
+  if ([bool]$runtimeStatus.cursorCredential.passed) {
+    Write-Ok "cached host provider-proxy proof matches this release"
+  } elseif ([bool]$runtimeStatus.cursorCredential.configured) {
+    Write-WarnLine "Real Cursor runs remain fail-closed because no matching provider proof exists."
+    Write-Note "Setup will not run the multi-minute live smoke automatically."
+    Write-Note "Opt in later: .\scripts\run-cursor-provider-smoke.ps1 -Repository `"$ProjectPath`""
+  }
 }
 
 # -- 8. Repository intelligence --------------------------------------------

@@ -430,8 +430,9 @@ printf '  %s✓ built%s %s\n' "$GREEN" "$RESET" "$CLI"
 
 # ── 4. Cursor API key (Windows User env — never .env) ─────────────────────
 stage "Cursor API key"
-say "The dashboard does not need a key. Real Cursor runs eventually need CURSOR_API_KEY."
-warn "Real Cursor credential mounting into Docker is currently fail-closed until its isolation release gate passes."
+say "The dashboard does not need a key. Real Cursor runs use host-only CURSOR_API_KEY."
+note "The host provider proxy keeps the key; workers receive only HARNESS_RPC_URL and HARNESS_WORKER_TOKEN."
+note "Provider proof is cached by release tuple and remains valid across launches and key rotation."
 EXISTING_KEY="${CURSOR_API_KEY:-}"
 if [[ -z "$EXISTING_KEY" ]] && _is_windows; then
   EXISTING_KEY="$(_read_windows_user_env CURSOR_API_KEY || true)"
@@ -569,12 +570,20 @@ else
   printf '  %s✓ worker image rebuilt and digest written%s\n' "$GREEN" "$RESET"
   STATUS_JSON="$(node "$CLI" execution status --repository "$PROJECT_PATH" --json)"
   if ! printf '%s' "$STATUS_JSON" | node -e \
-    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.exit(JSON.parse(s).ready?0:1))"; then
+    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const v=JSON.parse(s);process.exit(v.blockers.some(b=>b.code!=='cursor-credential-delivery-unsupported')?1:0)})"; then
     node "$CLI" execution status --repository "$PROJECT_PATH"
-    warn "The Docker-only runtime is still blocked after worker preparation."
+    warn "The Docker-only sandbox runtime is still blocked after worker preparation."
     exit 1
   fi
-  printf '  %s✓ Docker worker and isolation probe are ready%s\n' "$GREEN" "$RESET"
+  printf '  %s✓ Docker worker and disposable-sandbox isolation probe are ready%s\n' "$GREEN" "$RESET"
+  if printf '%s' "$STATUS_JSON" | node -e \
+    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.exit(JSON.parse(s).cursorCredential?.passed?0:1))"; then
+    printf '  %s✓ cached host provider-proxy proof matches this release%s\n' "$GREEN" "$RESET"
+  elif [[ -n "${CURSOR_API_KEY:-}" ]]; then
+    warn "Real Cursor runs remain fail-closed because no matching provider proof exists."
+    note "Setup will not run the multi-minute live smoke automatically."
+    note "Opt in later: node \"$CLI\" execution cursor-provider-smoke --repository \"$PROJECT_PATH\""
+  fi
 fi
 
 # ── 7. Repository intelligence ────────────────────────────────────────────

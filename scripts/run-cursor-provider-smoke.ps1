@@ -1,41 +1,53 @@
 <#
-Runs the live cursor-provider-smoke proof with a temporary CURSOR_API_KEY.
+Runs the live host Cursor provider-proxy proof on explicit request.
 
-The key is prompted with masked input, held only in this process's
-environment for the duration of the run, and always removed afterward
-(even on failure or Ctrl+C). It is never echoed, logged, or passed as an
-argument. Remember to revoke the temporary key in the Cursor dashboard
-when you are done.
+CURSOR_API_KEY must already be set in this session or in the Windows User
+environment. The key remains host-only and is never passed as a CLI argument
+or injected into the Docker worker environment. Matching proof is cached and
+reused across launches and key rotation; use -Force only when deliberately
+refreshing evidence for the same release tuple.
 #>
+#Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$Repository = "D:\Dev\LLM\Emperor-Test-Harness"
+    [string]$Repository = "D:\Dev\LLM\Emperor-Test-Harness",
+    [switch]$Force,
+    [switch]$Json
 )
 
 $ErrorActionPreference = "Stop"
+$HarnessRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$Cli = Join-Path $HarnessRoot "packages\agent-harness\dist\cli.js"
 
-$secureKey = Read-Host -Prompt "Paste temporary CURSOR_API_KEY" -AsSecureString
-if ($secureKey.Length -eq 0) {
-    Write-Error "No key provided; aborting."
-    exit 1
+if (-not (Test-Path -LiteralPath $Cli)) {
+    throw "The Agent Harness CLI is missing. Run npm.cmd install and npm.cmd run build in $HarnessRoot."
 }
 
-$bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
-try {
-    $env:CURSOR_API_KEY = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-} finally {
-    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+if ([string]::IsNullOrWhiteSpace($env:CURSOR_API_KEY)) {
+    $env:CURSOR_API_KEY = [Environment]::GetEnvironmentVariable("CURSOR_API_KEY", "User")
 }
 
-try {
-    Write-Host "Running cursor-provider-smoke against $Repository ..."
-    npx agent-harness execution cursor-provider-smoke --repository $Repository --force --json
-    $exitCode = $LASTEXITCODE
-} finally {
-    Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue
-    Set-Clipboard -Value " " -ErrorAction SilentlyContinue
-    Write-Host "CURSOR_API_KEY cleared from environment and clipboard overwritten."
-    Write-Host "Reminder: revoke the temporary key in the Cursor dashboard."
+if ([string]::IsNullOrWhiteSpace($env:CURSOR_API_KEY)) {
+    throw @"
+CURSOR_API_KEY is not configured on the host. Set it for this session:
+  `$env:CURSOR_API_KEY = "<key>"
+or save it for your Windows user:
+  [Environment]::SetEnvironmentVariable("CURSOR_API_KEY", "<key>", "User")
+"@
 }
 
-exit $exitCode
+Write-Host "Running the host provider-proxy proof against $Repository ..."
+Write-Host "The Docker worker receives only HARNESS_RPC_URL and HARNESS_WORKER_TOKEN." -ForegroundColor DarkGray
+
+$smokeArgs = @(
+    $Cli,
+    "execution",
+    "cursor-provider-smoke",
+    "--repository",
+    $Repository
+)
+if ($Force) { $smokeArgs += "--force" }
+if ($Json) { $smokeArgs += "--json" }
+
+& node @smokeArgs
+exit $LASTEXITCODE

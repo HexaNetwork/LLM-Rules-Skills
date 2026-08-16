@@ -47,7 +47,8 @@ Usage: bash scripts/launch-agent-harness.sh [project-path] [--no-pull] [--no-bui
     Unix:    ${XDG_CONFIG_HOME:-$HOME/.config}/agent-harness/settings.json
 
   CURSOR_API_KEY is optional for dashboard/readiness use. A Windows User value
-  is loaded automatically when present and is never stored in settings.json.
+  is loaded automatically when present, stays host-only, and is never stored
+  in settings.json or injected into Docker workers.
 EOF
 }
 
@@ -123,7 +124,7 @@ if [[ -z "${CURSOR_API_KEY:-}" ]] && command -v powershell.exe >/dev/null 2>&1; 
   export CURSOR_API_KEY
 fi
 if [[ -z "${CURSOR_API_KEY:-}" ]]; then
-  echo "Warning: CURSOR_API_KEY is not set — agent runs will fail until it is." >&2
+  echo "Warning: CURSOR_API_KEY is not set — the dashboard opens, but real agent runs are unavailable." >&2
 fi
 
 cd "$HARNESS_ROOT"
@@ -163,7 +164,7 @@ fi
 echo "→ checking Docker worker readiness"
 STATUS_JSON="$(node "$CLI" execution status --repository "$PROJECT_PATH" --json)"
 if ! printf '%s' "$STATUS_JSON" | node -e \
-  "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.exit(JSON.parse(s).ready?0:1))"; then
+  "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const v=JSON.parse(s);process.exit(v.blockers.some(b=>b.code!=='cursor-credential-delivery-unsupported')?1:0)})"; then
   node "$CLI" execution status --repository "$PROJECT_PATH"
   if [[ -t 0 ]]; then
     printf 'Prepare/repair the maintained worker now? [Y/n] '
@@ -175,8 +176,8 @@ if ! printf '%s' "$STATUS_JSON" | node -e \
     fi
   fi
   if ! printf '%s' "$STATUS_JSON" | node -e \
-    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.exit(JSON.parse(s).ready?0:1))"; then
-    echo "Docker worker readiness is still blocked; dashboard launch stopped." >&2
+    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const v=JSON.parse(s);process.exit(v.blockers.some(b=>b.code!=='cursor-credential-delivery-unsupported')?1:0)})"; then
+    echo "Docker worker or disposable-sandbox readiness is still blocked; dashboard launch stopped." >&2
     exit 1
   fi
 fi
@@ -188,8 +189,13 @@ fi
 
 echo "→ starting dashboard for $PROJECT_PATH"
 echo "  Open the full http://127.0.0.1:…/?token=… URL printed below."
-if [[ -n "${CURSOR_API_KEY:-}" ]]; then
-  echo "  Note: real Cursor-in-Docker execution stays fail-closed until the credential isolation gate passes."
+if printf '%s' "$STATUS_JSON" | node -e \
+  "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.exit(JSON.parse(s).cursorCredential?.passed?0:1))"; then
+  echo "  Cached host provider-proxy proof matches; key rotation does not require re-smoke."
+elif [[ -n "${CURSOR_API_KEY:-}" ]]; then
+  echo "  Real Cursor runs remain fail-closed; no smoke runs automatically."
+  echo "  Opt in: node \"$CLI\" execution cursor-provider-smoke --repository \"$PROJECT_PATH\""
 fi
+echo "  Workers receive only HARNESS_RPC_URL and HARNESS_WORKER_TOKEN."
 cd "$PROJECT_PATH"
 exec node "$CLI" "${UI_ARGS[@]}"

@@ -74,6 +74,12 @@ import type { HostRunLifecycleService } from "../vnext/plugins/host-run-lifecycl
 import type { DockerClient } from "../infrastructure/container/types.js";
 import { DockerSandboxProvider } from "../sandbox/index.js";
 import { SandboxAgentBackend } from "../infrastructure/agents/sandbox-backend.js";
+import {
+  assertCursorProviderProofPassed,
+  currentCursorProviderProofTuple,
+  findMatchingCursorProviderProof,
+  loadCursorProviderProofCache,
+} from "../application/cursor-provider-proof.js";
 
 export type { UiJob } from "./run-job-service.js";
 export { parseAnswerBody } from "./http/request.js";
@@ -307,6 +313,25 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
         loadRunConfig: (runId) =>
           loadRunConfig(projectConfig, runId, { runDirectory: store.runDirectory(runId) }),
         startWorker: async ({ config, runId, onProgress }) => {
+          if (cursorProviderProduction && cursorProviderTls) {
+            const imageDigest = config.execution.docker.workerImageDigest?.trim();
+            if (!imageDigest) {
+              throw new Error("A digest-pinned worker image is required for Cursor execution");
+            }
+            const tuple = currentCursorProviderProofTuple({
+              imageDigest,
+              model: config.models.capable,
+              tlsIdentity: cursorProviderTls.tlsIdentity,
+              apiKey: cursorProviderProduction.apiKey,
+            });
+            assertCursorProviderProofPassed(
+              findMatchingCursorProviderProof(
+                await loadCursorProviderProofCache(paths.stateRoot),
+                tuple,
+              ),
+              tuple,
+            );
+          }
           onProgress("Advancing workflow through a disposable sandbox");
           const sandboxBackend = new SandboxAgentBackend({
             sandboxProvider: new DockerSandboxProvider(docker),

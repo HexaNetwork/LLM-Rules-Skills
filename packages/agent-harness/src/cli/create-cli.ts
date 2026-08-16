@@ -4,8 +4,8 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Command } from "commander";
-import { createCursorBackend } from "../infrastructure/agents/cursor-backend.js";
 import type { AgentBackend } from "../infrastructure/agents/types.js";
+import { HarnessFailure } from "../errors.js";
 import { defaultConfigYaml, deploymentConfigYaml } from "../config/defaults.js";
 import { loadConfig, loadRunConfig } from "../config/io.js";
 import type { HarnessConfig } from "../config/schema.js";
@@ -41,9 +41,30 @@ export type CliDependencies = {
 
 export function productionCliDependencies(): CliDependencies {
   return {
-    createBackend: (apiKey) => createCursorBackend(apiKey),
+    createBackend: () => createHostControlBackend(),
     createDockerClient,
     startUiServer,
+  };
+}
+
+/**
+ * Production CLI commands are host-control adapters. Agent execution is
+ * supplied later by startUiServer's disposable SandboxAgentBackend.
+ */
+function createHostControlBackend(): AgentBackend {
+  return {
+    readiness: () => ({ ready: true }),
+    workspaceCapabilities: () => ({
+      canRestrictWritableWorkspace: true,
+      providerId: "host-control",
+    }),
+    async run() {
+      throw new HarnessFailure(
+        "Host control attempted agent execution; production agents must run in a disposable sandbox.",
+        "execution",
+        false,
+      );
+    },
   };
 }
 

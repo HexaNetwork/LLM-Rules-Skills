@@ -129,6 +129,8 @@ describe("architecture: package source inventory", () => {
 describe("architecture: Cordis production ownership", () => {
   it("keeps CLI start and POST /api/runs as lifecycle-only adapters", async () => {
     const cli = await readSrc("cli/create-cli.ts");
+    expect(cli).not.toContain("createCursorBackend");
+    expect(cli).toContain("production agents must run in a disposable sandbox");
     const cliStart = cli.slice(
       cli.indexOf('.command("start")'),
       cli.indexOf('.command("continue")'),
@@ -155,6 +157,19 @@ describe("architecture: Cordis production ownership", () => {
     expect(createRoute).not.toContain("continueDockerRunAfterWorkspaceReady");
     expect(routes).not.toContain("continueDockerRunAfterWorkspaceReady");
     expect(routes).not.toContain("ensureDockerWorkspaceReady");
+  });
+
+  it("gates every production worker reopen on proof before sandbox execution", async () => {
+    const server = await readSrc("ui/server.ts");
+    const startWorker = server.slice(
+      server.indexOf("startWorker: async"),
+      server.indexOf("stopWorker: async"),
+    );
+    expect(startWorker).toContain("assertCursorProviderProofPassed");
+    expect(startWorker).toContain("new SandboxAgentBackend");
+    expect(startWorker.indexOf("assertCursorProviderProofPassed")).toBeLessThan(
+      startWorker.indexOf("new SandboxAgentBackend"),
+    );
   });
 
   it("retires the HarnessEngine facade and keeps Cordis worker composition on WorkerHarnessRuntime", async () => {

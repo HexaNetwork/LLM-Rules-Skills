@@ -89,6 +89,7 @@ describe("host composition after launch defaults", () => {
         controlRoot: home,
         worktreePath: home,
         baseSha: "0".repeat(40),
+        baseBranch: "main",
         createdAt: new Date().toISOString(),
       });
       const execMock = vi.fn().mockResolvedValue({

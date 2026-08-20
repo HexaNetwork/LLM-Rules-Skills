@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { containerName } from "../../src/domain/mount-policy.js";
 import { bootHost } from "../../src/boot.js";
 import { hostRuntimeRows } from "../../src/plugins/profile.js";
-import { createTempDir, createTempRepo } from "../helpers.js";
+import { createTempDir, createTempRepo, currentBranch } from "../helpers.js";
 
 const exec = promisify(execFile);
 
@@ -46,7 +46,8 @@ describe("docker isolation", () => {
     const runId = "11111111-2222-4333-8444-555555555555";
     try {
       const project = await host.ctx.projects.add(repo);
-      const { worktreePath, baseSha } = await host.ctx.git.createWorktree(project, runId);
+      const baseBranch = await currentBranch(repo);
+      const { worktreePath, baseSha } = await host.ctx.git.createWorktree(project, runId, baseBranch);
       await host.ctx.store.writeIdentity({
         runId,
         projectKey: project.projectKey,
@@ -54,6 +55,7 @@ describe("docker isolation", () => {
         controlRoot: project.controlRoot,
         worktreePath,
         baseSha,
+        baseBranch,
         createdAt: new Date().toISOString(),
       });
       await host.ctx.sandbox.ensure(runId);

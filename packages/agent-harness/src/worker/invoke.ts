@@ -1,4 +1,5 @@
 import { Agent } from "@cursor/sdk";
+import { formatInvokeError } from "../domain/cursor-agent-error.js";
 import { REFLECT_EXPECTED_OUTPUT, REFLECT_ROLE_RULES } from "../domain/reflect.js";
 
 type InvokeRequest = {
@@ -64,5 +65,8 @@ async function main(): Promise<void> {
 
 const entry = process.argv[1] ?? "";
 if (entry.endsWith("invoke.js") || entry.endsWith("invoke.ts")) {
-  void main();
+  void main().catch((error) => {
+    process.stderr.write(`${formatInvokeError(error)}\n`);
+    process.exitCode = 1;
+  });
 }

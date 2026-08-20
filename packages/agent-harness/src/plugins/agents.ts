@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
+import { formatCursorAgentFailure } from "../domain/cursor-agent-error.js";
 import type { AgentInvocation, WorkPacket } from "../domain/types.js";
 
 export type AgentsService = {
@@ -113,7 +114,7 @@ export function createCursorAgents(ctx: Context): AgentsService {
         stdin: JSON.stringify({ role, packet }),
       });
       if (result.exitCode !== 0) {
-        throw new Error(`Cursor agent failed (${role}): ${result.stderr || result.stdout}`);
+        throw new Error(formatCursorAgentFailure(role, result));
       }
       return JSON.parse(result.stdout) as unknown;
     },

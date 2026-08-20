@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import type { Context } from "@deepseek-ai/cordis";
+import { buildDockerRunArgs } from "../domain/docker-run.js";
 import {
   buildRunSpec,
   containerName,
@@ -59,32 +60,7 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
         harnessHome: ctx.store.home,
         siblingRunRoots: siblings.map((id) => `${ctx.store.home}/runs/${id}`),
       });
-      await docker([
-        "run",
-        "-d",
-        "--name",
-        spec.name,
-        "--network",
-        "bridge",
-        "--read-only",
-        "--tmpfs",
-        "/tmp",
-        "--cap-drop",
-        "ALL",
-        "--security-opt",
-        "no-new-privileges",
-        "-v",
-        `${spec.worktreeHost}:/workspace`,
-        "-e",
-        `CURSOR_API_KEY=${spec.env.CURSOR_API_KEY ?? ""}`,
-        "-e",
-        "HOME=/tmp",
-        "-w",
-        "/workspace",
-        spec.image,
-        "sleep",
-        "infinity",
-      ]);
+      await docker(buildDockerRunArgs(spec));
       specs.set(runId, spec);
       return spec;
     },

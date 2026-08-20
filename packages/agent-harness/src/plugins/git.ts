@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -9,6 +9,7 @@ const exec = promisify(execFile);
 
 export type GitService = {
   createWorktree(registration: ProjectRegistration, runId: string): Promise<{ worktreePath: string; baseSha: string }>;
+  removeWorktree(identity: RunIdentity): Promise<void>;
   commit(identity: RunIdentity, message: string): Promise<string>;
   publish(identity: RunIdentity, title: string, body: string): Promise<{ branch: string; url?: string }>;
   head(cwd: string): Promise<string>;
@@ -22,6 +23,10 @@ export function createGitService(): GitService {
       await mkdir(path.dirname(worktreePath), { recursive: true });
       await git(registration.controlRoot, ["worktree", "add", "--detach", worktreePath, baseSha]);
       return { worktreePath, baseSha };
+    },
+    async removeWorktree(identity) {
+      await rm(identity.worktreePath, { recursive: true, force: true }).catch(() => undefined);
+      await git(identity.controlRoot, ["worktree", "prune"]).catch(() => undefined);
     },
     async commit(identity, message) {
       await git(identity.worktreePath, ["add", "-A"]);

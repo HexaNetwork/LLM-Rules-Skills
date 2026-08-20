@@ -99,6 +99,21 @@ export function createCli(): Command {
   }
 
   program
+    .command("delete")
+    .description("Delete a run, its sandbox, worktree, and stored artifacts")
+    .requiredOption("--run-id <id>", "run id")
+    .action(async (options: { runId: string }) => {
+      const home = program.opts<{ home?: string }>().home ?? defaultHarnessHome();
+      const booted = await bootHost({ home });
+      try {
+        const result = await booted.ctx.runLifecycle.delete(options.runId);
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } finally {
+        await booted.dispose();
+      }
+    });
+
+  program
     .command("answer")
     .requiredOption("--run-id <id>", "run id")
     .option("--answers <json>", "JSON object of question id → answer")

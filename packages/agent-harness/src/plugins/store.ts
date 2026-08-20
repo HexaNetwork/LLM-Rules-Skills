@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ProjectRegistration, RunIdentity, RunState } from "../domain/types.js";
@@ -17,6 +17,7 @@ export type StoreService = {
   writeIdentity(identity: RunIdentity): Promise<void>;
   readState(runId: string): Promise<RunState | undefined>;
   writeState(state: RunState): Promise<void>;
+  deleteRun(runId: string): Promise<void>;
   readRegistration(projectKey: string): Promise<ProjectRegistration | undefined>;
   writeRegistration(registration: ProjectRegistration): Promise<void>;
   readGlobalSettings(): Promise<Partial<ProjectSettings>>;
@@ -31,6 +32,12 @@ export type StoreService = {
   readArtifact<T>(runId: string, name: string): Promise<T | undefined>;
   appendEvent(runId: string, event: unknown): Promise<void>;
 };
+
+function assertSafeRunId(runId: string): void {
+  if (!runId || runId !== path.basename(runId) || runId.includes("\0")) {
+    throw new Error(`Invalid run id: ${runId}`);
+  }
+}
 
 function parseJsonText<T>(text: string): T {
   return JSON.parse(text.replace(/^\uFEFF/, "")) as T;
@@ -100,6 +107,10 @@ export function createFileStore(home: string): StoreService {
     writeIdentity: (identity) => writeJson(`runs/${identity.runId}/identity.json`, identity),
     readState: (runId) => readJson<RunState>(`runs/${runId}/state.json`),
     writeState: (state) => writeJson(`runs/${state.runId}/state.json`, state),
+    async deleteRun(runId) {
+      assertSafeRunId(runId);
+      await rm(resolve("runs", runId), { recursive: true, force: true });
+    },
     readRegistration: (projectKey) =>
       readJson<ProjectRegistration>(`projects/${projectKey}/registration.json`),
     writeRegistration: (registration) =>

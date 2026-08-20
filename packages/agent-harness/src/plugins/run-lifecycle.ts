@@ -19,6 +19,7 @@ export type RunLifecycleService = {
   answer(runId: string, batch: AnswerBatch): Promise<Run>;
   retry(runId: string): Promise<Run>;
   cancel(runId: string): Promise<Run>;
+  delete(runId: string): Promise<{ deleted: string }>;
   status(runId: string): Promise<Run>;
   list(): Promise<Run[]>;
   activity(runId: string): Promise<unknown[]>;
@@ -172,6 +173,19 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
       await ctx.sandbox.destroy(runId);
       await persist(run);
       return run;
+    },
+    async delete(runId) {
+      const identity = await ctx.store.readIdentity(runId);
+      if (!identity) {
+        const ids = await ctx.store.listRunIds();
+        if (!ids.includes(runId)) throw new Error(`Unknown run: ${runId}`);
+      }
+      await Promise.all([
+        ctx.sandbox.destroy(runId).catch(() => undefined),
+        identity ? ctx.git.removeWorktree(identity).catch(() => undefined) : Promise.resolve(),
+      ]);
+      await ctx.store.deleteRun(runId);
+      return { deleted: runId };
     },
     status: load,
     activity: (runId) => ctx.store.readJsonl(`runs/${runId}/events.jsonl`),

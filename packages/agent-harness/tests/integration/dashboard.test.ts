@@ -50,6 +50,14 @@ describe("dashboard as runLifecycle client", () => {
         { method: "POST", body: JSON.stringify({ answers: { restatement: "yes" } }) },
       );
       expect(answered.state.phase).toBe("grill");
+      const deleted = await fetchJson(
+        new URL(`/api/runs/${started.identity.runId}/delete`, url),
+        token,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      expect(deleted).toEqual({ deleted: started.identity.runId });
+      const remaining = await fetchJson(new URL("/api/runs", url), token, {});
+      expect(remaining.find((run: { identity: { runId: string } }) => run.identity.runId === started.identity.runId)).toBeUndefined();
     } finally {
       await host.ctx.dashboard?.stop();
       await host.dispose();
@@ -76,6 +84,9 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain("Hexa durable operations");
       expect(html).toContain("Operator input required");
       expect(html).toContain("Chart a new run");
+      expect(html).toContain('data-action="delete"');
+      expect(html).toContain("Deleting run…");
+      expect(html).toContain("Deleting…");
       expect(html).toContain("setInterval(() => refresh()");
       const sidebar = html.slice(html.indexOf('class="sidebar"'), html.indexOf('class="workspace"'));
       expect(sidebar).toContain("new-run-toggle");

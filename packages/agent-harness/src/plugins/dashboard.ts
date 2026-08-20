@@ -127,6 +127,9 @@ async function route(
   if (method === "POST" && runMatch?.[2] === "cancel") {
     return ctx.runLifecycle.cancel(decodeURIComponent(runMatch[1]!));
   }
+  if (method === "POST" && runMatch?.[2] === "delete") {
+    return ctx.runLifecycle.delete(decodeURIComponent(runMatch[1]!));
+  }
   if (method === "POST" && runMatch?.[2] === "answer") {
     const batch = (body ?? {}) as { answers?: Record<string, string>; parked?: string[]; notes?: string };
     return ctx.runLifecycle.answer(decodeURIComponent(runMatch[1]!), {

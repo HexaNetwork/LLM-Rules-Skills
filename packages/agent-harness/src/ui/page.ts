@@ -207,8 +207,11 @@ export function renderDashboardPage(): string {
     }
     .toast.show { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
     .toast.error { border-color: var(--danger-line); color: var(--danger); }
+    .toast.busy { border-color: var(--attention-line); color: var(--attention); }
     .toast-msg { flex: 1; min-width: 0; }
     .toast-close { flex: 0 0 auto; margin: -4px -4px 0 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: 16px/1 inherit; }
+    .busy-pulse { animation: busy-pulse 1s ease-in-out infinite; }
+    @keyframes busy-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
     .mobile-head { display: none; }
     @media (max-width: 820px) {
       .shell { display: block; }
@@ -267,7 +270,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, view: "empty", compose: { idea: "", projectKey: "", workflow: "default" } };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, view: "empty", compose: { idea: "", projectKey: "", workflow: "default" }, busy: null };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -283,6 +286,25 @@ export function renderDashboardPage(): string {
       el("toast-msg").textContent = message;
       el("toast").className = "toast show" + (error ? " error" : "");
     };
+    const toastBusy = (message) => {
+      el("toast-msg").textContent = message;
+      el("toast").className = "toast show busy";
+    };
+    function setActionBusy(busy) {
+      app.busy = busy;
+      const actions = document.querySelector(".actions");
+      if (!actions) return;
+      actions.querySelectorAll("button").forEach((button) => {
+        button.disabled = true;
+        if (busy && button.dataset.action === busy.action) {
+          button.textContent = busy.label;
+          button.classList.add("busy-pulse");
+        }
+      });
+    }
+    function clearActionBusy() {
+      app.busy = null;
+    }
     el("toast-close").onclick = () => { el("toast").className = "toast"; };
     async function api(path, options = {}) {
       const res = await fetch(path, { ...options, headers: { ...headers, ...(options.headers || {}) } });
@@ -466,13 +488,16 @@ export function renderDashboardPage(): string {
       setComposeActive(false);
       const terminal = run.state.status === "completed" || run.state.status === "cancelled";
       const blocked = run.state.status === "blocked";
+      const deleting = app.busy && app.busy.action === "delete" && app.busy.runId === run.identity.runId;
+      const busyLocked = Boolean(app.busy && app.busy.runId === run.identity.runId);
       el("detail").innerHTML =
         '<header class="topbar"><div><div class="eyebrow">' + esc(run.identity.projectKey) + ' · ' + esc(run.identity.workflowBundleId) + ' workflow</div>' +
-        '<h2 class="run-heading">' + esc(runLabel(run)) + '</h2>' + (runIdea(run) ? '<p class="lede">' + esc(runIdea(run)) + '</p>' : '') + '<div class="top-meta"><span class="status ' + esc(run.state.status) + '">' + esc(words(run.state.status)) + '</span>' +
+        '<h2 class="run-heading">' + esc(runLabel(run)) + '</h2>' + (runIdea(run) ? '<p class="lede">' + esc(runIdea(run)) + '</p>' : '') + '<div class="top-meta"><span class="status ' + esc(deleting ? "blocked" : run.state.status) + (deleting ? " busy-pulse" : "") + '">' + esc(deleting ? "Deleting" : words(run.state.status)) + '</span>' +
         '<span>' + esc(words(run.state.phase)) + '</span><span>rev ' + esc(run.state.revision) + '</span><span>' + esc(relative(run.state.updatedAt)) + '</span></div></div>' +
-        '<div class="actions"><button class="secondary" data-action="continue" type="button"' + (terminal || run.state.status === "awaiting_input" ? ' disabled' : '') + '>Continue</button>' +
-        '<button class="secondary" data-action="retry" type="button"' + (!blocked || run.state.block && !run.state.block.retriable ? ' disabled' : '') + '>Retry</button>' +
-        '<button class="danger" data-action="cancel" type="button"' + (terminal ? ' disabled' : '') + '>Cancel</button></div></header>' +
+        '<div class="actions"><button class="secondary" data-action="continue" type="button"' + (busyLocked || terminal || run.state.status === "awaiting_input" ? ' disabled' : '') + '>Continue</button>' +
+        '<button class="secondary" data-action="retry" type="button"' + (busyLocked || !blocked || run.state.block && !run.state.block.retriable ? ' disabled' : '') + '>Retry</button>' +
+        '<button class="danger" data-action="cancel" type="button"' + (busyLocked || terminal ? ' disabled' : '') + '>Cancel</button>' +
+        '<button class="danger' + (deleting ? ' busy-pulse' : '') + '" data-action="delete" type="button"' + (busyLocked ? ' disabled' : '') + '>' + (deleting ? 'Deleting…' : 'Delete') + '</button></div></header>' +
         '<nav class="phase-track" aria-label="Run phases">' + renderPhases(run) + '</nav>' +
         (run.state.block ? '<div class="block"><strong>Run blocked.</strong> ' + esc(run.state.block.reason) + '</div>' : '') +
         renderGate(run) +
@@ -490,6 +515,7 @@ export function renderDashboardPage(): string {
       else renderProjects();
     }
     async function refresh(options = {}) {
+      if (app.busy && !options.force) return;
       const runs = await api("/api/runs");
       app.runs = runs;
       renderRuns();
@@ -500,6 +526,7 @@ export function renderDashboardPage(): string {
       else if (app.view !== "compose") renderEmpty();
     }
     async function openRun(id, force) {
+      if (app.busy && app.busy.runId === id && !force) return;
       app.selectedId = id;
       const [run, activity, sessions] = await Promise.all([
         api("/api/runs/" + encodeURIComponent(id)),
@@ -508,7 +535,7 @@ export function renderDashboardPage(): string {
       ]);
       if (app.selectedId !== id) return;
       app.view = "run";
-      const signature = id + ":" + run.state.revision + ":" + run.state.status + ":" + run.state.phase + ":" + activity.length + ":" + sessions.length;
+      const signature = id + ":" + run.state.revision + ":" + run.state.status + ":" + run.state.phase + ":" + activity.length + ":" + sessions.length + ":" + (app.busy ? app.busy.action : "");
       app.run = run; app.activity = activity; app.sessions = sessions;
       renderRuns();
       if (force || signature !== app.signature) {
@@ -517,17 +544,49 @@ export function renderDashboardPage(): string {
       }
     }
     async function mutate(action, payload) {
-      if (!app.selectedId) return;
+      if (!app.selectedId || app.busy) return;
+      const runId = app.selectedId;
+      const pending = action === "delete"
+        ? { action: "delete", runId, message: "Deleting run… removing sandbox, worktree, and artifacts", label: "Deleting…" }
+        : action === "cancel"
+          ? { action: "cancel", runId, message: "Cancelling run…", label: "Cancelling…" }
+          : null;
       try {
-        await api("/api/runs/" + encodeURIComponent(app.selectedId) + "/" + action, { method: "POST", body: JSON.stringify(payload || {}) });
-        if (action === "answer") delete app.drafts[app.selectedId];
+        if (pending) {
+          toastBusy(pending.message);
+          setActionBusy(pending);
+          if (app.run) renderDetail();
+        }
+        await api("/api/runs/" + encodeURIComponent(runId) + "/" + action, { method: "POST", body: JSON.stringify(payload || {}) });
+        if (action === "answer") delete app.drafts[runId];
+        if (action === "delete") {
+          delete app.drafts[runId];
+          clearActionBusy();
+          app.selectedId = null;
+          app.run = null;
+          app.activity = [];
+          app.sessions = [];
+          app.signature = "";
+          await refresh({ selectFirst: true, force: true });
+          toast("Run deleted");
+          return;
+        }
+        clearActionBusy();
         await refresh({ force: true });
-      } catch (error) { toast(error.message, true); }
+      } catch (error) {
+        clearActionBusy();
+        if (app.run) renderDetail();
+        toast(error.message, true);
+      }
     }
-    el("new-run-toggle").onclick = () => showCompose();
+    el("new-run-toggle").onclick = () => { if (!app.busy) showCompose(); };
     el("nav-toggle").onclick = () => document.body.classList.toggle("nav-open");
-    el("refresh").onclick = () => refresh({ force: true }).catch((error) => toast(error.message, true));
+    el("refresh").onclick = () => {
+      if (app.busy) return;
+      refresh({ force: true }).catch((error) => toast(error.message, true));
+    };
     el("runs").onclick = (event) => {
+      if (app.busy) return;
       const button = event.target.closest("[data-run]");
       if (!button) return;
       document.body.classList.remove("nav-open");
@@ -595,8 +654,9 @@ export function renderDashboardPage(): string {
         return;
       }
       const action = event.target.closest("[data-action]");
-      if (!action || action.disabled) return;
+      if (!action || action.disabled || app.busy) return;
       if (action.dataset.action === "cancel" && !confirm("Cancel this run and destroy its sandbox?")) return;
+      if (action.dataset.action === "delete" && !confirm("Permanently delete this run, its sandbox, worktree, and stored artifacts?")) return;
       if (action.dataset.action === "answer") {
         const draft = app.drafts[app.selectedId] || { answers: {}, parked: {}, notes: "" };
         const parked = Object.keys(draft.parked).filter((key) => draft.parked[key]);

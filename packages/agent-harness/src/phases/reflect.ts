@@ -1,6 +1,13 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { seedFog } from "../domain/fog.js";
-import type { AnswerBatch, Phase, PhaseResult, Run } from "../domain/types.js";
+import {
+  REFLECT_SECTIONS,
+  applyReflectEdits,
+  coerceReflectOutput,
+  formatReflectRestatement,
+  type ReflectOutput,
+} from "../domain/reflect.js";
+import type { AnswerBatch, Phase, PhaseResult, Question, Run } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
 
 export function createReflectPhase(ctx: Context): Phase {
@@ -10,36 +17,44 @@ export function createReflectPhase(ctx: Context): Phase {
       run.state.artifacts.idea = run.state.idea;
     },
     async advance(run: Run): Promise<PhaseResult> {
-      const output = asRecord(await invokeRole(ctx, run, "reflector", { idea: run.state.idea }));
+      const output = coerceReflectOutput(
+        asRecord(await invokeRole(ctx, run, "reflector", { idea: run.state.idea })),
+        run.state.idea,
+      );
       run.state.artifacts.reflect = output;
-      const unknowns = Array.isArray(output.unknowns) ? output.unknowns.map(String) : [];
-      run.state.fog = seedFog(unknowns, run.state.fog);
+      run.state.fog = seedFog(output.unknowns, run.state.fog);
       return {
         kind: "await",
         gate: {
           id: "reflect-confirm",
-          title: "Confirm the restatement",
-          questions: [
-            {
-              id: "restatement",
-              prompt: String(output.restatement ?? run.state.idea),
-              kind: "confirm",
-              recommended: "yes",
-            },
-          ],
+          title: "Confirm feature understanding",
+          questions: reflectQuestions(output),
         },
       };
     },
     async onAnswer(run: Run, batch: AnswerBatch): Promise<PhaseResult> {
-      const restatement = batch.answers.restatement?.trim();
-      if (!restatement) {
+      const hasAnswers = Object.values(batch.answers).some((value) => value?.trim());
+      if (!hasAnswers) {
         return { kind: "block", reason: "Reflect confirmation is required", retriable: true };
       }
-      const confirmed = restatement === "yes" || restatement === "y"
-        ? String((run.state.artifacts.reflect as { restatement?: string } | undefined)?.restatement ?? run.state.idea)
-        : restatement;
-      run.state.artifacts.reflectBrief = { confirmed, notes: batch.notes };
+      const existing = coerceReflectOutput(run.state.artifacts.reflect, run.state.idea);
+      const structured = applyReflectEdits(existing, batch.answers);
+      const confirmed = formatReflectRestatement(structured);
+      run.state.artifacts.reflect = structured;
+      run.state.artifacts.reflectBrief = { confirmed, structured, notes: batch.notes };
+      run.state.fog = seedFog(structured.unknowns, run.state.fog);
       return { kind: "continue" };
     },
   };
+}
+
+function reflectQuestions(output: ReflectOutput): Question[] {
+  return REFLECT_SECTIONS.map((section) => ({
+    id: section.id,
+    prompt: section.label,
+    kind: "text" as const,
+    recommended: section.list
+      ? ((output[section.id] as string[] | undefined) ?? []).join("\n")
+      : String(output[section.id] ?? ""),
+  }));
 }

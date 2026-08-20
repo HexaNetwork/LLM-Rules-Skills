@@ -14,7 +14,7 @@ export function createCommandService(ctx: Context): CommandService {
   return {
     async verify(runId, command) {
       if (!command?.trim()) return undefined;
-      const parts = splitCommand(command);
+      const parts = splitCommand(command, ctx.sandbox.mode);
       const result = await ctx.sandbox.exec(runId, { command: parts });
       const output = `${result.stdout}${result.stderr}`.trim();
       return { command, passed: result.exitCode === 0, output };
@@ -22,9 +22,9 @@ export function createCommandService(ctx: Context): CommandService {
   };
 }
 
-function splitCommand(command: string): string[] {
-  if (process.platform === "win32") return ["cmd", "/c", command];
-  return ["sh", "-c", command];
+function splitCommand(command: string, sandboxMode?: "none" | "docker"): string[] {
+  if (sandboxMode === "docker" || process.platform !== "win32") return ["sh", "-c", command];
+  return ["cmd", "/c", command];
 }
 
 export const commandsPlugin = Object.assign(

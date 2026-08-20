@@ -72,9 +72,15 @@ describe("dashboard as runLifecycle client", () => {
       const page = await fetch(url);
       expect(page.status).toBe(200);
       const html = await page.text();
-      expect(html).toContain("Durable wayfinder operations");
+      expect(html).toContain("HexAgent Harness");
+      expect(html).toContain("Hexa durable operations");
       expect(html).toContain("Operator input required");
+      expect(html).toContain("Chart a new run");
       expect(html).toContain("setInterval(() => refresh()");
+      const sidebar = html.slice(html.indexOf('class="sidebar"'), html.indexOf('class="workspace"'));
+      expect(sidebar).toContain("new-run-toggle");
+      expect(sidebar).not.toContain('id="start-form"');
+      expect(sidebar).not.toContain('id="idea"');
 
       const unauthorized = await fetch(new URL("/api/runs", url));
       expect(unauthorized.status).toBe(401);

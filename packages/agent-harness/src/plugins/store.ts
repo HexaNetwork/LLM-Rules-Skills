@@ -32,12 +32,16 @@ export type StoreService = {
   appendEvent(runId: string, event: unknown): Promise<void>;
 };
 
+function parseJsonText<T>(text: string): T {
+  return JSON.parse(text.replace(/^\uFEFF/, "")) as T;
+}
+
 export function createFileStore(home: string): StoreService {
   const resolve = (...parts: string[]) => path.join(home, ...parts);
 
   const readJson = async <T>(relativePath: string): Promise<T | undefined> => {
     try {
-      return JSON.parse(await readFile(resolve(relativePath), "utf8")) as T;
+      return parseJsonText(await readFile(resolve(relativePath), "utf8"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
@@ -67,7 +71,7 @@ export function createFileStore(home: string): StoreService {
         .split("\n")
         .map((line) => line.trim())
         .filter((line) => line.length > 0)
-        .map((line) => JSON.parse(line) as T);
+        .map((line) => parseJsonText<T>(line));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;

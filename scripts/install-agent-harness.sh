@@ -189,6 +189,8 @@ CLI_REL="packages/agent-harness/dist/cli.js"
 
 # shellcheck source=lib/user-settings.sh
 . "$SCRIPT_DIR/lib/user-settings.sh"
+# shellcheck source=lib/live-ready.sh
+. "$SCRIPT_DIR/lib/live-ready.sh"
 
 _is_windows() {
   [[ "${OS:-}" == "Windows_NT" ]] || [[ "$(uname -s 2>/dev/null || true)" == MINGW* ]] \
@@ -542,15 +544,23 @@ if [[ "$INITIALIZED_GIT_REPO" -eq 1 ]]; then
   fi
 fi
 
-# ── 6. Docker (optional; not a launch gate) ────────────────────────────────
-stage "Docker"
+# -- 6. Maintained worker prepare/probe --------------------------------
+stage "Worker image"
+say "Build and probe the maintained worker image used for live Cursor runs."
+note "Tags the image as agent-harness-worker:local for the launcher."
 if _docker_ready; then
-  printf '  %s✓ Docker is ready (Linux containers). Runs use one container each.%s\n' "$GREEN" "$RESET"
+  if ah_worker_prepare "$HARNESS_ROOT" && ah_worker_probe; then
+    printf '  %s worker image ready%s (%s)\n' "$GREEN" "$RESET" "$(ah_live_worker_image)"
+  else
+    warn "worker image prepare/probe failed."
+    note "Fake-agent flows still work; live Cursor will not until the worker image builds."
+    exit 1
+  fi
 else
-  warn "Docker is not ready. Fake-agent flows still work; isolated Cursor runs will not."
+  warn "Docker is not ready. Skipping worker image. Fake-agent flows still work; live Cursor will not."
+  SKIPPED+=("worker image (Docker not ready)")
 fi
 
-# ── 7. Repository intelligence ────────────────────────────────────────────
 stage "Repository intelligence"
 say "Harness structural lookup prefers GitNexus, then falls back to CodeGraph."
 note "Both CLIs are optional. Skip either to leave that provider unset."

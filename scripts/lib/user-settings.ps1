@@ -124,6 +124,9 @@ function Get-AgentHarnessSettings {
   }
   try {
     $text = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+    if ($text.Length -gt 0 -and [int][char]$text[0] -eq 0xFEFF) {
+      $text = $text.Substring(1)
+    }
     if ([string]::IsNullOrWhiteSpace($text)) {
       return (New-AgentHarnessDefaultSettings)
     }
@@ -146,7 +149,8 @@ function Save-AgentHarnessSettings {
   }
   $merged = Merge-AgentHarnessSettings $Settings
   $json = $merged | ConvertTo-Json -Depth 6
-  Set-Content -LiteralPath $path -Value $json -Encoding UTF8
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($path, $json, $utf8NoBom)
 }
 
 function Get-AgentHarnessLaunchDefaults {

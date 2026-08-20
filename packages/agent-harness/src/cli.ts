@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
@@ -140,10 +141,23 @@ export function createCli(): Command {
       process.stdout.write(`${url}\n`);
       if (options.open) {
         const { default: opener } = await import("node:child_process");
-        const command =
-          process.platform === "win32" ? "start" : process.platform === "darwin" ? "open" : "xdg-open";
-        opener.spawn(command, [url], { shell: true, detached: true, stdio: "ignore" }).unref();
+        if (process.platform === "win32") {
+          // `start` is a cmd builtin; quote the empty title so URLs with ? are not mangled.
+          opener.spawn(`start "" "${url}"`, { shell: true, detached: true, stdio: "ignore" }).unref();
+        } else {
+          const command = process.platform === "darwin" ? "open" : "xdg-open";
+          opener.spawn(command, [url], { detached: true, stdio: "ignore" }).unref();
+        }
       }
+      await new Promise<void>((resolve) => {
+        const shutdown = () => {
+          void dashboard.stop().finally(() => {
+            void booted.dispose().finally(() => resolve());
+          });
+        };
+        process.once("SIGINT", shutdown);
+        process.once("SIGTERM", shutdown);
+      });
     });
 
   return program;
@@ -172,8 +186,18 @@ export async function main(argv = process.argv): Promise<void> {
   await createCli().parseAsync(argv);
 }
 
-const invoked = process.argv[1] ? path.resolve(process.argv[1]) : "";
-if (invoked && fileURLToPath(import.meta.url) === invoked) {
+function isCliEntry(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  const self = fileURLToPath(import.meta.url);
+  try {
+    return realpathSync(entry) === realpathSync(self);
+  } catch {
+    return path.resolve(entry) === path.resolve(self);
+  }
+}
+
+if (isCliEntry()) {
   void main();
 }
 

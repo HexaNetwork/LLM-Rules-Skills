@@ -23,6 +23,7 @@ export type SandboxExec = {
 };
 
 export type SandboxService = {
+  mode: "none" | "docker";
   ensure(runId: string): Promise<ContainerSpec | undefined>;
   exec(runId: string, request: SandboxExec): Promise<ExecResult>;
   destroy(runId: string): Promise<void>;
@@ -40,6 +41,7 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
   const specs = new Map<string, ContainerSpec>();
 
   return {
+    mode,
     async ensure(runId) {
       if (mode === "none") return undefined;
       if (specs.has(runId)) return specs.get(runId);

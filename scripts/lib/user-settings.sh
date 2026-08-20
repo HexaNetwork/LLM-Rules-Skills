@@ -104,7 +104,7 @@ function merge(raw) {
 function load() {
   try {
     if (!fs.existsSync(settingsPath)) return defaults();
-    const text = fs.readFileSync(settingsPath, "utf8");
+    const text = fs.readFileSync(settingsPath, "utf8").replace(/^\uFEFF/, "");
     if (!text.trim()) return defaults();
     return merge(JSON.parse(text));
   } catch {

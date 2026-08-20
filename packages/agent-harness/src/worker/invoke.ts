@@ -1,4 +1,5 @@
 import { Agent } from "@cursor/sdk";
+import { REFLECT_EXPECTED_OUTPUT, REFLECT_ROLE_RULES } from "../domain/reflect.js";
 
 type InvokeRequest = {
   role: string;
@@ -10,16 +11,24 @@ type InvokeRequest = {
   };
 };
 
-export async function invokeCursorAgent(request: InvokeRequest): Promise<unknown> {
-  const prompt = [
+export function buildCursorInvokePrompt(request: InvokeRequest): string {
+  const roleRules =
+    request.role === "reflector" ? REFLECT_ROLE_RULES.map((rule) => `- ${rule}`) : [];
+  return [
     `Role: ${request.role}`,
+    ...roleRules,
     request.packet.guidance ? `Guidance:\n${request.packet.guidance}` : "",
     request.packet.retrieval ? `Retrieval:\n${request.packet.retrieval}` : "",
     `Input:\n${JSON.stringify(request.packet.input, null, 2)}`,
+    request.role === "reflector" ? `Expected output: ${REFLECT_EXPECTED_OUTPUT}` : "",
     "Return a single JSON object. No markdown.",
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+export async function invokeCursorAgent(request: InvokeRequest): Promise<unknown> {
+  const prompt = buildCursorInvokePrompt(request);
 
   await using agent = await Agent.create({
     apiKey: process.env.CURSOR_API_KEY,

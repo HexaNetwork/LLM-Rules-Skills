@@ -22,6 +22,7 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib\user-settings.ps1")
 . (Join-Path $PSScriptRoot "lib\docker-ready.ps1")
+. (Join-Path $PSScriptRoot "lib\live-ready.ps1")
 
 # ---------------------------------------------------------------------------
 # Wizard helpers
@@ -589,14 +590,24 @@ if ($script:InitializedGitRepo) {
   }
 }
 
-# -- 7. Docker (optional; not a launch gate) --------------------------------
-Write-Stage "Docker"
+# -- 7. Maintained worker prepare/probe --------------------------------
+Write-Stage "Worker image"
+Write-Say "Build and probe the maintained worker image used for live Cursor runs."
+Write-Note "Tags the image as agent-harness-worker:local for the launcher."
 if (Test-AgentHarnessDockerReady) {
-  Write-Ok "Docker is ready (Linux containers). Runs use one container each."
+  try {
+    Invoke-AgentHarnessWorkerPrepare -HarnessRoot $HarnessRoot
+    Invoke-AgentHarnessWorkerProbe
+    Write-Ok "worker image ready ($(Get-AgentHarnessLiveWorkerImage))"
+  } catch {
+    Write-WarnLine ("worker image prepare/probe failed: " + $_.Exception.Message)
+    Write-Note "Fake-agent flows still work; live Cursor will not until the worker image builds."
+    exit 1
+  }
 } else {
-  Write-WarnLine "Docker is not ready. Fake-agent flows still work; isolated Cursor runs will not."
+  Write-WarnLine "Docker is not ready. Skipping worker image. Fake-agent flows still work; live Cursor will not."
+  $script:SKIPPED.Add("worker image (Docker not ready)") | Out-Null
 }
-
 # -- 8. Repository intelligence --------------------------------------------
 Write-Stage "Repository intelligence"
 Write-Say "Harness structural lookup prefers GitNexus, then falls back to CodeGraph."

@@ -19,6 +19,8 @@ CLI="$HARNESS_ROOT/packages/agent-harness/dist/cli.js"
 
 # shellcheck source=lib/user-settings.sh
 . "$SCRIPT_DIR/lib/user-settings.sh"
+# shellcheck source=lib/live-ready.sh
+. "$SCRIPT_DIR/lib/live-ready.sh"
 
 DO_PULL=1
 DO_BUILD=1
@@ -82,4 +84,5 @@ if [[ -z "${CURSOR_API_KEY:-}" ]]; then
   echo "CURSOR_API_KEY is unset. Fake-agent flows still work; live Cursor will not."
 fi
 
+ah_set_live_launch_env
 exec node "$CLI" ui --repository "$PROJECT_PATH"

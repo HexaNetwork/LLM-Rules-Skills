@@ -21,6 +21,7 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib\user-settings.ps1")
 . (Join-Path $PSScriptRoot "lib\docker-ready.ps1")
+. (Join-Path $PSScriptRoot "lib\live-ready.ps1")
 
 $HarnessRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Cli = Join-Path $HarnessRoot "packages\agent-harness\dist\cli.js"
@@ -162,6 +163,8 @@ if ($LASTEXITCODE -ne 0) { throw "project add failed (exit $LASTEXITCODE)" }
 if ([string]::IsNullOrWhiteSpace($env:CURSOR_API_KEY)) {
   $env:CURSOR_API_KEY = [Environment]::GetEnvironmentVariable("CURSOR_API_KEY", "User")
 }
+
+[void](Set-AgentHarnessLiveLaunchEnv)
 
 $uiDefaults = Get-AgentHarnessUiDefaults
 $uiArgs = [System.Collections.Generic.List[string]]::new()

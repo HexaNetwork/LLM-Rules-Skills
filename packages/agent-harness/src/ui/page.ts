@@ -358,17 +358,18 @@ export function renderDashboardPage(): string {
     function renderCompose() {
       const draft = app.compose;
       const hasProjects = app.projects.length > 0;
+      const starting = app.busy && app.busy.action === "start";
       setComposeActive(true);
       el("detail").innerHTML =
         '<header class="topbar"><div><div class="eyebrow">New run</div>' +
         '<h2 class="run-heading">Chart a new run</h2>' +
         '<p class="lede">Describe the outcome, pick a registered project, and begin wayfinding.</p></div></header>' +
         '<form class="compose" id="start-form">' +
-        '<label>Idea<textarea id="idea" required placeholder="Describe the outcome, constraint, or ticket…">' + esc(draft.idea) + '</textarea></label>' +
-        '<div class="compose-grid"><label>Project<select id="project"></select></label>' +
-        '<label>Workflow<select id="workflow"><option value="default">Default</option><option value="ticket">Ticket</option></select></label></div>' +
+        '<label>Idea<textarea id="idea" required placeholder="Describe the outcome, constraint, or ticket…"' + (starting ? " disabled" : "") + '>' + esc(draft.idea) + '</textarea></label>' +
+        '<div class="compose-grid"><label>Project<select id="project"' + (starting ? " disabled" : "") + '></select></label>' +
+        '<label>Workflow<select id="workflow"' + (starting ? " disabled" : "") + '><option value="default">Default</option><option value="ticket">Ticket</option></select></label></div>' +
         (hasProjects ? "" : '<p class="empty-inline">Register a local repository in the sidebar first.</p>') +
-        '<button class="primary" type="submit"' + (hasProjects ? "" : " disabled") + '>Begin wayfinding</button></form>';
+        '<button class="primary' + (starting ? " busy-pulse" : "") + '" type="submit"' + (hasProjects && !starting ? "" : " disabled") + '>' + (starting ? esc(app.busy.label) : "Begin wayfinding") + '</button></form>';
       renderProjects();
       if (draft.workflow) el("workflow").value = draft.workflow;
     }
@@ -613,21 +614,34 @@ export function renderDashboardPage(): string {
     el("detail").addEventListener("submit", async (event) => {
       if (event.target.id !== "start-form") return;
       event.preventDefault();
+      if (app.busy) return;
       const idea = el("idea").value.trim();
       const projectKey = el("project").value;
+      const workflow = el("workflow").value;
       if (!idea || !projectKey) return toast("Choose a project and enter an idea.", true);
-      const button = event.submitter || event.target.querySelector("button[type=submit]");
-      if (button) button.disabled = true;
+      app.compose.idea = idea;
+      app.compose.projectKey = projectKey;
+      app.compose.workflow = workflow;
+      const pending = {
+        action: "start",
+        message: "Starting wayfinding… creating worktree and opening first phase",
+        label: "Starting…",
+      };
       try {
-        const run = await api("/api/runs", { method: "POST", body: JSON.stringify({ idea, projectKey, workflowBundleId: el("workflow").value }) });
+        toastBusy(pending.message);
+        app.busy = pending;
+        renderCompose();
+        const run = await api("/api/runs", { method: "POST", body: JSON.stringify({ idea, projectKey, workflowBundleId: workflow }) });
         app.compose.idea = "";
-        app.compose.projectKey = projectKey;
-        app.compose.workflow = el("workflow").value;
+        clearActionBusy();
         app.view = "run";
         app.selectedId = run.identity.runId;
         await refresh({ force: true });
-      } catch (error) { toast(error.message, true); }
-      finally { if (button) button.disabled = false; }
+      } catch (error) {
+        clearActionBusy();
+        renderCompose();
+        toast(error.message, true);
+      }
     });
     el("detail").addEventListener("input", (event) => {
       if (saveComposeDraft(event.target)) return;

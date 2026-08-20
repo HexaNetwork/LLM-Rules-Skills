@@ -87,6 +87,8 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain('data-action="delete"');
       expect(html).toContain("Deleting run…");
       expect(html).toContain("Deleting…");
+      expect(html).toContain("Starting wayfinding…");
+      expect(html).toContain("Starting…");
       expect(html).toContain("setInterval(() => refresh()");
       const sidebar = html.slice(html.indexOf('class="sidebar"'), html.indexOf('class="workspace"'));
       expect(sidebar).toContain("new-run-toggle");

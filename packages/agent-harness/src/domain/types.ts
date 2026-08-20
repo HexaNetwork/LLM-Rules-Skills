@@ -1,4 +1,7 @@
 import type { ProjectSettings } from "./settings.js";
+import type { RunWorking } from "./working.js";
+
+export type { RunWorking } from "./working.js";
 
 export const RUN_STATUSES = [
   "active",
@@ -16,6 +19,7 @@ export type RunIdentity = {
   controlRoot: string;
   worktreePath: string;
   baseSha: string;
+  baseBranch: string;
   createdAt: string;
 };
 
@@ -66,9 +70,13 @@ export type RunState = {
   updatedAt: string;
   gate?: GateSpec;
   block?: { reason: string; retriable: boolean };
+  /** Ephemeral in-flight work line; overlaid from progress.json when serving status. */
+  working?: RunWorking;
   artifacts: Record<string, unknown>;
   fog: FogEntry[];
   tasks: Task[];
+  /** Delivery branch set at publish; absent means none yet. */
+  branchName?: string;
 };
 
 export type Run = {
@@ -101,6 +109,7 @@ export type WorkflowBundle = {
 
 export type StartInput = {
   idea: string;
+  baseBranch?: string;
   projectKey?: string;
   repository?: string;
   workflowBundleId?: string;

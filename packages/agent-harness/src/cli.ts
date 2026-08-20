@@ -60,21 +60,36 @@ export function createCli(): Command {
     .option("--repository <path>", "registered control root")
     .option("--project <key>", "registered project key")
     .option("--workflow <id>", "workflow bundle id", "default")
+    .option("--base-branch <name>", "local base branch for the worktree")
     .action(async (options: {
       idea: string;
       repository?: string;
       project?: string;
       workflow: string;
+      baseBranch?: string;
     }) => {
       const home = program.opts<{ home?: string }>().home ?? defaultHarnessHome();
       const idea = await resolveIdea(options.idea);
       const booted = await bootHost({ home });
       try {
+        const registration = await booted.ctx.projects.resolve({
+          projectKey: options.project,
+          repository: options.repository,
+        });
+        const baseBranch =
+          options.baseBranch?.trim() ||
+          (await booted.ctx.git.listLocalBranches(registration.controlRoot)).current;
+        if (!baseBranch) {
+          throw new Error(
+            "No current branch on the control root (detached HEAD?). Pass --base-branch <name>.",
+          );
+        }
         const run = await booted.ctx.runLifecycle.start({
           idea,
           repository: options.repository,
           projectKey: options.project,
           workflowBundleId: options.workflow,
+          baseBranch,
         });
         process.stdout.write(`${JSON.stringify(summarize(run), null, 2)}\n`);
       } finally {

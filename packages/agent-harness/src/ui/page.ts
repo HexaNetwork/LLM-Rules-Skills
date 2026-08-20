@@ -122,6 +122,14 @@ export function renderDashboardPage(): string {
     .eyebrow { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
     .run-heading { margin: 5px 0 0; max-width: 820px; font-size: clamp(22px, 3vw, 34px); font-weight: 570; line-height: 1.15; letter-spacing: -.02em; }
     .top-meta { display: flex; align-items: center; gap: 9px; margin-top: 11px; color: var(--muted); font-size: 12px; }
+    .working-line {
+      display: flex; align-items: baseline; gap: 8px; margin-top: 12px; max-width: 820px;
+      padding: 10px 12px; border: 1px solid var(--attention-line); border-radius: 8px;
+      background: var(--attention-soft); color: #f0c48a; font-size: 13px; line-height: 1.45;
+    }
+    .working-line strong { flex: 0 0 auto; color: var(--attention); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    .working-line span { min-width: 0; }
+    .run-working { margin-top: 4px; color: #f0c48a; font-size: 11px; line-height: 1.35; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .status {
       display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px;
       border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.06); font-weight: 650;
@@ -199,6 +207,33 @@ export function renderDashboardPage(): string {
     .project-box summary { color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     .project-list { margin: 9px 0; color: var(--muted); font-size: 11px; }
     .project-entry { overflow: hidden; padding: 4px 0; text-overflow: ellipsis; white-space: nowrap; }
+    .nav-link {
+      margin: 0 16px 10px; min-height: 36px; width: calc(100% - 32px); border: 1px solid var(--line-strong); border-radius: 8px;
+      background: transparent; color: var(--muted); font-weight: 600;
+    }
+    .nav-link:hover, .nav-link.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .guidance-layout { display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); gap: 22px; align-items: start; }
+    .guidance-roles { display: grid; gap: 6px; }
+    .guidance-role {
+      width: 100%; text-align: left; border: 1px solid transparent; border-radius: 7px;
+      background: transparent; color: var(--ink); padding: 9px 10px; font-weight: 600;
+    }
+    .guidance-role:hover { background: rgba(255,255,255,.04); }
+    .guidance-role.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+    .guidance-meta { display: grid; gap: 12px; margin: 14px 0 18px; }
+    .guidance-meta .faint { color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+    .guidance-warnings { margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--attention-line); background: var(--attention-soft); color: #f0c48a; font-size: 12px; }
+    .guidance-section { margin-top: 18px; }
+    .guidance-section h2 { margin: 0 0 8px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+    .guidance-section pre, .guidance-preview pre {
+      margin: 0; padding: 12px; border: 1px solid var(--line); background: rgba(0,0,0,.28);
+      font: 12px/1.55 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+    .guidance-preview { margin-top: 16px; }
+    .guidance-preview summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    @media (max-width: 820px) {
+      .guidance-layout { grid-template-columns: 1fr; }
+    }
     .toast {
       position: fixed; top: 16px; left: 50%; right: auto; bottom: auto; z-index: 20; max-width: min(520px, calc(100vw - 44px));
       display: flex; align-items: flex-start; gap: 12px;
@@ -248,6 +283,7 @@ export function renderDashboardPage(): string {
         <p>Hexa durable operations</p>
       </header>
       <button class="new-run-toggle" id="new-run-toggle" type="button" aria-pressed="false">Start a new run</button>
+      <button class="nav-link" id="guidance-toggle" type="button" aria-pressed="false">Agent contexts</button>
       <details class="project-box">
         <summary>Registered projects</summary>
         <div id="projects" class="project-list"></div>
@@ -270,7 +306,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, view: "empty", compose: { idea: "", projectKey: "", workflow: "default" }, busy: null };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, view: "empty", compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidancePacks: [], guidanceRole: null };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -326,17 +362,27 @@ export function renderDashboardPage(): string {
     function runIdea(run) {
       return String(run.state && run.state.idea || "").trim();
     }
+    function workingSummary(run) {
+      const working = run && run.state && run.state.working;
+      if (!working || !working.summary) return "";
+      const bits = [String(working.summary)];
+      if (working.role) bits.push(String(working.role));
+      return bits.join(" · ");
+    }
     function renderRuns() {
       const sorted = [...app.runs].sort((a, b) => String(b.state.updatedAt).localeCompare(String(a.state.updatedAt)));
       el("runs").innerHTML = sorted.length ? sorted.map((run) =>
         '<button type="button" class="run-row' + (app.selectedId === run.identity.runId ? ' selected' : '') + '" data-run="' + esc(run.identity.runId) + '">' +
           '<span class="status-bar ' + esc(run.state.status) + '"></span><span><span class="run-title">' + esc(runLabel(run)) + '</span>' +
+          (workingSummary(run) ? '<div class="run-working busy-pulse">' + esc(workingSummary(run)) + '</div>' : '') +
           '<span class="run-meta"><span>' + esc(words(run.state.phase)) + '</span><span>' + esc(relative(run.state.updatedAt)) + '</span></span></span></button>'
       ).join("") : '<div class="empty-inline" style="padding:14px 11px">No runs yet.</div>';
     }
     function setComposeActive(active) {
       el("new-run-toggle").classList.toggle("active", active);
       el("new-run-toggle").setAttribute("aria-pressed", active ? "true" : "false");
+      el("guidance-toggle").classList.toggle("active", app.view === "guidance");
+      el("guidance-toggle").setAttribute("aria-pressed", app.view === "guidance" ? "true" : "false");
     }
     function renderProjects() {
       el("projects").innerHTML = app.projects.length ? app.projects.map((project) =>
@@ -368,10 +414,38 @@ export function renderDashboardPage(): string {
         '<label>Idea<textarea id="idea" required placeholder="Describe the outcome, constraint, or ticket…"' + (starting ? " disabled" : "") + '>' + esc(draft.idea) + '</textarea></label>' +
         '<div class="compose-grid"><label>Project<select id="project"' + (starting ? " disabled" : "") + '></select></label>' +
         '<label>Workflow<select id="workflow"' + (starting ? " disabled" : "") + '><option value="default">Default</option><option value="ticket">Ticket</option></select></label></div>' +
+        '<div class="field"><label>Base branch<select id="base-branch"' + (starting ? " disabled" : "") + '><option value="">Select a project first</option></select></label></div>' +
         (hasProjects ? "" : '<p class="empty-inline">Register a local repository in the sidebar first.</p>') +
         '<button class="primary' + (starting ? " busy-pulse" : "") + '" type="submit"' + (hasProjects && !starting ? "" : " disabled") + '>' + (starting ? esc(app.busy.label) : "Begin wayfinding") + '</button></form>';
       renderProjects();
       if (draft.workflow) el("workflow").value = draft.workflow;
+      void loadBranches(el("project").value || draft.projectKey);
+    }
+    async function loadBranches(projectKey) {
+      const select = el("base-branch");
+      if (!select) return;
+      const preferred = app.compose.baseBranch;
+      if (!projectKey) {
+        select.innerHTML = '<option value="">Select a project first</option>';
+        return;
+      }
+      try {
+        const listed = await api("/api/projects/" + encodeURIComponent(projectKey) + "/branches");
+        const branches = listed.branches || [];
+        select.innerHTML = branches.length
+          ? branches.map((name) => '<option value="' + esc(name) + '">' + esc(name) + '</option>').join("")
+          : '<option value="">No local branches</option>';
+        const pick = (preferred && branches.includes(preferred))
+          ? preferred
+          : (listed.current && branches.includes(listed.current) ? listed.current : branches[0] || "");
+        if (pick) {
+          select.value = pick;
+          app.compose.baseBranch = pick;
+        }
+      } catch (error) {
+        select.innerHTML = '<option value="">Failed to load branches</option>';
+        toast(error.message, true);
+      }
     }
     function showCompose() {
       app.view = "compose";
@@ -381,6 +455,82 @@ export function renderDashboardPage(): string {
       document.body.classList.remove("nav-open");
       renderRuns();
       renderCompose();
+    }
+    function renderGuidanceRoles() {
+      const packs = app.guidancePacks || [];
+      const host = el("guidanceRoles");
+      if (!host) return;
+      host.innerHTML = packs.length
+        ? packs.map((pack) => {
+            const active = pack.role === app.guidanceRole ? " active" : "";
+            return '<button type="button" class="guidance-role' + active + '" data-guidance-role="' + esc(pack.role) + '">' + esc(pack.role) + '</button>';
+          }).join("")
+        : '<div class="empty-inline">No roles configured.</div>';
+    }
+    function renderGuidanceDetail() {
+      const host = el("guidanceDetail");
+      if (!host) return;
+      const pack = (app.guidancePacks || []).find((item) => item.role === app.guidanceRole);
+      if (!pack) {
+        host.innerHTML = '<div class="empty-inline">Select a role to inspect its context.</div>';
+        return;
+      }
+      const assignment = pack.assignment || { rules: [], skills: [] };
+      const assignmentNames = []
+        .concat((assignment.rules || []).map((name) => "rule:" + name))
+        .concat((assignment.skills || []).map((name) => "skill:" + name));
+      const warnings = [];
+      (pack.missingAssignments || []).forEach((item) => {
+        warnings.push("Missing " + item.kind + " '" + item.name + "': " + item.reason);
+      });
+      if (pack.truncated) {
+        warnings.push("Pack truncated from " + pack.truncated.before + " to " + pack.truncated.after + " characters.");
+      }
+      host.innerHTML =
+        '<div class="panel-title"><h3>' + esc(pack.role) + '</h3><span class="count">' + esc(String((pack.sources || []).length)) + ' source(s)</span></div>' +
+        '<div class="guidance-meta">' +
+          '<div><div class="eyebrow">Assignment</div><div class="faint">' + (assignmentNames.length ? esc(assignmentNames.join(", ")) : "none") + '</div></div>' +
+          '<div><div class="eyebrow">Resolved sources</div><div class="faint">' + ((pack.sources || []).length ? esc((pack.sources || []).join(", ")) : "none") + '</div></div>' +
+        '</div>' +
+        (warnings.length ? '<div class="guidance-warnings">' + warnings.map((warning) => '<div>' + esc(warning) + '</div>').join("") + '</div>' : "") +
+        '<div class="guidance-section"><h2>Role rules</h2><pre>' + esc((pack.roleRules || []).map((rule) => "- " + rule).join("\\n") || "(none)") + '</pre></div>' +
+        '<div class="guidance-section"><h2>Guidance pack</h2><pre>' + esc(pack.guidancePack || "(empty)") + '</pre></div>' +
+        '<details class="guidance-preview"><summary>Full prompt preview</summary><pre>' + esc(pack.promptPreview || "") + '</pre></details>';
+    }
+    async function loadGuidancePacks() {
+      const data = await api("/api/guidance/packs" + (app.compose.projectKey ? ("?projectKey=" + encodeURIComponent(app.compose.projectKey)) : ""));
+      app.guidancePacks = data.packs || [];
+      if (!app.guidanceRole && app.guidancePacks.length) app.guidanceRole = app.guidancePacks[0].role;
+      if (app.guidanceRole && !app.guidancePacks.some((pack) => pack.role === app.guidanceRole)) {
+        app.guidanceRole = app.guidancePacks[0] ? app.guidancePacks[0].role : null;
+      }
+      renderGuidanceRoles();
+      renderGuidanceDetail();
+    }
+    function renderGuidance() {
+      app.view = "guidance";
+      app.selectedId = null;
+      app.run = null;
+      app.signature = "";
+      setComposeActive(false);
+      document.body.classList.remove("nav-open");
+      renderRuns();
+      el("detail").innerHTML =
+        '<header class="topbar"><div><div class="eyebrow">Role inspector</div>' +
+        '<h2 class="run-heading">Agent contexts</h2>' +
+        '<p class="lede">Exact role rules and assigned skill/rule packs each worker receives — not lexical grab-bag search.</p></div></header>' +
+        '<div class="guidance-layout"><aside class="panel"><div class="panel-title"><h3>Roles</h3></div><div class="guidance-roles" id="guidanceRoles"><div class="empty-inline">Loading…</div></div></aside>' +
+        '<section class="panel" id="guidanceDetail"><div class="empty-inline">Loading guidance packs…</div></section></div>';
+      void loadGuidancePacks().catch((error) => {
+        const roles = el("guidanceRoles");
+        const detail = el("guidanceDetail");
+        if (roles) roles.innerHTML = '<div class="empty-inline">Unable to load roles.</div>';
+        if (detail) detail.innerHTML = '<div class="empty-inline">' + esc(error.message) + '</div>';
+      });
+    }
+    function showGuidance() {
+      if (app.busy) return;
+      renderGuidance();
     }
     function renderPhases(run) {
       const bundle = run.identity.workflowBundleId === "ticket" ? ["implement","scenario-test","publish"] : phases;
@@ -494,8 +644,10 @@ export function renderDashboardPage(): string {
       el("detail").innerHTML =
         '<header class="topbar"><div><div class="eyebrow">' + esc(run.identity.projectKey) + ' · ' + esc(run.identity.workflowBundleId) + ' workflow</div>' +
         '<h2 class="run-heading">' + esc(runLabel(run)) + '</h2>' + (runIdea(run) ? '<p class="lede">' + esc(runIdea(run)) + '</p>' : '') + '<div class="top-meta"><span class="status ' + esc(deleting ? "blocked" : run.state.status) + (deleting ? " busy-pulse" : "") + '">' + esc(deleting ? "Deleting" : words(run.state.status)) + '</span>' +
-        '<span>' + esc(words(run.state.phase)) + '</span><span>rev ' + esc(run.state.revision) + '</span><span>' + esc(relative(run.state.updatedAt)) + '</span></div></div>' +
-        '<div class="actions"><button class="secondary" data-action="continue" type="button"' + (busyLocked || terminal || run.state.status === "awaiting_input" ? ' disabled' : '') + '>Continue</button>' +
+        '<span>' + esc(words(run.state.phase)) + '</span><span>rev ' + esc(run.state.revision) + '</span><span>' + esc(relative(run.state.updatedAt)) + '</span></div>' +
+        (workingSummary(run) ? '<div class="working-line busy-pulse"><strong>Working</strong><span>' + esc(workingSummary(run)) + '</span></div>' : '') +
+        '</div>' +
+        '<div class="actions"><button class="secondary" data-action="continue" type="button"' + (busyLocked || terminal || run.state.status === "awaiting_input" || workingSummary(run) ? ' disabled' : '') + '>Continue</button>' +
         '<button class="secondary" data-action="retry" type="button"' + (busyLocked || !blocked || run.state.block && !run.state.block.retriable ? ' disabled' : '') + '>Retry</button>' +
         '<button class="danger" data-action="cancel" type="button"' + (busyLocked || terminal ? ' disabled' : '') + '>Cancel</button>' +
         '<button class="danger' + (deleting ? ' busy-pulse' : '') + '" data-action="delete" type="button"' + (busyLocked ? ' disabled' : '') + '>' + (deleting ? 'Deleting…' : 'Delete') + '</button></div></header>' +
@@ -508,7 +660,10 @@ export function renderDashboardPage(): string {
         renderFog(run.state.fog) + '</section><section class="panel"><div class="panel-title"><h3>Recent activity</h3><span class="count">' + app.activity.length + ' events</span></div>' +
         renderActivity(app.activity) + '</section><section class="panel"><div class="panel-title"><h3>Agent sessions</h3><span class="count">' + app.sessions.length + '</span></div>' +
         renderSessions(app.sessions) + '</section><section class="panel"><div class="panel-title"><h3>Run identity</h3></div>' +
-        '<div class="item-copy"><strong>ID</strong><br>' + esc(run.identity.runId) + '<br><br><strong>Worktree</strong><br>' + esc(run.identity.worktreePath) + '</div></section></aside></div>';
+        '<div class="item-copy"><strong>ID</strong><br>' + esc(run.identity.runId) +
+        '<br><br><strong>Base branch</strong><br>' + esc(run.identity.baseBranch || "none") +
+        '<br><br><strong>Current branch</strong><br>' + esc(run.state.branchName || "none") +
+        '<br><br><strong>Worktree</strong><br>' + esc(run.identity.worktreePath) + '</div></section></aside></div>';
     }
     async function loadProjects() {
       app.projects = await api("/api/projects");
@@ -516,18 +671,24 @@ export function renderDashboardPage(): string {
       else renderProjects();
     }
     async function refresh(options = {}) {
-      if (app.busy && !options.force) return;
       const runs = await api("/api/runs");
       app.runs = runs;
       renderRuns();
+      if (app.busy && app.busy.action === "start" && !app.selectedId) {
+        const live = runs.find((run) => run.state && run.state.working);
+        if (live) {
+          app.selectedId = live.identity.runId;
+          app.view = "run";
+        }
+      }
       if (app.view === "compose" && !app.selectedId) return;
+      if (app.view === "guidance") return;
       if (!app.selectedId && options.selectFirst && runs[0]) app.selectedId = runs[0].identity.runId;
       if (app.selectedId) await openRun(app.selectedId, Boolean(options.force));
       else if (options.selectFirst) showCompose();
-      else if (app.view !== "compose") renderEmpty();
+      else if (app.view !== "compose" && app.view !== "guidance") renderEmpty();
     }
     async function openRun(id, force) {
-      if (app.busy && app.busy.runId === id && !force) return;
       app.selectedId = id;
       const [run, activity, sessions] = await Promise.all([
         api("/api/runs/" + encodeURIComponent(id)),
@@ -536,7 +697,8 @@ export function renderDashboardPage(): string {
       ]);
       if (app.selectedId !== id) return;
       app.view = "run";
-      const signature = id + ":" + run.state.revision + ":" + run.state.status + ":" + run.state.phase + ":" + activity.length + ":" + sessions.length + ":" + (app.busy ? app.busy.action : "");
+      const workingKey = workingSummary(run) + ":" + ((run.state.working && run.state.working.startedAt) || "");
+      const signature = id + ":" + run.state.revision + ":" + run.state.status + ":" + run.state.phase + ":" + activity.length + ":" + sessions.length + ":" + workingKey + ":" + (app.busy ? app.busy.action : "");
       app.run = run; app.activity = activity; app.sessions = sessions;
       renderRuns();
       if (force || signature !== app.signature) {
@@ -581,9 +743,14 @@ export function renderDashboardPage(): string {
       }
     }
     el("new-run-toggle").onclick = () => { if (!app.busy) showCompose(); };
+    el("guidance-toggle").onclick = () => showGuidance();
     el("nav-toggle").onclick = () => document.body.classList.toggle("nav-open");
     el("refresh").onclick = () => {
       if (app.busy) return;
+      if (app.view === "guidance") {
+        loadGuidancePacks().catch((error) => toast(error.message, true));
+        return;
+      }
       refresh({ force: true }).catch((error) => toast(error.message, true));
     };
     el("runs").onclick = (event) => {
@@ -605,10 +772,11 @@ export function renderDashboardPage(): string {
       } catch (error) { toast(error.message, true); }
     };
     function saveComposeDraft(target) {
-      if (!target || (target.id !== "idea" && target.id !== "project" && target.id !== "workflow")) return false;
+      if (!target || (target.id !== "idea" && target.id !== "project" && target.id !== "workflow" && target.id !== "base-branch")) return false;
       if (target.id === "idea") app.compose.idea = target.value;
       if (target.id === "project") app.compose.projectKey = target.value;
       if (target.id === "workflow") app.compose.workflow = target.value;
+      if (target.id === "base-branch") app.compose.baseBranch = target.value;
       return true;
     }
     el("detail").addEventListener("submit", async (event) => {
@@ -618,10 +786,13 @@ export function renderDashboardPage(): string {
       const idea = el("idea").value.trim();
       const projectKey = el("project").value;
       const workflow = el("workflow").value;
+      const baseBranch = el("base-branch").value.trim();
       if (!idea || !projectKey) return toast("Choose a project and enter an idea.", true);
+      if (!baseBranch) return toast("Choose a base branch.", true);
       app.compose.idea = idea;
       app.compose.projectKey = projectKey;
       app.compose.workflow = workflow;
+      app.compose.baseBranch = baseBranch;
       const pending = {
         action: "start",
         message: "Starting wayfinding… creating worktree and opening first phase",
@@ -631,7 +802,7 @@ export function renderDashboardPage(): string {
         toastBusy(pending.message);
         app.busy = pending;
         renderCompose();
-        const run = await api("/api/runs", { method: "POST", body: JSON.stringify({ idea, projectKey, workflowBundleId: workflow }) });
+        const run = await api("/api/runs", { method: "POST", body: JSON.stringify({ idea, projectKey, workflowBundleId: workflow, baseBranch }) });
         app.compose.idea = "";
         clearActionBusy();
         app.view = "run";
@@ -652,8 +823,21 @@ export function renderDashboardPage(): string {
       if (event.target.dataset.park) draft.parked[event.target.dataset.park] = event.target.checked;
       if (event.target.id === "gate-notes") draft.notes = event.target.value;
     });
-    el("detail").addEventListener("change", (event) => { saveComposeDraft(event.target); });
+    el("detail").addEventListener("change", (event) => {
+      if (!saveComposeDraft(event.target)) return;
+      if (event.target.id === "project") {
+        app.compose.baseBranch = "";
+        void loadBranches(event.target.value);
+      }
+    });
     el("detail").addEventListener("click", (event) => {
+      const guidanceRole = event.target.closest("[data-guidance-role]");
+      if (guidanceRole) {
+        app.guidanceRole = guidanceRole.dataset.guidanceRole;
+        renderGuidanceRoles();
+        renderGuidanceDetail();
+        return;
+      }
       const composeAction = event.target.closest('[data-action="compose"]');
       if (composeAction) {
         showCompose();

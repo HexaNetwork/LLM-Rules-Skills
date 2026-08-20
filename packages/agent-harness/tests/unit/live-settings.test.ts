@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mergeSettings } from "../../src/domain/settings.js";
-import { bootTestHost, createTempRepo } from "../helpers.js";
+import { bootTestHost, createTempRepo, currentBranch } from "../helpers.js";
 
 describe("live settings", () => {
   it("merges packaged defaults under global then project layers", () => {
@@ -25,6 +25,7 @@ describe("live settings", () => {
       const started = await host.ctx.runLifecycle.start({
         idea: "Add a status badge",
         projectKey: project.projectKey,
+        baseBranch: await currentBranch(repo),
       });
       expect(started.identity.workflowBundleId).toBe("default");
       expect(started.settings.verification.command).toBe("echo first");

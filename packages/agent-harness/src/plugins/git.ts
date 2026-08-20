@@ -8,7 +8,12 @@ import type { ProjectRegistration, RunIdentity } from "../domain/types.js";
 const exec = promisify(execFile);
 
 export type GitService = {
-  createWorktree(registration: ProjectRegistration, runId: string): Promise<{ worktreePath: string; baseSha: string }>;
+  listLocalBranches(cwd: string): Promise<{ branches: string[]; current?: string }>;
+  createWorktree(
+    registration: ProjectRegistration,
+    runId: string,
+    baseBranch: string,
+  ): Promise<{ worktreePath: string; baseSha: string; baseBranch: string }>;
   removeWorktree(identity: RunIdentity): Promise<void>;
   commit(identity: RunIdentity, message: string): Promise<string>;
   publish(identity: RunIdentity, title: string, body: string): Promise<{ branch: string; url?: string }>;
@@ -17,12 +22,23 @@ export type GitService = {
 
 export function createGitService(): GitService {
   return {
-    async createWorktree(registration, runId) {
-      const baseSha = (await git(registration.controlRoot, ["rev-parse", "HEAD"])).trim();
+    async listLocalBranches(cwd) {
+      const raw = await git(cwd, ["branch", "--format=%(refname:short)"]);
+      const branches = raw
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const current = (await git(cwd, ["branch", "--show-current"]).catch(() => "")).trim() || undefined;
+      return { branches, current };
+    },
+    async createWorktree(registration, runId, baseBranch) {
+      const resolved = baseBranch.trim();
+      if (!resolved) throw new Error("baseBranch is required");
+      const baseSha = (await git(registration.controlRoot, ["rev-parse", "--verify", resolved])).trim();
       const worktreePath = path.join(registration.worktreeRoot, safe(runId));
       await mkdir(path.dirname(worktreePath), { recursive: true });
       await git(registration.controlRoot, ["worktree", "add", "--detach", worktreePath, baseSha]);
-      return { worktreePath, baseSha };
+      return { worktreePath, baseSha, baseBranch: resolved };
     },
     async removeWorktree(identity) {
       await rm(identity.worktreePath, { recursive: true, force: true }).catch(() => undefined);

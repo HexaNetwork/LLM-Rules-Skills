@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bootTestHost, createTempRepo } from "../helpers.js";
+import { bootTestHost, createTempRepo, currentBranch } from "../helpers.js";
 
 describe("reflect with fake agents", () => {
   it("starts from an idea and stops at awaiting_input", async () => {
@@ -10,6 +10,7 @@ describe("reflect with fake agents", () => {
       const run = await host.ctx.runLifecycle.start({
         idea: "Add a health check",
         projectKey: project.projectKey,
+        baseBranch: await currentBranch(repo),
       });
       expect(run.state.phase).toBe("reflect");
       expect(run.state.status).toBe("awaiting_input");

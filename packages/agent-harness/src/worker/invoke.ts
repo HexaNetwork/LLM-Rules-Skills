@@ -1,6 +1,7 @@
 import { Agent } from "@cursor/sdk";
+import { roleRulesFor } from "../domain/agent-roles.js";
 import { formatInvokeError } from "../domain/cursor-agent-error.js";
-import { REFLECT_EXPECTED_OUTPUT, REFLECT_ROLE_RULES } from "../domain/reflect.js";
+import { REFLECT_EXPECTED_OUTPUT } from "../domain/reflect.js";
 
 type InvokeRequest = {
   role: string;
@@ -13,8 +14,7 @@ type InvokeRequest = {
 };
 
 export function buildCursorInvokePrompt(request: InvokeRequest): string {
-  const roleRules =
-    request.role === "reflector" ? REFLECT_ROLE_RULES.map((rule) => `- ${rule}`) : [];
+  const roleRules = roleRulesFor(request.role).map((rule) => `- ${rule}`);
   return [
     `Role: ${request.role}`,
     ...roleRules,

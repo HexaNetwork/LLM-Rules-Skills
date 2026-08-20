@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
-import type { ProjectSettings } from "../domain/settings.js";
+import { workingOn, type RunWorking } from "../domain/working.js";
 import type {
   AnswerBatch,
   PhaseResult,
@@ -27,12 +27,30 @@ export type RunLifecycleService = {
 };
 
 export function createRunLifecycle(ctx: Context): RunLifecycleService {
+  const attachWorking = async (run: Run): Promise<Run> => {
+    const working = await ctx.store.readProgress(run.identity.runId);
+    if (!working) {
+      delete run.state.working;
+      return run;
+    }
+    run.state.working = working;
+    return run;
+  };
+
   const load = async (runId: string): Promise<Run> => {
     const identity = await ctx.store.readIdentity(runId);
     const state = await ctx.store.readState(runId);
     if (!identity || !state) throw new Error(`Unknown run: ${runId}`);
     const settings = await ctx.settings.readLive(identity.projectKey);
-    return { identity, state, settings };
+    return attachWorking({ identity, state, settings });
+  };
+
+  const setWorking = async (runId: string, working: RunWorking): Promise<void> => {
+    await ctx.store.writeProgress(runId, working);
+  };
+
+  const clearWorking = async (runId: string): Promise<void> => {
+    await ctx.store.clearProgress(runId);
   };
 
   const persist = async (run: Run): Promise<void> => {
@@ -90,8 +108,10 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
     run.state.gate = undefined;
     run.state.block = undefined;
     const phase = ctx.phases.get(next);
+    await setWorking(run.identity.runId, workingOn(`Entering ${next}`, { phase: next }));
     await phase.enter?.(run);
     await persist(run);
+    await setWorking(run.identity.runId, workingOn(`Running ${next}`, { phase: next }));
     const again = await phase.advance(run, { reason: "continue" });
     return apply(run, again, hops + 1);
   };
@@ -107,6 +127,19 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
     return body(run);
   };
 
+  const withWorkingScope = async (
+    runId: string,
+    initial: RunWorking,
+    body: () => Promise<Run>,
+  ): Promise<Run> => {
+    await setWorking(runId, initial);
+    try {
+      return await body();
+    } finally {
+      await clearWorking(runId);
+    }
+  };
+
   return {
     addProject: (controlRoot) => ctx.projects.add(controlRoot),
     listProjects: () => ctx.projects.list(),
@@ -115,64 +148,107 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
       const workflowBundleId = input.workflowBundleId ?? "default";
       const first = ctx.workflow.firstPhase(workflowBundleId);
       const runId = randomUUID();
-      const { worktreePath, baseSha } = await ctx.git.createWorktree(registration, runId);
-      const identity: RunIdentity = {
-        runId,
-        projectKey: registration.projectKey,
-        workflowBundleId,
-        controlRoot: registration.controlRoot,
-        worktreePath,
-        baseSha,
-        createdAt: new Date().toISOString(),
-      };
-      const settings = await ctx.settings.readLive(registration.projectKey);
-      const state: RunState = {
-        runId,
-        status: "active",
-        phase: first,
-        idea: input.idea,
-        revision: 0,
-        updatedAt: identity.createdAt,
-        artifacts: {},
-        fog: [],
-        tasks: [],
-      };
-      await ctx.store.writeIdentity(identity);
-      await ctx.store.writeState(state);
-      await ctx.settings.audit(runId, "start", settings);
-      const run: Run = { identity, state, settings };
-      const phase = ctx.phases.get(first);
-      await phase.enter?.(run);
-      const result = await phase.advance(run, { reason: "start" });
-      return apply(run, result);
+      await setWorking(runId, workingOn("Creating worktree", { phase: first }));
+      try {
+        const requested = input.baseBranch?.trim();
+        const baseBranch =
+          requested ||
+          (await ctx.git.listLocalBranches(registration.controlRoot)).current ||
+          "";
+        if (!baseBranch) throw new Error("baseBranch is required");
+        const { worktreePath, baseSha } = await ctx.git.createWorktree(
+          registration,
+          runId,
+          baseBranch,
+        );
+        const identity: RunIdentity = {
+          runId,
+          projectKey: registration.projectKey,
+          workflowBundleId,
+          controlRoot: registration.controlRoot,
+          worktreePath,
+          baseSha,
+          baseBranch,
+          createdAt: new Date().toISOString(),
+        };
+        const settings = await ctx.settings.readLive(registration.projectKey);
+        const state: RunState = {
+          runId,
+          status: "active",
+          phase: first,
+          idea: input.idea,
+          revision: 0,
+          updatedAt: identity.createdAt,
+          artifacts: {},
+          fog: [],
+          tasks: [],
+        };
+        await ctx.store.writeIdentity(identity);
+        await ctx.store.writeState(state);
+        await ctx.settings.audit(runId, "start", settings);
+        const run: Run = { identity, state, settings };
+        const phase = ctx.phases.get(first);
+        await setWorking(runId, workingOn(`Entering ${first}`, { phase: first }));
+        await phase.enter?.(run);
+        await setWorking(runId, workingOn(`Running ${first}`, { phase: first }));
+        const result = await phase.advance(run, { reason: "start" });
+        return apply(run, result);
+      } finally {
+        await clearWorking(runId);
+      }
     },
     continue: (runId) =>
-      withLiveSettings(runId, "advance", async (run) => {
-        if (run.state.status === "completed" || run.state.status === "cancelled") return run;
-        const result = await ctx.phases.get(run.state.phase).advance(run, { reason: "continue" });
-        return apply(run, result);
-      }),
+      withLiveSettings(runId, "advance", (run) =>
+        withWorkingScope(
+          runId,
+          workingOn(`Continuing ${run.state.phase}`, { phase: run.state.phase }),
+          async () => {
+            if (run.state.status === "completed" || run.state.status === "cancelled") return run;
+            await setWorking(runId, workingOn(`Running ${run.state.phase}`, { phase: run.state.phase }));
+            const result = await ctx.phases.get(run.state.phase).advance(run, { reason: "continue" });
+            return apply(run, result);
+          },
+        ),
+      ),
     answer: (runId, batch) =>
-      withLiveSettings(runId, "answer", async (run) => {
-        const phase = ctx.phases.get(run.state.phase);
-        if (!phase.onAnswer) throw new Error(`Phase "${phase.id}" does not accept answers`);
-        const result = await phase.onAnswer(run, batch);
-        return apply(run, result);
-      }),
+      withLiveSettings(runId, "answer", (run) =>
+        withWorkingScope(
+          runId,
+          workingOn(`Applying answers for ${run.state.phase}`, { phase: run.state.phase }),
+          async () => {
+            const phase = ctx.phases.get(run.state.phase);
+            if (!phase.onAnswer) throw new Error(`Phase "${phase.id}" does not accept answers`);
+            const result = await phase.onAnswer(run, batch);
+            return apply(run, result);
+          },
+        ),
+      ),
     retry: (runId) =>
-      withLiveSettings(runId, "retry", async (run) => {
-        if (run.state.block && !run.state.block.retriable) return run;
-        run.state.status = "active";
-        run.state.block = undefined;
-        const result = await ctx.phases.get(run.state.phase).advance(run, { reason: "retry" });
-        return apply(run, result);
-      }),
+      withLiveSettings(runId, "retry", (run) =>
+        withWorkingScope(
+          runId,
+          workingOn(`Retrying ${run.state.phase}`, { phase: run.state.phase }),
+          async () => {
+            if (run.state.block && !run.state.block.retriable) return run;
+            run.state.status = "active";
+            run.state.block = undefined;
+            await setWorking(runId, workingOn(`Running ${run.state.phase}`, { phase: run.state.phase }));
+            const result = await ctx.phases.get(run.state.phase).advance(run, { reason: "retry" });
+            return apply(run, result);
+          },
+        ),
+      ),
     async cancel(runId) {
       const run = await load(runId);
-      run.state.status = "cancelled";
-      await ctx.sandbox.destroy(runId);
-      await persist(run);
-      return run;
+      await setWorking(runId, workingOn("Cancelling run", { phase: run.state.phase }));
+      try {
+        run.state.status = "cancelled";
+        await ctx.sandbox.destroy(runId);
+        await persist(run);
+        return run;
+      } finally {
+        await clearWorking(runId);
+      }
     },
     async delete(runId) {
       const identity = await ctx.store.readIdentity(runId);
@@ -180,12 +256,17 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
         const ids = await ctx.store.listRunIds();
         if (!ids.includes(runId)) throw new Error(`Unknown run: ${runId}`);
       }
-      await Promise.all([
-        ctx.sandbox.destroy(runId).catch(() => undefined),
-        identity ? ctx.git.removeWorktree(identity).catch(() => undefined) : Promise.resolve(),
-      ]);
-      await ctx.store.deleteRun(runId);
-      return { deleted: runId };
+      await setWorking(runId, workingOn("Deleting run", { phase: identity?.workflowBundleId }));
+      try {
+        await Promise.all([
+          ctx.sandbox.destroy(runId).catch(() => undefined),
+          identity ? ctx.git.removeWorktree(identity).catch(() => undefined) : Promise.resolve(),
+        ]);
+        await ctx.store.deleteRun(runId);
+        return { deleted: runId };
+      } finally {
+        await clearWorking(runId).catch(() => undefined);
+      }
     },
     status: load,
     activity: (runId) => ctx.store.readJsonl(`runs/${runId}/events.jsonl`),

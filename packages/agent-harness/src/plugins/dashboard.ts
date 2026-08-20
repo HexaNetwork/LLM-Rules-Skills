@@ -2,6 +2,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ProfileRow } from "../boot.js";
+import {
+  AGENT_ROLES,
+  assignmentFor,
+  renderGuidancePromptPreview,
+  roleRulesFor,
+} from "../domain/agent-roles.js";
 import { renderDashboardPage } from "../ui/page.js";
 
 export type DashboardService = {
@@ -96,8 +102,43 @@ async function route(
     if (!controlRoot) throw new Error("Project path is required");
     return ctx.runLifecycle.addProject(controlRoot);
   }
+  const projectBranches = url.pathname.match(/^\/api\/projects\/([^/]+)\/branches$/);
+  if (method === "GET" && projectBranches) {
+    const projectKey = decodeURIComponent(projectBranches[1]!);
+    const projects = await ctx.runLifecycle.listProjects();
+    const project = projects.find((row) => row.projectKey === projectKey);
+    if (!project) throw new Error(`Unknown project: ${projectKey}`);
+    return ctx.git.listLocalBranches(project.controlRoot);
+  }
   if (method === "GET" && url.pathname === "/api/runs") {
     return ctx.runLifecycle.list();
+  }
+  if (method === "GET" && url.pathname === "/api/guidance/packs") {
+    const projectKey = url.searchParams.get("projectKey")?.trim() || undefined;
+    const settings = await ctx.settings.readLive(projectKey);
+    const maxCharacters = settings.budgets.guidanceTokens * 4;
+    const packs = await Promise.all(
+      AGENT_ROLES.map(async (role) => {
+        const assignment = assignmentFor(settings.guidance.assignments, role);
+        const compiled = await ctx.knowledge.compileRoleGuidancePack({
+          assignment,
+          maxCharacters,
+          extraPaths: settings.guidance.extraPaths,
+        });
+        const roleRules = [...roleRulesFor(role)];
+        return {
+          role,
+          assignment,
+          sources: compiled.sources,
+          missingAssignments: compiled.missingAssignments,
+          truncated: compiled.truncated,
+          roleRules,
+          guidancePack: compiled.text,
+          promptPreview: renderGuidancePromptPreview(role, compiled.text),
+        };
+      }),
+    );
+    return { packs };
   }
   const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)(?:\/([^/]+))?$/);
   if (method === "GET" && runMatch && !runMatch[2]) {
@@ -110,12 +151,21 @@ async function route(
     return ctx.runLifecycle.sessions(decodeURIComponent(runMatch[1]!));
   }
   if (method === "POST" && url.pathname === "/api/runs") {
-    const input = (body ?? {}) as { idea?: string; workflowBundleId?: string; repository?: string; projectKey?: string };
+    const input = (body ?? {}) as {
+      idea?: string;
+      workflowBundleId?: string;
+      repository?: string;
+      projectKey?: string;
+      baseBranch?: string;
+    };
+    const baseBranch = String(input.baseBranch ?? "").trim();
+    if (!baseBranch) throw new Error("baseBranch is required");
     return ctx.runLifecycle.start({
       idea: String(input.idea ?? ""),
       workflowBundleId: input.workflowBundleId,
       repository: input.repository,
       projectKey: input.projectKey,
+      baseBranch,
     });
   }
   if (method === "POST" && runMatch?.[2] === "continue") {
@@ -162,7 +212,7 @@ export function dashboardPlugin(ctx: Context, config: DashboardConfig = {}): voi
   ctx.provide("dashboard", createDashboardService(ctx, config));
 }
 
-Object.assign(dashboardPlugin, { inject: ["runLifecycle"] });
+Object.assign(dashboardPlugin, { inject: ["runLifecycle", "git", "knowledge", "settings"] });
 
 export function dashboardRow(config: DashboardConfig = {}): ProfileRow {
   return {

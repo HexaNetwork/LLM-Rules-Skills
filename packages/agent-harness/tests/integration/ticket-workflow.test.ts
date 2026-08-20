@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bootTestHost, createTempRepo } from "../helpers.js";
+import { bootTestHost, createTempRepo, currentBranch } from "../helpers.js";
 
 describe("ticket workflow", () => {
   it("runs implement → scenario-test → publish without editing runLifecycle", async () => {
@@ -11,6 +11,7 @@ describe("ticket workflow", () => {
         idea: "Fix the timeout copy",
         projectKey: project.projectKey,
         workflowBundleId: "ticket",
+        baseBranch: await currentBranch(repo),
       });
       expect(run.identity.workflowBundleId).toBe("ticket");
       expect(run.state.status).toBe("completed");

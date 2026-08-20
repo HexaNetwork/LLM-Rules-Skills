@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ROLE_RULES } from "./agent-roles.js";
 
 export const REFLECT_EXPECTED_OUTPUT =
   "{proposedTitle:string,summary:string,restatement:string,goal:string,users:[string],inScope:[string],outOfScope:[string],assumptions:[string],unknowns:[string]}";
@@ -16,13 +17,7 @@ export const ReflectOutputSchema = z.object({
 });
 export type ReflectOutput = z.infer<typeof ReflectOutputSchema>;
 
-export const REFLECT_ROLE_RULES = [
-  "Restate the idea in your own words without inventing requirements.",
-  'Propose a concise imperative feature title suitable as a run label (for example "Add greeting tone"), not a paragraph.',
-  "Separate goal, users, in-scope, out-of-scope, assumptions, and unknowns.",
-  "Do not ask grilling questions and do not plan implementation.",
-  "Return exactly one raw JSON object matching the expected output contract. Do not use Markdown headings or code fences.",
-];
+export const REFLECT_ROLE_RULES = ROLE_RULES.reflector;
 
 export const REFLECT_SECTIONS = [
   { id: "proposedTitle", label: "Feature title", list: false },

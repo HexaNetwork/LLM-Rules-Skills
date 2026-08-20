@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runTitle } from "../../src/domain/run-title.js";
-import { bootTestHost, createTempRepo } from "../helpers.js";
+import { bootTestHost, createTempRepo, currentBranch } from "../helpers.js";
 
 describe("reflect confirm applies edits", () => {
   it("shows a sectioned reflect gate and writes edited structured plus flat brief", async () => {
@@ -11,6 +11,7 @@ describe("reflect confirm applies edits", () => {
       let run = await host.ctx.runLifecycle.start({
         idea: "Add a health check",
         projectKey: project.projectKey,
+        baseBranch: await currentBranch(repo),
       });
 
       expect(run.state.phase).toBe("reflect");

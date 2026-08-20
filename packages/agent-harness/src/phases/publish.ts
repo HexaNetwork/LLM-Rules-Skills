@@ -16,6 +16,7 @@ export function createPublishPhase(ctx: Context): Phase {
       const body = String(copy.body ?? run.state.idea);
       const published = await ctx.git.publish(run.identity, title, body);
       run.state.artifacts.publish = published;
+      run.state.branchName = published.branch;
       return { kind: "done" };
     },
   };

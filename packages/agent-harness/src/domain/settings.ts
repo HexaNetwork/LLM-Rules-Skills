@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_ROLE_ASSIGNMENTS, RoleAssignmentsSchema } from "./agent-roles.js";
 
 export const ProjectSettingsSchema = z.object({
   models: z.object({
@@ -33,7 +34,8 @@ export const ProjectSettingsSchema = z.object({
   }).default({ enabled: false }),
   guidance: z.object({
     extraPaths: z.array(z.string().min(1)).default([]),
-  }).default({ extraPaths: [] }),
+    assignments: RoleAssignmentsSchema,
+  }).default({ extraPaths: [], assignments: DEFAULT_ROLE_ASSIGNMENTS }),
 });
 
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;

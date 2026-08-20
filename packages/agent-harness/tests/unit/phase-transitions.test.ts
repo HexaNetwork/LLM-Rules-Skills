@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_WORKFLOW } from "../../src/workflows/default.js";
 import { TICKET_WORKFLOW } from "../../src/workflows/ticket.js";
-import { bootTestHost, createTempRepo } from "../helpers.js";
+import { bootTestHost, createTempRepo, currentBranch } from "../helpers.js";
 
 describe("phase transitions", () => {
   it("moves reflect to awaiting_input and does not delegate through a monolith", async () => {
@@ -15,6 +15,7 @@ describe("phase transitions", () => {
       const run = await host.ctx.runLifecycle.start({
         idea: "Document the health endpoint",
         projectKey: project.projectKey,
+        baseBranch: await currentBranch(repo),
       });
       expect(run.state.phase).toBe("reflect");
       expect(run.state.status).toBe("awaiting_input");
@@ -36,6 +37,7 @@ describe("phase transitions", () => {
         idea: "Skip the interview",
         projectKey: project.projectKey,
         workflowBundleId: "no-grill",
+        baseBranch: await currentBranch(repo),
       });
       const after = await host.ctx.runLifecycle.answer(started.identity.runId, {
         answers: { restatement: "yes" },

@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { bootHost, type BootedHost } from "../src/boot.js";
 import { hostRuntimeRows } from "../src/plugins/profile.js";
+import type { AgentsConfig } from "../src/plugins/agents.js";
 import type { WorkflowBundle } from "../src/domain/types.js";
 
 const exec = promisify(execFile);
@@ -24,15 +25,23 @@ export async function createTempRepo(): Promise<string> {
   return dir;
 }
 
+export async function currentBranch(cwd: string): Promise<string> {
+  const { stdout } = await exec("git", ["branch", "--show-current"], { cwd, windowsHide: true });
+  const name = stdout.trim();
+  if (!name) throw new Error(`No current branch in ${cwd}; pass an explicit baseBranch`);
+  return name;
+}
+
 export async function bootTestHost(options: {
   home?: string;
   bundles?: WorkflowBundle[];
+  agents?: AgentsConfig;
 } = {}): Promise<{ home: string; host: BootedHost }> {
   const home = options.home ?? (await createTempDir("harness-home-"));
   const host = await bootHost({
     home,
     extraRows: hostRuntimeRows({
-      agents: { mode: "fake" },
+      agents: options.agents ?? { mode: "fake" },
       sandbox: { mode: "none" },
       bundles: options.bundles,
     }),

@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
-import type { ProjectRegistration, RunIdentity, RunState } from "../domain/types.js";
+import type { ProjectRegistration, RunIdentity, RunState, RunWorking } from "../domain/types.js";
 import type { ProjectSettings, SettingsAuditEntry } from "../domain/settings.js";
 import { ProjectSettingsSchema } from "../domain/settings.js";
 
@@ -31,6 +31,9 @@ export type StoreService = {
   writeArtifact(runId: string, name: string, value: unknown): Promise<void>;
   readArtifact<T>(runId: string, name: string): Promise<T | undefined>;
   appendEvent(runId: string, event: unknown): Promise<void>;
+  writeProgress(runId: string, working: RunWorking): Promise<void>;
+  readProgress(runId: string): Promise<RunWorking | undefined>;
+  clearProgress(runId: string): Promise<void>;
 };
 
 function assertSafeRunId(runId: string): void {
@@ -106,7 +109,10 @@ export function createFileStore(home: string): StoreService {
     readIdentity: (runId) => readJson<RunIdentity>(`runs/${runId}/identity.json`),
     writeIdentity: (identity) => writeJson(`runs/${identity.runId}/identity.json`, identity),
     readState: (runId) => readJson<RunState>(`runs/${runId}/state.json`),
-    writeState: (state) => writeJson(`runs/${state.runId}/state.json`, state),
+    writeState: async (state) => {
+      const { working: _working, ...durable } = state;
+      await writeJson(`runs/${durable.runId}/state.json`, durable);
+    },
     async deleteRun(runId) {
       assertSafeRunId(runId);
       await rm(resolve("runs", runId), { recursive: true, force: true });
@@ -151,6 +157,12 @@ export function createFileStore(home: string): StoreService {
     writeArtifact: (runId, name, value) => writeJson(`runs/${runId}/artifacts/${name}.json`, value),
     readArtifact: (runId, name) => readJson(`runs/${runId}/artifacts/${name}.json`),
     appendEvent: (runId, event) => appendJsonl(`runs/${runId}/events.jsonl`, event),
+    writeProgress: (runId, working) => writeJson(`runs/${runId}/progress.json`, working),
+    readProgress: (runId) => readJson<RunWorking>(`runs/${runId}/progress.json`),
+    async clearProgress(runId) {
+      assertSafeRunId(runId);
+      await rm(resolve("runs", runId, "progress.json"), { force: true });
+    },
   };
 }
 

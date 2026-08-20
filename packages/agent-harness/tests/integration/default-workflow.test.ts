@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bootTestHost, createTempRepo } from "../helpers.js";
+import { bootTestHost, createTempRepo, currentBranch } from "../helpers.js";
 
 describe("default workflow", () => {
   it("walks idea to publish with a fake agent on a temporary git repo", async () => {
@@ -10,6 +10,7 @@ describe("default workflow", () => {
       let run = await host.ctx.runLifecycle.start({
         idea: "Add a status endpoint",
         projectKey: project.projectKey,
+        baseBranch: await currentBranch(repo),
       });
       expect(run.state.phase).toBe("reflect");
 

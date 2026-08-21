@@ -220,6 +220,14 @@ export function renderDashboardPage(): string {
     .item-title { font-size: 13px; font-weight: 600; line-height: 1.4; }
     .item-state { flex: 0 0 auto; color: var(--muted); font: 10px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
     .item-copy { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .repo-label { display: inline-flex; align-items: center; gap: 6px; }
+    .copy-path-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
+      background: transparent; color: var(--faint); cursor: pointer;
+    }
+    .copy-path-btn:hover { color: var(--ink); background: rgba(255, 255, 255, .06); }
+    .copy-path-btn svg { display: block; }
     .activity { position: relative; padding-left: 18px; }
     .activity::before { content: ""; position: absolute; left: 3px; top: 5px; bottom: 6px; width: 1px; background: var(--line-strong); }
     .event { position: relative; padding: 0 0 15px; }
@@ -762,11 +770,18 @@ export function renderDashboardPage(): string {
         (session.packet && session.packet.phase ? '<div class="item-copy">' + esc(words(session.packet.phase)) + ' phase</div>' : '') + '</li>'
       ).join("") + '</ul>' : '<div class="empty-inline">No agent sessions recorded yet.</div>';
     }
+    function copyPathBtn(value, ariaLabel) {
+      if (!value) return "";
+      return '<button type="button" class="copy-path-btn" data-copy-path="' + esc(value) + '" title="Copy" aria-label="' + esc(ariaLabel) + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg></button>';
+    }
     function renderIdentity(run) {
+      const baseBranch = run.identity.baseBranch || "";
+      const currentBranch = run.state.branchName || "";
+      const worktreePath = run.identity.worktreePath || "";
       return '<div class="item-copy"><strong>ID</strong><br>' + esc(run.identity.runId) +
-        '<br><br><strong>Base branch</strong><br>' + esc(run.identity.baseBranch || "none") +
-        '<br><br><strong>Current branch</strong><br>' + esc(run.state.branchName || "none") +
-        '<br><br><strong>Worktree</strong><br>' + esc(run.identity.worktreePath) + '</div>';
+        '<br><br><span class="repo-label"><strong>Base branch</strong>' + copyPathBtn(baseBranch, "Copy base branch") + '</span><br>' + esc(baseBranch || "none") +
+        '<br><br><span class="repo-label"><strong>Current branch</strong>' + copyPathBtn(currentBranch, "Copy current branch") + '</span><br>' + esc(currentBranch || "none") +
+        '<br><br><span class="repo-label"><strong>Worktree</strong>' + copyPathBtn(worktreePath, "Copy worktree path") + '</span><br><span title="' + esc(worktreePath) + '">' + esc(worktreePath) + '</span></div>';
     }
     function renderRunTabs(run) {
       const tabs = [
@@ -1063,6 +1078,27 @@ export function renderDashboardPage(): string {
       }
     });
     el("detail").addEventListener("click", (event) => {
+      const copyBtn = event.target.closest("[data-copy-path]");
+      if (copyBtn) {
+        const path = copyBtn.dataset.copyPath;
+        if (!path) { toast("Nothing to copy", true); return; }
+        const copied = () => toast("Copied");
+        const failed = () => toast("Could not copy", true);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(path).then(copied).catch(failed);
+        } else {
+          const area = document.createElement("textarea");
+          area.value = path;
+          area.setAttribute("readonly", "");
+          area.style.position = "fixed";
+          area.style.opacity = "0";
+          document.body.appendChild(area);
+          area.select();
+          try { if (document.execCommand("copy")) copied(); else failed(); } catch (_) { failed(); }
+          document.body.removeChild(area);
+        }
+        return;
+      }
       const tab = event.target.closest("[data-tab]");
       if (tab && app.run) {
         app.runTab = tab.dataset.tab;

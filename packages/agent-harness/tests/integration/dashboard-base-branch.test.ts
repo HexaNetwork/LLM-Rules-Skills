@@ -65,6 +65,11 @@ describe("dashboard base branch", () => {
     expect(html).toContain('id="base-branch"');
     expect(html).toContain("Base branch");
     expect(html).toContain("Current branch");
+    expect(html).toContain("data-copy-path");
+    expect(html).toContain("copy-path-btn");
+    expect(html).toContain("Copy base branch");
+    expect(html).toContain("Copy current branch");
+    expect(html).toContain("Copy worktree path");
     expect(html).toContain("/api/projects/");
     expect(html).toContain("/branches");
     expect(html).toContain("baseBranch");

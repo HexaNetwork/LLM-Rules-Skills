@@ -51,12 +51,31 @@ describe("dashboard as runLifecycle client", () => {
         {},
       );
       expect(activity.at(-1)).toMatchObject({ phase: "reflect", status: "awaiting_input" });
+      expect(activity.some((event: { kind?: string }) => event.kind === "agent")).toBe(true);
+      const agentEvent = activity.find((event: { kind?: string }) => event.kind === "agent");
+      expect(agentEvent).toMatchObject({
+        kind: "agent",
+        role: "reflector",
+        phase: "reflect",
+        status: "completed",
+      });
+      expect(typeof agentEvent.sessionId).toBe("string");
       const sessions = await fetchJson(
         new URL(`/api/runs/${started.identity.runId}/sessions`, url),
         token,
         {},
       );
       expect(sessions.length).toBeGreaterThan(0);
+      expect(sessions[0]).toMatchObject({
+        role: "reflector",
+        status: "completed",
+      });
+      expect(typeof sessions[0].sessionId).toBe("string");
+      expect(sessions[0].startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(sessions[0].endedAt).toBe(sessions[0].at);
+      expect(sessions[0].packet).toMatchObject({ phase: "reflect", role: "reflector" });
+      expect(sessions[0].output).toBeTruthy();
+      expect(agentEvent.sessionId).toBe(sessions[0].sessionId);
       const answered = await fetchJson(
         new URL(`/api/runs/${started.identity.runId}/answer`, url),
         token,
@@ -121,6 +140,11 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain('["sessions", "Sessions"');
       expect(html).toContain('["activity", "Activity"');
       expect(html).toContain('["docker", "Docker"');
+      expect(html).toContain('data-session="');
+      expect(html).toContain("sessionOpen");
+      expect(html).toContain('details.session[data-session]');
+      expect(html).toContain('event.kind === "agent"');
+      expect(html).toContain("session-status");
       const roles = await fetchJson(new URL("/api/guidance/roles", url), token, {});
       expect(roles.roles.length).toBeGreaterThan(0);
       const reflectorEntry = roles.roles.find((entry: { role: string }) => entry.role === "reflector");

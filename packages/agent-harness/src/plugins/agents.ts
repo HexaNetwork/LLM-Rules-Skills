@@ -158,17 +158,57 @@ Object.assign(agentsPlugin, { inject: ["store", "sandbox"] });
 function wrapWithSessions(ctx: Context, inner: AgentsService): AgentsService {
   return {
     async invoke(role, packet) {
-      const output = await inner.invoke(role, packet);
-      const invocation: AgentInvocation = {
-        role,
-        packet,
-        output,
-        at: new Date().toISOString(),
-      };
-      await ctx.store.writeSession(packet.runId, randomUUID(), invocation);
-      return output;
+      const sessionId = randomUUID();
+      const startedAt = new Date().toISOString();
+      try {
+        const output = await inner.invoke(role, packet);
+        const endedAt = new Date().toISOString();
+        const invocation: AgentInvocation = {
+          sessionId,
+          role,
+          packet,
+          output,
+          startedAt,
+          endedAt,
+          at: endedAt,
+          status: "completed",
+        };
+        await persistSession(ctx, packet, invocation);
+        return output;
+      } catch (error) {
+        const endedAt = new Date().toISOString();
+        const message = error instanceof Error ? error.message : String(error);
+        const invocation: AgentInvocation = {
+          sessionId,
+          role,
+          packet,
+          startedAt,
+          endedAt,
+          at: endedAt,
+          status: "failed",
+          error: message,
+        };
+        await persistSession(ctx, packet, invocation);
+        throw error;
+      }
     },
   };
+}
+
+async function persistSession(
+  ctx: Context,
+  packet: WorkPacket,
+  invocation: AgentInvocation,
+): Promise<void> {
+  await ctx.store.writeSession(packet.runId, invocation.sessionId, invocation);
+  await ctx.store.appendEvent(packet.runId, {
+    kind: "agent",
+    at: invocation.endedAt,
+    sessionId: invocation.sessionId,
+    role: invocation.role,
+    phase: packet.phase,
+    status: invocation.status,
+  });
 }
 
 function extractIdea(input: unknown): string {

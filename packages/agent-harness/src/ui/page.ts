@@ -302,8 +302,39 @@ export function renderDashboardPage(): string {
     .activity::before { content: ""; position: absolute; left: 3px; top: 5px; bottom: 6px; width: 1px; background: var(--line-strong); }
     .event { position: relative; padding: 0 0 15px; }
     .event::before { content: ""; position: absolute; left: -18px; top: 4px; width: 7px; height: 7px; background: var(--surface); border: 2px solid var(--accent); }
+    .event.agent::before { border-color: var(--info); }
+    .event.failed::before { border-color: var(--danger); }
+    .event.failed .event-main { color: var(--danger); }
     .event-main { font-size: 12px; font-weight: 600; }
     .event-time { margin-top: 3px; color: var(--faint); font: 10px "Cascadia Mono", Consolas, monospace; }
+    .session { margin: 0 0 10px; border: 1px solid var(--line); background: rgba(0, 0, 0, .16); }
+    .session > summary {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      cursor: pointer; list-style: none; padding: 11px 12px; color: var(--ink);
+    }
+    .session > summary::-webkit-details-marker { display: none; }
+    .session > summary::before {
+      content: ""; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+      border-left: 6px solid var(--faint); flex: 0 0 auto;
+    }
+    .session[open] > summary::before { transform: rotate(90deg); }
+    .session-title { font-size: 13px; font-weight: 600; }
+    .session-meta { margin-left: auto; color: var(--muted); font: 10px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+    .session-status {
+      display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--line-strong);
+      border-radius: 999px; font: 10px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; color: var(--muted);
+    }
+    .session-status.completed { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong)); background: var(--accent-soft); }
+    .session-status.failed { color: var(--danger); border-color: var(--danger-line); background: var(--danger-soft); }
+    .session-body { padding: 0 12px 12px; display: grid; gap: 12px; }
+    .session-section h4 {
+      margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    }
+    .session-section pre {
+      margin: 0; padding: 12px; border: 1px solid var(--line); background: rgba(0, 0, 0, .28);
+      font: 12px/1.55 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+    .session-error pre { border-color: var(--danger-line); color: #f0b4ae; background: var(--danger-soft); }
     .empty-inline { color: var(--faint); font-size: 12px; line-height: 1.5; }
     .project-box { margin: 0 16px 13px; padding-top: 12px; border-top: 1px solid var(--line); }
     .project-box summary { color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
@@ -423,7 +454,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, artifactOpen: {}, view: "empty", runTab: "overview", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home" };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home" };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -976,18 +1007,65 @@ export function renderDashboardPage(): string {
     }
     function renderActivity(activity) {
       const recent = [...activity].reverse();
-      return recent.length ? '<div class="activity">' + recent.map((event) =>
-        '<div class="event"><div class="event-main">' + esc(words(event.phase || "run")) + ' · ' + esc(words(event.status || "updated")) + '</div>' +
-        '<div class="event-time">' + esc(relative(event.at)) + (event.revision != null ? ' · revision ' + esc(event.revision) : '') + '</div></div>'
-      ).join("") + '</div>' : '<div class="empty-inline">No lifecycle activity recorded yet.</div>';
+      return recent.length ? '<div class="activity">' + recent.map((event) => {
+        if (event.kind === "agent") {
+          const failed = event.status === "failed";
+          const label = esc(words(event.role || "agent")) + " · " + esc(words(event.phase || "phase")) + " · " + esc(words(event.status || "completed"));
+          return '<div class="event agent' + (failed ? " failed" : "") + '"' + (event.sessionId ? ' data-session-ref="' + esc(event.sessionId) + '"' : "") + '>' +
+            '<div class="event-main">' + label + '</div>' +
+            '<div class="event-time">' + esc(relative(event.at)) + (event.sessionId ? ' · ' + esc(event.sessionId.slice(0, 8)) : '') + '</div></div>';
+        }
+        return '<div class="event"><div class="event-main">' + esc(words(event.phase || "run")) + ' · ' + esc(words(event.status || "updated")) + '</div>' +
+          '<div class="event-time">' + esc(relative(event.at)) + (event.revision != null ? ' · revision ' + esc(event.revision) : '') + '</div></div>';
+      }).join("") + '</div>' : '<div class="empty-inline">No lifecycle activity recorded yet.</div>';
+    }
+    function sessionOpenKey(sessionId) {
+      return (app.selectedId || "") + ":" + sessionId;
+    }
+    function sessionStatus(session) {
+      return session.status === "failed" ? "failed" : "completed";
+    }
+    function sessionDuration(session) {
+      if (!session.startedAt || !session.endedAt) return "";
+      const ms = new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime();
+      if (!Number.isFinite(ms) || ms < 0) return "";
+      if (ms < 1000) return ms + "ms";
+      if (ms < 60000) return (ms / 1000).toFixed(1).replace(/\\.0$/, "") + "s";
+      return Math.floor(ms / 60000) + "m " + Math.floor((ms % 60000) / 1000) + "s";
+    }
+    function cappedPre(value, label) {
+      const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+      const max = 80000;
+      if (text.length <= max) return '<pre>' + esc(text) + '</pre>';
+      return '<pre>' + esc(text.slice(0, max)) + '\\n\\n… truncated (' + label + ' was ' + text.length + ' chars)</pre>';
+    }
+    function renderSessionSection(title, content, extraClass) {
+      if (!content) return "";
+      return '<div class="session-section' + (extraClass ? " " + extraClass : "") + '"><h4>' + esc(title) + '</h4>' + content + '</div>';
     }
     function renderSessions(sessions) {
       const recent = [...sessions].reverse();
-      return recent.length ? '<ul class="item-list">' + recent.map((session) =>
-        '<li class="item"><div class="item-line"><span class="item-title">' + esc(words(session.role || "agent session")) + '</span>' +
-        '<span class="item-state">' + esc(session.at ? relative(session.at) : "recorded") + '</span></div>' +
-        (session.packet && session.packet.phase ? '<div class="item-copy">' + esc(words(session.packet.phase)) + ' phase</div>' : '') + '</li>'
-      ).join("") + '</ul>' : '<div class="empty-inline">No agent sessions recorded yet.</div>';
+      return recent.length ? recent.map((session, index) => {
+        const id = session.sessionId || ("legacy-" + index);
+        const status = sessionStatus(session);
+        const phase = session.packet && session.packet.phase ? words(session.packet.phase) : "";
+        const ended = session.endedAt || session.at;
+        const duration = sessionDuration(session);
+        const meta = [phase ? phase + " phase" : "", ended ? relative(ended) : "", duration].filter(Boolean).join(" · ");
+        const packet = session.packet || {};
+        const body =
+          renderSessionSection("Error", session.error ? cappedPre(session.error, "error") : "", "session-error") +
+          renderSessionSection("Packet input", packet.input !== undefined ? cappedPre(packet.input, "input") : "") +
+          renderSessionSection("Guidance", packet.guidance ? cappedPre(packet.guidance, "guidance") : "") +
+          renderSessionSection("Retrieval", packet.retrieval ? cappedPre(packet.retrieval, "retrieval") : "") +
+          renderSessionSection("Budget", packet.budget ? cappedPre(packet.budget, "budget") : "") +
+          renderSessionSection("Output", session.output !== undefined && session.output !== null ? cappedPre(session.output, "output") : "");
+        return '<details class="session"' + (app.sessionOpen[sessionOpenKey(id)] ? " open" : "") + ' data-session="' + esc(id) + '">' +
+          '<summary><span class="session-title">' + esc(words(session.role || "agent session")) + '</span>' +
+          '<span class="session-status ' + esc(status) + '">' + esc(status) + '</span>' +
+          (meta ? '<span class="session-meta">' + esc(meta) + '</span>' : '') +
+          '</summary><div class="session-body">' + (body || '<div class="empty-inline">No packet details recorded.</div>') + '</div></details>';
+      }).join("") : '<div class="empty-inline">No agent sessions recorded yet.</div>';
     }
     function copyPathBtn(value, ariaLabel) {
       if (!value) return "";
@@ -1288,8 +1366,13 @@ export function renderDashboardPage(): string {
     });
     el("detail").addEventListener("toggle", (event) => {
       const artifact = event.target.closest && event.target.closest("details.artifact[data-artifact]");
-      if (!artifact || artifact !== event.target) return;
-      app.artifactOpen[artifactOpenKey(artifact.dataset.artifact)] = artifact.open;
+      if (artifact && artifact === event.target) {
+        app.artifactOpen[artifactOpenKey(artifact.dataset.artifact)] = artifact.open;
+        return;
+      }
+      const session = event.target.closest && event.target.closest("details.session[data-session]");
+      if (!session || session !== event.target) return;
+      app.sessionOpen[sessionOpenKey(session.dataset.session)] = session.open;
     }, true);
     el("detail").addEventListener("change", (event) => {
       if (event.target.id === "guidance-scope") {

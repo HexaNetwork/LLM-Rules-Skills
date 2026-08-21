@@ -144,10 +144,17 @@ export type WorkPacket = {
 };
 
 export type AgentInvocation = {
+  sessionId: string;
   role: string;
   packet: WorkPacket;
-  output: unknown;
+  /** Present on completed invokes; omitted or null on hard failure. */
+  output?: unknown;
+  startedAt: string;
+  endedAt: string;
+  /** Same as `endedAt`; kept for older UI/API consumers. */
   at: string;
+  status: "completed" | "failed";
+  error?: string;
 };
 
 export type ProjectRegistration = {

@@ -140,14 +140,15 @@ export function createFileStore(home: string): StoreService {
       writeJson(`runs/${runId}/sessions/${sessionId}.json`, value),
     async readSessions<T>(runId: string) {
       try {
-        const names = (await readdir(resolve("runs", runId, "sessions")))
-          .filter((name) => name.endsWith(".json"))
-          .sort();
+        const names = (await readdir(resolve("runs", runId, "sessions"))).filter((name) =>
+          name.endsWith(".json"),
+        );
         const rows: T[] = [];
         for (const name of names) {
           const row = await readJson<T>(`runs/${runId}/sessions/${name}`);
           if (row !== undefined) rows.push(row);
         }
+        rows.sort((a, b) => sessionTimeKey(a).localeCompare(sessionTimeKey(b)));
         return rows;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -168,4 +169,13 @@ export function createFileStore(home: string): StoreService {
 
 export function storePlugin(ctx: Context, config: { home: string }): void {
   ctx.provide("store", createFileStore(config.home));
+}
+
+function sessionTimeKey(row: unknown): string {
+  if (row && typeof row === "object") {
+    const record = row as { startedAt?: unknown; at?: unknown };
+    if (typeof record.startedAt === "string") return record.startedAt;
+    if (typeof record.at === "string") return record.at;
+  }
+  return "";
 }

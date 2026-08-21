@@ -184,6 +184,23 @@ export function renderDashboardPage(): string {
     }
     .content-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, .8fr); gap: 22px; align-items: start; }
     .stack { display: grid; gap: 22px; }
+    .run-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+    .run-tab {
+      border: 0; border-bottom: 2px solid transparent; border-radius: 7px 7px 0 0;
+      background: transparent; color: var(--muted); padding: 8px 12px; font-size: 13px; font-weight: 600;
+    }
+    .run-tab:hover { color: var(--ink); background: rgba(255, 255, 255, .04); }
+    .run-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .run-tab .count { margin-left: 6px; }
+    .sandbox-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 0 0 6px; }
+    .sandbox-meta dt { color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .sandbox-meta dd { margin: 3px 0 0; font: 12px "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
+    .sandbox-subhead { margin: 18px 0 8px; color: var(--muted); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+    .sandbox-table { width: 100%; border-collapse: collapse; font: 12px "Cascadia Mono", Consolas, monospace; }
+    .sandbox-table th { padding: 6px 8px; border-bottom: 1px solid var(--line-strong); color: var(--faint); font-size: 10px; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
+    .sandbox-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+    .sandbox-env { list-style: none; margin: 0; padding: 0; font: 12px "Cascadia Mono", Consolas, monospace; }
+    .sandbox-env li { padding: 4px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
     .panel { border-top: 2px solid var(--ink); padding-top: 13px; }
     .panel-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
     .panel h3 { margin: 0; font-size: 15px; letter-spacing: .02em; }
@@ -328,7 +345,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, view: "empty", compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home" };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, view: "empty", runTab: "overview", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home" };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -731,19 +748,110 @@ export function renderDashboardPage(): string {
       ).join("") + '</ul>' : '<div class="empty-inline">Tasks will arrive after slicing.</div>';
     }
     function renderActivity(activity) {
-      const recent = [...activity].reverse().slice(0, 12);
+      const recent = [...activity].reverse();
       return recent.length ? '<div class="activity">' + recent.map((event) =>
         '<div class="event"><div class="event-main">' + esc(words(event.phase || "run")) + ' · ' + esc(words(event.status || "updated")) + '</div>' +
         '<div class="event-time">' + esc(relative(event.at)) + (event.revision != null ? ' · revision ' + esc(event.revision) : '') + '</div></div>'
       ).join("") + '</div>' : '<div class="empty-inline">No lifecycle activity recorded yet.</div>';
     }
     function renderSessions(sessions) {
-      const recent = [...sessions].reverse().slice(0, 6);
+      const recent = [...sessions].reverse();
       return recent.length ? '<ul class="item-list">' + recent.map((session) =>
         '<li class="item"><div class="item-line"><span class="item-title">' + esc(words(session.role || "agent session")) + '</span>' +
         '<span class="item-state">' + esc(session.at ? relative(session.at) : "recorded") + '</span></div>' +
         (session.packet && session.packet.phase ? '<div class="item-copy">' + esc(words(session.packet.phase)) + ' phase</div>' : '') + '</li>'
       ).join("") + '</ul>' : '<div class="empty-inline">No agent sessions recorded yet.</div>';
+    }
+    function renderIdentity(run) {
+      return '<div class="item-copy"><strong>ID</strong><br>' + esc(run.identity.runId) +
+        '<br><br><strong>Base branch</strong><br>' + esc(run.identity.baseBranch || "none") +
+        '<br><br><strong>Current branch</strong><br>' + esc(run.state.branchName || "none") +
+        '<br><br><strong>Worktree</strong><br>' + esc(run.identity.worktreePath) + '</div>';
+    }
+    function renderRunTabs(run) {
+      const tabs = [
+        ["overview", "Overview", null],
+        ["artifacts", "Artifacts", Object.keys(visibleArtifacts(run.state.artifacts)).length],
+        ["tasks", "Tasks", run.state.tasks.length],
+        ["sessions", "Sessions", app.sessions.length],
+        ["activity", "Activity", app.activity.length],
+        ["docker", "Docker", null]
+      ];
+      return '<nav class="run-tabs" aria-label="Run detail sections">' + tabs.map((entry) => {
+        const active = app.runTab === entry[0];
+        return '<button type="button" class="run-tab' + (active ? " active" : "") + '" data-tab="' + entry[0] + '" aria-selected="' + (active ? "true" : "false") + '">' + entry[1] +
+          (entry[2] != null ? '<span class="count">' + entry[2] + '</span>' : "") + '</button>';
+      }).join("") + '</nav>';
+    }
+    function renderSandbox(run) {
+      const info = app.sandbox[run.identity.runId];
+      let body;
+      if (!info) {
+        body = '<div class="empty-inline">Loading sandbox info…</div>';
+      } else if (info.error) {
+        body = '<div class="empty-inline">Sandbox info unavailable: ' + esc(info.error) + '</div>';
+      } else if (info.mode === "none") {
+        body = '<div class="empty-inline">Sandbox disabled — runs execute locally.</div>';
+      } else if (!info.running) {
+        body = '<div class="empty-inline">Container not running: ' + esc(info.containerName) + '</div>';
+      } else {
+        const mounts = Array.isArray(info.mounts) ? info.mounts : [];
+        const env = Array.isArray(info.env) ? info.env : [];
+        body = '<dl class="sandbox-meta">' +
+          '<div><dt>Mode</dt><dd>' + esc(info.mode) + '</dd></div>' +
+          '<div><dt>Container</dt><dd>' + esc(info.containerName) + '</dd></div>' +
+          '<div><dt>Image</dt><dd>' + esc(info.image || "unknown") + '</dd></div>' +
+          '<div><dt>Status</dt><dd>' + esc(info.status || "running") + '</dd></div></dl>' +
+          '<h4 class="sandbox-subhead">Mounts</h4>' +
+          (mounts.length
+            ? '<table class="sandbox-table"><thead><tr><th>Source</th><th>Destination</th></tr></thead><tbody>' +
+              mounts.map((mount) => '<tr><td>' + esc(mount.source) + '</td><td>' + esc(mount.destination) + '</td></tr>').join("") + '</tbody></table>'
+            : '<div class="empty-inline">No mounts recorded.</div>') +
+          '<h4 class="sandbox-subhead">Environment</h4>' +
+          (env.length
+            ? '<ul class="sandbox-env">' + env.map((entry) => '<li>' + esc(entry) + '</li>').join("") + '</ul>'
+            : '<div class="empty-inline">No environment variables recorded.</div>');
+      }
+      return '<section class="panel"><div class="panel-title"><h3>Docker sandbox</h3>' +
+        (info && !info.error && info.status ? '<span class="count">' + esc(info.status) + '</span>' : '') + '</div>' + body + '</section>';
+    }
+    function renderTabContent(run) {
+      if (app.runTab === "artifacts") {
+        return '<section class="panel"><div class="panel-title"><h3>Brief & evidence</h3><span class="count">' + Object.keys(visibleArtifacts(run.state.artifacts)).length + ' artifacts</span></div>' +
+          renderArtifacts(run.state.artifacts) + '</section>';
+      }
+      if (app.runTab === "tasks") {
+        return '<section class="panel"><div class="panel-title"><h3>Tasks</h3><span class="count">' + run.state.tasks.length + '</span></div>' +
+          renderTasks(run.state.tasks) + '</section>';
+      }
+      if (app.runTab === "sessions") {
+        return '<section class="panel"><div class="panel-title"><h3>Agent sessions</h3><span class="count">' + app.sessions.length + '</span></div>' +
+          renderSessions(app.sessions) + '</section>';
+      }
+      if (app.runTab === "activity") {
+        return '<section class="panel"><div class="panel-title"><h3>Activity</h3><span class="count">' + app.activity.length + ' events</span></div>' +
+          renderActivity(app.activity) + '</section>';
+      }
+      if (app.runTab === "docker") {
+        return renderSandbox(run);
+      }
+      return '<div class="content-grid"><section class="panel"><div class="panel-title"><h3>Unknowns & fog</h3><span class="count">' + run.state.fog.length + '</span></div>' +
+        renderFog(run.state.fog) + '</section><aside class="panel"><div class="panel-title"><h3>Run identity</h3></div>' +
+        renderIdentity(run) + '</aside></div>';
+    }
+    function maybeLoadSandbox(run, refresh) {
+      const runId = run.identity.runId;
+      if (app.sandboxPending[runId]) return;
+      if (!refresh && app.sandbox[runId]) return;
+      app.sandboxPending[runId] = true;
+      api("/api/runs/" + encodeURIComponent(runId) + "/sandbox").then((data) => {
+        app.sandbox[runId] = data;
+      }).catch((error) => {
+        app.sandbox[runId] = { error: error.message || "request failed" };
+      }).finally(() => {
+        delete app.sandboxPending[runId];
+        if (app.view === "run" && app.run && app.selectedId === runId && app.runTab === "docker") renderDetail();
+      });
     }
     function renderDetail() {
       const run = app.run;
@@ -766,17 +874,10 @@ export function renderDashboardPage(): string {
         '<nav class="phase-track" aria-label="Run phases">' + renderPhases(run) + '</nav>' +
         (run.state.block ? '<div class="block"><strong>Run blocked.</strong> ' + esc(run.state.block.reason) + '</div>' : '') +
         renderGate(run) +
-        '<div class="content-grid"><div class="stack"><section class="panel"><div class="panel-title"><h3>Brief & evidence</h3><span class="count">' + Object.keys(visibleArtifacts(run.state.artifacts)).length + ' artifacts</span></div>' +
-        renderArtifacts(run.state.artifacts) + '</section><section class="panel"><div class="panel-title"><h3>Tasks</h3><span class="count">' + run.state.tasks.length + '</span></div>' +
-        renderTasks(run.state.tasks) + '</section></div><aside class="stack"><section class="panel"><div class="panel-title"><h3>Unknowns & fog</h3><span class="count">' + run.state.fog.length + '</span></div>' +
-        renderFog(run.state.fog) + '</section><section class="panel"><div class="panel-title"><h3>Recent activity</h3><span class="count">' + app.activity.length + ' events</span></div>' +
-        renderActivity(app.activity) + '</section><section class="panel"><div class="panel-title"><h3>Agent sessions</h3><span class="count">' + app.sessions.length + '</span></div>' +
-        renderSessions(app.sessions) + '</section><section class="panel"><div class="panel-title"><h3>Run identity</h3></div>' +
-        '<div class="item-copy"><strong>ID</strong><br>' + esc(run.identity.runId) +
-        '<br><br><strong>Base branch</strong><br>' + esc(run.identity.baseBranch || "none") +
-        '<br><br><strong>Current branch</strong><br>' + esc(run.state.branchName || "none") +
-        '<br><br><strong>Worktree</strong><br>' + esc(run.identity.worktreePath) + '</div></section></aside></div>';
+        renderRunTabs(run) +
+        renderTabContent(run);
       autosizeReflectFields();
+      if (app.runTab === "docker") maybeLoadSandbox(run);
     }
     async function loadProjects() {
       app.projects = await api("/api/projects");
@@ -790,18 +891,23 @@ export function renderDashboardPage(): string {
       if (app.busy && app.busy.action === "start" && !app.selectedId) {
         const live = runs.find((run) => run.state && run.state.working);
         if (live) {
+          if (app.selectedId !== live.identity.runId) app.runTab = "overview";
           app.selectedId = live.identity.runId;
           app.view = "run";
         }
       }
       if (app.view === "compose" && !app.selectedId) return;
       if (app.view === "guidance") return;
-      if (!app.selectedId && options.selectFirst && runs[0]) app.selectedId = runs[0].identity.runId;
+      if (!app.selectedId && options.selectFirst && runs[0]) {
+        app.runTab = "overview";
+        app.selectedId = runs[0].identity.runId;
+      }
       if (app.selectedId) await openRun(app.selectedId, Boolean(options.force));
       else if (options.selectFirst) showCompose();
       else if (app.view !== "compose" && app.view !== "guidance") renderEmpty();
     }
     async function openRun(id, force) {
+      if (app.selectedId !== id) app.runTab = "overview";
       app.selectedId = id;
       const [run, activity, sessions] = await Promise.all([
         api("/api/runs/" + encodeURIComponent(id)),
@@ -817,6 +923,10 @@ export function renderDashboardPage(): string {
       if (force || signature !== app.signature) {
         app.signature = signature;
         renderDetail();
+        if (app.runTab === "docker") {
+          const terminal = run.state.status === "completed" || run.state.status === "cancelled";
+          maybeLoadSandbox(run, !terminal);
+        }
       }
     }
     async function mutate(action, payload) {
@@ -837,6 +947,7 @@ export function renderDashboardPage(): string {
         if (action === "answer") delete app.drafts[runId];
         if (action === "delete") {
           delete app.drafts[runId];
+          delete app.sandbox[runId];
           clearActionBusy();
           app.selectedId = null;
           app.run = null;
@@ -952,6 +1063,12 @@ export function renderDashboardPage(): string {
       }
     });
     el("detail").addEventListener("click", (event) => {
+      const tab = event.target.closest("[data-tab]");
+      if (tab && app.run) {
+        app.runTab = tab.dataset.tab;
+        renderDetail();
+        return;
+      }
       const guidanceRole = event.target.closest("[data-guidance-role]");
       if (guidanceRole) {
         app.guidanceRole = guidanceRole.dataset.guidanceRole;

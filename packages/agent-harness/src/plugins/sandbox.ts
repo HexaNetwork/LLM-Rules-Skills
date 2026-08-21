@@ -28,7 +28,12 @@ export type SandboxService = {
   ensure(runId: string): Promise<ContainerSpec | undefined>;
   exec(runId: string, request: SandboxExec): Promise<ExecResult>;
   destroy(runId: string): Promise<void>;
-  inspect(runId: string): Promise<{ mounts: Array<{ source: string; destination: string }>; env: string[] }>;
+  inspect(runId: string): Promise<{
+    image: string;
+    status: string;
+    mounts: Array<{ source: string; destination: string }>;
+    env: string[];
+  }>;
 };
 
 export type SandboxConfig = {
@@ -85,9 +90,12 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
       const raw = await docker(["inspect", name]);
       const [info] = JSON.parse(raw) as Array<{
         Mounts?: Array<{ Source: string; Destination: string }>;
-        Config?: { Env?: string[] };
+        Config?: { Env?: string[]; Image?: string };
+        State?: { Status?: string };
       }>;
       return {
+        image: info?.Config?.Image ?? "",
+        status: info?.State?.Status ?? "unknown",
         mounts: (info?.Mounts ?? []).map((mount) => ({
           source: mount.Source,
           destination: mount.Destination,

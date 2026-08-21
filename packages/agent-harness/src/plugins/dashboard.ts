@@ -3,7 +3,27 @@ import { randomBytes } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ProfileRow } from "../boot.js";
 import { outputContractFor, roleRulesFor } from "../domain/agent-roles.js";
+import { containerName } from "../domain/mount-policy.js";
 import { renderDashboardPage } from "../ui/page.js";
+
+const SECRET_ENV_PATTERN = /KEY|TOKEN|SECRET/i;
+
+export function redactEnv(env: string[]): string[] {
+  return env.map((entry) => {
+    const separator = entry.indexOf("=");
+    const name = separator === -1 ? entry : entry.slice(0, separator);
+    return SECRET_ENV_PATTERN.test(name) ? `${name}=<redacted>` : entry;
+  });
+}
+
+class HttpError extends Error {
+  constructor(
+    readonly statusCode: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 export type DashboardService = {
   start(): Promise<string>;
@@ -77,7 +97,8 @@ async function handle(
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(payload));
   } catch (error) {
-    res.writeHead(400, { "content-type": "application/json" });
+    const statusCode = error instanceof HttpError ? error.statusCode : 400;
+    res.writeHead(statusCode, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
   }
 }
@@ -152,6 +173,28 @@ async function route(
   if (method === "GET" && runMatch?.[2] === "sessions") {
     return ctx.runLifecycle.sessions(decodeURIComponent(runMatch[1]!));
   }
+  if (method === "GET" && runMatch?.[2] === "sandbox") {
+    const runId = decodeURIComponent(runMatch[1]!);
+    const identity = await ctx.store.readIdentity(runId);
+    if (!identity) throw new HttpError(404, `Unknown run: ${runId}`);
+    const mode = ctx.sandbox.mode;
+    const name = containerName(runId);
+    if (mode !== "docker") return { mode, containerName: name };
+    try {
+      const info = await ctx.sandbox.inspect(runId);
+      return {
+        mode,
+        containerName: name,
+        running: info.status === "running",
+        status: info.status,
+        image: info.image,
+        mounts: info.mounts,
+        env: redactEnv(info.env),
+      };
+    } catch {
+      return { mode, containerName: name, running: false };
+    }
+  }
   if (method === "POST" && url.pathname === "/api/runs") {
     const input = (body ?? {}) as {
       idea?: string;
@@ -214,7 +257,9 @@ export function dashboardPlugin(ctx: Context, config: DashboardConfig = {}): voi
   ctx.provide("dashboard", createDashboardService(ctx, config));
 }
 
-Object.assign(dashboardPlugin, { inject: ["runLifecycle", "git", "roleGuidance", "settings"] });
+Object.assign(dashboardPlugin, {
+  inject: ["runLifecycle", "git", "roleGuidance", "settings", "store", "sandbox"],
+});
 
 export function dashboardRow(config: DashboardConfig = {}): ProfileRow {
   return {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { containerName } from "../../src/domain/mount-policy.js";
 import { dashboardRow } from "../../src/plugins/dashboard.js";
 import { hostRuntimeRows } from "../../src/plugins/profile.js";
 import { bootHost } from "../../src/boot.js";
@@ -107,6 +108,14 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain("Agent contexts");
       expect(html).toContain('id="guidance-toggle"');
       expect(html).toContain("setInterval(() => refresh()");
+      expect(html).toContain('class="run-tabs"');
+      expect(html).toContain('data-tab="');
+      expect(html).toContain('["overview", "Overview"');
+      expect(html).toContain('["artifacts", "Artifacts"');
+      expect(html).toContain('["tasks", "Tasks"');
+      expect(html).toContain('["sessions", "Sessions"');
+      expect(html).toContain('["activity", "Activity"');
+      expect(html).toContain('["docker", "Docker"');
       const roles = await fetchJson(new URL("/api/guidance/roles", url), token, {});
       expect(roles.roles.length).toBeGreaterThan(0);
       const reflectorEntry = roles.roles.find((entry: { role: string }) => entry.role === "reflector");
@@ -180,6 +189,105 @@ describe("dashboard as runLifecycle client", () => {
       });
       expect(resetHome.source).toBe("packaged");
       expect(String(resetHome.body)).toContain("Fixer guidance");
+    } finally {
+      await host.ctx.dashboard?.stop();
+      await host.dispose();
+    }
+  });
+
+  it("exposes sandbox info for a run without failing when the container is absent", async () => {
+    const home = await createTempDir("harness-ui-sandbox-");
+    const repo = await createTempRepo();
+    const baseBranch = (
+      await exec("git", ["branch", "--show-current"], { cwd: repo, windowsHide: true })
+    ).stdout.trim();
+    const host = await bootHost({
+      home,
+      extraRows: [
+        ...hostRuntimeRows({ agents: { mode: "fake" }, sandbox: { mode: "none" } }),
+        dashboardRow({ port: 0 }),
+      ],
+    });
+    try {
+      const dashboard = host.ctx.dashboard;
+      if (!dashboard) throw new Error("dashboard missing");
+      const url = await dashboard.start();
+      const token = dashboard.token;
+      const registered = await fetchJson(new URL("/api/projects", url), token, {
+        method: "POST",
+        body: JSON.stringify({ controlRoot: repo }),
+      });
+      const started = await fetchJson(new URL("/api/runs", url), token, {
+        method: "POST",
+        body: JSON.stringify({
+          idea: "Inspect sandbox metadata",
+          projectKey: registered.projectKey,
+          baseBranch,
+        }),
+      });
+      const runId = started.identity.runId;
+      const sandbox = await fetchJson(new URL(`/api/runs/${runId}/sandbox`, url), token, {});
+      expect(sandbox).toEqual({
+        mode: "none",
+        containerName: containerName(runId),
+      });
+      expect(sandbox).not.toHaveProperty("running");
+
+      const missing = await fetch(new URL("/api/runs/no-such-run/sandbox", url), {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(missing.status).toBe(404);
+      expect(await missing.json()).toEqual({ error: "Unknown run: no-such-run" });
+    } finally {
+      await host.ctx.dashboard?.stop();
+      await host.dispose();
+    }
+  });
+
+  it("returns running false when docker inspect fails for a known run", async () => {
+    const home = await createTempDir("harness-ui-sandbox-docker-");
+    const repo = await createTempRepo();
+    const baseBranch = (
+      await exec("git", ["branch", "--show-current"], { cwd: repo, windowsHide: true })
+    ).stdout.trim();
+    const host = await bootHost({
+      home,
+      extraRows: [
+        ...hostRuntimeRows({ agents: { mode: "fake" }, sandbox: { mode: "docker" } }),
+        dashboardRow({ port: 0 }),
+      ],
+    });
+    try {
+      expect(host.ctx.sandbox.mode).toBe("docker");
+      host.ctx.sandbox.inspect = async () => {
+        throw new Error("No such container");
+      };
+      const dashboard = host.ctx.dashboard;
+      if (!dashboard) throw new Error("dashboard missing");
+      const url = await dashboard.start();
+      const token = dashboard.token;
+      const registered = await fetchJson(new URL("/api/projects", url), token, {
+        method: "POST",
+        body: JSON.stringify({ controlRoot: repo }),
+      });
+      const started = await fetchJson(new URL("/api/runs", url), token, {
+        method: "POST",
+        body: JSON.stringify({
+          idea: "Docker sandbox absent container",
+          projectKey: registered.projectKey,
+          baseBranch,
+        }),
+      });
+      const runId = started.identity.runId;
+      const response = await fetch(new URL(`/api/runs/${runId}/sandbox`, url), {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        mode: "docker",
+        containerName: containerName(runId),
+        running: false,
+      });
     } finally {
       await host.ctx.dashboard?.stop();
       await host.dispose();

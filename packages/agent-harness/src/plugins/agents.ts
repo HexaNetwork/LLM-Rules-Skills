@@ -49,14 +49,40 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
           {
             id: "users",
             prompt: "Who are the primary users?",
-            kind: "text",
-            recommended: "operators of the registered repository",
+            context: "This shapes who the slice must serve and how we phrase the brief.",
+            options: [
+              {
+                id: "operators",
+                label: "Operators of the registered repository",
+                description: "People running the harness against this repo day to day.",
+              },
+              {
+                id: "end-users",
+                label: "End users of the product",
+                description: "People who use the shipped feature, not the harness itself.",
+              },
+            ],
+            recommendedOptionId: "operators",
+            recommendation: "Default to operators unless the idea clearly targets product end users.",
           },
           {
             id: "scope",
             prompt: "What is out of scope for this slice?",
-            kind: "text",
-            recommended: "unrelated refactors",
+            context: "Keep the first cut thin enough to verify and publish.",
+            options: [
+              {
+                id: "refactors",
+                label: "Unrelated refactors",
+                description: "Skip drive-by cleanups that are not required for the slice.",
+              },
+              {
+                id: "adjacent",
+                label: "Adjacent features",
+                description: "Defer nearby work that can ship in a follow-up run.",
+              },
+            ],
+            recommendedOptionId: "refactors",
+            recommendation: "Park unrelated refactors so the slice stays reviewable.",
           },
         ],
         unknowns: ["Who are the users?", "What is explicitly out of scope?"],

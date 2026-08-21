@@ -147,7 +147,7 @@ export const ROLE_OUTPUT_CONTRACTS: Record<AgentRole, string> = {
   reflector:
     "{proposedTitle:string,summary:string,restatement:string,goal:string,users:[string],inScope:[string],outOfScope:[string],assumptions:[string],unknowns:[string]}",
   griller:
-    '{questions:[{id:string,prompt:string,kind:"text"|"choice"|"confirm",choices?:[string],recommended?:string}],unknowns:[string]}',
+    '{questions:[{id:string,prompt:string,context?:string,options:[{id:string,label:string,description:string}],recommendedOptionId:string,recommendation:string}],unknowns:[string]}',
   "docs-writer":
     "glossary phase: {glossary:[{term:string,definition:string}]}; prd phase: {title:string,body:string}",
   planner: "{plan:string}",

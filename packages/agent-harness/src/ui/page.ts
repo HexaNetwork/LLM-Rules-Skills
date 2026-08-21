@@ -178,6 +178,64 @@ export function renderDashboardPage(): string {
     .choice.selected { border-color: var(--attention); background: var(--attention-soft); color: #f0c48a; }
     .gate-footer { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 14px; padding: 0 20px 20px; }
     .gate-footer textarea { min-height: 52px; }
+    .batch-card .gate-head { margin-bottom: 0; }
+    .keyboard-hint { margin: 0 20px 14px; color: var(--faint); font-size: 12px; }
+    .batch-question {
+      border: 1px solid var(--line-strong); border-radius: 11px; background: rgba(15, 17, 21, .55);
+      padding: 14px 15px; margin: 0 20px 12px;
+    }
+    .batch-question:focus { outline: 2px solid var(--attention); outline-offset: 2px; }
+    .batch-question.parked { opacity: .55; }
+    .batch-question.clarifying { opacity: 1; }
+    .batch-question .item-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+    .batch-question .card-label { color: var(--faint); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .batch-question .tag {
+      border: 1px solid var(--line); color: var(--muted); border-radius: 999px; font-size: 10px;
+      padding: 3px 7px; text-transform: uppercase; letter-spacing: .06em;
+    }
+    .batch-question .tag.hitl { color: var(--attention); border-color: var(--attention-line); }
+    .batch-question .prompt { margin: 10px 0 6px; color: var(--ink); font-size: 16px; line-height: 1.4; letter-spacing: -.01em; }
+    .question-context { color: var(--muted); max-width: 850px; margin: 0 0 14px; font-size: 13px; line-height: 1.5; }
+    .question-options { display: grid; grid-template-columns: 1fr; gap: 9px; margin: 0 0 14px; }
+    .question-option {
+      position: relative; display: block; width: 100%; min-height: 72px; text-align: left;
+      border: 1px solid var(--line-strong); border-radius: 10px; background: var(--field);
+      color: var(--ink); padding: 13px 14px;
+    }
+    .question-option:hover { border-color: var(--attention); background: var(--attention-soft); }
+    .question-option.recommended { border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong)); }
+    .question-option.selected {
+      border-color: var(--accent); background: var(--accent-soft);
+      box-shadow: 0 0 0 2px var(--accent-ring) inset;
+    }
+    .question-option strong { display: block; padding-right: 88px; }
+    .question-option small { display: block; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+    .recommendation-badge, .selected-badge {
+      position: absolute; top: 11px; right: 11px; color: var(--accent); font-size: 9px;
+      font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+    }
+    .recommendation {
+      border-left: 2px solid var(--accent); background: var(--accent-soft); color: #dce9c3;
+      padding: 9px 12px; margin: 0 0 14px; font-size: 13px; line-height: 1.45;
+    }
+    .recommendation strong { margin-right: 5px; }
+    .batch-question textarea { min-height: 64px; margin-top: 8px; }
+    .batch-clarify-box { margin-top: 8px; }
+    .batch-clarify-box textarea { min-height: 72px; }
+    .batch-question-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .batch-footer {
+      position: sticky; bottom: 0; margin: 14px 0 0; padding: 12px 20px 18px;
+      background: linear-gradient(180deg, transparent, #1c1812 18%);
+      border-top: 1px solid var(--attention-line); display: flex; align-items: center;
+      justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    }
+    .batch-footer .muted { color: var(--muted); font-size: 13px; }
+    .batch-footer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .batch-feedback {
+      margin: 0 20px 16px; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid var(--danger-line); background: var(--danger-soft); color: #f0b4ae; font-size: 13px;
+    }
+    .batch-feedback[hidden] { display: none; }
     .block {
       margin-bottom: 24px; padding: 16px 18px; border-left: 4px solid var(--danger);
       background: var(--danger-soft); color: #f0b4ae;
@@ -640,6 +698,17 @@ export function renderDashboardPage(): string {
         '<span class="phase-step ' + (index === current ? 'current' : index < current ? 'done' : '') + '">' + esc(words(phase)) + '</span>'
       ).join("");
     }
+    function emptyDraft() {
+      return { answers: {}, parked: {}, notes: "", selectedOptions: {}, clarifications: {}, batchFeedback: "" };
+    }
+    function ensureDraft(runId) {
+      const draft = app.drafts[runId] || emptyDraft();
+      if (!draft.selectedOptions) draft.selectedOptions = {};
+      if (!draft.clarifications) draft.clarifications = {};
+      if (draft.batchFeedback == null) draft.batchFeedback = "";
+      app.drafts[runId] = draft;
+      return draft;
+    }
     function answerControl(q, draft) {
       const value = draft.answers[q.id] != null ? draft.answers[q.id] : (q.recommended || "");
       if (q.kind === "choice" || q.kind === "confirm") {
@@ -649,6 +718,58 @@ export function renderDashboardPage(): string {
         ).join("") + '</div>';
       }
       return '<textarea data-answer="' + esc(q.id) + '" placeholder="Operator response">' + esc(value) + '</textarea>';
+    }
+    function grillQuestionAnswered(q, draft) {
+      if (draft.parked[q.id] || draft.clarifications[q.id] != null) return true;
+      if (draft.selectedOptions[q.id]) return true;
+      return Boolean(String(draft.answers[q.id] || "").trim());
+    }
+    function renderBatchQuestion(q, index, total, draft) {
+      const selected = draft.selectedOptions[q.id];
+      const parked = Boolean(draft.parked[q.id]);
+      const clarifying = draft.clarifications[q.id] != null;
+      const clarifyText = clarifying ? draft.clarifications[q.id] : "";
+      const note = draft.answers[q.id] || "";
+      const questionOptions = Array.isArray(q.options) ? q.options : [];
+      const options = (!clarifying && questionOptions.length)
+        ? '<div class="question-options">' + questionOptions.map((option, i) => {
+            const recommended = option.id === q.recommendedOptionId;
+            const isSelected = selected === option.id;
+            return '<button type="button" class="question-option' + (recommended ? ' recommended' : '') + (isSelected ? ' selected' : '') + '" data-batch-choice="' + esc(q.id) + '" data-option-id="' + esc(option.id) + '" data-option-index="' + i + '"><strong>' + esc(option.label) + '</strong>' + (isSelected ? '<span class="selected-badge">Selected</span>' : (recommended ? '<span class="recommendation-badge">Recommended</span>' : '')) + (option.description ? '<small>' + esc(option.description) + '</small>' : '') + '</button>';
+          }).join("") + '</div>'
+        : '';
+      const context = q.context ? '<div class="question-context">' + esc(q.context) + '</div>' : '';
+      const recommendation = (!clarifying && q.recommendation)
+        ? '<div class="recommendation"><strong>Our recommendation:</strong>' + esc(q.recommendation) + '</div>'
+        : '';
+      const answered = grillQuestionAnswered(q, draft);
+      const statusTag = clarifying
+        ? '<span class="tag">Wait what?</span>'
+        : (parked ? '<span class="tag">Skipped</span>' : (answered ? '<span class="tag hitl">Answered</span>' : '<span class="tag">Unanswered</span>'));
+      const answerArea = clarifying
+        ? '<div class="batch-clarify-box"><textarea data-batch-clarify-text="' + esc(q.id) + '" placeholder="What is unclear? Ask the griller to rephrase or add precision…">' + esc(clarifyText) + '</textarea></div>'
+        : '<textarea data-batch-answer="' + esc(q.id) + '" placeholder="Optional notes, or answer in your own words…">' + esc(note) + '</textarea>';
+      return '<div class="batch-question' + (parked ? ' parked' : '') + (clarifying ? ' clarifying' : '') + '" data-batch-question="' + esc(q.id) + '" tabindex="0">' +
+        '<div class="item-head"><div class="card-label">Question ' + (index + 1) + ' of ' + total + '</div>' + statusTag + '</div>' +
+        '<div class="prompt">' + esc(q.prompt) + '</div>' + context + options + recommendation +
+        answerArea +
+        '<div class="batch-question-foot">' +
+          '<button type="button" class="quiet" data-batch-clarify="' + esc(q.id) + '">' + (clarifying ? 'Cancel Wait what?' : 'Wait what?') + '</button>' +
+          '<button type="button" class="quiet" data-batch-skip="' + esc(q.id) + '">' + (parked ? 'Unskip' : 'Skip for now') + '</button>' +
+        '</div></div>';
+    }
+    function renderGrillGate(gate, draft) {
+      const questions = gate.questions || [];
+      const answeredCount = questions.filter((q) => grillQuestionAnswered(q, draft)).length;
+      return '<section class="gate batch-card" id="batchCard" data-testid="question-batch">' +
+        '<header class="gate-head"><div class="eyebrow">Operator input required</div><h3>' + esc(gate.title) + '</h3></header>' +
+        '<div class="keyboard-hint">Keys: 1–4 choose an option for the focused question · ↑/↓ move between questions · Esc skips the focused question</div>' +
+        questions.map((q, i) => renderBatchQuestion(q, i, questions.length, draft)).join("") +
+        '<div class="batch-footer"><span class="muted" id="batchCount">' + answeredCount + ' of ' + questions.length + ' answered</span>' +
+        '<div class="batch-footer-actions"><button type="button" class="secondary" id="acceptAllBtn" data-batch-accept-all>Accept all recommendations</button>' +
+        '<button type="button" class="primary" id="submitBatchBtn" data-action="answer" data-testid="submit-answers">Submit answers</button></div></div>' +
+        '<div class="batch-feedback" id="batchFeedback"' + (draft.batchFeedback ? '' : ' hidden') + '>' + esc(draft.batchFeedback || '') + '</div>' +
+        '<div class="gate-footer"><label>Batch notes<textarea id="gate-notes" placeholder="Context that applies to the whole batch">' + esc(draft.notes || "") + '</textarea></label></div></section>';
     }
     function reflectFieldValue(reflect, draft, id) {
       if (draft.answers[id] != null) return draft.answers[id];
@@ -687,7 +808,7 @@ export function renderDashboardPage(): string {
       node.style.height = Math.max(node.scrollHeight, 52) + "px";
     }
     function autosizeReflectFields() {
-      document.querySelectorAll(".reflect-fields textarea, #gate-notes").forEach(autosizeTextarea);
+      document.querySelectorAll(".reflect-fields textarea, #gate-notes, [data-batch-answer], [data-batch-clarify-text]").forEach(autosizeTextarea);
     }
     function renderReflectGate(run, gate, draft) {
       const reflect = run.state.artifacts && run.state.artifacts.reflect && typeof run.state.artifacts.reflect === "object" ? run.state.artifacts.reflect : {};
@@ -718,16 +839,99 @@ export function renderDashboardPage(): string {
     function renderGate(run) {
       const gate = run.state.gate;
       if (!gate) return "";
-      const draft = app.drafts[run.identity.runId] || { answers: {}, parked: {}, notes: "" };
-      app.drafts[run.identity.runId] = draft;
+      const draft = ensureDraft(run.identity.runId);
       if (gate.id === "reflect-confirm") return renderReflectGate(run, gate, draft);
+      if (gate.id === "grill-batch") return renderGrillGate(gate, draft);
       return '<section class="gate"><header class="gate-head"><div class="eyebrow">Operator input required</div><h3>' + esc(gate.title) + '</h3></header>' +
         '<div class="questions">' + gate.questions.map((q) =>
-          '<div class="question"><div class="question-title"><span>' + esc(q.prompt) + '</span>' +
-          '<label class="park-label"><input class="park" type="checkbox" data-park="' + esc(q.id) + '"' + (draft.parked[q.id] ? ' checked' : '') + '>Park</label></div>' +
+          '<div class="question"><div class="question-title"><span>' + esc(q.prompt) + '</span></div>' +
           answerControl(q, draft) + '</div>'
         ).join("") + '</div><div class="gate-footer"><label>Batch notes<textarea id="gate-notes" placeholder="Context that applies to the whole batch">' + esc(draft.notes || "") + '</textarea></label>' +
         '<button class="primary" type="button" data-action="answer">Submit batch</button></div></section>';
+    }
+    function selectBatchOption(qid, optionId) {
+      const draft = ensureDraft(app.selectedId);
+      if (draft.clarifications[qid] != null) delete draft.clarifications[qid];
+      if (draft.selectedOptions[qid] === optionId) {
+        delete draft.selectedOptions[qid];
+      } else {
+        draft.selectedOptions[qid] = optionId;
+        delete draft.parked[qid];
+      }
+      draft.batchFeedback = "";
+      renderDetail();
+    }
+    function toggleBatchSkip(qid) {
+      const draft = ensureDraft(app.selectedId);
+      if (draft.parked[qid]) {
+        delete draft.parked[qid];
+      } else {
+        draft.parked[qid] = true;
+        delete draft.selectedOptions[qid];
+        delete draft.clarifications[qid];
+        delete draft.answers[qid];
+      }
+      draft.batchFeedback = "";
+      renderDetail();
+    }
+    function toggleBatchClarify(qid) {
+      const draft = ensureDraft(app.selectedId);
+      if (draft.clarifications[qid] != null) {
+        delete draft.clarifications[qid];
+      } else {
+        draft.clarifications[qid] = "";
+        delete draft.selectedOptions[qid];
+        delete draft.parked[qid];
+        delete draft.answers[qid];
+      }
+      draft.batchFeedback = "";
+      renderDetail();
+      if (ensureDraft(app.selectedId).clarifications[qid] != null) {
+        const box = document.querySelector('[data-batch-clarify-text="' + CSS.escape(qid) + '"]');
+        if (box) box.focus();
+      }
+    }
+    function acceptAllRecommendations() {
+      const gate = app.run && app.run.state.gate;
+      if (!gate || gate.id !== "grill-batch") return;
+      const draft = ensureDraft(app.selectedId);
+      gate.questions.forEach((q) => {
+        if (draft.parked[q.id] || draft.clarifications[q.id] != null) return;
+        if (draft.selectedOptions[q.id] != null) return;
+        if (q.recommendedOptionId) draft.selectedOptions[q.id] = q.recommendedOptionId;
+      });
+      draft.batchFeedback = "";
+      renderDetail();
+    }
+    function buildGrillAnswerPayload(gate, draft) {
+      const answers = {};
+      const parked = [];
+      const clarifications = [];
+      const missing = [];
+      gate.questions.forEach((q) => {
+        if (draft.parked[q.id]) {
+          parked.push(q.id);
+          return;
+        }
+        if (draft.clarifications[q.id] != null) {
+          const ask = String(draft.clarifications[q.id] || "").trim();
+          if (!ask) {
+            missing.push(q.id);
+            return;
+          }
+          clarifications.push({ questionId: q.id, text: ask });
+          return;
+        }
+        const optionId = draft.selectedOptions[q.id];
+        const note = String(draft.answers[q.id] || "").trim();
+        if (optionId == null && !note) {
+          missing.push(q.id);
+          return;
+        }
+        const option = Array.isArray(q.options) ? q.options.find((item) => item.id === optionId) : null;
+        answers[q.id] = note || (option ? option.label : "");
+      });
+      return { answers, parked, clarifications, missing };
     }
     function artifactBody(value) {
       if (typeof value === "string") return '<div class="artifact-body">' + esc(value).replace(/\\n/g, "<br>") + '</div>';
@@ -1071,12 +1275,13 @@ export function renderDashboardPage(): string {
     el("detail").addEventListener("input", (event) => {
       if (saveComposeDraft(event.target)) return;
       if (!app.selectedId || !app.run || !app.run.state.gate) return;
-      const draft = app.drafts[app.selectedId] || { answers: {}, parked: {}, notes: "" };
-      app.drafts[app.selectedId] = draft;
+      const draft = ensureDraft(app.selectedId);
       if (event.target.dataset.reflectListItem) {
         syncReflectListAnswers(event.target.dataset.reflectListItem, draft);
       }
       if (event.target.dataset.answer) draft.answers[event.target.dataset.answer] = event.target.value;
+      if (event.target.dataset.batchAnswer) draft.answers[event.target.dataset.batchAnswer] = event.target.value;
+      if (event.target.dataset.batchClarifyText) draft.clarifications[event.target.dataset.batchClarifyText] = event.target.value;
       if (event.target.dataset.park) draft.parked[event.target.dataset.park] = event.target.checked;
       if (event.target.id === "gate-notes") draft.notes = event.target.value;
       autosizeTextarea(event.target);
@@ -1148,10 +1353,29 @@ export function renderDashboardPage(): string {
         showCompose();
         return;
       }
+      const batchChoice = event.target.closest("[data-batch-choice]");
+      if (batchChoice && app.selectedId) {
+        selectBatchOption(batchChoice.dataset.batchChoice, batchChoice.dataset.optionId);
+        return;
+      }
+      const batchSkip = event.target.closest("[data-batch-skip]");
+      if (batchSkip && app.selectedId) {
+        toggleBatchSkip(batchSkip.dataset.batchSkip);
+        return;
+      }
+      const batchClarify = event.target.closest("[data-batch-clarify]");
+      if (batchClarify && app.selectedId) {
+        toggleBatchClarify(batchClarify.dataset.batchClarify);
+        return;
+      }
+      const acceptAll = event.target.closest("[data-batch-accept-all]");
+      if (acceptAll && app.selectedId) {
+        acceptAllRecommendations();
+        return;
+      }
       const choice = event.target.closest("[data-choice]");
       if (choice && app.selectedId) {
-        const draft = app.drafts[app.selectedId] || { answers: {}, parked: {}, notes: "" };
-        app.drafts[app.selectedId] = draft;
+        const draft = ensureDraft(app.selectedId);
         draft.answers[choice.dataset.choice] = choice.dataset.value;
         document.querySelectorAll('[data-choice="' + CSS.escape(choice.dataset.choice) + '"]').forEach((node) => node.classList.toggle("selected", node === choice));
         return;
@@ -1159,8 +1383,7 @@ export function renderDashboardPage(): string {
       const listAdd = event.target.closest("[data-reflect-list-add]");
       if (listAdd && app.selectedId) {
         const fieldId = listAdd.dataset.reflectListAdd;
-        const draft = app.drafts[app.selectedId] || { answers: {}, parked: {}, notes: "" };
-        app.drafts[app.selectedId] = draft;
+        const draft = ensureDraft(app.selectedId);
         syncReflectListAnswers(fieldId, draft);
         const entries = reflectListEntries(draft.answers[fieldId] || "");
         entries.push("");
@@ -1175,8 +1398,7 @@ export function renderDashboardPage(): string {
       if (listRemove && app.selectedId && !listRemove.disabled) {
         const fieldId = listRemove.dataset.reflectListRemove;
         const index = Number(listRemove.dataset.index);
-        const draft = app.drafts[app.selectedId] || { answers: {}, parked: {}, notes: "" };
-        app.drafts[app.selectedId] = draft;
+        const draft = ensureDraft(app.selectedId);
         syncReflectListAnswers(fieldId, draft);
         const entries = reflectListEntries(draft.answers[fieldId] || "");
         if (entries.length <= 1) {
@@ -1193,15 +1415,66 @@ export function renderDashboardPage(): string {
       if (action.dataset.action === "cancel" && !confirm("Cancel this run and destroy its sandbox?")) return;
       if (action.dataset.action === "delete" && !confirm("Permanently delete this run, its sandbox, worktree, and stored artifacts?")) return;
       if (action.dataset.action === "answer") {
-        const draft = app.drafts[app.selectedId] || { answers: {}, parked: {}, notes: "" };
+        const draft = ensureDraft(app.selectedId);
         document.querySelectorAll("[data-reflect-list]").forEach((node) => {
           syncReflectListAnswers(node.dataset.reflectList, draft);
         });
+        const gate = app.run && app.run.state.gate;
+        if (gate && gate.id === "grill-batch") {
+          const payload = buildGrillAnswerPayload(gate, draft);
+          if (payload.missing.length) {
+            draft.batchFeedback = payload.missing.length + " question(s) still need an answer, Skip, or Wait what? with a clarification.";
+            renderDetail();
+            const focus = document.querySelector('[data-batch-question="' + CSS.escape(payload.missing[0]) + '"]');
+            if (focus) focus.focus();
+            return;
+          }
+          draft.batchFeedback = "";
+          mutate("answer", {
+            answers: payload.answers,
+            parked: payload.parked,
+            clarifications: payload.clarifications,
+            notes: draft.notes,
+          });
+          return;
+        }
         const parked = Object.keys(draft.parked).filter((key) => draft.parked[key]);
         mutate("answer", { answers: draft.answers, parked, notes: draft.notes });
         return;
       }
       mutate(action.dataset.action);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (!app.run || !app.run.state.gate || app.run.state.gate.id !== "grill-batch") return;
+      const target = event.target;
+      if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable)) return;
+      const focused = document.activeElement && document.activeElement.closest
+        ? document.activeElement.closest("[data-batch-question]")
+        : null;
+      if (!focused) return;
+      const qid = focused.getAttribute("data-batch-question");
+      if (!qid) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        toggleBatchSkip(qid);
+        return;
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const nodes = Array.from(document.querySelectorAll("[data-batch-question]"));
+        const index = nodes.indexOf(focused);
+        if (index < 0) return;
+        const next = nodes[(index + (event.key === "ArrowDown" ? 1 : -1) + nodes.length) % nodes.length];
+        if (next) next.focus();
+        return;
+      }
+      if (/^[1-4]$/.test(event.key)) {
+        const option = focused.querySelector('[data-option-index="' + (Number(event.key) - 1) + '"]');
+        if (option) {
+          event.preventDefault();
+          selectBatchOption(qid, option.getAttribute("data-option-id"));
+        }
+      }
     });
     Promise.all([loadProjects(), refresh({ selectFirst: true, force: true })]).catch((error) => toast(error.message, true));
     setInterval(() => refresh().catch(() => {}), 4000);

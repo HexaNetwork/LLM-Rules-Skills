@@ -12,6 +12,22 @@ Interview relentlessly about every aspect of this plan until shared understandin
 
 When running as the harness **griller** worker, the deliverable is **only** the expected JSON contract (`needs_input` or `ready_to_plan`). Put questions, options, recommendations, resolutions, and `openUnknowns` in that JSON. The harness UI shows them to the operator; the next turn receives structured answers.
 
+Each question must use structured options the dashboard can render as cards:
+
+```json
+{
+  "id": "tone",
+  "prompt": "Which tone should the interface use?",
+  "context": "Optional why-this-matters note",
+  "options": [
+    { "id": "quiet", "label": "Quiet", "description": "Restrained presentation supports focused work." },
+    { "id": "energetic", "label": "Energetic", "description": "Stronger emphasis makes progress more prominent." }
+  ],
+  "recommendedOptionId": "quiet",
+  "recommendation": "Use quiet because this is a long-running work surface."
+}
+```
+
 Do **not** write Markdown interview reports, headings, bullet briefings, or chat-style Q&A as the session result. Codebase facts belong in `summary` / question `context`, not in a freeform Markdown document. When plan mode uses CreatePlan, the plan body must be that JSON contract only — Markdown research notes are not a valid deliverable.
 
 Prefer fewer questions; batch only mutually independent ones. Dependent forks stay sequential across turns.

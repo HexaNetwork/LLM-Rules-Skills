@@ -23,12 +23,24 @@ export type RunIdentity = {
   createdAt: string;
 };
 
+export type QuestionOption = {
+  id: string;
+  label: string;
+  description: string;
+};
+
 export type Question = {
   id: string;
   prompt: string;
   kind: "confirm" | "text" | "choice";
+  /** @deprecated Prefer structured `options`; kept for simple confirm/yes-no gates. */
   choices?: string[];
+  /** @deprecated Prefer `recommendedOptionId` + `recommendation`. */
   recommended?: string;
+  context?: string;
+  options?: QuestionOption[];
+  recommendedOptionId?: string;
+  recommendation?: string;
 };
 
 export type GateSpec = {
@@ -41,6 +53,7 @@ export type AnswerBatch = {
   answers: Record<string, string>;
   parked?: string[];
   notes?: string;
+  clarifications?: Array<{ questionId: string; text: string }>;
 };
 
 export type FogStatus = "fog" | "asked" | "parked" | "resolved";

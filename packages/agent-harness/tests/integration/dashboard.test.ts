@@ -97,6 +97,11 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain("HexAgent Harness");
       expect(html).toContain("Hexa durable operations");
       expect(html).toContain("Operator input required");
+      expect(html).toContain("Wait what?");
+      expect(html).toContain("Skip for now");
+      expect(html).toContain("Accept all recommendations");
+      expect(html).toContain("data-batch-choice");
+      expect(html).toContain("question-option");
       expect(html).toContain("Chart a new run");
       expect(html).toContain('data-action="delete"');
       expect(html).toContain("Deleting run…");

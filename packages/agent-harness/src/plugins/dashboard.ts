@@ -226,11 +226,17 @@ async function route(
     return ctx.runLifecycle.delete(decodeURIComponent(runMatch[1]!));
   }
   if (method === "POST" && runMatch?.[2] === "answer") {
-    const batch = (body ?? {}) as { answers?: Record<string, string>; parked?: string[]; notes?: string };
+    const batch = (body ?? {}) as {
+      answers?: Record<string, string>;
+      parked?: string[];
+      notes?: string;
+      clarifications?: Array<{ questionId: string; text: string }>;
+    };
     return ctx.runLifecycle.answer(decodeURIComponent(runMatch[1]!), {
       answers: batch.answers ?? {},
       parked: batch.parked,
       notes: batch.notes,
+      clarifications: batch.clarifications,
     });
   }
   throw new Error(`Unknown route ${method} ${url.pathname}`);

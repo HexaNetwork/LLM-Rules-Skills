@@ -1,5 +1,4 @@
 import type { Context } from "@deepseek-ai/cordis";
-import { assignmentFor } from "../domain/agent-roles.js";
 import type { Run } from "../domain/types.js";
 import { workingOn } from "../domain/working.js";
 
@@ -15,18 +14,16 @@ export async function invokeRole(
     run.identity.runId,
     workingOn(`Invoking ${role}`, { phase: run.state.phase, role }),
   );
-  const assignment = assignmentFor(run.settings.guidance.assignments, role);
-  const pack = await ctx.knowledge.compileRoleGuidancePack({
-    assignment,
+  const context = await ctx.roleGuidance.compileRoleContext(role, {
+    projectKey: run.identity.projectKey,
     maxCharacters: run.settings.budgets.guidanceTokens * CHARS_PER_TOKEN,
-    extraPaths: run.settings.guidance.extraPaths,
   });
   const packet = ctx.packets.build({
     role,
     runId: run.identity.runId,
     phase: run.state.phase,
     input,
-    guidance: pack.text,
+    guidance: context.text,
     settings: run.settings,
   });
   return ctx.agents.invoke(role, packet);

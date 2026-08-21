@@ -89,6 +89,7 @@ describe("dashboard as runLifecycle client", () => {
       const dashboard = host.ctx.dashboard;
       if (!dashboard) throw new Error("dashboard missing");
       const url = await dashboard.start();
+      const token = dashboard.token;
       const page = await fetch(url);
       expect(page.status).toBe(200);
       const html = await page.text();
@@ -106,12 +107,15 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain("Agent contexts");
       expect(html).toContain('id="guidance-toggle"');
       expect(html).toContain("setInterval(() => refresh()");
-      const packs = await fetchJson(new URL("/api/guidance/packs", url), token, {});
-      expect(packs.packs.length).toBeGreaterThan(0);
-      const reflector = packs.packs.find((pack: { role: string }) => pack.role === "reflector");
-      expect(reflector.assignment.skills).toEqual(["domain-modeling"]);
-      expect(String(reflector.guidancePack).toLowerCase()).toContain("domain modeling");
-      expect(String(reflector.guidancePack).toLowerCase()).not.toContain("rip and tear");
+      const roles = await fetchJson(new URL("/api/guidance/roles", url), token, {});
+      expect(roles.roles.length).toBeGreaterThan(0);
+      const reflectorEntry = roles.roles.find((entry: { role: string }) => entry.role === "reflector");
+      expect(reflectorEntry.source).toBe("packaged");
+      const reflector = await fetchJson(new URL("/api/guidance/roles/reflector", url), token, {});
+      expect(reflector.source).toBe("packaged");
+      expect(String(reflector.body)).toContain("Reflector guidance");
+      expect(String(reflector.promptPreview)).toContain("EXPECTED OUTPUT");
+      expect(String(reflector.promptPreview)).toContain("Reflector guidance");
       const sidebar = html.slice(html.indexOf('class="sidebar"'), html.indexOf('class="workspace"'));
       expect(sidebar).toContain("new-run-toggle");
       expect(sidebar).toContain("guidance-toggle");
@@ -120,6 +124,62 @@ describe("dashboard as runLifecycle client", () => {
 
       const unauthorized = await fetch(new URL("/api/runs", url));
       expect(unauthorized.status).toBe(401);
+    } finally {
+      await host.ctx.dashboard?.stop();
+      await host.dispose();
+    }
+  });
+
+  it("saves and resets role guidance overrides through the dashboard API", async () => {
+    const home = await createTempDir("harness-ui-guidance-");
+    const host = await bootHost({
+      home,
+      extraRows: [
+        ...hostRuntimeRows({ agents: { mode: "fake" }, sandbox: { mode: "none" } }),
+        dashboardRow({ port: 0 }),
+      ],
+    });
+    try {
+      const dashboard = host.ctx.dashboard;
+      if (!dashboard) throw new Error("dashboard missing");
+      const url = await dashboard.start();
+      const token = dashboard.token;
+      const before = await fetchJson(new URL("/api/guidance/roles/fixer", url), token, {});
+      expect(before.source).toBe("packaged");
+      const saved = await fetchJson(new URL("/api/guidance/roles/fixer", url), token, {
+        method: "PUT",
+        body: JSON.stringify({ body: "Custom fixer guidance from the dashboard." }),
+      });
+      expect(saved.source).toBe("home");
+      expect(String(saved.body)).toContain("Custom fixer guidance from the dashboard.");
+      const projectSaved = await fetchJson(new URL("/api/guidance/roles/fixer", url), token, {
+        method: "PUT",
+        body: JSON.stringify({
+          body: "Project-scoped fixer guidance.",
+          projectKey: "demo-project",
+        }),
+      });
+      expect(projectSaved.source).toBe("project");
+      const projectView = await fetchJson(
+        new URL("/api/guidance/roles/fixer?projectKey=demo-project", url),
+        token,
+        {},
+      );
+      expect(projectView.source).toBe("project");
+      expect(String(projectView.promptPreview)).toContain("Project-scoped fixer guidance.");
+      const globalView = await fetchJson(new URL("/api/guidance/roles/fixer", url), token, {});
+      expect(globalView.source).toBe("home");
+      const resetProject = await fetchJson(
+        new URL("/api/guidance/roles/fixer?projectKey=demo-project", url),
+        token,
+        { method: "DELETE" },
+      );
+      expect(resetProject.source).toBe("home");
+      const resetHome = await fetchJson(new URL("/api/guidance/roles/fixer", url), token, {
+        method: "DELETE",
+      });
+      expect(resetHome.source).toBe("packaged");
+      expect(String(resetHome.body)).toContain("Fixer guidance");
     } finally {
       await host.ctx.dashboard?.stop();
       await host.dispose();

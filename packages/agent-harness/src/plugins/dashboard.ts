@@ -2,12 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ProfileRow } from "../boot.js";
-import {
-  AGENT_ROLES,
-  assignmentFor,
-  renderGuidancePromptPreview,
-  roleRulesFor,
-} from "../domain/agent-roles.js";
+import { outputContractFor, roleRulesFor } from "../domain/agent-roles.js";
 import { renderDashboardPage } from "../ui/page.js";
 
 export type DashboardService = {
@@ -77,7 +72,7 @@ async function handle(
     return;
   }
   try {
-    const body = req.method === "POST" ? await readBody(req) : undefined;
+    const body = req.method === "POST" || req.method === "PUT" ? await readBody(req) : undefined;
     const payload = await route(ctx, req.method ?? "GET", url, body);
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(payload));
@@ -113,32 +108,39 @@ async function route(
   if (method === "GET" && url.pathname === "/api/runs") {
     return ctx.runLifecycle.list();
   }
-  if (method === "GET" && url.pathname === "/api/guidance/packs") {
+  if (method === "GET" && url.pathname === "/api/guidance/roles") {
+    const projectKey = url.searchParams.get("projectKey")?.trim() || undefined;
+    const roles = await ctx.roleGuidance.listRoles(projectKey);
+    return { roles };
+  }
+  const guidanceRole = url.pathname.match(/^\/api\/guidance\/roles\/([^/]+)$/);
+  if (method === "GET" && guidanceRole) {
+    const role = decodeURIComponent(guidanceRole[1]!);
     const projectKey = url.searchParams.get("projectKey")?.trim() || undefined;
     const settings = await ctx.settings.readLive(projectKey);
-    const maxCharacters = settings.budgets.guidanceTokens * 4;
-    const packs = await Promise.all(
-      AGENT_ROLES.map(async (role) => {
-        const assignment = assignmentFor(settings.guidance.assignments, role);
-        const compiled = await ctx.knowledge.compileRoleGuidancePack({
-          assignment,
-          maxCharacters,
-          extraPaths: settings.guidance.extraPaths,
-        });
-        const roleRules = [...roleRulesFor(role)];
-        return {
-          role,
-          assignment,
-          sources: compiled.sources,
-          missingAssignments: compiled.missingAssignments,
-          truncated: compiled.truncated,
-          roleRules,
-          guidancePack: compiled.text,
-          promptPreview: renderGuidancePromptPreview(role, compiled.text),
-        };
-      }),
-    );
-    return { packs };
+    const compiled = await ctx.roleGuidance.compileRoleContext(role, {
+      projectKey,
+      maxCharacters: settings.budgets.guidanceTokens * 4,
+    });
+    const document = await ctx.roleGuidance.read(role, projectKey);
+    return {
+      ...document,
+      roleRules: [...roleRulesFor(role)],
+      contract: outputContractFor(role),
+      promptPreview: compiled.text,
+      truncated: compiled.truncated,
+    };
+  }
+  if (method === "PUT" && guidanceRole) {
+    const role = decodeURIComponent(guidanceRole[1]!);
+    const input = (body ?? {}) as { body?: string; projectKey?: string };
+    const projectKey = String(input.projectKey ?? "").trim() || undefined;
+    return ctx.roleGuidance.writeOverride(role, String(input.body ?? ""), projectKey);
+  }
+  if (method === "DELETE" && guidanceRole) {
+    const role = decodeURIComponent(guidanceRole[1]!);
+    const projectKey = url.searchParams.get("projectKey")?.trim() || undefined;
+    return ctx.roleGuidance.resetOverride(role, projectKey);
   }
   const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)(?:\/([^/]+))?$/);
   if (method === "GET" && runMatch && !runMatch[2]) {
@@ -212,7 +214,7 @@ export function dashboardPlugin(ctx: Context, config: DashboardConfig = {}): voi
   ctx.provide("dashboard", createDashboardService(ctx, config));
 }
 
-Object.assign(dashboardPlugin, { inject: ["runLifecycle", "git", "knowledge", "settings"] });
+Object.assign(dashboardPlugin, { inject: ["runLifecycle", "git", "roleGuidance", "settings"] });
 
 export function dashboardRow(config: DashboardConfig = {}): ProfileRow {
   return {

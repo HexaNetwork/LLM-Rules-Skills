@@ -18,6 +18,7 @@ export const HOST_SERVICE_NAMES = [
   "git",
   "sandbox",
   "knowledge",
+  "roleGuidance",
   "commands",
   "runLifecycle",
 ] as const;

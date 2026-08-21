@@ -22,6 +22,7 @@ import { agentsPlugin, type AgentsConfig } from "./agents.js";
 import { gitPlugin } from "./git.js";
 import { sandboxPlugin, type SandboxConfig } from "./sandbox.js";
 import { knowledgePlugin } from "./knowledge.js";
+import { roleGuidancePlugin } from "./role-guidance.js";
 import { commandsPlugin } from "./commands.js";
 import { runLifecyclePlugin } from "./run-lifecycle.js";
 import type { WorkflowBundle } from "../domain/types.js";
@@ -60,6 +61,12 @@ export function hostRuntimeRows(options: RuntimeOptions = {}): ProfileRow[] {
       trusted: true,
     },
     { id: "host.knowledge", plugin: knowledgePlugin, provides: ["knowledge"], trusted: true },
+    {
+      id: "host.roleGuidance",
+      plugin: roleGuidancePlugin,
+      provides: ["roleGuidance"],
+      trusted: true,
+    },
     { id: "host.commands", plugin: commandsPlugin, provides: ["commands"], trusted: true },
     phaseRow("reflect", createReflectPhase),
     phaseRow("grill", createGrillPhase),
@@ -94,6 +101,7 @@ export function hostRuntimeRows(options: RuntimeOptions = {}): ProfileRow[] {
 const PHASE_INJECT = [
   "phases",
   "knowledge",
+  "roleGuidance",
   "packets",
   "agents",
   "git",

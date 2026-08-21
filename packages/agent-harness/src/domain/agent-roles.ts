@@ -142,6 +142,30 @@ export function roleRulesFor(role: string): readonly string[] {
   return [];
 }
 
+/** Role-specific JSON output contracts appended to each worker's context. */
+export const ROLE_OUTPUT_CONTRACTS: Record<AgentRole, string> = {
+  reflector:
+    "{proposedTitle:string,summary:string,restatement:string,goal:string,users:[string],inScope:[string],outOfScope:[string],assumptions:[string],unknowns:[string]}",
+  griller:
+    '{questions:[{id:string,prompt:string,kind:"text"|"choice"|"confirm",choices?:[string],recommended?:string}],unknowns:[string]}',
+  "docs-writer":
+    "glossary phase: {glossary:[{term:string,definition:string}]}; prd phase: {title:string,body:string}",
+  planner: "{plan:string}",
+  "scenario-planner": "{scenarios:[{id:string,title:string,steps:[string]}]}",
+  "issue-slicer": "{tasks:[{id:string,title:string,description:string}]}",
+  implementer: "{summary:string,files:[string],note?:string}",
+  "task-reviewer": '{verdict:"approve"|"reject",summary:string}',
+  reviewer: '{verdict:"approve"|"reject",summary:string}',
+  fixer: "{summary:string,passed:boolean}",
+  "message-writer": "{title:string,body:string}",
+  "project-profiler": "{command:string,testGlobs:[string]}",
+};
+
+export function outputContractFor(role: string): string | undefined {
+  if (role in ROLE_OUTPUT_CONTRACTS) return ROLE_OUTPUT_CONTRACTS[role as AgentRole];
+  return undefined;
+}
+
 export function assignmentFor(
   assignments: RoleAssignments,
   role: string,
@@ -156,5 +180,17 @@ export function renderGuidancePromptPreview(role: string, guidancePack: string):
     `You are the ${role} worker in a deterministic software-delivery harness.`,
     ...roleRulesFor(role).map((rule) => `- ${rule}`),
     ...(pack ? ["", "GUIDANCE", pack] : []),
+  ].join("\n");
+}
+
+/** Full worker context: role identity/rules, output contract, then the editable guidance body. */
+export function renderRoleContext(role: string, guidanceBody: string): string {
+  const contract = outputContractFor(role);
+  const body = guidanceBody.trim();
+  return [
+    `You are the ${role} worker in a deterministic software-delivery harness.`,
+    ...roleRulesFor(role).map((rule) => `- ${rule}`),
+    ...(contract ? ["", "EXPECTED OUTPUT", contract] : []),
+    ...(body ? ["", "GUIDANCE", body] : []),
   ].join("\n");
 }

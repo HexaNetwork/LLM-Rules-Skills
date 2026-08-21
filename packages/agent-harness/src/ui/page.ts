@@ -225,6 +225,21 @@ export function renderDashboardPage(): string {
     .guidance-warnings { margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--attention-line); background: var(--attention-soft); color: #f0c48a; font-size: 12px; }
     .guidance-section { margin-top: 18px; }
     .guidance-section h2 { margin: 0 0 8px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+    .guidance-source { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+    .guidance-role.active .guidance-source { color: var(--accent); }
+    #guidance-editor {
+      width: 100%; min-height: 320px; resize: vertical;
+      background: var(--field); color: var(--ink); border: 1px solid var(--line-strong);
+      border-radius: 8px; padding: 12px 14px; font-family: "Cascadia Code", Consolas, monospace;
+      font-size: 12.5px; line-height: 1.55;
+    }
+    #guidance-editor:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+    .guidance-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .guidance-scope-label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+    .guidance-scope-label select {
+      background: var(--field); color: var(--ink); border: 1px solid var(--line-strong);
+      border-radius: 6px; padding: 6px 8px;
+    }
     .guidance-section pre, .guidance-preview pre {
       margin: 0; padding: 12px; border: 1px solid var(--line); background: rgba(0,0,0,.28);
       font: 12px/1.55 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
@@ -306,7 +321,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, view: "empty", compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidancePacks: [], guidanceRole: null };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, view: "empty", compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home" };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -456,56 +471,98 @@ export function renderDashboardPage(): string {
       renderRuns();
       renderCompose();
     }
+    function guidanceSourceLabel(source) {
+      if (source === "project") return "project override";
+      if (source === "home") return "home override";
+      return "packaged";
+    }
     function renderGuidanceRoles() {
-      const packs = app.guidancePacks || [];
+      const roles = app.guidanceRoles || [];
       const host = el("guidanceRoles");
       if (!host) return;
-      host.innerHTML = packs.length
-        ? packs.map((pack) => {
-            const active = pack.role === app.guidanceRole ? " active" : "";
-            return '<button type="button" class="guidance-role' + active + '" data-guidance-role="' + esc(pack.role) + '">' + esc(pack.role) + '</button>';
+      host.innerHTML = roles.length
+        ? roles.map((entry) => {
+            const active = entry.role === app.guidanceRole ? " active" : "";
+            return '<button type="button" class="guidance-role' + active + '" data-guidance-role="' + esc(entry.role) + '">' +
+              '<span>' + esc(entry.role) + '</span><span class="guidance-source">' + esc(guidanceSourceLabel(entry.source)) + '</span></button>';
           }).join("")
         : '<div class="empty-inline">No roles configured.</div>';
     }
     function renderGuidanceDetail() {
       const host = el("guidanceDetail");
       if (!host) return;
-      const pack = (app.guidancePacks || []).find((item) => item.role === app.guidanceRole);
-      if (!pack) {
-        host.innerHTML = '<div class="empty-inline">Select a role to inspect its context.</div>';
+      const doc = app.guidanceDoc;
+      if (!doc || doc.role !== app.guidanceRole) {
+        host.innerHTML = '<div class="empty-inline">Select a role to edit its guidance.</div>';
         return;
       }
-      const assignment = pack.assignment || { rules: [], skills: [] };
-      const assignmentNames = []
-        .concat((assignment.rules || []).map((name) => "rule:" + name))
-        .concat((assignment.skills || []).map((name) => "skill:" + name));
-      const warnings = [];
-      (pack.missingAssignments || []).forEach((item) => {
-        warnings.push("Missing " + item.kind + " '" + item.name + "': " + item.reason);
-      });
-      if (pack.truncated) {
-        warnings.push("Pack truncated from " + pack.truncated.before + " to " + pack.truncated.after + " characters.");
-      }
+      const scopeOptions =
+        '<option value="home"' + (app.guidanceScope === "home" ? " selected" : "") + '>Harness home</option>' +
+        (app.compose.projectKey
+          ? '<option value="project"' + (app.guidanceScope === "project" ? " selected" : "") + '>Selected project</option>'
+          : "");
       host.innerHTML =
-        '<div class="panel-title"><h3>' + esc(pack.role) + '</h3><span class="count">' + esc(String((pack.sources || []).length)) + ' source(s)</span></div>' +
+        '<div class="panel-title"><h3>' + esc(doc.role) + '</h3><span class="count">' + esc(guidanceSourceLabel(doc.source)) + '</span></div>' +
         '<div class="guidance-meta">' +
-          '<div><div class="eyebrow">Assignment</div><div class="faint">' + (assignmentNames.length ? esc(assignmentNames.join(", ")) : "none") + '</div></div>' +
-          '<div><div class="eyebrow">Resolved sources</div><div class="faint">' + ((pack.sources || []).length ? esc((pack.sources || []).join(", ")) : "none") + '</div></div>' +
+          '<div><div class="eyebrow">Effective source</div><div class="faint">' + esc(doc.path || "") + '</div></div>' +
+          '<div><div class="eyebrow">Overrides</div><div class="faint">' +
+            (doc.hasHomeOverride ? "home override present" : "no home override") + " · " +
+            (doc.hasProjectOverride ? "project override present" : "no project override") + '</div></div>' +
         '</div>' +
-        (warnings.length ? '<div class="guidance-warnings">' + warnings.map((warning) => '<div>' + esc(warning) + '</div>').join("") + '</div>' : "") +
-        '<div class="guidance-section"><h2>Role rules</h2><pre>' + esc((pack.roleRules || []).map((rule) => "- " + rule).join("\\n") || "(none)") + '</pre></div>' +
-        '<div class="guidance-section"><h2>Guidance pack</h2><pre>' + esc(pack.guidancePack || "(empty)") + '</pre></div>' +
-        '<details class="guidance-preview"><summary>Full prompt preview</summary><pre>' + esc(pack.promptPreview || "") + '</pre></details>';
+        '<div class="guidance-section"><h2>Guidance body</h2>' +
+        '<textarea id="guidance-editor" spellcheck="false">' + esc(doc.body || "") + '</textarea></div>' +
+        '<div class="guidance-actions">' +
+          '<label class="guidance-scope-label">Save to <select id="guidance-scope">' + scopeOptions + '</select></label>' +
+          '<button class="primary" type="button" data-guidance-save>Save override</button>' +
+          '<button class="secondary" type="button" data-guidance-reset>Reset to packaged default</button>' +
+        '</div>' +
+        '<div class="guidance-section"><h2>Role rules</h2><pre>' + esc((doc.roleRules || []).map((rule) => "- " + rule).join("\\n") || "(none)") + '</pre></div>' +
+        (doc.contract ? '<div class="guidance-section"><h2>Expected output</h2><pre>' + esc(doc.contract) + '</pre></div>' : "") +
+        '<details class="guidance-preview"><summary>Full prompt preview</summary><pre>' + esc(doc.promptPreview || "") + '</pre></details>';
     }
-    async function loadGuidancePacks() {
-      const data = await api("/api/guidance/packs" + (app.compose.projectKey ? ("?projectKey=" + encodeURIComponent(app.compose.projectKey)) : ""));
-      app.guidancePacks = data.packs || [];
-      if (!app.guidanceRole && app.guidancePacks.length) app.guidanceRole = app.guidancePacks[0].role;
-      if (app.guidanceRole && !app.guidancePacks.some((pack) => pack.role === app.guidanceRole)) {
-        app.guidanceRole = app.guidancePacks[0] ? app.guidancePacks[0].role : null;
+    function guidanceProjectQuery() {
+      return app.compose.projectKey ? "?projectKey=" + encodeURIComponent(app.compose.projectKey) : "";
+    }
+    async function loadGuidanceRoles() {
+      const data = await api("/api/guidance/roles" + guidanceProjectQuery());
+      app.guidanceRoles = data.roles || [];
+      if (!app.guidanceRole && app.guidanceRoles.length) app.guidanceRole = app.guidanceRoles[0].role;
+      if (app.guidanceRole && !app.guidanceRoles.some((entry) => entry.role === app.guidanceRole)) {
+        app.guidanceRole = app.guidanceRoles[0] ? app.guidanceRoles[0].role : null;
       }
       renderGuidanceRoles();
+      await loadGuidanceRoleDetail();
+    }
+    async function loadGuidanceRoleDetail() {
+      if (!app.guidanceRole) {
+        app.guidanceDoc = null;
+        renderGuidanceDetail();
+        return;
+      }
+      const doc = await api("/api/guidance/roles/" + encodeURIComponent(app.guidanceRole) + guidanceProjectQuery());
+      if (app.guidanceRole !== doc.role) return;
+      app.guidanceDoc = doc;
       renderGuidanceDetail();
+    }
+    async function saveGuidanceOverride() {
+      const editor = el("guidance-editor");
+      if (!editor || !app.guidanceRole) return;
+      const scope = el("guidance-scope") ? el("guidance-scope").value : "home";
+      const projectKey = scope === "project" ? app.compose.projectKey : undefined;
+      await api("/api/guidance/roles/" + encodeURIComponent(app.guidanceRole), {
+        method: "PUT",
+        body: JSON.stringify({ body: editor.value, projectKey }),
+      });
+      toast("Guidance override saved");
+      await loadGuidanceRoles();
+    }
+    async function resetGuidanceOverride() {
+      if (!app.guidanceRole) return;
+      const scope = el("guidance-scope") ? el("guidance-scope").value : "home";
+      const projectKey = scope === "project" ? app.compose.projectKey : "";
+      await api("/api/guidance/roles/" + encodeURIComponent(app.guidanceRole) + (projectKey ? "?projectKey=" + encodeURIComponent(projectKey) : ""), { method: "DELETE" });
+      toast("Guidance reset to packaged default");
+      await loadGuidanceRoles();
     }
     function renderGuidance() {
       app.view = "guidance";
@@ -516,12 +573,12 @@ export function renderDashboardPage(): string {
       document.body.classList.remove("nav-open");
       renderRuns();
       el("detail").innerHTML =
-        '<header class="topbar"><div><div class="eyebrow">Role inspector</div>' +
+        '<header class="topbar"><div><div class="eyebrow">Role guidance editor</div>' +
         '<h2 class="run-heading">Agent contexts</h2>' +
-        '<p class="lede">Exact role rules and assigned skill/rule packs each worker receives — not lexical grab-bag search.</p></div></header>' +
+        '<p class="lede">Dedicated guidance per worker role. Edits save as layered overrides; packaged defaults stay untouched.</p></div></header>' +
         '<div class="guidance-layout"><aside class="panel"><div class="panel-title"><h3>Roles</h3></div><div class="guidance-roles" id="guidanceRoles"><div class="empty-inline">Loading…</div></div></aside>' +
-        '<section class="panel" id="guidanceDetail"><div class="empty-inline">Loading guidance packs…</div></section></div>';
-      void loadGuidancePacks().catch((error) => {
+        '<section class="panel" id="guidanceDetail"><div class="empty-inline">Loading role guidance…</div></section></div>';
+      void loadGuidanceRoles().catch((error) => {
         const roles = el("guidanceRoles");
         const detail = el("guidanceDetail");
         if (roles) roles.innerHTML = '<div class="empty-inline">Unable to load roles.</div>';
@@ -748,7 +805,7 @@ export function renderDashboardPage(): string {
     el("refresh").onclick = () => {
       if (app.busy) return;
       if (app.view === "guidance") {
-        loadGuidancePacks().catch((error) => toast(error.message, true));
+        loadGuidanceRoles().catch((error) => toast(error.message, true));
         return;
       }
       refresh({ force: true }).catch((error) => toast(error.message, true));
@@ -824,6 +881,10 @@ export function renderDashboardPage(): string {
       if (event.target.id === "gate-notes") draft.notes = event.target.value;
     });
     el("detail").addEventListener("change", (event) => {
+      if (event.target.id === "guidance-scope") {
+        app.guidanceScope = event.target.value;
+        return;
+      }
       if (!saveComposeDraft(event.target)) return;
       if (event.target.id === "project") {
         app.compose.baseBranch = "";
@@ -835,7 +896,18 @@ export function renderDashboardPage(): string {
       if (guidanceRole) {
         app.guidanceRole = guidanceRole.dataset.guidanceRole;
         renderGuidanceRoles();
-        renderGuidanceDetail();
+        loadGuidanceRoleDetail().catch((error) => toast(error.message, true));
+        return;
+      }
+      const guidanceSave = event.target.closest("[data-guidance-save]");
+      if (guidanceSave) {
+        saveGuidanceOverride().catch((error) => toast(error.message, true));
+        return;
+      }
+      const guidanceReset = event.target.closest("[data-guidance-reset]");
+      if (guidanceReset) {
+        if (!confirm("Remove this override and restore the packaged default?")) return;
+        resetGuidanceOverride().catch((error) => toast(error.message, true));
         return;
       }
       const composeAction = event.target.closest('[data-action="compose"]');

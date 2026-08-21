@@ -207,7 +207,19 @@ export function renderDashboardPage(): string {
     .count { color: var(--faint); font: 11px "Cascadia Mono", Consolas, monospace; }
     .artifact { padding: 15px 0; border-top: 1px solid var(--line); }
     .artifact:first-child { border-top: 0; padding-top: 0; }
-    .artifact h4 { margin: 0 0 8px; color: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+    .artifact > summary {
+      list-style: none; cursor: pointer; user-select: none;
+      color: var(--accent); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .artifact > summary::-webkit-details-marker { display: none; }
+    .artifact > summary::before {
+      content: ""; flex: 0 0 auto; width: 0; height: 0;
+      border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid var(--accent);
+      opacity: .7; transition: transform .12s ease;
+    }
+    .artifact[open] > summary { margin-bottom: 8px; }
+    .artifact[open] > summary::before { transform: rotate(90deg); }
     .artifact-body { color: #c4c8d0; font-size: 13px; line-height: 1.58; overflow-wrap: anywhere; }
     pre.artifact-body {
       margin: 0; padding: 12px; border: 1px solid var(--line); background: rgba(0, 0, 0, .28);
@@ -353,7 +365,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, view: "empty", runTab: "overview", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home" };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, artifactOpen: {}, view: "empty", runTab: "overview", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home" };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -733,6 +745,9 @@ export function renderDashboardPage(): string {
       }
       return bag;
     }
+    function artifactOpenKey(name) {
+      return (app.selectedId || "") + ":" + name;
+    }
     function renderArtifacts(artifacts) {
       const entries = Object.entries(visibleArtifacts(artifacts));
       const priority = ["reflectBrief","brief","prd","plan","scenario","scenarios","summary","reflect"];
@@ -741,7 +756,7 @@ export function renderDashboardPage(): string {
         return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
       });
       return entries.length ? entries.map(([name, value]) =>
-        '<article class="artifact"><h4>' + esc(words(name)) + '</h4>' + artifactBody(value) + '</article>'
+        '<details class="artifact"' + (app.artifactOpen[artifactOpenKey(name)] ? " open" : "") + ' data-artifact="' + esc(name) + '"><summary>' + esc(words(name)) + '</summary>' + artifactBody(value) + '</details>'
       ).join("") : '<div class="empty-inline">The brief and planning artifacts will appear as phases complete.</div>';
     }
     function renderFog(fog) {
@@ -1066,6 +1081,11 @@ export function renderDashboardPage(): string {
       if (event.target.id === "gate-notes") draft.notes = event.target.value;
       autosizeTextarea(event.target);
     });
+    el("detail").addEventListener("toggle", (event) => {
+      const artifact = event.target.closest && event.target.closest("details.artifact[data-artifact]");
+      if (!artifact || artifact !== event.target) return;
+      app.artifactOpen[artifactOpenKey(artifact.dataset.artifact)] = artifact.open;
+    }, true);
     el("detail").addEventListener("change", (event) => {
       if (event.target.id === "guidance-scope") {
         app.guidanceScope = event.target.value;

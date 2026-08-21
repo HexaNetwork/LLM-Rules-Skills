@@ -74,7 +74,14 @@ export function renderDashboardPage(): string {
     }
     textarea { resize: vertical; min-height: 76px; line-height: 1.45; }
     .reflect-fields { padding: 16px 20px 0; }
-    .reflect-fields textarea { min-height: 52px; }
+    .reflect-fields textarea {
+      min-height: 52px; overflow-y: hidden; resize: none; field-sizing: content;
+    }
+    .reflect-list { display: grid; gap: 8px; margin-top: 6px; }
+    .reflect-list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+    .reflect-list-row input { margin-top: 0; }
+    .reflect-list-row .quiet { min-height: 36px; padding: 7px 10px; }
+    .reflect-list-add { justify-self: start; margin-top: 2px; }
     input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
     .field { margin-top: 11px; }
     .lede { margin: 10px 0 0; max-width: 34rem; color: var(--muted); font-size: 15px; line-height: 1.65; }
@@ -612,27 +619,63 @@ export function renderDashboardPage(): string {
       if (Array.isArray(raw)) return raw.join("\\n");
       return raw == null ? "" : String(raw);
     }
+    function reflectListEntries(value) {
+      const raw = value == null ? "" : String(value);
+      const entries = raw.length ? raw.split(/\\r?\\n/) : [""];
+      return entries.length ? entries : [""];
+    }
+    function reflectListMarkup(fieldId, value) {
+      const entries = reflectListEntries(value);
+      return '<div class="reflect-list" data-reflect-list="' + esc(fieldId) + '">' +
+        entries.map((entry, index) =>
+          '<div class="reflect-list-row">' +
+          '<input type="text" data-reflect-list-item="' + esc(fieldId) + '" data-index="' + index + '" value="' + esc(entry) + '" placeholder="One entry">' +
+          '<button type="button" class="quiet" data-reflect-list-remove="' + esc(fieldId) + '" data-index="' + index + '"' + (entries.length <= 1 ? " disabled" : "") + '>Remove</button>' +
+          '</div>'
+        ).join("") +
+        '<button type="button" class="secondary reflect-list-add" data-reflect-list-add="' + esc(fieldId) + '">Add entry</button></div>';
+    }
+    function syncReflectListAnswers(fieldId, draft) {
+      const inputs = Array.from(document.querySelectorAll('[data-reflect-list-item="' + CSS.escape(fieldId) + '"]'));
+      draft.answers[fieldId] = inputs.map((input) => input.value).join("\\n");
+    }
+    function replaceReflectList(fieldId, draft) {
+      const host = document.querySelector('[data-reflect-list="' + CSS.escape(fieldId) + '"]');
+      if (!host) return;
+      host.outerHTML = reflectListMarkup(fieldId, draft.answers[fieldId] || "");
+    }
+    function autosizeTextarea(node) {
+      if (!node || node.tagName !== "TEXTAREA") return;
+      node.style.height = "auto";
+      node.style.height = Math.max(node.scrollHeight, 52) + "px";
+    }
+    function autosizeReflectFields() {
+      document.querySelectorAll(".reflect-fields textarea, #gate-notes").forEach(autosizeTextarea);
+    }
     function renderReflectGate(run, gate, draft) {
       const reflect = run.state.artifacts && run.state.artifacts.reflect && typeof run.state.artifacts.reflect === "object" ? run.state.artifacts.reflect : {};
       const fields = [
         { id: "proposedTitle", label: "Feature title", single: true },
         { id: "restatement", label: "Restatement" },
         { id: "goal", label: "Goal" },
-        { id: "users", label: "Users" },
-        { id: "inScope", label: "In scope" },
-        { id: "outOfScope", label: "Out of scope" },
-        { id: "assumptions", label: "Assumptions" },
-        { id: "unknowns", label: "Unknowns" }
+        { id: "users", label: "Users", list: true },
+        { id: "inScope", label: "In scope", list: true },
+        { id: "outOfScope", label: "Out of scope", list: true },
+        { id: "assumptions", label: "Assumptions", list: true },
+        { id: "unknowns", label: "Unknowns", list: true }
       ];
       fields.forEach((field) => {
         if (draft.answers[field.id] == null) draft.answers[field.id] = reflectFieldValue(reflect, draft, field.id);
       });
       return '<section class="gate"><header class="gate-head"><div class="eyebrow">Operator input required</div><h3>' + esc(gate.title) + '</h3></header>' +
-        '<form class="reflect-fields" id="reflectFields">' + fields.map((field) =>
-          '<div class="field"><label>' + esc(field.label) + (field.single
+        '<form class="reflect-fields" id="reflectFields">' + fields.map((field) => {
+          if (field.list) {
+            return '<div class="field"><label>' + esc(field.label) + '</label>' + reflectListMarkup(field.id, draft.answers[field.id] || "") + '</div>';
+          }
+          return '<div class="field"><label>' + esc(field.label) + (field.single
             ? '<input type="text" data-reflect-field="' + esc(field.id) + '" data-answer="' + esc(field.id) + '" value="' + esc(draft.answers[field.id] || "") + '" placeholder="Short imperative run label">'
-            : '<textarea data-reflect-field="' + esc(field.id) + '" data-answer="' + esc(field.id) + '">' + esc(draft.answers[field.id] || "") + '</textarea>') + '</label></div>'
-        ).join("") + '</form><div class="gate-footer"><label>Batch notes<textarea id="gate-notes" placeholder="Context that applies to the whole batch">' + esc(draft.notes || "") + '</textarea></label>' +
+            : '<textarea data-reflect-field="' + esc(field.id) + '" data-answer="' + esc(field.id) + '" rows="1">' + esc(draft.answers[field.id] || "") + '</textarea>') + '</label></div>';
+        }).join("") + '</form><div class="gate-footer"><label>Batch notes<textarea id="gate-notes" rows="1" placeholder="Context that applies to the whole batch">' + esc(draft.notes || "") + '</textarea></label>' +
         '<button class="primary" type="button" data-action="answer">Confirm brief</button></div></section>';
     }
     function renderGate(run) {
@@ -721,6 +764,7 @@ export function renderDashboardPage(): string {
         '<br><br><strong>Base branch</strong><br>' + esc(run.identity.baseBranch || "none") +
         '<br><br><strong>Current branch</strong><br>' + esc(run.state.branchName || "none") +
         '<br><br><strong>Worktree</strong><br>' + esc(run.identity.worktreePath) + '</div></section></aside></div>';
+      autosizeReflectFields();
     }
     async function loadProjects() {
       app.projects = await api("/api/projects");
@@ -876,9 +920,13 @@ export function renderDashboardPage(): string {
       if (!app.selectedId || !app.run || !app.run.state.gate) return;
       const draft = app.drafts[app.selectedId] || { answers: {}, parked: {}, notes: "" };
       app.drafts[app.selectedId] = draft;
+      if (event.target.dataset.reflectListItem) {
+        syncReflectListAnswers(event.target.dataset.reflectListItem, draft);
+      }
       if (event.target.dataset.answer) draft.answers[event.target.dataset.answer] = event.target.value;
       if (event.target.dataset.park) draft.parked[event.target.dataset.park] = event.target.checked;
       if (event.target.id === "gate-notes") draft.notes = event.target.value;
+      autosizeTextarea(event.target);
     });
     el("detail").addEventListener("change", (event) => {
       if (event.target.id === "guidance-scope") {
@@ -923,12 +971,47 @@ export function renderDashboardPage(): string {
         document.querySelectorAll('[data-choice="' + CSS.escape(choice.dataset.choice) + '"]').forEach((node) => node.classList.toggle("selected", node === choice));
         return;
       }
+      const listAdd = event.target.closest("[data-reflect-list-add]");
+      if (listAdd && app.selectedId) {
+        const fieldId = listAdd.dataset.reflectListAdd;
+        const draft = app.drafts[app.selectedId] || { answers: {}, parked: {}, notes: "" };
+        app.drafts[app.selectedId] = draft;
+        syncReflectListAnswers(fieldId, draft);
+        const entries = reflectListEntries(draft.answers[fieldId] || "");
+        entries.push("");
+        draft.answers[fieldId] = entries.join("\\n");
+        replaceReflectList(fieldId, draft);
+        const inputs = document.querySelectorAll('[data-reflect-list-item="' + CSS.escape(fieldId) + '"]');
+        const last = inputs[inputs.length - 1];
+        if (last) last.focus();
+        return;
+      }
+      const listRemove = event.target.closest("[data-reflect-list-remove]");
+      if (listRemove && app.selectedId && !listRemove.disabled) {
+        const fieldId = listRemove.dataset.reflectListRemove;
+        const index = Number(listRemove.dataset.index);
+        const draft = app.drafts[app.selectedId] || { answers: {}, parked: {}, notes: "" };
+        app.drafts[app.selectedId] = draft;
+        syncReflectListAnswers(fieldId, draft);
+        const entries = reflectListEntries(draft.answers[fieldId] || "");
+        if (entries.length <= 1) {
+          draft.answers[fieldId] = "";
+        } else {
+          entries.splice(index, 1);
+          draft.answers[fieldId] = entries.join("\\n");
+        }
+        replaceReflectList(fieldId, draft);
+        return;
+      }
       const action = event.target.closest("[data-action]");
       if (!action || action.disabled || app.busy) return;
       if (action.dataset.action === "cancel" && !confirm("Cancel this run and destroy its sandbox?")) return;
       if (action.dataset.action === "delete" && !confirm("Permanently delete this run, its sandbox, worktree, and stored artifacts?")) return;
       if (action.dataset.action === "answer") {
         const draft = app.drafts[app.selectedId] || { answers: {}, parked: {}, notes: "" };
+        document.querySelectorAll("[data-reflect-list]").forEach((node) => {
+          syncReflectListAnswers(node.dataset.reflectList, draft);
+        });
         const parked = Object.keys(draft.parked).filter((key) => draft.parked[key]);
         mutate("answer", { answers: draft.answers, parked, notes: draft.notes });
         return;

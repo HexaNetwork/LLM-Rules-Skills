@@ -142,6 +142,10 @@ describe("dashboard reflector editor", () => {
     const html = renderDashboardPage();
     expect(html).toContain("reflect.proposedTitle");
     expect(html).toContain("data-reflect-field");
+    expect(html).toContain("data-reflect-list-add");
+    expect(html).toContain("data-reflect-list-item");
+    expect(html).toContain("data-reflect-list-remove");
+    expect(html).toContain("autosizeReflectFields");
   });
 
   it("embeds a parseable script (no template-literal newline escapes)", () => {
@@ -150,5 +154,7 @@ describe("dashboard reflector editor", () => {
     expect(script).toBeTruthy();
     expect(() => new Function(script!)).not.toThrow();
     expect(script).toContain('raw.join("\\n")');
+    expect(script).toContain("reflectListEntries");
+    expect(html).toContain("field-sizing: content");
   });
 });

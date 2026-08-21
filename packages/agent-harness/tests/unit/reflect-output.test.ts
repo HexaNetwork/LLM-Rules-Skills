@@ -157,4 +157,12 @@ describe("dashboard reflector editor", () => {
     expect(script).toContain("reflectListEntries");
     expect(html).toContain("field-sizing: content");
   });
+
+  it("shows structured reflect until confirmed, then the formatted brief only", () => {
+    const html = renderDashboardPage();
+    const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1] ?? "";
+    expect(script).toContain("function visibleArtifacts");
+    expect(script).toContain('bag.reflectBrief = brief.confirmed');
+    expect(script).toContain("delete bag.reflect");
+  });
 });

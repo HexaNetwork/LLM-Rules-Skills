@@ -696,9 +696,21 @@ export function renderDashboardPage(): string {
       if (typeof value === "string") return '<div class="artifact-body">' + esc(value).replace(/\\n/g, "<br>") + '</div>';
       return '<pre class="artifact-body">' + esc(JSON.stringify(value, null, 2)) + '</pre>';
     }
+    function visibleArtifacts(artifacts) {
+      const bag = Object.assign({}, artifacts || {});
+      const brief = bag.reflectBrief && typeof bag.reflectBrief === "object" ? bag.reflectBrief : null;
+      const confirmed = brief && typeof brief.confirmed === "string" ? brief.confirmed.trim() : "";
+      if (confirmed) {
+        delete bag.reflect;
+        bag.reflectBrief = brief.confirmed;
+      } else {
+        delete bag.reflectBrief;
+      }
+      return bag;
+    }
     function renderArtifacts(artifacts) {
-      const entries = Object.entries(artifacts || {});
-      const priority = ["brief","prd","plan","scenario","scenarios","summary"];
+      const entries = Object.entries(visibleArtifacts(artifacts));
+      const priority = ["reflectBrief","brief","prd","plan","scenario","scenarios","summary","reflect"];
       entries.sort((a, b) => {
         const ai = priority.indexOf(a[0]); const bi = priority.indexOf(b[0]);
         return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
@@ -754,7 +766,7 @@ export function renderDashboardPage(): string {
         '<nav class="phase-track" aria-label="Run phases">' + renderPhases(run) + '</nav>' +
         (run.state.block ? '<div class="block"><strong>Run blocked.</strong> ' + esc(run.state.block.reason) + '</div>' : '') +
         renderGate(run) +
-        '<div class="content-grid"><div class="stack"><section class="panel"><div class="panel-title"><h3>Brief & evidence</h3><span class="count">' + Object.keys(run.state.artifacts || {}).length + ' artifacts</span></div>' +
+        '<div class="content-grid"><div class="stack"><section class="panel"><div class="panel-title"><h3>Brief & evidence</h3><span class="count">' + Object.keys(visibleArtifacts(run.state.artifacts)).length + ' artifacts</span></div>' +
         renderArtifacts(run.state.artifacts) + '</section><section class="panel"><div class="panel-title"><h3>Tasks</h3><span class="count">' + run.state.tasks.length + '</span></div>' +
         renderTasks(run.state.tasks) + '</section></div><aside class="stack"><section class="panel"><div class="panel-title"><h3>Unknowns & fog</h3><span class="count">' + run.state.fog.length + '</span></div>' +
         renderFog(run.state.fog) + '</section><section class="panel"><div class="panel-title"><h3>Recent activity</h3><span class="count">' + app.activity.length + ' events</span></div>' +

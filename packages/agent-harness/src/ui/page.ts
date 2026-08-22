@@ -152,8 +152,7 @@ export function renderDashboardPage(): string {
     .status.completed::before { background: var(--accent); }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .phase-track {
-      display: flex; gap: 0; overflow-x: auto; margin: 0 0 24px; padding: 0 0 12px;
-      border-bottom: 1px solid var(--line);
+      display: flex; gap: 0; overflow-x: auto; margin: 0 0 8px; padding: 0 0 12px;
     }
     .phase-step { display: flex; align-items: center; flex: 0 0 auto; color: var(--faint); font-size: 11px; }
     .phase-step::after { content: ""; width: 22px; height: 1px; margin: 0 8px; background: var(--line-strong); }
@@ -180,13 +179,19 @@ export function renderDashboardPage(): string {
     .choice.selected { border-color: var(--attention); background: var(--attention-soft); color: #f0c48a; }
     .gate-footer { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 14px; padding: 0 20px 20px; }
     .gate-footer textarea { min-height: 52px; }
-    .batch-card .gate-head { margin-bottom: 0; }
-    .keyboard-hint { margin: 0 20px 14px; color: var(--faint); font-size: 12px; }
-    .batch-question {
-      border: 1px solid var(--line-strong); border-radius: 11px; background: rgba(15, 17, 21, .55);
-      padding: 14px 15px; margin: 0 20px 12px;
+    .batch-card {
+      border: 0; border-left: 3px solid var(--attention); background: transparent; box-shadow: none;
     }
-    .batch-question:focus { outline: 2px solid var(--attention); outline-offset: 2px; }
+    .batch-card .gate-head { margin-bottom: 0; padding: 4px 20px 14px; border-bottom: 0; }
+    .keyboard-hint {
+      margin: 0 20px; padding: 0 0 14px; border-bottom: 1px solid var(--attention-line);
+      color: var(--faint); font-size: 12px;
+    }
+    .batch-question {
+      border: 0; border-bottom: 1px solid var(--attention-line); border-radius: 0; background: transparent;
+      padding: 20px 0; margin: 0 20px;
+    }
+    .batch-question:focus { outline: 2px solid var(--attention); outline-offset: 6px; }
     .batch-question.parked { opacity: .55; }
     .batch-question.clarifying { opacity: 1; }
     .batch-question .item-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
@@ -198,17 +203,20 @@ export function renderDashboardPage(): string {
     .batch-question .tag.hitl { color: var(--attention); border-color: var(--attention-line); }
     .batch-question .prompt { margin: 10px 0 6px; color: var(--ink); font-size: 16px; line-height: 1.4; letter-spacing: -.01em; }
     .question-context { color: var(--muted); max-width: 850px; margin: 0 0 14px; font-size: 13px; line-height: 1.5; }
-    .question-options { display: grid; grid-template-columns: 1fr; gap: 9px; margin: 0 0 14px; }
-    .question-option {
-      position: relative; display: block; width: 100%; min-height: 72px; text-align: left;
-      border: 1px solid var(--line-strong); border-radius: 10px; background: var(--field);
-      color: var(--ink); padding: 13px 14px;
+    .question-options {
+      display: grid; grid-template-columns: 1fr; gap: 0; margin: 0 0 14px;
+      border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong);
     }
-    .question-option:hover { border-color: var(--attention); background: var(--attention-soft); }
-    .question-option.recommended { border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong)); }
+    .question-option {
+      position: relative; display: block; width: 100%; min-height: 64px; text-align: left;
+      border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent;
+      color: var(--ink); padding: 12px 14px;
+    }
+    .question-option:last-child { border-bottom: 0; }
+    .question-option:hover { background: rgba(233, 162, 74, .08); }
+    .question-option.recommended { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
     .question-option.selected {
-      border-color: var(--accent); background: var(--accent-soft);
-      box-shadow: 0 0 0 2px var(--accent-ring) inset;
+      background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent);
     }
     .question-option strong { display: block; padding-right: 88px; }
     .question-option small { display: block; color: var(--muted); margin-top: 5px; line-height: 1.4; }
@@ -217,8 +225,8 @@ export function renderDashboardPage(): string {
       font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
     }
     .recommendation {
-      border-left: 2px solid var(--accent); background: var(--accent-soft); color: #dce9c3;
-      padding: 9px 12px; margin: 0 0 14px; font-size: 13px; line-height: 1.45;
+      border-left: 2px solid var(--accent); background: transparent; color: #dce9c3;
+      padding: 4px 0 4px 12px; margin: 0 0 14px; font-size: 13px; line-height: 1.45;
     }
     .recommendation strong { margin-right: 5px; }
     .batch-question textarea { min-height: 64px; margin-top: 8px; }
@@ -226,8 +234,8 @@ export function renderDashboardPage(): string {
     .batch-clarify-box textarea { min-height: 72px; }
     .batch-question-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
     .batch-footer {
-      position: sticky; bottom: 0; margin: 14px 0 0; padding: 12px 20px 18px;
-      background: linear-gradient(180deg, transparent, #1c1812 18%);
+      position: sticky; bottom: 0; margin: 0; padding: 14px 20px;
+      background: color-mix(in srgb, var(--paper) 94%, transparent); backdrop-filter: blur(10px);
       border-top: 1px solid var(--attention-line); display: flex; align-items: center;
       justify-content: space-between; gap: 12px; flex-wrap: wrap;
     }
@@ -1233,9 +1241,9 @@ export function renderDashboardPage(): string {
         '<button class="danger" data-action="cancel" type="button"' + (busyLocked || terminal ? ' disabled' : '') + '>Cancel</button>' +
         '<button class="danger' + (deleting ? ' busy-pulse' : '') + '" data-action="delete" type="button"' + (busyLocked ? ' disabled' : '') + '>' + (deleting ? 'Deleting…' : 'Delete') + '</button></div></header>' +
         '<nav class="phase-track" aria-label="Run phases">' + renderPhases(run) + '</nav>' +
+        renderRunTabs(run) +
         (run.state.block ? '<div class="block"><strong>Run blocked.</strong> ' + esc(run.state.block.reason) + '</div>' : '') +
         renderGate(run) +
-        renderRunTabs(run) +
         renderTabContent(run);
       autosizeReflectFields();
       if (app.runTab === "docker") maybeLoadSandbox(run);

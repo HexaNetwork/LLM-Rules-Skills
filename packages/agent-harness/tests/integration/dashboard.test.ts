@@ -82,6 +82,19 @@ describe("dashboard as runLifecycle client", () => {
         { method: "POST", body: JSON.stringify({ answers: { restatement: "yes" } }) },
       );
       expect(answered.state.phase).toBe("grill");
+      const lifecycleDelete = host.ctx.runLifecycle.delete.bind(host.ctx.runLifecycle);
+      let releaseCleanup!: () => void;
+      const cleanupGate = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+      let finishCleanup!: () => void;
+      const cleanupFinished = new Promise<void>((resolve) => { finishCleanup = resolve; });
+      host.ctx.runLifecycle.delete = async (runId) => {
+        try {
+          await cleanupGate;
+          return await lifecycleDelete(runId);
+        } finally {
+          finishCleanup();
+        }
+      };
       const deleted = await fetchJson(
         new URL(`/api/runs/${started.identity.runId}/delete`, url),
         token,
@@ -90,6 +103,9 @@ describe("dashboard as runLifecycle client", () => {
       expect(deleted).toEqual({ deleted: started.identity.runId });
       const remaining = await fetchJson(new URL("/api/runs", url), token, {});
       expect(remaining.find((run: { identity: { runId: string } }) => run.identity.runId === started.identity.runId)).toBeUndefined();
+      expect(await host.ctx.store.readIdentity(started.identity.runId)).toBeTruthy();
+      releaseCleanup();
+      await cleanupFinished;
     } finally {
       await host.ctx.dashboard?.stop();
       await host.dispose();
@@ -123,8 +139,7 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain("question-option");
       expect(html).toContain("Chart a new run");
       expect(html).toContain('data-action="delete"');
-      expect(html).toContain("Deleting run…");
-      expect(html).toContain("Deleting…");
+      expect(html).toContain("Run removed; cleanup is continuing in the background");
       expect(html).toContain("Starting wayfinding…");
       expect(html).toContain("Starting…");
       expect(html).toContain("Submitting answers… continuing the run");

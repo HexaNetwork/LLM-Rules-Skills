@@ -1320,9 +1320,30 @@ export function renderDashboardPage(): string {
     async function mutate(action, payload) {
       if (!app.selectedId || app.busy) return;
       const runId = app.selectedId;
-      const pending = action === "delete"
-        ? { action: "delete", runId, message: "Deleting run… removing sandbox, worktree, and artifacts", label: "Deleting…" }
-        : action === "cancel"
+      if (action === "delete") {
+        const request = api("/api/runs/" + encodeURIComponent(runId) + "/delete", { method: "POST", body: "{}" });
+        app.runs = app.runs.filter((run) => run.identity.runId !== runId);
+        delete app.drafts[runId];
+        delete app.sandbox[runId];
+        app.selectedId = null;
+        app.run = null;
+        app.activity = [];
+        app.sessions = [];
+        app.signature = "";
+        renderRuns();
+        const next = app.runs[0];
+        if (next) await openRun(next.identity.runId, true);
+        else renderEmpty();
+        try {
+          await request;
+          toast("Run removed; cleanup is continuing in the background");
+        } catch (error) {
+          await refresh({ selectFirst: true, force: true });
+          toast(error.message, true);
+        }
+        return;
+      }
+      const pending = action === "cancel"
           ? { action: "cancel", runId, message: "Cancelling run…", label: "Cancelling…" }
           : action === "answer"
             ? { action: "answer", runId, message: "Submitting answers… continuing the run", label: "Submitting…" }
@@ -1340,19 +1361,6 @@ export function renderDashboardPage(): string {
         }
         await api("/api/runs/" + encodeURIComponent(runId) + "/" + action, { method: "POST", body: JSON.stringify(payload || {}) });
         if (action === "answer") delete app.drafts[runId];
-        if (action === "delete") {
-          delete app.drafts[runId];
-          delete app.sandbox[runId];
-          clearActionBusy();
-          app.selectedId = null;
-          app.run = null;
-          app.activity = [];
-          app.sessions = [];
-          app.signature = "";
-          await refresh({ selectFirst: true, force: true });
-          toast("Run deleted");
-          return;
-        }
         clearActionBusy();
         await refresh({ force: true });
         if (action === "answer" || action === "continue" || action === "retry") focusRunChrome();

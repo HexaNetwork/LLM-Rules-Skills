@@ -3,6 +3,7 @@ import {
   REFLECT_EXPECTED_OUTPUT,
   REFLECT_ROLE_RULES,
   ReflectOutputSchema,
+  coerceReflectOutput,
   formatReflectRestatement,
 } from "../../src/domain/reflect.js";
 import { renderDashboardPage } from "../../src/ui/page.js";
@@ -58,6 +59,43 @@ describe("ReflectOutputSchema", () => {
         unknowns: [],
       }),
     ).toThrow();
+  });
+});
+
+describe("coerceReflectOutput", () => {
+  it("accepts a complete structured reflector payload", () => {
+    expect(coerceReflectOutput(sample)).toEqual(sample);
+  });
+
+  it("does not fall back to the idea or a prose text field", () => {
+    expect(() => coerceReflectOutput({ text: "Add a health check" })).toThrow(/missing or invalid fields/i);
+    expect(() => coerceReflectOutput({})).toThrow(/missing or invalid fields/i);
+    expect(() => coerceReflectOutput("Add a health check")).toThrow(/must be a JSON object/i);
+    expect(() =>
+      coerceReflectOutput({
+        restatement: "Only a restatement",
+        users: [],
+        inScope: [],
+        outOfScope: [],
+        assumptions: [],
+        unknowns: [],
+      }),
+    ).toThrow(/missing or invalid fields/i);
+  });
+
+  it("still allows title as an alias for proposedTitle", () => {
+    const parsed = coerceReflectOutput({
+      title: "Alias title",
+      summary: "Summary",
+      restatement: "Restatement",
+      goal: "Goal",
+      users: [],
+      inScope: [],
+      outOfScope: [],
+      assumptions: [],
+      unknowns: [],
+    });
+    expect(parsed.proposedTitle).toBe("Alias title");
   });
 });
 

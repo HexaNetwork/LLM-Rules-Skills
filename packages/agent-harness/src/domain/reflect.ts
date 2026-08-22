@@ -50,23 +50,31 @@ export function formatReflectRestatement(output: ReflectOutput): string {
   ].join("\n");
 }
 
-export function coerceReflectOutput(raw: unknown, idea: string): ReflectOutput {
+export function coerceReflectOutput(raw: unknown): ReflectOutput {
   const record = asRecord(raw);
-  const restatement = firstText(record.restatement, record.text, idea) || idea;
-  const summary = firstText(record.summary, restatement) || restatement;
-  const goal = firstText(record.goal, restatement) || restatement;
+  if (!record) {
+    throw new Error("Reflector output must be a JSON object");
+  }
   const proposedTitle = firstText(record.proposedTitle, record.title);
-  return ReflectOutputSchema.parse({
-    ...(proposedTitle ? { proposedTitle } : {}),
-    summary,
-    restatement,
-    goal,
-    users: asStringArray(record.users),
-    inScope: asStringArray(record.inScope),
-    outOfScope: asStringArray(record.outOfScope),
-    assumptions: asStringArray(record.assumptions),
-    unknowns: asStringArray(record.unknowns),
-  });
+  try {
+    return ReflectOutputSchema.parse({
+      ...(proposedTitle ? { proposedTitle } : {}),
+      summary: firstText(record.summary),
+      restatement: firstText(record.restatement),
+      goal: firstText(record.goal),
+      users: asStringArray(record.users),
+      inScope: asStringArray(record.inScope),
+      outOfScope: asStringArray(record.outOfScope),
+      assumptions: asStringArray(record.assumptions),
+      unknowns: asStringArray(record.unknowns),
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const detail = error.issues.map((issue) => issue.path.join(".") || "root").join(", ");
+      throw new Error(`missing or invalid fields: ${detail || error.message}`);
+    }
+    throw error;
+  }
 }
 
 export function applyReflectEdits(base: ReflectOutput, answers: Record<string, string>): ReflectOutput {
@@ -87,8 +95,10 @@ export function applyReflectEdits(base: ReflectOutput, answers: Record<string, s
   });
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function asStringArray(value: unknown): string[] {

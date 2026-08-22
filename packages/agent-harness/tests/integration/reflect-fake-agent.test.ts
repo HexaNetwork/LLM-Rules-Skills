@@ -22,4 +22,32 @@ describe("reflect with fake agents", () => {
       await host.dispose();
     }
   });
+
+  it("blocks with a retriable error when reflector output is not structured", async () => {
+    const repo = await createTempRepo();
+    const { host } = await bootTestHost({
+      agents: {
+        mode: "fake",
+        scripted: {
+          reflector: { text: "Add a health check" },
+        },
+      },
+    });
+    try {
+      const project = await host.ctx.projects.add(repo);
+      const run = await host.ctx.runLifecycle.start({
+        idea: "Add a health check",
+        projectKey: project.projectKey,
+        baseBranch: await currentBranch(repo),
+      });
+      expect(run.state.phase).toBe("reflect");
+      expect(run.state.status).toBe("blocked");
+      expect(run.state.block?.retriable).toBe(true);
+      expect(run.state.block?.reason).toMatch(/Invalid reflector output/i);
+      expect(run.state.artifacts.reflect).toBeUndefined();
+      expect(run.state.gate).toBeUndefined();
+    } finally {
+      await host.dispose();
+    }
+  });
 });

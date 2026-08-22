@@ -8,7 +8,7 @@ import {
   type ReflectOutput,
 } from "../domain/reflect.js";
 import type { AnswerBatch, Phase, PhaseResult, Question, Run } from "../domain/types.js";
-import { asRecord, invokeRole } from "./helpers.js";
+import { invokeRole } from "./helpers.js";
 
 export function createReflectPhase(ctx: Context): Phase {
   return {
@@ -17,10 +17,14 @@ export function createReflectPhase(ctx: Context): Phase {
       run.state.artifacts.idea = run.state.idea;
     },
     async advance(run: Run): Promise<PhaseResult> {
-      const output = coerceReflectOutput(
-        asRecord(await invokeRole(ctx, run, "reflector", { idea: run.state.idea })),
-        run.state.idea,
-      );
+      let output: ReflectOutput;
+      try {
+        output = coerceReflectOutput(
+          await invokeRole(ctx, run, "reflector", { idea: run.state.idea }),
+        );
+      } catch (error) {
+        return contractBlock(error);
+      }
       run.state.artifacts.reflect = output;
       run.state.fog = seedFog(output.unknowns, run.state.fog);
       return {
@@ -37,7 +41,12 @@ export function createReflectPhase(ctx: Context): Phase {
       if (!hasAnswers) {
         return { kind: "block", reason: "Reflect confirmation is required", retriable: true };
       }
-      const existing = coerceReflectOutput(run.state.artifacts.reflect, run.state.idea);
+      let existing: ReflectOutput;
+      try {
+        existing = coerceReflectOutput(run.state.artifacts.reflect);
+      } catch (error) {
+        return contractBlock(error);
+      }
       const structured = applyReflectEdits(existing, batch.answers);
       const confirmed = formatReflectRestatement(structured);
       run.state.artifacts.reflect = structured;
@@ -57,4 +66,9 @@ function reflectQuestions(output: ReflectOutput): Question[] {
       ? ((output[section.id] as string[] | undefined) ?? []).join("\n")
       : String(output[section.id] ?? ""),
   }));
+}
+
+function contractBlock(error: unknown): PhaseResult {
+  const detail = error instanceof Error ? error.message : String(error);
+  return { kind: "block", reason: `Invalid reflector output: ${detail}`, retriable: true };
 }

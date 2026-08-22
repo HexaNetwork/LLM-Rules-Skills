@@ -45,13 +45,22 @@ export function createDashboardService(ctx: Context, config: DashboardConfig = {
   const port = config.port ?? 8787;
   const urlHost = host === "::1" ? "[::1]" : host;
   let server: ReturnType<typeof createServer> | undefined;
+  const deletingRuns = new Set<string>();
+
+  const deleteInBackground = (runId: string): void => {
+    if (deletingRuns.has(runId)) return;
+    deletingRuns.add(runId);
+    void ctx.runLifecycle.delete(runId).catch(() => undefined).finally(() => {
+      deletingRuns.delete(runId);
+    });
+  };
 
   const service: DashboardService = {
     token,
     async start() {
       if (server) return `http://${urlHost}:${port}/?token=${token}`;
       server = createServer((req, res) => {
-        void handle(ctx, token, req, res);
+        void handle(ctx, token, deletingRuns, deleteInBackground, req, res);
       });
       await new Promise<void>((resolve, reject) => {
         server!.listen(port, host, () => resolve());
@@ -75,6 +84,8 @@ export function createDashboardService(ctx: Context, config: DashboardConfig = {
 async function handle(
   ctx: Context,
   token: string,
+  deletingRuns: ReadonlySet<string>,
+  deleteInBackground: (runId: string) => void,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -93,7 +104,7 @@ async function handle(
   }
   try {
     const body = req.method === "POST" || req.method === "PUT" ? await readBody(req) : undefined;
-    const payload = await route(ctx, req.method ?? "GET", url, body);
+    const payload = await route(ctx, deletingRuns, deleteInBackground, req.method ?? "GET", url, body);
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(payload));
   } catch (error) {
@@ -105,6 +116,8 @@ async function handle(
 
 async function route(
   ctx: Context,
+  deletingRuns: ReadonlySet<string>,
+  deleteInBackground: (runId: string) => void,
   method: string,
   url: URL,
   body?: unknown,
@@ -127,7 +140,8 @@ async function route(
     return ctx.git.listLocalBranches(project.controlRoot);
   }
   if (method === "GET" && url.pathname === "/api/runs") {
-    return ctx.runLifecycle.list();
+    const runs = await ctx.runLifecycle.list();
+    return runs.filter((run) => !deletingRuns.has(run.identity.runId));
   }
   if (method === "GET" && url.pathname === "/api/guidance/roles") {
     const projectKey = url.searchParams.get("projectKey")?.trim() || undefined;
@@ -164,8 +178,12 @@ async function route(
     return ctx.roleGuidance.resetOverride(role, projectKey);
   }
   const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)(?:\/([^/]+))?$/);
+  const matchedRunId = runMatch ? decodeURIComponent(runMatch[1]!) : undefined;
+  if (method === "GET" && matchedRunId && deletingRuns.has(matchedRunId)) {
+    throw new HttpError(404, `Unknown run: ${matchedRunId}`);
+  }
   if (method === "GET" && runMatch && !runMatch[2]) {
-    return ctx.runLifecycle.status(decodeURIComponent(runMatch[1]!));
+    return ctx.runLifecycle.status(matchedRunId!);
   }
   if (method === "GET" && runMatch?.[2] === "activity") {
     return ctx.runLifecycle.activity(decodeURIComponent(runMatch[1]!));
@@ -223,7 +241,15 @@ async function route(
     return ctx.runLifecycle.cancel(decodeURIComponent(runMatch[1]!));
   }
   if (method === "POST" && runMatch?.[2] === "delete") {
-    return ctx.runLifecycle.delete(decodeURIComponent(runMatch[1]!));
+    const runId = matchedRunId!;
+    if (!deletingRuns.has(runId)) {
+      const identity = await ctx.store.readIdentity(runId);
+      if (!identity && !(await ctx.store.listRunIds()).includes(runId)) {
+        throw new HttpError(404, `Unknown run: ${runId}`);
+      }
+      deleteInBackground(runId);
+    }
+    return { deleted: runId };
   }
   if (method === "POST" && runMatch?.[2] === "answer") {
     const batch = (body ?? {}) as {

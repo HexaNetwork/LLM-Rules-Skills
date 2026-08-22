@@ -119,6 +119,7 @@ describe("live reflector prompt contract", () => {
     expect(REFLECT_EXPECTED_OUTPUT).toContain("restatement:string");
     expect(REFLECT_EXPECTED_OUTPUT).toContain("users:[string]");
     expect(REFLECT_ROLE_RULES.some((rule) => rule.includes("concise imperative feature title"))).toBe(true);
+    expect(REFLECT_ROLE_RULES.some((rule) => rule.includes("Do not meta-frame restatement"))).toBe(true);
     const prompt = buildCursorInvokePrompt({
       role: "reflector",
       packet: {
@@ -130,6 +131,7 @@ describe("live reflector prompt contract", () => {
     expect(prompt).toContain("Role: reflector");
     expect(prompt).toContain("lexical guidance");
     expect(prompt).toContain("concise imperative feature title");
+    expect(prompt).toContain("Do not meta-frame restatement");
     expect(prompt).toContain("Do not ask grilling questions");
     expect(prompt).toContain(REFLECT_EXPECTED_OUTPUT);
     expect(prompt).toMatch(/Return (exactly )?one raw JSON object/i);

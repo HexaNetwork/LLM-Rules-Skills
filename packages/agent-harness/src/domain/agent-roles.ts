@@ -69,7 +69,8 @@ export type RoleAssignments = z.infer<typeof RoleAssignmentsSchema>;
 
 export const ROLE_RULES: Record<AgentRole, string[]> = {
   reflector: [
-    "Restate the idea in your own words without inventing requirements.",
+    "Write restatement as the feature itself in plain language; do not invent requirements.",
+    'Do not meta-frame restatement (for example "The operator wants to…" or "The request is…").',
     'Propose a concise imperative feature title suitable as a run label (for example "Add greeting tone"), not a paragraph.',
     "Separate goal, users, in-scope, out-of-scope, assumptions, and unknowns.",
     "Do not ask grilling questions and do not plan implementation.",

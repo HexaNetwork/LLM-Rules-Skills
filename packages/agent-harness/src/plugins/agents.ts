@@ -21,12 +21,12 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
       return {
         proposedTitle: "Clarify request",
         summary: "Restate the request without adding requirements.",
-        restatement: `The request is: ${idea}`,
+        restatement: idea,
         goal: "Establish a shared understanding of the request before grilling.",
         users: ["operators of the registered repository"],
         inScope: ["the requested outcome"],
         outOfScope: ["unrelated refactors"],
-        assumptions: ["The operator wants a thin vertical slice."],
+        assumptions: ["A thin vertical slice is preferred."],
         unknowns: ["Who are the users?", "What is explicitly out of scope?"],
       };
     case "griller": {

@@ -118,7 +118,9 @@ export function renderDashboardPage(): string {
     .status-bar.completed { background: var(--accent); }
     .run-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 600; }
     .run-meta { display: flex; justify-content: space-between; gap: 6px; margin-top: 5px; color: var(--muted); font-size: 11px; }
-    .sidebar-foot { padding: 12px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+    .sidebar-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+    .sound-toggle { border: 0; background: transparent; color: var(--muted); padding: 0; font-size: 12px; }
+    .sound-toggle:hover { color: var(--accent); }
     .workspace { min-width: 0; padding: 26px clamp(20px, 4vw, 58px) 48px; }
     .empty-state { min-height: calc(100vh - 74px); display: grid; place-items: center; }
     .empty-copy { max-width: 510px; text-align: center; }
@@ -444,7 +446,7 @@ export function renderDashboardPage(): string {
         <div class="section-head"><h2>Runs</h2><button class="quiet" id="refresh" type="button">Refresh</button></div>
         <div class="run-list" id="runs"></div>
       </section>
-      <footer class="sidebar-foot">Loopback only · token authenticated</footer>
+      <footer class="sidebar-foot"><span>Loopback only · token authenticated</span><button type="button" class="sound-toggle" id="soundMuteBtn" title="Toggle notification sounds">Sound on</button></footer>
     </aside>
     <main class="workspace" id="detail">
       <div class="empty-state"><div class="empty-copy"><svg class="waypoint" viewBox="0 0 16 18" aria-hidden="true"><polygon points="8,1 15,4.5 15,13.5 8,17 1,13.5 1,4.5"/><polygon class="hex-core" points="8,6.5 10.5,7.75 10.5,10.25 8,11.5 5.5,10.25 5.5,7.75"/></svg><h2>Choose a run or chart a new one.</h2><p>The dashboard follows the host lifecycle. Gates, fog, evidence, and task progress remain durable between visits.</p><button class="primary" data-action="compose" type="button">Start a new run</button></div></div>
@@ -454,7 +456,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home" };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", lastSoundStatus: null };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -516,6 +518,53 @@ export function renderDashboardPage(): string {
       const bits = [String(working.summary)];
       if (working.role) bits.push(String(working.role));
       return bits.join(" · ");
+    }
+    function soundsMuted() {
+      try { return localStorage.getItem("harnessSoundsMuted") === "1"; } catch (error) { return false; }
+    }
+    function setSoundsMuted(muted) {
+      try { localStorage.setItem("harnessSoundsMuted", muted ? "1" : "0"); } catch (error) { /* ignore */ }
+      const btn = el("soundMuteBtn");
+      if (btn) btn.textContent = muted ? "Sound off" : "Sound on";
+    }
+    function playTone(kind) {
+      if (soundsMuted()) return;
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        if (!playTone.ctx) playTone.ctx = new Ctx();
+        const ctx = playTone.ctx;
+        if (ctx.state === "suspended") ctx.resume();
+        const now = ctx.currentTime;
+        const specs = {
+          awaiting_input: [523.25, 659.25, 0.08, 0.12],
+          error: [220, 164.81, 0.12, 0.18],
+          completed: [392, 523.25, 0.1, 0.16]
+        };
+        const spec = specs[kind] || specs.awaiting_input;
+        [spec[0], spec[1]].forEach((freq, index) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.0001, now);
+          gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02 + index * spec[2]);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + spec[3] + index * spec[2]);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + index * spec[2]);
+          osc.stop(now + spec[3] + index * spec[2] + 0.05);
+        });
+      } catch (error) { /* Web Audio unavailable */ }
+    }
+    function maybePlayStatusSound(status) {
+      if (!status || status === app.lastSoundStatus) return;
+      const previous = app.lastSoundStatus;
+      app.lastSoundStatus = status;
+      if (previous == null) return;
+      if (status === "awaiting_input") playTone("awaiting_input");
+      else if (status === "blocked") playTone("error");
+      else if (status === "completed") playTone("completed");
     }
     function renderRuns() {
       const sorted = [...app.runs].sort((a, b) => String(b.state.updatedAt).localeCompare(String(a.state.updatedAt)));
@@ -1240,6 +1289,7 @@ export function renderDashboardPage(): string {
           maybeLoadSandbox(run, !terminal);
         }
       }
+      maybePlayStatusSound(run.state.status);
     }
     async function mutate(action, payload) {
       if (!app.selectedId || app.busy) return;
@@ -1281,6 +1331,8 @@ export function renderDashboardPage(): string {
     el("new-run-toggle").onclick = () => { if (!app.busy) showCompose(); };
     el("guidance-toggle").onclick = () => showGuidance();
     el("nav-toggle").onclick = () => document.body.classList.toggle("nav-open");
+    el("soundMuteBtn").onclick = () => setSoundsMuted(!soundsMuted());
+    setSoundsMuted(soundsMuted());
     el("refresh").onclick = () => {
       if (app.busy) return;
       if (app.view === "guidance") {

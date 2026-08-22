@@ -159,4 +159,13 @@ describe("dashboard agent contexts page", () => {
     expect(html).toContain("data-guidance-save");
     expect(html).toContain("data-guidance-reset");
   });
+
+  it("embeds attention sounds with a mute toggle", () => {
+    const html = renderDashboardPage();
+    expect(html).toContain('id="soundMuteBtn"');
+    expect(html).toContain("harnessSoundsMuted");
+    expect(html).toContain("maybePlayStatusSound");
+    expect(html).toContain("awaiting_input");
+    expect(html).toContain("playTone");
+  });
 });

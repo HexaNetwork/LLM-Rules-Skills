@@ -18,7 +18,7 @@ describe("default workflow", () => {
       expect(run.state.phase).toBe("grill");
 
       run = await host.ctx.runLifecycle.answer(run.identity.runId, {
-        answers: { users: "operators", scope: "unrelated refactors" },
+        answers: { users: "end-users", scope: "unrelated refactors" },
       });
       expect(run.state.phase).toBe("verification-settings");
 

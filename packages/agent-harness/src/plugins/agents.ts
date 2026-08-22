@@ -23,7 +23,7 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
         summary: "Restate the request without adding requirements.",
         restatement: idea,
         goal: "Establish a shared understanding of the request before grilling.",
-        users: ["operators of the registered repository"],
+        users: ["end users of the product"],
         inScope: ["the requested outcome"],
         outOfScope: ["unrelated refactors"],
         assumptions: ["A thin vertical slice is preferred."],
@@ -52,18 +52,18 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
             context: "This shapes who the slice must serve and how we phrase the brief.",
             options: [
               {
-                id: "operators",
-                label: "Operators of the registered repository",
-                description: "People running the harness against this repo day to day.",
-              },
-              {
                 id: "end-users",
                 label: "End users of the product",
-                description: "People who use the shipped feature, not the harness itself.",
+                description: "People who use the shipped feature.",
+              },
+              {
+                id: "maintainers",
+                label: "Maintainers of this repository",
+                description: "People who develop or operate the codebase itself.",
               },
             ],
-            recommendedOptionId: "operators",
-            recommendation: "Default to operators unless the idea clearly targets product end users.",
+            recommendedOptionId: "end-users",
+            recommendation: "Default to product end users unless the idea clearly targets maintainers.",
           },
           {
             id: "scope",
@@ -98,7 +98,13 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
       return { plan: `1. Restate the goal.\n2. Implement the smallest change.\n3. Verify.\n\nGoal: ${idea}` };
     case "scenario-planner":
       return {
-        scenarios: [{ id: "happy-path", title: "Happy path", steps: ["Start from the idea", "Reach a passing check"] }],
+        scenarios: [
+          {
+            id: "happy-path",
+            title: "Happy path",
+            steps: ["A user starts from the idea", "The verification command exits zero"],
+          },
+        ],
       };
     case "issue-slicer":
       return {

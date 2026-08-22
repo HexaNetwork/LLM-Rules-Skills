@@ -98,7 +98,8 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
   ],
   "scenario-planner": [
     "Do not edit the working tree. Author intent-level test scenarios only.",
-    "Cover happy-path and error-path scenarios in operator-readable language.",
+    "Cover happy-path and error-path scenarios in plain, observable product language.",
+    "Do not include harness jargon (operator, phases, fog, packets) in scenario titles or steps.",
     "Return exactly one raw JSON object matching the expected output contract.",
   ],
   "issue-slicer": [

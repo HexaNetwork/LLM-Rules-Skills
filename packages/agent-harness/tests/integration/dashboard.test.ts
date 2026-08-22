@@ -127,6 +127,11 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain("Deleting…");
       expect(html).toContain("Starting wayfinding…");
       expect(html).toContain("Starting…");
+      expect(html).toContain("Submitting answers… continuing the run");
+      expect(html).toContain("Submitting…");
+      expect(html).toContain("function gateHiddenWhileBusy");
+      expect(html).toContain("function focusRunChrome");
+      expect(html).toContain('action === "answer"');
       expect(html).toContain("working-line");
       expect(html).toContain("Working");
       expect(html).toContain("Agent contexts");

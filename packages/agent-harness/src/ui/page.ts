@@ -924,7 +924,20 @@ export function renderDashboardPage(): string {
         }).join("") + '</form><div class="gate-footer"><label>Batch notes<textarea id="gate-notes" rows="1" placeholder="Context that applies to the whole batch">' + esc(draft.notes || "") + '</textarea></label>' +
         '<button class="primary" type="button" data-action="answer">Confirm brief</button></div></section>';
     }
+    function gateHiddenWhileBusy(run) {
+      return Boolean(
+        app.busy &&
+        app.busy.runId === run.identity.runId &&
+        (app.busy.action === "answer" || app.busy.action === "continue" || app.busy.action === "retry")
+      );
+    }
+    function focusRunChrome() {
+      window.scrollTo(0, 0);
+      const top = document.querySelector(".topbar");
+      if (top) top.scrollIntoView({ block: "start" });
+    }
     function renderGate(run) {
+      if (gateHiddenWhileBusy(run)) return "";
       const gate = run.state.gate;
       if (!gate) return "";
       const draft = ensureDraft(run.identity.runId);
@@ -1230,19 +1243,23 @@ export function renderDashboardPage(): string {
       const blocked = run.state.status === "blocked";
       const deleting = app.busy && app.busy.action === "delete" && app.busy.runId === run.identity.runId;
       const busyLocked = Boolean(app.busy && app.busy.runId === run.identity.runId);
+      const answering = app.busy && app.busy.action === "answer" && app.busy.runId === run.identity.runId;
+      const progressText = workingSummary(run) || (busyLocked && app.busy.message ? app.busy.message : "");
+      const statusLabel = deleting ? "Deleting" : (answering ? "Active" : words(run.state.status));
+      const statusClass = deleting ? "blocked" : (answering ? "active" : run.state.status);
       el("detail").innerHTML =
         '<header class="topbar"><div><div class="eyebrow">' + esc(run.identity.projectKey) + ' · ' + esc(run.identity.workflowBundleId) + ' workflow</div>' +
-        '<h2 class="run-heading">' + esc(runLabel(run)) + '</h2>' + (runIdea(run) ? '<p class="lede">' + esc(runIdea(run)) + '</p>' : '') + '<div class="top-meta"><span class="status ' + esc(deleting ? "blocked" : run.state.status) + (deleting ? " busy-pulse" : "") + '">' + esc(deleting ? "Deleting" : words(run.state.status)) + '</span>' +
+        '<h2 class="run-heading">' + esc(runLabel(run)) + '</h2>' + (runIdea(run) ? '<p class="lede">' + esc(runIdea(run)) + '</p>' : '') + '<div class="top-meta"><span class="status ' + esc(statusClass) + (deleting || answering ? " busy-pulse" : "") + '">' + esc(statusLabel) + '</span>' +
         '<span>' + esc(words(run.state.phase)) + '</span><span>rev ' + esc(run.state.revision) + '</span><span>' + esc(relative(run.state.updatedAt)) + '</span></div>' +
-        (workingSummary(run) ? '<div class="working-line busy-pulse"><strong>Working</strong><span>' + esc(workingSummary(run)) + '</span></div>' : '') +
+        (progressText ? '<div class="working-line busy-pulse"><strong>Working</strong><span>' + esc(progressText) + '</span></div>' : '') +
         '</div>' +
-        '<div class="actions"><button class="secondary" data-action="continue" type="button"' + (busyLocked || terminal || run.state.status === "awaiting_input" || workingSummary(run) ? ' disabled' : '') + '>Continue</button>' +
-        '<button class="secondary" data-action="retry" type="button"' + (busyLocked || !blocked || run.state.block && !run.state.block.retriable ? ' disabled' : '') + '>Retry</button>' +
+        '<div class="actions"><button class="secondary" data-action="continue" type="button"' + (busyLocked || terminal || run.state.status === "awaiting_input" || workingSummary(run) ? ' disabled' : '') + '>' + (app.busy && app.busy.action === "continue" && app.busy.runId === run.identity.runId ? esc(app.busy.label) : "Continue") + '</button>' +
+        '<button class="secondary' + (app.busy && app.busy.action === "retry" && app.busy.runId === run.identity.runId ? " busy-pulse" : "") + '" data-action="retry" type="button"' + (busyLocked || !blocked || run.state.block && !run.state.block.retriable ? ' disabled' : '') + '>' + (app.busy && app.busy.action === "retry" && app.busy.runId === run.identity.runId ? esc(app.busy.label) : "Retry") + '</button>' +
         '<button class="danger" data-action="cancel" type="button"' + (busyLocked || terminal ? ' disabled' : '') + '>Cancel</button>' +
         '<button class="danger' + (deleting ? ' busy-pulse' : '') + '" data-action="delete" type="button"' + (busyLocked ? ' disabled' : '') + '>' + (deleting ? 'Deleting…' : 'Delete') + '</button></div></header>' +
         '<nav class="phase-track" aria-label="Run phases">' + renderPhases(run) + '</nav>' +
         renderRunTabs(run) +
-        (run.state.block ? '<div class="block"><strong>Run blocked.</strong> ' + esc(run.state.block.reason) + '</div>' : '') +
+        (run.state.block && !gateHiddenWhileBusy(run) ? '<div class="block"><strong>Run blocked.</strong> ' + esc(run.state.block.reason) + '</div>' : '') +
         renderGate(run) +
         renderTabContent(run);
       autosizeReflectFields();
@@ -1306,12 +1323,19 @@ export function renderDashboardPage(): string {
         ? { action: "delete", runId, message: "Deleting run… removing sandbox, worktree, and artifacts", label: "Deleting…" }
         : action === "cancel"
           ? { action: "cancel", runId, message: "Cancelling run…", label: "Cancelling…" }
-          : null;
+          : action === "answer"
+            ? { action: "answer", runId, message: "Submitting answers… continuing the run", label: "Submitting…" }
+            : action === "continue"
+              ? { action: "continue", runId, message: "Continuing run…", label: "Continuing…" }
+              : action === "retry"
+                ? { action: "retry", runId, message: "Retrying…", label: "Retrying…" }
+                : null;
       try {
         if (pending) {
           toastBusy(pending.message);
           setActionBusy(pending);
           if (app.run) renderDetail();
+          if (action === "answer" || action === "continue" || action === "retry") focusRunChrome();
         }
         await api("/api/runs/" + encodeURIComponent(runId) + "/" + action, { method: "POST", body: JSON.stringify(payload || {}) });
         if (action === "answer") delete app.drafts[runId];
@@ -1330,6 +1354,7 @@ export function renderDashboardPage(): string {
         }
         clearActionBusy();
         await refresh({ force: true });
+        if (action === "answer" || action === "continue" || action === "retry") focusRunChrome();
       } catch (error) {
         clearActionBusy();
         if (app.run) renderDetail();

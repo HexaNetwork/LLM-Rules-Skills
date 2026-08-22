@@ -10,6 +10,9 @@ export function createPlanPhase(ctx: Context): Phase {
         await invokeRole(ctx, run, "planner", {
           brief: run.state.artifacts.reflectBrief,
           glossary: run.state.artifacts.glossary,
+          resolutions: run.state.artifacts.resolutions,
+          fog: run.state.fog,
+          fogResolutions: run.state.artifacts.fogResolutions,
         }),
       );
       run.state.artifacts.plan = output.plan ?? output;

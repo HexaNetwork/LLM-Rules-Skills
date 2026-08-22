@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; amends the interview interaction model of [ADR 0004](0004-bounded-resumable-wayfinding-episodes.md)
+Amended by [ADR 0019](0019-explicit-fog-resolution.md); omission-based resolution is superseded
 
 ## Context
 

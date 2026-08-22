@@ -1,58 +1,78 @@
-import type { FogEntry } from "./types.js";
+import { createHash } from "node:crypto";
+import type { FogDraft, FogEntry, FogResolution } from "./types.js";
 
 export function seedFog(unknowns: string[], existing: FogEntry[] = []): FogEntry[] {
   return reconcileFog(unknowns, existing);
 }
 
-export function reconcileFog(draft: string[], existing: FogEntry[]): FogEntry[] {
+/**
+ * Add unknowns to the register without inferring resolution from omission.
+ *
+ * The register is durable state, not a projection of the latest model response.
+ * Entries may only leave an open state through an operator answer/park or an
+ * explicit, reasoned agent resolution.
+ */
+export function reconcileFog(draft: Array<string | FogDraft>, existing: FogEntry[]): FogEntry[] {
   const next: FogEntry[] = existing.map((entry) => ({ ...entry }));
+  const byId = new Map(next.map((entry) => [entry.id, entry]));
   const byText = new Map(next.map((entry) => [normalize(entry.text), entry]));
-  const seen = new Set<string>();
 
-  for (const text of draft) {
+  for (const item of draft) {
+    const text = typeof item === "string" ? item.trim() : item.text.trim();
     const key = normalize(text);
     if (!key) continue;
-    seen.add(key);
-    const current = byText.get(key);
-    if (!current) {
-      const created: FogEntry = { id: fogId(text), text, status: "fog" };
-      next.push(created);
-      byText.set(key, created);
+    const requestedId = typeof item === "string" ? fogId(text) : item.id.trim();
+    const currentById = requestedId ? byId.get(requestedId) : undefined;
+    if (currentById) {
+      if (normalize(currentById.text) !== key) {
+        throw new Error(`Fog id ${requestedId} is already assigned to a different unknown`);
+      }
       continue;
     }
-    if (current.status === "resolved") current.status = "fog";
-  }
-
-  for (const entry of next) {
-    if (entry.status === "parked") continue;
-    if (!seen.has(normalize(entry.text)) && entry.status !== "resolved") {
-      entry.status = "resolved";
-    }
+    if (byText.has(key)) continue;
+    const id = requestedId || fogId(text);
+    const created: FogEntry = { id, text, status: "fog" };
+    next.push(created);
+    byId.set(id, created);
+    byText.set(key, created);
   }
   return next;
 }
 
-export function markAsked(fog: FogEntry[], texts: string[]): FogEntry[] {
-  const asked = new Set(texts.map(normalize));
+export function markAsked(fog: FogEntry[], ids: string[]): FogEntry[] {
+  const asked = new Set(ids);
   return fog.map((entry) =>
-    asked.has(normalize(entry.text)) && entry.status !== "resolved"
-      ? { ...entry, status: "asked" as const }
+    asked.has(entry.id) && entry.status !== "resolved"
+      ? { ...entry, status: "asked" as const, resolution: undefined }
       : entry,
   );
 }
 
 export function applyAnswers(
   fog: FogEntry[],
-  answeredTexts: string[],
-  parkedTexts: string[],
+  answered: Array<{ id: string; reason: string }>,
+  parkedIds: string[],
 ): FogEntry[] {
-  const answered = new Set(answeredTexts.map(normalize));
-  const parked = new Set(parkedTexts.map(normalize));
+  const answeredById = new Map(answered.map((entry) => [entry.id, entry.reason]));
+  const parked = new Set(parkedIds);
   return fog.map((entry) => {
-    const key = normalize(entry.text);
-    if (parked.has(key)) return { ...entry, status: "parked" };
-    if (answered.has(key)) return { ...entry, status: "resolved" };
+    if (parked.has(entry.id)) return { ...entry, status: "parked", resolution: undefined };
+    const reason = answeredById.get(entry.id);
+    if (reason) return { ...entry, status: "resolved", resolution: { source: "operator", reason } };
     return entry;
+  });
+}
+
+export function applyAgentResolutions(
+  fog: FogEntry[],
+  resolutions: FogResolution[],
+): FogEntry[] {
+  const byId = new Map(resolutions.map((entry) => [entry.id, entry.reason.trim()]));
+  return fog.map((entry) => {
+    const reason = byId.get(entry.id);
+    return reason
+      ? { ...entry, status: "resolved", resolution: { source: "agent" as const, reason } }
+      : entry;
   });
 }
 
@@ -65,5 +85,8 @@ function normalize(text: string): string {
 }
 
 function fogId(text: string): string {
-  return `fog-${normalize(text).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
+  const normalized = normalize(text);
+  const slug = normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 28);
+  const digest = createHash("sha256").update(normalized).digest("hex").slice(0, 10);
+  return `fog-${slug || "unknown"}-${digest}`;
 }

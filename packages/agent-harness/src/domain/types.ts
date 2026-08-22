@@ -41,6 +41,8 @@ export type Question = {
   options?: QuestionOption[];
   recommendedOptionId?: string;
   recommendation?: string;
+  /** Fog entries this question resolves or parks when the operator answers. */
+  fogIds?: string[];
 };
 
 export type GateSpec = {
@@ -62,6 +64,20 @@ export type FogEntry = {
   id: string;
   text: string;
   status: FogStatus;
+  resolution?: {
+    source: "agent" | "operator";
+    reason: string;
+  };
+};
+
+export type FogDraft = {
+  id: string;
+  text: string;
+};
+
+export type FogResolution = {
+  id: string;
+  reason: string;
 };
 
 export type TaskStatus = "pending" | "in_progress" | "review" | "committed" | "blocked";

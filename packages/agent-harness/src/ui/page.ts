@@ -1066,7 +1066,8 @@ export function renderDashboardPage(): string {
     }
     function renderFog(fog) {
       return fog.length ? '<ul class="item-list">' + fog.map((item) =>
-        '<li class="item"><div class="item-line"><span class="item-title">' + esc(item.text) + '</span><span class="item-state">' + esc(item.status) + '</span></div></li>'
+        '<li class="item"><div class="item-line"><span class="item-title">' + esc(item.text) + '</span><span class="item-state">' + esc(item.status) + '</span></div>' +
+        (item.resolution ? '<div class="item-copy">' + esc(words(item.resolution.source)) + ': ' + esc(item.resolution.reason) + '</div>' : '') + '</li>'
       ).join("") + '</ul>' : '<div class="empty-inline">No unresolved fog recorded.</div>';
     }
     function renderTasks(tasks) {

@@ -10,13 +10,14 @@ Interview relentlessly about every aspect of this plan until shared understandin
 
 ## Harness delivery (required)
 
-When running as the harness **griller** worker, the deliverable is **only** the expected JSON contract (`needs_input` or `ready_to_plan`). Put questions, options, recommendations, resolutions, and `openUnknowns` in that JSON. The harness UI shows them to the operator; the next turn receives structured answers.
+When running as the harness **griller** worker, the deliverable is **only** the expected JSON contract. The supplied fog register is durable state: omission never resolves an entry. Link every question to its existing `fogIds`; add only genuinely new entries through `newUnknowns`; resolve codebase facts through `resolvedUnknowns` with a concrete evidence-backed reason. Product decisions must be answered by the operator, not placed in `resolvedUnknowns`.
 
 Each question must use structured options the dashboard can render as cards:
 
 ```json
 {
   "id": "tone",
+  "fogIds": ["fog-interface-tone"],
   "prompt": "Which tone should the interface use?",
   "context": "Optional why-this-matters note",
   "options": [
@@ -27,6 +28,18 @@ Each question must use structured options the dashboard can render as cards:
   "recommendation": "Use quiet because this is a long-running work surface."
 }
 ```
+
+The complete result shape is:
+
+```json
+{
+  "questions": [],
+  "newUnknowns": [{ "id": "fog-new-stable-id", "text": "A genuinely new unknown" }],
+  "resolvedUnknowns": [{ "id": "fog-existing-id", "reason": "Concrete codebase evidence" }]
+}
+```
+
+An empty `questions` list is valid only when every fog entry is already resolved or parked, including entries explicitly resolved in the same result.
 
 Do **not** write Markdown interview reports, headings, bullet briefings, or chat-style Q&A as the session result. Codebase facts belong in `summary` / question `context`, not in a freeform Markdown document. When plan mode uses CreatePlan, the plan body must be that JSON contract only — Markdown research notes are not a valid deliverable.
 

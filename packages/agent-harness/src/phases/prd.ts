@@ -10,6 +10,9 @@ export function createPrdPhase(ctx: Context): Phase {
         await invokeRole(ctx, run, "docs-writer", {
           brief: run.state.artifacts.reflectBrief,
           plan: run.state.artifacts.plan,
+          resolutions: run.state.artifacts.resolutions,
+          fog: run.state.fog,
+          fogResolutions: run.state.artifacts.fogResolutions,
         }),
       );
       run.state.artifacts.prd = output;

@@ -80,14 +80,18 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
   griller: [
     "Ask only mutually independent questions in a single turn; dependent forks stay sequential.",
     "Prefer fewer questions; batch size is a ceiling, not a target.",
-    "Return openUnknowns every turn — everything still needed before planning, including unasked items.",
+    "Treat the supplied fog register as durable state; never imply resolution by omitting an entry.",
+    "Link every question to one or more open fogIds.",
+    "Return only genuinely new unknowns in newUnknowns, each with a stable id and text.",
+    "Resolve codebase facts only through resolvedUnknowns with the fog id and a concrete evidence-backed reason.",
     "Look up codebase facts; put product decisions to the human with a recommendation.",
     "Do not enact the plan; when understanding is sufficient, return ready_to_plan.",
     "Return exactly one JSON object matching the expected output contract. Do not write Markdown interview prose.",
   ],
   "docs-writer": [
     "Edit the working tree but never commit, push, or open a pull request.",
-    "Update only glossary/PRD artifacts from the confirmed brief and grill resolutions.",
+    "Update only glossary/PRD artifacts from the confirmed brief, operator resolutions, and evidence-backed fog resolutions.",
+    "Do not describe a resolved fog entry as open, and do not invent new open items after the grill gate.",
     "Preserve existing glossary entries unless a grill resolution sharpens or replaces them.",
     "Return exactly one raw JSON object matching the expected output contract.",
   ],
@@ -149,7 +153,7 @@ export const ROLE_OUTPUT_CONTRACTS: Record<AgentRole, string> = {
   reflector:
     "{proposedTitle:string,summary:string,restatement:string,goal:string,users:[string],inScope:[string],outOfScope:[string],assumptions:[string],unknowns:[string]}",
   griller:
-    '{questions:[{id:string,prompt:string,context?:string,options:[{id:string,label:string,description:string}],recommendedOptionId:string,recommendation:string}],unknowns:[string]}',
+    '{questions:[{id:string,fogIds:[string],prompt:string,context?:string,options:[{id:string,label:string,description:string}],recommendedOptionId:string,recommendation:string}],newUnknowns:[{id:string,text:string}],resolvedUnknowns:[{id:string,reason:string}]}',
   "docs-writer":
     "glossary phase: {glossary:[{term:string,definition:string}]}; prd phase: {title:string,body:string}",
   planner: "{plan:string}",

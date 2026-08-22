@@ -31,23 +31,17 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
       };
     case "griller": {
       const input = packet.input as {
-        fog?: Array<{ status: string }>;
+        fog?: Array<{ id: string; status: string }>;
         resolutions?: unknown[];
       } | undefined;
       const fog = input?.fog ?? [];
-      if ((input?.resolutions?.length ?? 0) > 0) {
-        return { questions: [], unknowns: [] };
-      }
-      if (fog.length > 0 && fog.every((entry) => entry.status === "resolved" || entry.status === "parked")) {
-        return { questions: [], unknowns: [] };
-      }
-      if (fog.some((entry) => entry.status === "resolved")) {
-        return { questions: [], unknowns: [] };
-      }
+      const open = fog.filter((entry) => entry.status === "fog" || entry.status === "asked");
+      if (open.length === 0) return { questions: [], newUnknowns: [], resolvedUnknowns: [] };
       return {
         questions: [
           {
             id: "users",
+            fogIds: [open[0]?.id].filter(Boolean),
             prompt: "Who are the primary users?",
             context: "This shapes who the slice must serve and how we phrase the brief.",
             options: [
@@ -67,6 +61,7 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
           },
           {
             id: "scope",
+            fogIds: [open[1]?.id].filter(Boolean),
             prompt: "What is out of scope for this slice?",
             context: "Keep the first cut thin enough to verify and publish.",
             options: [
@@ -84,8 +79,9 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
             recommendedOptionId: "refactors",
             recommendation: "Park unrelated refactors so the slice stays reviewable.",
           },
-        ],
-        unknowns: ["Who are the users?", "What is explicitly out of scope?"],
+        ].filter((question) => question.fogIds.length > 0),
+        newUnknowns: [],
+        resolvedUnknowns: [],
       };
     }
     case "docs-writer":

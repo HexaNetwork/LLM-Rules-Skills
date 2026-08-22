@@ -1,6 +1,21 @@
 import type { Context } from "@deepseek-ai/cordis";
-import { applyAnswers, markAsked, openFog, reconcileFog } from "../domain/fog.js";
-import type { AnswerBatch, Phase, PhaseResult, Question, QuestionOption, Run } from "../domain/types.js";
+import {
+  applyAgentResolutions,
+  applyAnswers,
+  markAsked,
+  openFog,
+  reconcileFog,
+} from "../domain/fog.js";
+import type {
+  AnswerBatch,
+  FogDraft,
+  FogResolution,
+  Phase,
+  PhaseResult,
+  Question,
+  QuestionOption,
+  Run,
+} from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
 
 export function createGrillPhase(ctx: Context): Phase {
@@ -15,21 +30,67 @@ export function createGrillPhase(ctx: Context): Phase {
           resolutions: run.state.artifacts.resolutions,
         }),
       );
-      const unknowns = Array.isArray(output.unknowns) ? output.unknowns.map(String) : [];
-      run.state.fog = reconcileFog(unknowns, run.state.fog);
+      let nextFog;
+      let resolutions: FogResolution[];
+      try {
+        const rawUnknowns = output.newUnknowns ?? output.unknowns;
+        nextFog = reconcileFog(normalizeFogDrafts(rawUnknowns), run.state.fog);
+        resolutions = normalizeFogResolutions(output.resolvedUnknowns);
+      } catch (error) {
+        return contractBlock(error);
+      }
+
+      const fogById = new Map(nextFog.map((entry) => [entry.id, entry]));
+      for (const resolution of resolutions) {
+        const entry = fogById.get(resolution.id);
+        if (!entry) {
+          return contractBlock(`Resolution references unknown fog id ${resolution.id}`);
+        }
+        if (entry.status === "resolved") {
+          return contractBlock(`Fog id ${resolution.id} is already resolved`);
+        }
+      }
+      nextFog = applyAgentResolutions(nextFog, resolutions);
       const questions = normalizeQuestions(output.questions).slice(
         0,
         run.settings.workflow.grillQuestionsPerBatch,
       );
-      if (questions.length === 0 && openFog(run.state.fog).length === 0) {
+      const questionFogIds = new Set<string>();
+      for (const question of questions) {
+        if (!question.fogIds?.length) {
+          return contractBlock(`Question ${question.id} does not reference any fogIds`);
+        }
+        for (const fogId of question.fogIds) {
+          const entry = nextFog.find((item) => item.id === fogId);
+          if (!entry) return contractBlock(`Question ${question.id} references unknown fog id ${fogId}`);
+          if (entry.status === "resolved") {
+            return contractBlock(`Question ${question.id} references resolved fog id ${fogId}`);
+          }
+          if (questionFogIds.has(fogId)) {
+            return contractBlock(`Fog id ${fogId} is linked to more than one question in the batch`);
+          }
+          questionFogIds.add(fogId);
+        }
+      }
+
+      run.state.fog = nextFog;
+      if (resolutions.length > 0) {
+        const prior = (run.state.artifacts.fogResolutions as FogResolution[] | undefined) ?? [];
+        run.state.artifacts.fogResolutions = [...prior, ...resolutions];
+      }
+      if (questions.length === 0 && openFog(nextFog).length === 0) {
         return { kind: "continue" };
       }
       if (questions.length === 0) {
-        return { kind: "continue" };
+        return {
+          kind: "block",
+          reason: `Griller returned no questions while ${openFog(nextFog).length} unknowns remain open`,
+          retriable: true,
+        };
       }
       run.state.fog = markAsked(
         run.state.fog,
-        questions.map((question) => question.prompt),
+        questions.flatMap((question) => question.fogIds ?? []),
       );
       run.state.artifacts.grillBatch = questions;
       return {
@@ -62,18 +123,23 @@ export function createGrillPhase(ctx: Context): Phase {
       }
       const answered = questions
         .filter((question) => batch.answers[question.id] && !parkedIds.has(question.id))
-        .map((question) => question.prompt);
+        .flatMap((question) =>
+          (question.fogIds ?? []).map((id) => ({
+            id,
+            reason: `Answer to "${question.prompt}": ${batch.answers[question.id]}`,
+          })),
+        );
       const parked = questions
         .filter((question) => parkedIds.has(question.id))
-        .map((question) => question.prompt);
-      run.state.fog = applyAnswers(run.state.fog, answered, parked).map((entry) =>
-        entry.status === "asked" ? { ...entry, status: "resolved" } : entry,
-      );
+        .flatMap((question) => question.fogIds ?? []);
+      run.state.fog = applyAnswers(run.state.fog, answered, parked);
       run.state.artifacts.resolutions = [
         ...((run.state.artifacts.resolutions as unknown[]) ?? []),
         {
           answers: batch.answers,
           parked: [...parkedIds],
+          resolvedFogIds: answered.map((entry) => entry.id),
+          parkedFogIds: parked,
           notes: batch.notes,
           clarifications: batch.clarifications ?? [],
         },
@@ -123,11 +189,50 @@ export function normalizeQuestions(raw: unknown): Question[] {
         options,
         recommendedOptionId,
         recommendation,
+        fogIds: Array.isArray(row.fogIds)
+          ? [...new Set(row.fogIds.map(String).map((id) => id.trim()).filter(Boolean))]
+          : undefined,
         choices: Array.isArray(row.choices) ? row.choices.map(String) : undefined,
         recommended: row.recommended != null ? String(row.recommended) : undefined,
       },
     ];
   });
+}
+
+export function normalizeFogDrafts(raw: unknown): Array<string | FogDraft> {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) throw new Error("newUnknowns must be an array");
+  return raw.map((item, index) => {
+    if (typeof item === "string") return item;
+    if (!item || typeof item !== "object") {
+      throw new Error(`newUnknowns[${index}] must contain id and text`);
+    }
+    const row = item as Record<string, unknown>;
+    const id = String(row.id ?? "").trim();
+    const text = String(row.text ?? "").trim();
+    if (!id || !text) throw new Error(`newUnknowns[${index}] must contain id and text`);
+    return { id, text };
+  });
+}
+
+export function normalizeFogResolutions(raw: unknown): FogResolution[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) throw new Error("resolvedUnknowns must be an array");
+  return raw.map((item, index) => {
+    if (!item || typeof item !== "object") {
+      throw new Error(`resolvedUnknowns[${index}] must contain id and reason`);
+    }
+    const row = item as Record<string, unknown>;
+    const id = String(row.id ?? "").trim();
+    const reason = String(row.reason ?? "").trim();
+    if (!id || !reason) throw new Error(`resolvedUnknowns[${index}] must contain id and reason`);
+    return { id, reason };
+  });
+}
+
+function contractBlock(error: unknown): PhaseResult {
+  const detail = error instanceof Error ? error.message : String(error);
+  return { kind: "block", reason: `Invalid griller output: ${detail}`, retriable: true };
 }
 
 function normalizeOptions(row: Record<string, unknown>): QuestionOption[] | undefined {

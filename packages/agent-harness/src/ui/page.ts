@@ -948,7 +948,7 @@ export function renderDashboardPage(): string {
           '<div class="question"><div class="question-title"><span>' + esc(q.prompt) + '</span></div>' +
           answerControl(q, draft) + '</div>'
         ).join("") + '</div><div class="gate-footer"><label>Batch notes<textarea id="gate-notes" placeholder="Context that applies to the whole batch">' + esc(draft.notes || "") + '</textarea></label>' +
-        '<button class="primary" type="button" data-action="answer">Submit batch</button></div></section>';
+        '<button class="primary" type="button" data-action="answer">Submit</button></div></section>';
     }
     function selectBatchOption(qid, optionId) {
       const draft = ensureDraft(app.selectedId);

@@ -826,7 +826,7 @@ export function renderDashboardPage(): string {
         return '<div class="question-options">' + q.options.map((option) => {
           const recommended = option.id === q.recommendedOptionId;
           const selected = String(value) === String(option.id);
-          const commandHint = String(option.description || "").split("\n")[0];
+          const commandHint = String(option.description || "").split("\\n")[0];
           return '<button type="button" class="question-option' + (recommended ? ' recommended' : '') + (selected ? ' selected' : '') + '" data-choice="' + esc(q.id) + '" data-value="' + esc(option.id) + '" data-command-hint="' + esc(commandHint) + '"><strong>' + esc(option.label) + '</strong>' + (selected ? '<span class="selected-badge">Selected</span>' : (recommended ? '<span class="recommendation-badge">Recommended</span>' : '')) + (option.description ? '<small>' + esc(option.description) + '</small>' : '') + '</button>';
         }).join("") + '</div>' + (q.recommendation ? '<div class="recommendation"><strong>Recommendation:</strong> ' + esc(q.recommendation) + '</div>' : '');
       }

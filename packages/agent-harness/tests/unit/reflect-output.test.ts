@@ -194,6 +194,8 @@ describe("dashboard reflector editor", () => {
     expect(script).toBeTruthy();
     expect(() => new Function(script!)).not.toThrow();
     expect(script).toContain('raw.join("\\n")');
+    expect(script).toContain('.split("\\n")[0]');
+    expect(script).not.toMatch(/\.split\("\n"\)/);
     expect(script).toContain("reflectListEntries");
     expect(html).toContain("field-sizing: content");
   });

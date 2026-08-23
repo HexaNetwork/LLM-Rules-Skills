@@ -1,53 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { HOST_SERVICE_NAMES } from "../../src/boot.js";
 import {
   AGENT_ROLES,
-  DEFAULT_ROLE_ASSIGNMENTS,
   ROLE_RULES,
   outputContractFor,
 } from "../../src/domain/agent-roles.js";
-import { mergeSettings } from "../../src/domain/settings.js";
-import { createKnowledgeService } from "../../src/plugins/knowledge.js";
 import { createRoleGuidanceService } from "../../src/plugins/role-guidance.js";
+import { mergeSettings } from "../../src/domain/settings.js";
 import { renderDashboardPage } from "../../src/ui/page.js";
 import { buildCursorInvokePrompt } from "../../src/worker/invoke.js";
 import { createTempDir } from "../helpers.js";
-
-describe("role guidance assignments", () => {
-  it("defaults reflector to domain-modeling only", () => {
-    const settings = mergeSettings();
-    expect(settings.guidance.assignments.reflector).toEqual({
-      rules: [],
-      skills: ["domain-modeling"],
-    });
-    expect(settings.guidance.assignments.griller.skills).toEqual(["grill-me", "domain-modeling"]);
-  });
-
-  it("compiles the reflector pack from assigned skills, not lexical idea search", async () => {
-    const knowledge = createKnowledgeService();
-    const pack = await knowledge.compileRoleGuidancePack({
-      assignment: DEFAULT_ROLE_ASSIGNMENTS.reflector,
-      maxCharacters: 16000,
-    });
-    expect(pack.missingAssignments).toEqual([]);
-    expect(pack.selected.map((item) => `${item.kind}:${item.name}`)).toEqual(["skill:domain-modeling"]);
-    expect(pack.text.toLowerCase()).toContain("domain modeling");
-    expect(pack.text.toLowerCase()).not.toContain("rip and tear");
-  });
-
-  it("does not inject rip-and-tear into the reflector when compiling defaults", async () => {
-    const knowledge = createKnowledgeService();
-    const lexical = await knowledge.search(
-      "remove plot claim system rip tear culture zone protection",
-    );
-    expect(lexical.some((hit) => hit.path.toLowerCase().includes("rip-and-tear"))).toBe(true);
-
-    const pack = await knowledge.compileRoleGuidancePack({
-      assignment: DEFAULT_ROLE_ASSIGNMENTS.reflector,
-      maxCharacters: 16000,
-    });
-    expect(pack.sources.join("\n").toLowerCase()).not.toContain("rip-and-tear");
-  });
-});
 
 describe("role prompt rules", () => {
   it("includes specialized role rules for every agent type in the live prompt", () => {
@@ -66,6 +28,16 @@ describe("role prompt rules", () => {
   it("requires explicit code provenance in griller resolutions", () => {
     expect(outputContractFor("griller")).toContain('source:"code"');
     expect(ROLE_RULES.griller.join("\n")).toContain("ask every independent unresolved product");
+  });
+});
+
+describe("legacy guidance cleanup", () => {
+  it("does not expose a knowledge service or retain legacy assignment settings", () => {
+    expect(HOST_SERVICE_NAMES).not.toContain("knowledge");
+    const settings = mergeSettings({
+      guidance: { assignments: { griller: { skills: ["grill-me"] } } },
+    } as never);
+    expect("guidance" in settings).toBe(false);
   });
 });
 

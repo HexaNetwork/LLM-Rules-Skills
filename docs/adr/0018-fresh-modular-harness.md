@@ -36,9 +36,10 @@ A run pins only identity:
 - worktree path and `baseSha`
 
 Project and profile settings (verification command, test globs, budgets,
-coverage, models, guidance) are re-read on every `start` / `continue` /
-`answer` / `retry`. Changing a knob and hitting Continue applies it. The
-effective snapshot is appended to a per-run audit log. There is no
+coverage, and models) are re-read on every `start` / `continue` / `answer` /
+`retry`. Per-role guidance is resolved live for every worker invocation.
+Changing a knob and hitting Continue applies it. The effective settings
+snapshot is appended to a per-run audit log. There is no
 `configurationHash`, `CONFIG_VERSION` migration, frozen-components snapshot, or
 config-fixer role.
 
@@ -77,7 +78,7 @@ CLI / Dashboard
     → ctx.store          host filesystem artifacts
     → ctx.git            host worktree, commit, push, PR
     → ctx.sandbox        one Docker container per run
-    → ctx.knowledge      live guidance (no freeze copy)
+    → ctx.roleGuidance  live per-role guidance (no freeze copy)
     → ctx.commands       verification / coverage inside the sandbox
 ```
 

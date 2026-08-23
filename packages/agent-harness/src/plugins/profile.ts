@@ -21,7 +21,6 @@ import { packetsPlugin } from "./packets.js";
 import { agentsPlugin, type AgentsConfig } from "./agents.js";
 import { gitPlugin } from "./git.js";
 import { sandboxPlugin, type SandboxConfig } from "./sandbox.js";
-import { knowledgePlugin } from "./knowledge.js";
 import { roleGuidancePlugin } from "./role-guidance.js";
 import { commandsPlugin } from "./commands.js";
 import { runLifecyclePlugin } from "./run-lifecycle.js";
@@ -60,7 +59,6 @@ export function hostRuntimeRows(options: RuntimeOptions = {}): ProfileRow[] {
       provides: ["sandbox"],
       trusted: true,
     },
-    { id: "host.knowledge", plugin: knowledgePlugin, provides: ["knowledge"], trusted: true },
     {
       id: "host.roleGuidance",
       plugin: roleGuidancePlugin,
@@ -94,7 +92,6 @@ export function hostRuntimeRows(options: RuntimeOptions = {}): ProfileRow[] {
 
 const PHASE_INJECT = [
   "phases",
-  "knowledge",
   "roleGuidance",
   "packets",
   "agents",

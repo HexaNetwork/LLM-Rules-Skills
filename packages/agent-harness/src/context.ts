@@ -7,7 +7,6 @@ import type { PacketService } from "./plugins/packets.js";
 import type { AgentsService } from "./plugins/agents.js";
 import type { GitService } from "./plugins/git.js";
 import type { SandboxService } from "./plugins/sandbox.js";
-import type { KnowledgeService } from "./plugins/knowledge.js";
 import type { RoleGuidanceService } from "./plugins/role-guidance.js";
 import type { CommandService } from "./plugins/commands.js";
 import type { RunLifecycleService } from "./plugins/run-lifecycle.js";
@@ -24,7 +23,6 @@ declare module "@deepseek-ai/cordis" {
     agents: AgentsService;
     git: GitService;
     sandbox: SandboxService;
-    knowledge: KnowledgeService;
     roleGuidance: RoleGuidanceService;
     commands: CommandService;
     runLifecycle: RunLifecycleService;

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Harness Run"
-  short_description: "Run a durable idea-to-feature workflow"
-  default_prompt: "Use $harness-run to launch this idea as a durable feature-delivery run."

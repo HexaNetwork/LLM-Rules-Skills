@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0020](0020-role-guidance-only.md)
 
 ## Context
 

@@ -27,9 +27,10 @@ Human-in-the-loop ideas that stay:
 - Git commit, push, and PR stay on the host.
 
 Settings that used to be frozen (verification command, test globs, budgets,
-coverage, models, guidance) are live project/profile knobs. Changing them and
-hitting Continue applies them. Identity cannot change mid-run: `runId`,
-workflow bundle id, worktree, `baseSha`.
+coverage, and models) are live project/profile knobs. Per-role guidance is
+resolved live for every worker invocation. Changing a setting and hitting
+Continue applies it. Identity cannot change mid-run: `runId`, workflow bundle
+id, worktree, `baseSha`.
 
 ## Architecture
 
@@ -46,7 +47,7 @@ CLI / Dashboard
     → ctx.store          host filesystem artifacts
     → ctx.git            host worktree, commit, push, PR
     → ctx.sandbox        one Docker container per run
-    → ctx.knowledge      live guidance (no freeze copy)
+    → ctx.roleGuidance  live per-role guidance (no freeze copy)
     → ctx.commands       verification / coverage inside the sandbox
 ```
 

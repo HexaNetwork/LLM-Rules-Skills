@@ -19,54 +19,6 @@ export const AGENT_ROLES = [
 export const AgentRoleSchema = z.enum(AGENT_ROLES);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 
-export const GuidanceAssignmentSchema = z.object({
-  rules: z.array(z.string().min(1)).default([]),
-  skills: z.array(z.string().min(1)).default([]),
-});
-export type GuidanceAssignment = z.infer<typeof GuidanceAssignmentSchema>;
-
-/** Exact skill/rule packs each role receives — not lexical grab-bag search. */
-export const DEFAULT_ROLE_ASSIGNMENTS: Record<AgentRole, GuidanceAssignment> = {
-  reflector: { rules: [], skills: ["domain-modeling"] },
-  griller: { rules: [], skills: ["grill-me", "domain-modeling"] },
-  "docs-writer": { rules: [], skills: ["domain-modeling"] },
-  planner: { rules: [], skills: ["domain-modeling", "to-prd"] },
-  "scenario-planner": { rules: [], skills: [] },
-  "issue-slicer": {
-    rules: [],
-    skills: ["prd-to-issues", "domain-modeling", "improve-codebase-architecture"],
-  },
-  implementer: { rules: [], skills: [] },
-  "task-reviewer": { rules: [], skills: ["task-review"] },
-  reviewer: { rules: [], skills: ["code-review"] },
-  fixer: { rules: [], skills: ["diagnose"] },
-  "message-writer": { rules: [], skills: [] },
-  "project-profiler": { rules: [], skills: [] },
-};
-
-export const RoleAssignmentsSchema = z
-  .object({
-    reflector: GuidanceAssignmentSchema.default(DEFAULT_ROLE_ASSIGNMENTS.reflector),
-    griller: GuidanceAssignmentSchema.default(DEFAULT_ROLE_ASSIGNMENTS.griller),
-    "docs-writer": GuidanceAssignmentSchema.default(DEFAULT_ROLE_ASSIGNMENTS["docs-writer"]),
-    planner: GuidanceAssignmentSchema.default(DEFAULT_ROLE_ASSIGNMENTS.planner),
-    "scenario-planner": GuidanceAssignmentSchema.default(
-      DEFAULT_ROLE_ASSIGNMENTS["scenario-planner"],
-    ),
-    "issue-slicer": GuidanceAssignmentSchema.default(DEFAULT_ROLE_ASSIGNMENTS["issue-slicer"]),
-    implementer: GuidanceAssignmentSchema.default(DEFAULT_ROLE_ASSIGNMENTS.implementer),
-    "task-reviewer": GuidanceAssignmentSchema.default(DEFAULT_ROLE_ASSIGNMENTS["task-reviewer"]),
-    reviewer: GuidanceAssignmentSchema.default(DEFAULT_ROLE_ASSIGNMENTS.reviewer),
-    fixer: GuidanceAssignmentSchema.default(DEFAULT_ROLE_ASSIGNMENTS.fixer),
-    "message-writer": GuidanceAssignmentSchema.default(DEFAULT_ROLE_ASSIGNMENTS["message-writer"]),
-    "project-profiler": GuidanceAssignmentSchema.default(
-      DEFAULT_ROLE_ASSIGNMENTS["project-profiler"],
-    ),
-  })
-  .default(DEFAULT_ROLE_ASSIGNMENTS);
-
-export type RoleAssignments = z.infer<typeof RoleAssignmentsSchema>;
-
 export const ROLE_RULES: Record<AgentRole, string[]> = {
   reflector: [
     "Write restatement as the feature itself in plain language; do not invent requirements.",
@@ -174,14 +126,6 @@ export const ROLE_OUTPUT_CONTRACTS: Record<AgentRole, string> = {
 export function outputContractFor(role: string): string | undefined {
   if (role in ROLE_OUTPUT_CONTRACTS) return ROLE_OUTPUT_CONTRACTS[role as AgentRole];
   return undefined;
-}
-
-export function assignmentFor(
-  assignments: RoleAssignments,
-  role: string,
-): GuidanceAssignment {
-  if (role in assignments) return assignments[role as AgentRole];
-  return { rules: [], skills: [] };
 }
 
 export function renderGuidancePromptPreview(role: string, guidancePack: string): string {

@@ -17,7 +17,6 @@ export const HOST_SERVICE_NAMES = [
   "agents",
   "git",
   "sandbox",
-  "knowledge",
   "roleGuidance",
   "commands",
   "runLifecycle",

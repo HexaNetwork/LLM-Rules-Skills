@@ -33,6 +33,6 @@ export function phasesPlugin(ctx: Context, config: { phases?: Phase[] } = {}): v
 export function definePhasePlugin(phase: Phase) {
   const plugin = (ctx: Context) => ctx.phases.register(phase);
   return Object.assign(plugin, {
-    inject: ["phases", "knowledge", "packets", "agents", "git", "commands", "store", "settings"],
+    inject: ["phases", "packets", "agents", "git", "commands", "store", "settings"],
   });
 }

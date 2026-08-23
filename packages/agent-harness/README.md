@@ -1,10 +1,13 @@
-# Agent Harness
+﻿# Agent Harness
 
 Turns an idea into verified, committed feature slices. One host process composed
 with `@deepseek-ai/cordis`. One Linux container per run. Live project settings.
 No frozen run configuration.
 
 Package: `@hexanetwork/agent-harness`. Binary: `agent-harness`.
+
+Design rules (project-agnostic, deterministic-first, lean UI):
+[design.md](./design.md).
 
 ## Quick start
 
@@ -32,11 +35,11 @@ Pre-rewrite runs are unsupported.
 ## Lifecycle
 
 ```text
-idea → reflect → grill → glossary → verification-settings
-    → plan + PRD + scenarios → operator-gate → slice
-    → implement (per-task review, host commit)
-    → scenario-test → crystallize (optional coverage)
-    → final-review → publish (host push + PR)
+idea ΓåÆ reflect ΓåÆ grill ΓåÆ glossary ΓåÆ verification-settings
+    ΓåÆ plan + PRD + scenarios ΓåÆ operator-gate ΓåÆ slice
+    ΓåÆ implement (per-task review, host commit)
+    ΓåÆ scenario-test ΓåÆ crystallize (optional coverage)
+    ΓåÆ final-review ΓåÆ publish (host push + PR)
 ```
 
 Stops: `awaiting_input`, `blocked`, `cancelled`, `completed`.
@@ -50,7 +53,7 @@ advance. A run pins only identity: `runId`, workflow bundle id, worktree,
 | Bundle | Phases |
 | --- | --- |
 | `default` | reflect through publish |
-| `ticket` | implement → scenario-test → publish |
+| `ticket` | implement ΓåÆ scenario-test ΓåÆ publish |
 
 ```bash
 agent-harness start --idea "Fix the timeout copy" --workflow ticket --repository "/path/to/your-project"
@@ -62,10 +65,10 @@ Target repositories cannot install plugins.
 
 ```text
 Host: workflow, dashboard, CLI, durable state, GITHUB_TOKEN, Git, Docker lifecycle
-  → one Linux container per run
-  → bind run worktree at /workspace
-  → env: CURSOR_API_KEY
-  → never: GH tokens, harness home, sibling runs, Docker socket, control checkout
+  ΓåÆ one Linux container per run
+  ΓåÆ bind run worktree at /workspace
+  ΓåÆ env: CURSOR_API_KEY
+  ΓåÆ never: GH tokens, harness home, sibling runs, Docker socket, control checkout
 ```
 
 Live Cursor is opt-in. Isolation is proven by mount list, secret absence, and an

@@ -80,7 +80,11 @@ export function renderDashboardPage(): string {
     .reflect-list { display: grid; gap: 8px; margin-top: 6px; }
     .reflect-list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; }
     .reflect-list-row input { margin-top: 0; }
-    .reflect-list-row .quiet { min-height: 36px; padding: 7px 10px; }
+    .reflect-list-row .quiet {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 36px; min-height: 36px; padding: 0;
+    }
+    .reflect-list-row .quiet svg { display: block; }
     .reflect-list-add { justify-self: start; margin-top: 2px; }
     input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
     .field { margin-top: 11px; }
@@ -857,7 +861,7 @@ export function renderDashboardPage(): string {
         '<div class="batch-footer-actions"><button type="button" class="secondary" id="acceptAllBtn" data-batch-accept-all>Accept all recommendations</button>' +
         '<button type="button" class="primary" id="submitBatchBtn" data-action="answer" data-testid="submit-answers">Submit answers</button></div></div>' +
         '<div class="batch-feedback" id="batchFeedback"' + (draft.batchFeedback ? '' : ' hidden') + '>' + esc(draft.batchFeedback || '') + '</div>' +
-        '<div class="gate-footer"><label>Batch notes<textarea id="gate-notes" placeholder="Context that applies to the whole batch">' + esc(draft.notes || "") + '</textarea></label></div></section>';
+        '<div class="gate-footer"><label>Extra notes for the agent<textarea id="gate-notes" placeholder="Optional context for the next agent turn">' + esc(draft.notes || "") + '</textarea></label></div></section>';
     }
     function reflectFieldValue(reflect, draft, id) {
       if (draft.answers[id] != null) return draft.answers[id];
@@ -876,7 +880,7 @@ export function renderDashboardPage(): string {
         entries.map((entry, index) =>
           '<div class="reflect-list-row">' +
           '<input type="text" data-reflect-list-item="' + esc(fieldId) + '" data-index="' + index + '" value="' + esc(entry) + '" placeholder="One entry">' +
-          '<button type="button" class="quiet" data-reflect-list-remove="' + esc(fieldId) + '" data-index="' + index + '"' + (entries.length <= 1 ? " disabled" : "") + '>Remove</button>' +
+          '<button type="button" class="quiet" data-reflect-list-remove="' + esc(fieldId) + '" data-index="' + index + '" title="Remove" aria-label="Remove"' + (entries.length <= 1 ? " disabled" : "") + '><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" stroke="currentColor" stroke-width="2"/><path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>' +
           '</div>'
         ).join("") +
         '<button type="button" class="secondary reflect-list-add" data-reflect-list-add="' + esc(fieldId) + '">Add entry</button></div>';
@@ -921,7 +925,7 @@ export function renderDashboardPage(): string {
           return '<div class="field"><label>' + esc(field.label) + (field.single
             ? '<input type="text" data-reflect-field="' + esc(field.id) + '" data-answer="' + esc(field.id) + '" value="' + esc(draft.answers[field.id] || "") + '" placeholder="Short imperative run label">'
             : '<textarea data-reflect-field="' + esc(field.id) + '" data-answer="' + esc(field.id) + '" rows="1">' + esc(draft.answers[field.id] || "") + '</textarea>') + '</label></div>';
-        }).join("") + '</form><div class="gate-footer"><label>Batch notes<textarea id="gate-notes" rows="1" placeholder="Context that applies to the whole batch">' + esc(draft.notes || "") + '</textarea></label>' +
+        }).join("") + '</form><div class="gate-footer"><label>Extra notes for the agent<textarea id="gate-notes" rows="1" placeholder="Optional context for the next agent turn">' + esc(draft.notes || "") + '</textarea></label>' +
         '<button class="primary" type="button" data-action="answer">Confirm brief</button></div></section>';
     }
     function gateHiddenWhileBusy(run) {
@@ -947,7 +951,7 @@ export function renderDashboardPage(): string {
         '<div class="questions">' + gate.questions.map((q) =>
           '<div class="question"><div class="question-title"><span>' + esc(q.prompt) + '</span></div>' +
           answerControl(q, draft) + '</div>'
-        ).join("") + '</div><div class="gate-footer"><label>Batch notes<textarea id="gate-notes" placeholder="Context that applies to the whole batch">' + esc(draft.notes || "") + '</textarea></label>' +
+        ).join("") + '</div><div class="gate-footer"><label>Extra notes for the agent<textarea id="gate-notes" placeholder="Optional context for the next agent turn">' + esc(draft.notes || "") + '</textarea></label>' +
         '<button class="primary" type="button" data-action="answer">Submit</button></div></section>';
     }
     function selectBatchOption(qid, optionId) {

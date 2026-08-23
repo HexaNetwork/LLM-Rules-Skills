@@ -160,6 +160,10 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain('["sessions", "Sessions"');
       expect(html).toContain('["activity", "Activity"');
       expect(html).toContain('["docker", "Docker"');
+      expect(html).toContain("function renderOverview");
+      expect(html).toContain("needs-input");
+      expect(html).not.toContain("gate-banner");
+      expect(html).toContain("formatGateScenarios");
       expect(html).toContain('data-session="');
       expect(html).toContain("sessionOpen");
       expect(html).toContain('details.session[data-session]');

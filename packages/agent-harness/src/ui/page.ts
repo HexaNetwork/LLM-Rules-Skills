@@ -195,6 +195,10 @@ export function renderDashboardPage(): string {
       letter-spacing: .08em; text-transform: uppercase;
     }
     .gate-review-missing { color: var(--attention); font-size: 13px; }
+    .gate-scenario { margin-top: 10px; }
+    .gate-scenario:first-child { margin-top: 0; }
+    .gate-scenario h5 { margin: 0 0 6px; font-size: 13px; font-weight: 650; }
+    .gate-scenario ol { margin: 0; padding-left: 18px; color: #c4c8d0; font-size: 13px; line-height: 1.5; }
     .gate-feedback {
       margin: 0 20px 12px; padding: 10px 12px; border-radius: 8px;
       border: 1px solid var(--danger-line); background: var(--danger-soft); color: #f0b4ae; font-size: 13px;
@@ -280,6 +284,10 @@ export function renderDashboardPage(): string {
     }
     .run-tab:hover { color: var(--ink); background: rgba(255, 255, 255, .04); }
     .run-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .run-tab.needs-input { color: var(--attention); }
+    .run-tab.needs-input .count {
+      color: var(--attention); border-color: var(--attention-line); background: var(--attention-soft);
+    }
     .run-tab .count { margin-left: 6px; }
     .sandbox-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 0 0 6px; }
     .sandbox-meta dt { color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
@@ -969,17 +977,51 @@ export function renderDashboardPage(): string {
       if (top) top.scrollIntoView({ block: "start" });
     }
 
-    function formatGateArtifact(value) {
+    function formatGateText(value) {
+      return '<div class="artifact-body">' + esc(String(value)).replace(/\\n/g, "<br>") + '</div>';
+    }
+    function formatGateScenarios(value) {
+      const list = Array.isArray(value)
+        ? value
+        : (value && typeof value === "object" && Array.isArray(value.scenarios) ? value.scenarios : null);
+      if (!list || !list.length) return '<div class="gate-review-missing">Missing</div>';
+      return list.map((item) => {
+        const row = item && typeof item === "object" ? item : {};
+        const title = String(row.title || row.id || "Scenario");
+        const steps = Array.isArray(row.steps) ? row.steps.map(String) : [];
+        return '<div class="gate-scenario"><h5>' + esc(title) + '</h5>' +
+          (steps.length
+            ? '<ol>' + steps.map((step) => '<li>' + esc(step) + '</li>').join("") + '</ol>'
+            : '<div class="empty-inline">No steps.</div>') +
+          '</div>';
+      }).join("");
+    }
+    function formatGateArtifact(kind, value) {
       if (value == null || value === "") return '<div class="gate-review-missing">Missing</div>';
-      return artifactBody(value);
+      if (kind === "plan") {
+        if (typeof value === "string") return formatGateText(value);
+        if (value && typeof value === "object" && typeof value.plan === "string") return formatGateText(value.plan);
+      }
+      if (kind === "prd") {
+        if (typeof value === "string") return formatGateText(value);
+        if (value && typeof value === "object") {
+          const title = typeof value.title === "string" ? value.title.trim() : "";
+          const body = typeof value.body === "string" ? value.body : "";
+          if (!title && !body) return '<div class="gate-review-missing">Missing</div>';
+          return (title ? '<div class="artifact-body"><strong>' + esc(title) + '</strong></div>' : "") +
+            (body ? formatGateText(body) : "");
+        }
+      }
+      if (kind === "scenarios") return formatGateScenarios(value);
+      return formatGateText(typeof value === "string" ? value : JSON.stringify(value, null, 2));
     }
     function renderOperatorGate(run, gate, draft) {
       const artifacts = (run.state && run.state.artifacts) || {};
       return '<section class="gate" data-testid="operator-gate"><header class="gate-head"><div class="eyebrow">Operator input required</div><h3>' + esc(gate.title) + '</h3></header>' +
         '<div class="gate-review">' +
-          '<div class="gate-review-block"><h4>Plan</h4>' + formatGateArtifact(artifacts.plan) + '</div>' +
-          '<div class="gate-review-block"><h4>PRD</h4>' + formatGateArtifact(artifacts.prd) + '</div>' +
-          '<div class="gate-review-block"><h4>Scenarios</h4>' + formatGateArtifact(artifacts.scenarios) + '</div>' +
+          '<div class="gate-review-block"><h4>Plan</h4>' + formatGateArtifact("plan", artifacts.plan) + '</div>' +
+          '<div class="gate-review-block"><h4>PRD</h4>' + formatGateArtifact("prd", artifacts.prd) + '</div>' +
+          '<div class="gate-review-block"><h4>Scenarios</h4>' + formatGateArtifact("scenarios", artifacts.scenarios) + '</div>' +
         '</div>' +
         '<div class="gate-feedback" id="gateFeedback"' + (draft.gateFeedback ? '' : ' hidden') + '>' + esc(draft.gateFeedback || '') + '</div>' +
         '<div class="gate-footer operator-gate-footer"><label>Notes<textarea id="gate-notes" placeholder="Optional on approve; required when requesting changes">' + esc(draft.notes || "") + '</textarea></label>' +
@@ -1207,8 +1249,9 @@ export function renderDashboardPage(): string {
         '<br><br><span class="repo-label"><strong>Worktree</strong>' + copyPathBtn(worktreePath, "Copy worktree path") + '</span><br><span title="' + esc(worktreePath) + '">' + esc(worktreePath) + '</span></div>';
     }
     function renderRunTabs(run) {
+      const awaiting = Boolean(run.state.gate && !gateHiddenWhileBusy(run));
       const tabs = [
-        ["overview", "Overview", null],
+        ["overview", "Overview", awaiting ? "input" : null],
         ["artifacts", "Artifacts", Object.keys(visibleArtifacts(run.state.artifacts)).length],
         ["tasks", "Tasks", run.state.tasks.length],
         ["sessions", "Sessions", app.sessions.length],
@@ -1217,7 +1260,9 @@ export function renderDashboardPage(): string {
       ];
       return '<nav class="run-tabs" aria-label="Run detail sections">' + tabs.map((entry) => {
         const active = app.runTab === entry[0];
-        return '<button type="button" class="run-tab' + (active ? " active" : "") + '" data-tab="' + entry[0] + '" aria-selected="' + (active ? "true" : "false") + '">' + entry[1] +
+        const needsInput = entry[0] === "overview" && awaiting;
+        return '<button type="button" class="run-tab' + (active ? " active" : "") + (needsInput ? " needs-input" : "") + '" data-tab="' + entry[0] + '" aria-selected="' + (active ? "true" : "false") + '"' +
+          (needsInput ? ' title="Operator input required"' : "") + '>' + entry[1] +
           (entry[2] != null ? '<span class="count">' + entry[2] + '</span>' : "") + '</button>';
       }).join("") + '</nav>';
     }
@@ -1253,6 +1298,13 @@ export function renderDashboardPage(): string {
       return '<section class="panel"><div class="panel-title"><h3>Docker sandbox</h3>' +
         (info && !info.error && info.status ? '<span class="count">' + esc(info.status) + '</span>' : '') + '</div>' + body + '</section>';
     }
+    function renderOverview(run) {
+      const gateHtml = renderGate(run);
+      if (gateHtml) return gateHtml;
+      return '<div class="content-grid"><section class="panel"><div class="panel-title"><h3>Unknowns & fog</h3><span class="count">' + run.state.fog.length + '</span></div>' +
+        renderFog(run.state.fog) + '</section><aside class="panel"><div class="panel-title"><h3>Run identity</h3></div>' +
+        renderIdentity(run) + '</aside></div>';
+    }
     function renderTabContent(run) {
       if (app.runTab === "artifacts") {
         return '<section class="panel"><div class="panel-title"><h3>Brief & evidence</h3><span class="count">' + Object.keys(visibleArtifacts(run.state.artifacts)).length + ' artifacts</span></div>' +
@@ -1273,9 +1325,7 @@ export function renderDashboardPage(): string {
       if (app.runTab === "docker") {
         return renderSandbox(run);
       }
-      return '<div class="content-grid"><section class="panel"><div class="panel-title"><h3>Unknowns & fog</h3><span class="count">' + run.state.fog.length + '</span></div>' +
-        renderFog(run.state.fog) + '</section><aside class="panel"><div class="panel-title"><h3>Run identity</h3></div>' +
-        renderIdentity(run) + '</aside></div>';
+      return renderOverview(run);
     }
     function maybeLoadSandbox(run, refresh) {
       const runId = run.identity.runId;
@@ -1316,7 +1366,6 @@ export function renderDashboardPage(): string {
         '<nav class="phase-track" aria-label="Run phases">' + renderPhases(run) + '</nav>' +
         renderRunTabs(run) +
         (run.state.block && !gateHiddenWhileBusy(run) ? '<div class="block"><strong>Run blocked.</strong> ' + esc(run.state.block.reason) + '</div>' : '') +
-        renderGate(run) +
         renderTabContent(run);
       autosizeReflectFields();
       if (app.runTab === "docker") maybeLoadSandbox(run);

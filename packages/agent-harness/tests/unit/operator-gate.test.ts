@@ -45,6 +45,13 @@ describe("operator gate UI", () => {
     expect(html).toContain(">Plan</h4>");
     expect(html).toContain(">PRD</h4>");
     expect(html).toContain(">Scenarios</h4>");
+    expect(html).toContain("formatGateArtifact(\"plan\"");
+    expect(html).toContain("formatGateScenarios");
+    expect(html).toContain("function renderOverview");
+    expect(html).toContain("needs-input");
+    expect(html).toContain('awaiting ? "input" : null');
+    expect(html).not.toContain("gate-banner");
+    expect(html).not.toContain("Operator input is waiting on Overview.");
     expect(html).toContain("Notes are required when requesting changes.");
 
     const start = html.indexOf("function renderOperatorGate");
@@ -53,6 +60,20 @@ describe("operator gate UI", () => {
     expect(operatorFn).not.toContain(">Submit</button>");
     expect(operatorFn).not.toContain('data-value="yes"');
     expect(operatorFn).not.toContain('data-value="no"');
+    expect(operatorFn).not.toContain("artifactBody(value)");
+    expect(operatorFn).not.toContain("JSON.stringify(value, null, 2)");
+
+    const detailStart = html.indexOf("function renderDetail()");
+    const detailEnd = html.indexOf("async function loadProjects()", detailStart);
+    const detailFn = html.slice(detailStart, detailEnd);
+    expect(detailFn).toContain("renderTabContent(run)");
+    expect(detailFn).not.toContain("renderGate(run)");
+
+    const tabStart = html.indexOf("function renderTabContent(run)");
+    const tabEnd = html.indexOf("function maybeLoadSandbox", tabStart);
+    const tabFn = html.slice(tabStart, tabEnd);
+    expect(tabFn).toContain("return renderOverview(run)");
+    expect(tabFn).not.toContain("renderGate(run)");
   });
 });
 

@@ -50,7 +50,7 @@ export function markAsked(fog: FogEntry[], ids: string[]): FogEntry[] {
 
 export function applyAnswers(
   fog: FogEntry[],
-  answered: Array<{ id: string; reason: string }>,
+  answered: Array<Omit<FogResolution, "source">>,
   parkedIds: string[],
 ): FogEntry[] {
   const answeredById = new Map(answered.map((entry) => [entry.id, entry.reason]));
@@ -58,12 +58,12 @@ export function applyAnswers(
   return fog.map((entry) => {
     if (parked.has(entry.id)) return { ...entry, status: "parked", resolution: undefined };
     const reason = answeredById.get(entry.id);
-    if (reason) return { ...entry, status: "resolved", resolution: { source: "operator", reason } };
+    if (reason) return { ...entry, status: "resolved", resolution: { source: "user", reason } };
     return entry;
   });
 }
 
-export function applyAgentResolutions(
+export function applyCodeResolutions(
   fog: FogEntry[],
   resolutions: FogResolution[],
 ): FogEntry[] {
@@ -71,7 +71,7 @@ export function applyAgentResolutions(
   return fog.map((entry) => {
     const reason = byId.get(entry.id);
     return reason
-      ? { ...entry, status: "resolved", resolution: { source: "agent" as const, reason } }
+      ? { ...entry, status: "resolved", resolution: { source: "code" as const, reason } }
       : entry;
   });
 }

@@ -79,11 +79,12 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
   ],
   griller: [
     "Ask only mutually independent questions in a single turn; dependent forks stay sequential.",
-    "Prefer fewer questions; batch size is a ceiling, not a target.",
+    "Audit every open fog item; ask every independent unresolved product or design decision up to the batch limit.",
     "Treat the supplied fog register as durable state; never imply resolution by omitting an entry.",
     "Link every question to one or more open fogIds.",
     "Return only genuinely new unknowns in newUnknowns, each with a stable id and text.",
-    "Resolve codebase facts only through resolvedUnknowns with the fog id and a concrete evidence-backed reason.",
+    "Resolve codebase facts only through resolvedUnknowns with source code, the fog id, and a concrete evidence-backed reason.",
+    "Code evidence may establish current behavior but must not silently choose product behavior; ask the user when a requirement or trade-off remains.",
     "Look up codebase facts; put product decisions to the human with a recommendation.",
     "Do not enact the plan; when understanding is sufficient, return ready_to_plan.",
     "Return exactly one JSON object matching the expected output contract. Do not write Markdown interview prose.",
@@ -139,6 +140,8 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
   ],
   "project-profiler": [
     "Infer verification commands and test globs from the repository; do not invent tooling.",
+    "Always return a generic project-wide command when the repo has one, even if you also propose feature-specific commands.",
+    "Feature-specific commands are optional; only include them when a narrower command clearly covers this brief.",
     "Return exactly one raw JSON object matching the expected output contract.",
   ],
 };
@@ -153,7 +156,7 @@ export const ROLE_OUTPUT_CONTRACTS: Record<AgentRole, string> = {
   reflector:
     "{proposedTitle:string,summary:string,restatement:string,goal:string,users:[string],inScope:[string],outOfScope:[string],assumptions:[string],unknowns:[string]}",
   griller:
-    '{questions:[{id:string,fogIds:[string],prompt:string,context?:string,options:[{id:string,label:string,description:string}],recommendedOptionId:string,recommendation:string}],newUnknowns:[{id:string,text:string}],resolvedUnknowns:[{id:string,reason:string}]}',
+    '{questions:[{id:string,fogIds:[string],prompt:string,context?:string,options:[{id:string,label:string,description:string}],recommendedOptionId:string,recommendation:string}],newUnknowns:[{id:string,text:string}],resolvedUnknowns:[{id:string,source:"code",reason:string}]}',
   "docs-writer":
     "glossary phase: {glossary:[{term:string,definition:string}]}; prd phase: {title:string,body:string}",
   planner: "{plan:string}",
@@ -164,7 +167,8 @@ export const ROLE_OUTPUT_CONTRACTS: Record<AgentRole, string> = {
   reviewer: '{verdict:"approve"|"reject",summary:string}',
   fixer: "{summary:string,passed:boolean}",
   "message-writer": "{title:string,body:string}",
-  "project-profiler": "{command:string,testGlobs:[string]}",
+  "project-profiler":
+    "{command:string,testGlobs:[string],rationale?:string,specificCommands?:[{id:string,label:string,command:string,rationale?:string}]}",
 };
 
 export function outputContractFor(role: string): string | undefined {

@@ -88,8 +88,28 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
       return packet.phase === "prd"
         ? { title: idea.slice(0, 72) || "Feature", body: `# PRD\n\n${idea}\n` }
         : { glossary: [{ term: "Run", definition: "A durable idea-to-feature execution." }] };
-    case "project-profiler":
-      return { command: "npm test", testGlobs: ["**/*.test.ts"] };
+    case "project-profiler": {
+      const slug = idea
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 32);
+      return {
+        command: "npm test",
+        testGlobs: ["**/*.test.ts"],
+        rationale: "package.json exposes a standard test script.",
+        specificCommands: slug
+          ? [
+              {
+                id: "feature-focused",
+                label: "Feature-focused",
+                command: `npm test -- ${slug}`,
+                rationale: "Narrow the suite toward this slice when the runner supports a filter.",
+              },
+            ]
+          : [],
+      };
+    }
     case "planner":
       return { plan: `1. Restate the goal.\n2. Implement the smallest change.\n3. Verify.\n\nGoal: ${idea}` };
     case "scenario-planner":

@@ -71,13 +71,7 @@ export function hostRuntimeRows(options: RuntimeOptions = {}): ProfileRow[] {
     phaseRow("reflect", createReflectPhase),
     phaseRow("grill", createGrillPhase),
     phaseRow("glossary", createGlossaryPhase),
-    {
-      id: "host.phase.verification-settings",
-      plugin: Object.assign((ctx: Context) => ctx.phases.register(createVerificationSettingsPhase()), {
-        inject: PHASE_INJECT,
-      }),
-      trusted: true,
-    },
+    phaseRow("verification-settings", createVerificationSettingsPhase),
     phaseRow("plan", createPlanPhase),
     phaseRow("prd", createPrdPhase),
     phaseRow("scenarios", createScenariosPhase),

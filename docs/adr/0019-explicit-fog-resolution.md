@@ -15,7 +15,7 @@ Questions were also associated with fog by comparing question prompts to unknown
 - Fog entries retain stable IDs for their lifetime. Text is presentation, not identity.
 - Griller questions must reference one or more open `fogIds`. Operator answers and parks transition exactly those entries.
 - Griller output uses `newUnknowns` only for genuinely new entries. Omitting an existing entry has no state effect.
-- A codebase fact may be resolved through `resolvedUnknowns`, but each resolution must name an existing fog ID and include a concrete reason. The reason is persisted with the entry and in the run artifacts.
+- A codebase fact may be resolved through `resolvedUnknowns`, but each resolution must name an existing fog ID, declare `source: "code"`, and include a concrete reason. User answers are recorded by the engine with `source: "user"`. Provenance and reason are persisted with the entry and in the run artifacts.
 - Product decisions may not be agent-resolved; they remain open until answered or explicitly parked by the operator.
 - A griller response with no questions blocks when any non-parked fog remains open. It cannot advance merely by returning an empty list.
 - Invalid references, duplicate question links, and unreasoned resolutions block as retriable griller contract failures.

@@ -802,6 +802,16 @@ export function renderDashboardPage(): string {
       return draft;
     }
     function answerControl(q, draft) {
+      if (Array.isArray(q.options) && q.options.length) {
+        if (draft.answers[q.id] == null && q.recommendedOptionId) draft.answers[q.id] = q.recommendedOptionId;
+        const value = draft.answers[q.id] != null ? draft.answers[q.id] : "";
+        return '<div class="question-options">' + q.options.map((option) => {
+          const recommended = option.id === q.recommendedOptionId;
+          const selected = String(value) === String(option.id);
+          const commandHint = String(option.description || "").split("\n")[0];
+          return '<button type="button" class="question-option' + (recommended ? ' recommended' : '') + (selected ? ' selected' : '') + '" data-choice="' + esc(q.id) + '" data-value="' + esc(option.id) + '" data-command-hint="' + esc(commandHint) + '"><strong>' + esc(option.label) + '</strong>' + (selected ? '<span class="selected-badge">Selected</span>' : (recommended ? '<span class="recommendation-badge">Recommended</span>' : '')) + (option.description ? '<small>' + esc(option.description) + '</small>' : '') + '</button>';
+        }).join("") + '</div>' + (q.recommendation ? '<div class="recommendation"><strong>Recommendation:</strong> ' + esc(q.recommendation) + '</div>' : '');
+      }
       const value = draft.answers[q.id] != null ? draft.answers[q.id] : (q.recommended || "");
       if (q.kind === "choice" || q.kind === "confirm") {
         const choices = q.choices && q.choices.length ? q.choices : ["yes", "no"];
@@ -950,8 +960,9 @@ export function renderDashboardPage(): string {
       return '<section class="gate"><header class="gate-head"><div class="eyebrow">Operator input required</div><h3>' + esc(gate.title) + '</h3></header>' +
         '<div class="questions">' + gate.questions.map((q) =>
           '<div class="question"><div class="question-title"><span>' + esc(q.prompt) + '</span></div>' +
+          (q.context ? '<div class="question-context">' + esc(q.context) + '</div>' : '') +
           answerControl(q, draft) + '</div>'
-        ).join("") + '</div><div class="gate-footer"><label>Extra notes for the agent<textarea id="gate-notes" placeholder="Optional context for the next agent turn">' + esc(draft.notes || "") + '</textarea></label>' +
+        ).join("") + '</div><div class="gate-footer">' +
         '<button class="primary" type="button" data-action="answer">Submit</button></div></section>';
     }
     function selectBatchOption(qid, optionId) {
@@ -1558,7 +1569,10 @@ export function renderDashboardPage(): string {
       if (choice && app.selectedId) {
         const draft = ensureDraft(app.selectedId);
         draft.answers[choice.dataset.choice] = choice.dataset.value;
-        document.querySelectorAll('[data-choice="' + CSS.escape(choice.dataset.choice) + '"]').forEach((node) => node.classList.toggle("selected", node === choice));
+        if (choice.dataset.choice === "selection" && choice.dataset.commandHint) {
+          draft.answers.command = choice.dataset.commandHint;
+        }
+        renderDetail();
         return;
       }
       const listAdd = event.target.closest("[data-reflect-list-add]");

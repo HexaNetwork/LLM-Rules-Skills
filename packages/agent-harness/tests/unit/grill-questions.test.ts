@@ -58,10 +58,15 @@ describe("normalizeQuestions", () => {
     expect(normalizeFogDrafts([{ id: "fog-storage", text: "Where is it stored?" }])).toEqual([
       { id: "fog-storage", text: "Where is it stored?" },
     ]);
-    expect(normalizeFogResolutions([{ id: "fog-storage", reason: "Found in config.yml" }])).toEqual([
-      { id: "fog-storage", reason: "Found in config.yml" },
-    ]);
-    expect(() => normalizeFogResolutions([{ id: "fog-storage" }])).toThrow(/id and reason/);
+    expect(
+      normalizeFogResolutions([
+        { id: "fog-storage", source: "code", reason: "Found in config.yml" },
+      ]),
+    ).toEqual([{ id: "fog-storage", source: "code", reason: "Found in config.yml" }]);
+    expect(() => normalizeFogResolutions([{ id: "fog-storage", reason: "Found" }])).toThrow(/source "code"/);
+    expect(() =>
+      normalizeFogResolutions([{ id: "fog-storage", source: "user", reason: "Claimed by agent" }]),
+    ).toThrow(/source "code"/);
   });
 });
 
@@ -104,8 +109,17 @@ describe("grill clarifications", () => {
       expect(run.state.fog.find((entry) => entry.text === "Who are the users?")?.status).toBe("parked");
       expect(run.state.fog.find((entry) => entry.text === "What is explicitly out of scope?")).toMatchObject({
         status: "resolved",
-        resolution: { source: "operator" },
+        resolution: { source: "user" },
       });
+      expect(run.state.artifacts.fogResolutions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: expect.any(String),
+            source: "user",
+            reason: expect.stringContaining("Unrelated refactors"),
+          }),
+        ]),
+      );
     } finally {
       await host.dispose();
     }
@@ -154,7 +168,11 @@ describe("grill fog safety", () => {
               newUnknowns: [],
               resolvedUnknowns: input.fog
                 .filter((entry) => entry.status === "fog" || entry.status === "asked")
-                .map((entry) => ({ id: entry.id, reason: `Verified code evidence for ${entry.id}` })),
+                .map((entry) => ({
+                  id: entry.id,
+                  source: "code",
+                  reason: `Verified code evidence for ${entry.id}`,
+                })),
             };
           },
         },
@@ -172,8 +190,13 @@ describe("grill fog safety", () => {
       expect(run.state.phase).toBe("verification-settings");
       expect(run.state.fog).toHaveLength(2);
       expect(run.state.fog.every((entry) => entry.status === "resolved")).toBe(true);
-      expect(run.state.fog.every((entry) => entry.resolution?.source === "agent")).toBe(true);
+      expect(run.state.fog.every((entry) => entry.resolution?.source === "code")).toBe(true);
       expect(run.state.artifacts.fogResolutions).toHaveLength(2);
+      expect(
+        (run.state.artifacts.fogResolutions as Array<{ source: string }>).every(
+          (entry) => entry.source === "code",
+        ),
+      ).toBe(true);
     } finally {
       await host.dispose();
     }

@@ -1,6 +1,6 @@
 import type { Context } from "@deepseek-ai/cordis";
 import {
-  applyAgentResolutions,
+  applyCodeResolutions,
   applyAnswers,
   markAsked,
   openFog,
@@ -50,7 +50,7 @@ export function createGrillPhase(ctx: Context): Phase {
           return contractBlock(`Fog id ${resolution.id} is already resolved`);
         }
       }
-      nextFog = applyAgentResolutions(nextFog, resolutions);
+      nextFog = applyCodeResolutions(nextFog, resolutions);
       const questions = normalizeQuestions(output.questions).slice(
         0,
         run.settings.workflow.grillQuestionsPerBatch,
@@ -133,6 +133,13 @@ export function createGrillPhase(ctx: Context): Phase {
         .filter((question) => parkedIds.has(question.id))
         .flatMap((question) => question.fogIds ?? []);
       run.state.fog = applyAnswers(run.state.fog, answered, parked);
+      if (answered.length > 0) {
+        const prior = (run.state.artifacts.fogResolutions as FogResolution[] | undefined) ?? [];
+        run.state.artifacts.fogResolutions = [
+          ...prior,
+          ...answered.map((entry) => ({ ...entry, source: "user" as const })),
+        ];
+      }
       run.state.artifacts.resolutions = [
         ...((run.state.artifacts.resolutions as unknown[]) ?? []),
         {
@@ -220,13 +227,16 @@ export function normalizeFogResolutions(raw: unknown): FogResolution[] {
   if (!Array.isArray(raw)) throw new Error("resolvedUnknowns must be an array");
   return raw.map((item, index) => {
     if (!item || typeof item !== "object") {
-      throw new Error(`resolvedUnknowns[${index}] must contain id and reason`);
+      throw new Error(`resolvedUnknowns[${index}] must contain id, source "code", and reason`);
     }
     const row = item as Record<string, unknown>;
     const id = String(row.id ?? "").trim();
+    const source = String(row.source ?? "").trim();
     const reason = String(row.reason ?? "").trim();
-    if (!id || !reason) throw new Error(`resolvedUnknowns[${index}] must contain id and reason`);
-    return { id, reason };
+    if (!id || source !== "code" || !reason) {
+      throw new Error(`resolvedUnknowns[${index}] must contain id, source "code", and reason`);
+    }
+    return { id, source, reason };
   });
 }
 

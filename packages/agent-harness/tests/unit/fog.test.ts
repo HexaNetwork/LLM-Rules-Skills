@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  applyAgentResolutions,
+  applyCodeResolutions,
   applyAnswers,
   markAsked,
   reconcileFog,
@@ -21,7 +21,7 @@ describe("fog register", () => {
     expect(fog.find((entry) => entry.text.startsWith("Who"))?.status).toBe("resolved");
     expect(fog.find((entry) => entry.text.startsWith("What"))?.status).toBe("parked");
     expect(fog.find((entry) => entry.id === usersId)?.resolution).toEqual({
-      source: "operator",
+      source: "user",
       reason: "Operator selected end users",
     });
 
@@ -45,16 +45,20 @@ describe("fog register", () => {
     expect(fog.filter((entry) => entry.status === "fog")).toHaveLength(3);
   });
 
-  it("requires an explicit reason to record an agent resolution", () => {
+  it("records an explicit code source with a reason", () => {
     let fog = seedFog(["Does the code already expose a setting?"]);
-    fog = applyAgentResolutions(fog, [
-      { id: fog[0]!.id, reason: "CivSettings exposes buildable_area_radius at settings.ts:42" },
+    fog = applyCodeResolutions(fog, [
+      {
+        id: fog[0]!.id,
+        source: "code",
+        reason: "CivSettings exposes buildable_area_radius at settings.ts:42",
+      },
     ]);
 
     expect(fog[0]).toMatchObject({
       status: "resolved",
       resolution: {
-        source: "agent",
+        source: "code",
         reason: "CivSettings exposes buildable_area_radius at settings.ts:42",
       },
     });

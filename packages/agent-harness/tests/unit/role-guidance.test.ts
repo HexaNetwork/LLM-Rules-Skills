@@ -62,6 +62,11 @@ describe("role prompt rules", () => {
       expect(prompt).toContain(ROLE_RULES[role as keyof typeof ROLE_RULES][0]!);
     }
   });
+
+  it("requires explicit code provenance in griller resolutions", () => {
+    expect(outputContractFor("griller")).toContain('source:"code"');
+    expect(ROLE_RULES.griller.join("\n")).toContain("ask every independent unresolved product");
+  });
 });
 
 describe("dedicated role guidance service", () => {

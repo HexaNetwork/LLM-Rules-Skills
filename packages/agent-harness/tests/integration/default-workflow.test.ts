@@ -22,8 +22,13 @@ describe("default workflow", () => {
       });
       expect(run.state.phase).toBe("verification-settings");
 
-      run = await host.ctx.runLifecycle.answer(run.identity.runId, { answers: { confirm: "yes" } });
+      run = await host.ctx.runLifecycle.answer(run.identity.runId, {
+        answers: { selection: "generic" },
+      });
       expect(run.state.phase).toBe("operator-gate");
+      expect(
+        (run.state.artifacts.verification as { command?: string } | undefined)?.command,
+      ).toBe("npm test");
 
       run = await host.ctx.runLifecycle.answer(run.identity.runId, { answers: { approve: "yes" } });
       expect(run.state.status).toBe("completed");

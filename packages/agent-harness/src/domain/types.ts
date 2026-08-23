@@ -59,13 +59,14 @@ export type AnswerBatch = {
 };
 
 export type FogStatus = "fog" | "asked" | "parked" | "resolved";
+export type FogResolutionSource = "user" | "code";
 
 export type FogEntry = {
   id: string;
   text: string;
   status: FogStatus;
   resolution?: {
-    source: "agent" | "operator";
+    source: FogResolutionSource;
     reason: string;
   };
 };
@@ -77,6 +78,7 @@ export type FogDraft = {
 
 export type FogResolution = {
   id: string;
+  source: FogResolutionSource;
   reason: string;
 };
 

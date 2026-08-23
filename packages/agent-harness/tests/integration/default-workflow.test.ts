@@ -30,7 +30,9 @@ describe("default workflow", () => {
         (run.state.artifacts.verification as { command?: string } | undefined)?.command,
       ).toBe("npm test");
 
-      run = await host.ctx.runLifecycle.answer(run.identity.runId, { answers: { approve: "yes" } });
+      run = await host.ctx.runLifecycle.answer(run.identity.runId, {
+        answers: { decision: "approve" },
+      });
       expect(run.state.status).toBe("completed");
       expect(run.state.phase).toBe("publish");
       expect(run.state.tasks.some((task) => task.status === "committed")).toBe(true);

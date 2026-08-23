@@ -13,6 +13,8 @@ export function createPrdPhase(ctx: Context): Phase {
           resolutions: run.state.artifacts.resolutions,
           fog: run.state.fog,
           fogResolutions: run.state.artifacts.fogResolutions,
+          planningFeedback: run.state.artifacts.planningFeedback,
+          operatorNotes: run.state.artifacts.operatorNotes,
         }),
       );
       run.state.artifacts.prd = output;

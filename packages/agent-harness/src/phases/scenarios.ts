@@ -10,6 +10,8 @@ export function createScenariosPhase(ctx: Context): Phase {
         await invokeRole(ctx, run, "scenario-planner", {
           plan: run.state.artifacts.plan,
           prd: run.state.artifacts.prd,
+          planningFeedback: run.state.artifacts.planningFeedback,
+          operatorNotes: run.state.artifacts.operatorNotes,
         }),
       );
       run.state.artifacts.scenarios = output.scenarios ?? output;

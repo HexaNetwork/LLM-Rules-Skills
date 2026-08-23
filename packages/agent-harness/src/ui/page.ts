@@ -183,6 +183,23 @@ export function renderDashboardPage(): string {
     .choice.selected { border-color: var(--attention); background: var(--attention-soft); color: #f0c48a; }
     .gate-footer { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 14px; padding: 0 20px 20px; }
     .gate-footer textarea { min-height: 52px; }
+    .gate-footer.operator-gate-footer { grid-template-columns: 1fr; }
+    .gate-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .gate-review { display: grid; gap: 12px; padding: 4px 20px 12px; }
+    .gate-review-block {
+      border: 1px solid var(--line-strong); border-radius: 8px; background: var(--field);
+      padding: 12px 14px;
+    }
+    .gate-review-block h4 {
+      margin: 0 0 8px; color: var(--muted); font-size: 11px; font-weight: 700;
+      letter-spacing: .08em; text-transform: uppercase;
+    }
+    .gate-review-missing { color: var(--attention); font-size: 13px; }
+    .gate-feedback {
+      margin: 0 20px 12px; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid var(--danger-line); background: var(--danger-soft); color: #f0b4ae; font-size: 13px;
+    }
+    .gate-feedback[hidden] { display: none; }
     .batch-card {
       border: 0; border-left: 3px solid var(--attention); background: transparent; box-shadow: none;
     }
@@ -791,13 +808,14 @@ export function renderDashboardPage(): string {
       ).join("");
     }
     function emptyDraft() {
-      return { answers: {}, parked: {}, notes: "", selectedOptions: {}, clarifications: {}, batchFeedback: "" };
+      return { answers: {}, parked: {}, notes: "", selectedOptions: {}, clarifications: {}, batchFeedback: "", gateFeedback: "" };
     }
     function ensureDraft(runId) {
       const draft = app.drafts[runId] || emptyDraft();
       if (!draft.selectedOptions) draft.selectedOptions = {};
       if (!draft.clarifications) draft.clarifications = {};
       if (draft.batchFeedback == null) draft.batchFeedback = "";
+      if (draft.gateFeedback == null) draft.gateFeedback = "";
       app.drafts[runId] = draft;
       return draft;
     }
@@ -950,6 +968,27 @@ export function renderDashboardPage(): string {
       const top = document.querySelector(".topbar");
       if (top) top.scrollIntoView({ block: "start" });
     }
+
+    function formatGateArtifact(value) {
+      if (value == null || value === "") return '<div class="gate-review-missing">Missing</div>';
+      return artifactBody(value);
+    }
+    function renderOperatorGate(run, gate, draft) {
+      const artifacts = (run.state && run.state.artifacts) || {};
+      return '<section class="gate" data-testid="operator-gate"><header class="gate-head"><div class="eyebrow">Operator input required</div><h3>' + esc(gate.title) + '</h3></header>' +
+        '<div class="gate-review">' +
+          '<div class="gate-review-block"><h4>Plan</h4>' + formatGateArtifact(artifacts.plan) + '</div>' +
+          '<div class="gate-review-block"><h4>PRD</h4>' + formatGateArtifact(artifacts.prd) + '</div>' +
+          '<div class="gate-review-block"><h4>Scenarios</h4>' + formatGateArtifact(artifacts.scenarios) + '</div>' +
+        '</div>' +
+        '<div class="gate-feedback" id="gateFeedback"' + (draft.gateFeedback ? '' : ' hidden') + '>' + esc(draft.gateFeedback || '') + '</div>' +
+        '<div class="gate-footer operator-gate-footer"><label>Notes<textarea id="gate-notes" placeholder="Optional on approve; required when requesting changes">' + esc(draft.notes || "") + '</textarea></label>' +
+        '<div class="gate-actions">' +
+          '<button class="secondary" type="button" data-action="answer" data-decision="request_changes" data-testid="request-changes">Request changes</button>' +
+          '<button class="primary" type="button" data-action="answer" data-decision="approve" data-testid="approve-plan">Approve</button>' +
+        '</div></div></section>';
+    }
+
     function renderGate(run) {
       if (gateHiddenWhileBusy(run)) return "";
       const gate = run.state.gate;
@@ -957,6 +996,7 @@ export function renderDashboardPage(): string {
       const draft = ensureDraft(run.identity.runId);
       if (gate.id === "reflect-confirm") return renderReflectGate(run, gate, draft);
       if (gate.id === "grill-batch") return renderGrillGate(gate, draft);
+      if (gate.id === "operator-gate") return renderOperatorGate(run, gate, draft);
       return '<section class="gate"><header class="gate-head"><div class="eyebrow">Operator input required</div><h3>' + esc(gate.title) + '</h3></header>' +
         '<div class="questions">' + gate.questions.map((q) =>
           '<div class="question"><div class="question-title"><span>' + esc(q.prompt) + '</span></div>' +
@@ -1631,6 +1671,22 @@ export function renderDashboardPage(): string {
             clarifications: payload.clarifications,
             notes: draft.notes,
           });
+          return;
+        }
+        if (gate && gate.id === "operator-gate") {
+          const notesEl = document.getElementById("gate-notes");
+          if (notesEl) draft.notes = notesEl.value;
+          const decision = action.dataset.decision || "";
+          const notes = String(draft.notes || "").trim();
+          if (decision === "request_changes" && !notes) {
+            draft.gateFeedback = "Notes are required when requesting changes.";
+            renderDetail();
+            const box = document.getElementById("gate-notes");
+            if (box) box.focus();
+            return;
+          }
+          draft.gateFeedback = "";
+          mutate("answer", { answers: { decision }, notes: draft.notes });
           return;
         }
         const parked = Object.keys(draft.parked).filter((key) => draft.parked[key]);

@@ -289,6 +289,23 @@ export function renderDashboardPage(): string {
       color: var(--attention); border-color: var(--attention-line); background: var(--attention-soft);
     }
     .run-tab .count { margin-left: 6px; }
+    .usage-tabs { display: flex; gap: 4px; margin: 4px 0 18px; border-bottom: 1px solid var(--line); }
+    .usage-tab {
+      border: 0; border-bottom: 2px solid transparent; border-radius: 7px 7px 0 0;
+      background: transparent; color: var(--muted); padding: 8px 12px; font-size: 12px; font-weight: 600;
+    }
+    .usage-tab:hover { color: var(--ink); background: rgba(255, 255, 255, .04); }
+    .usage-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .usage-summary {
+      display: flex; flex-wrap: wrap; gap: 28px; padding: 10px 8px 14px;
+    }
+    .usage-metric { min-width: 150px; }
+    .usage-metric-label {
+      display: block; margin-bottom: 7px; color: var(--faint); font-size: 10px; font-weight: 700;
+      letter-spacing: .08em; text-transform: uppercase;
+    }
+    .usage-metric-value { color: var(--ink); font: 20px "Cascadia Mono", Consolas, monospace; }
+    .usage-note { flex-basis: 100%; margin-top: -8px; color: var(--muted); font-size: 11px; line-height: 1.5; }
     .sandbox-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 0 0 6px; }
     .sandbox-meta dt { color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     .sandbox-meta dd { margin: 3px 0 0; font: 12px "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
@@ -493,7 +510,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", lastSoundStatus: null };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", usageTab: "totals", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", lastSoundStatus: null };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -1243,17 +1260,26 @@ export function renderDashboardPage(): string {
     function formatCents(value) {
       return "$" + (Number(value || 0) / 100).toFixed(4);
     }
-    function renderUsageTable(title, rows) {
-      return '<div class="session-section"><h4>' + esc(title) + '</h4><table class="sandbox-table"><thead><tr><th>Name</th><th>Sessions</th><th>Input</th><th>Output</th><th>Cache read</th><th>Total</th><th>Charged</th></tr></thead><tbody>' +
+    function renderUsageTable(rows) {
+      return '<table class="sandbox-table"><thead><tr><th>Name</th><th>Sessions</th><th>Input</th><th>Output</th><th>Cache read</th><th>Total</th><th>Charged</th></tr></thead><tbody>' +
         rows.map((row) => '<tr><td>' + esc(words(row.key)) + '</td><td>' + formatTokens(row.sessions) + '</td><td>' + formatTokens(row.usage.inputTokens) + '</td><td>' + formatTokens(row.usage.outputTokens) + '</td><td>' + formatTokens(row.usage.cacheReadTokens) + '</td><td>' + formatTokens(row.usage.totalTokens) + '</td><td>' + formatCents(row.cost.chargedCents) + (row.costReportedSessions < row.sessions ? ' <span title="Cost telemetry pending or unavailable">*</span>' : '') + '</td></tr>').join("") +
-        '</tbody></table></div>';
+        '</tbody></table>';
     }
     function renderUsage(report) {
       if (!report || !report.total || !report.total.sessions) return '<div class="empty-inline">Usage telemetry will appear after an agent session.</div>';
       const total = report.total;
-      return '<div class="item-copy"><strong>' + formatTokens(total.usage.totalTokens) + '</strong> tokens &middot; <strong>' + formatCents(total.cost.chargedCents) + '</strong> charged' +
-        (total.usageReportedSessions < total.sessions || total.costReportedSessions < total.sessions ? '<br><small>* Some provider telemetry is pending or unavailable; reported totals are not estimates.</small>' : '') + '</div>' +
-        renderUsageTable("By model", report.byModel) + renderUsageTable("By agent type", report.byAgentType);
+      const tabs = [["model", "By model"], ["totals", "Cost / tokens"], ["agent-type", "By agent type"]];
+      const tabsHtml = '<nav class="usage-tabs" aria-label="Usage breakdown">' + tabs.map((entry) => {
+        const active = app.usageTab === entry[0];
+        return '<button type="button" class="usage-tab' + (active ? " active" : "") + '" data-usage-tab="' + entry[0] + '" aria-selected="' + (active ? "true" : "false") + '">' + entry[1] + '</button>';
+      }).join("") + '</nav>';
+      let content;
+      if (app.usageTab === "model") content = renderUsageTable(report.byModel);
+      else if (app.usageTab === "agent-type") content = renderUsageTable(report.byAgentType);
+      else content = '<div class="usage-summary"><div class="usage-metric"><span class="usage-metric-label">Total tokens</span><strong class="usage-metric-value">' + formatTokens(total.usage.totalTokens) + '</strong></div>' +
+        '<div class="usage-metric"><span class="usage-metric-label">Charged</span><strong class="usage-metric-value">' + formatCents(total.cost.chargedCents) + '</strong></div>' +
+        (total.usageReportedSessions < total.sessions || total.costReportedSessions < total.sessions ? '<div class="usage-note">* Some provider telemetry is pending or unavailable; reported totals are not estimates.</div>' : '') + '</div>';
+      return tabsHtml + content;
     }
     function copyPathBtn(value, ariaLabel) {
       if (!value) return "";
@@ -1321,7 +1347,7 @@ export function renderDashboardPage(): string {
     function renderOverview(run) {
       const gateHtml = renderGate(run);
       const usageHtml = '<section class="panel"><div class="panel-title"><h3>Usage & cost</h3></div>' + renderUsage(app.usage) + '</section>';
-      return usageHtml + (gateHtml || "") +
+      return (gateHtml || "") + usageHtml +
         '<div class="content-grid"><section class="panel"><div class="panel-title"><h3>Unknowns & fog</h3><span class="count">' + run.state.fog.length + '</span></div>' +
         renderFog(run.state.fog) + '</section><aside class="panel"><div class="panel-title"><h3>Run identity</h3></div>' +
         renderIdentity(run) + '</aside></div>';
@@ -1625,6 +1651,12 @@ export function renderDashboardPage(): string {
           try { if (document.execCommand("copy")) copied(); else failed(); } catch (_) { failed(); }
           document.body.removeChild(area);
         }
+        return;
+      }
+      const usageTab = event.target.closest("[data-usage-tab]");
+      if (usageTab && app.run) {
+        app.usageTab = usageTab.dataset.usageTab;
+        renderDetail();
         return;
       }
       const tab = event.target.closest("[data-tab]");

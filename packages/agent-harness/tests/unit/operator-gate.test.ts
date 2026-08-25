@@ -60,6 +60,7 @@ describe("operator gate UI", () => {
     expect(overviewFn).toContain("renderGate(run)");
     expect(overviewFn).toContain("renderIdentity(run)");
     expect(overviewFn).toContain("renderFog(run.state.fog)");
+    expect(overviewFn).toContain('return (gateHtml || "") + usageHtml');
     expect(overviewFn).not.toMatch(/if \(gateHtml\) return gateHtml/);
 
     const start = html.indexOf("function renderOperatorGate");

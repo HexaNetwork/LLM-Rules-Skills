@@ -182,6 +182,11 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain('event.kind === "agent"');
       expect(html).toContain("session-status");
       expect(html).toContain("Usage & cost");
+      expect(html).toContain('data-usage-tab="');
+      expect(html).toContain('["model", "By model"]');
+      expect(html).toContain('["totals", "Cost / tokens"]');
+      expect(html).toContain('["agent-type", "By agent type"]');
+      expect(html).toContain("Cost / tokens");
       expect(html).toContain("By agent type");
       const roles = await fetchJson(new URL("/api/guidance/roles", url), token, {});
       expect(roles.roles.length).toBeGreaterThan(0);

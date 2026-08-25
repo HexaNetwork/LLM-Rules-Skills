@@ -306,6 +306,7 @@ export function renderDashboardPage(): string {
     }
     .usage-metric-value { color: var(--ink); font: 20px "Cascadia Mono", Consolas, monospace; }
     .usage-note { flex-basis: 100%; margin-top: -8px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .panel.usage-panel { padding-top: 20px; padding-bottom: 22px; }
     .sandbox-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 0 0 6px; }
     .sandbox-meta dt { color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     .sandbox-meta dd { margin: 3px 0 0; font: 12px "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
@@ -1280,7 +1281,8 @@ export function renderDashboardPage(): string {
       let content;
       if (app.usageTab === "model") content = renderUsageTable(report.byModel);
       else if (app.usageTab === "agent-type") content = renderUsageTable(report.byAgentType);
-      else content = '<div class="usage-summary"><div class="usage-metric"><span class="usage-metric-label">Total tokens</span><strong class="usage-metric-value">' + formatTokens(total.usage.totalTokens) + '</strong></div>' +
+      else content = '<div class="usage-summary"><div class="usage-metric"><span class="usage-metric-label">Tokens</span><strong class="usage-metric-value">' + formatTokens(total.usage.totalTokens) + '</strong></div>' +
+        '<div class="usage-metric"><span class="usage-metric-label">Cached tokens</span><strong class="usage-metric-value">' + formatTokens(total.usage.cacheReadTokens) + '</strong></div>' +
         '<div class="usage-metric"><span class="usage-metric-label">Charged</span><strong class="usage-metric-value">' + formatCents(total.cost.chargedCents) + '</strong></div>' +
         (total.usageReportedSessions < total.sessions || total.costReportedSessions < total.sessions ? '<div class="usage-note">* Some provider telemetry is pending or unavailable; reported totals are not estimates.</div>' : '') + '</div>';
       return tabsHtml + content;
@@ -1387,7 +1389,7 @@ export function renderDashboardPage(): string {
     }
     function renderOverview(run) {
       const gateHtml = renderGate(run);
-      const usageHtml = '<section class="panel"><div class="panel-title"><h3>Usage & cost</h3></div>' + renderUsage(app.usage) + '</section>';
+      const usageHtml = '<section class="panel usage-panel"><div class="panel-title"><h3>Usage & cost</h3></div>' + renderUsage(app.usage) + '</section>';
       return (gateHtml || "") + usageHtml +
         '<div class="content-grid"><section class="panel"><div class="panel-title"><h3>Unknowns & fog</h3><span class="count">' + run.state.fog.length + '</span></div>' +
         renderFog(run.state.fog) + '</section><aside class="panel"><div class="panel-title"><h3>Run identity</h3></div>' +

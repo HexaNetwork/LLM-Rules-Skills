@@ -57,8 +57,8 @@ packet, configured and provider-resolved model, role (agent type), timestamps,
 provider run identifiers, output or error, token telemetry, and provider-billed
 cost when Cursor reports it. Failed calls are retained too.
 
-The dashboard **Sessions** tab shows usage totals broken down by model and agent
-type, plus the individual audit records.
+The dashboard **Overview** tab shows usage totals broken down by model and agent
+type; the **Sessions** tab shows the individual audit records.
 `GET /api/runs/<runId>/usage` exposes the same aggregate.
 Missing or eventually-consistent provider cost is marked as unavailable and is
 never estimated from a local price table.

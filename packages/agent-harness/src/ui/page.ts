@@ -1320,7 +1320,8 @@ export function renderDashboardPage(): string {
     }
     function renderOverview(run) {
       const gateHtml = renderGate(run);
-      return (gateHtml || "") +
+      const usageHtml = '<section class="panel"><div class="panel-title"><h3>Usage & cost</h3></div>' + renderUsage(app.usage) + '</section>';
+      return usageHtml + (gateHtml || "") +
         '<div class="content-grid"><section class="panel"><div class="panel-title"><h3>Unknowns & fog</h3><span class="count">' + run.state.fog.length + '</span></div>' +
         renderFog(run.state.fog) + '</section><aside class="panel"><div class="panel-title"><h3>Run identity</h3></div>' +
         renderIdentity(run) + '</aside></div>';
@@ -1335,8 +1336,7 @@ export function renderDashboardPage(): string {
           renderTasks(run.state.tasks) + '</section>';
       }
       if (app.runTab === "sessions") {
-        return '<section class="panel"><div class="panel-title"><h3>Usage & cost</h3></div>' + renderUsage(app.usage) + '</section>' +
-          '<section class="panel"><div class="panel-title"><h3>Agent sessions</h3><span class="count">' + app.sessions.length + '</span></div>' + renderSessions(app.sessions) + '</section>';
+        return '<section class="panel"><div class="panel-title"><h3>Agent sessions</h3><span class="count">' + app.sessions.length + '</span></div>' + renderSessions(app.sessions) + '</section>';
       }
       if (app.runTab === "activity") {
         return '<section class="panel"><div class="panel-title"><h3>Activity</h3><span class="count">' + app.activity.length + ' events</span></div>' +

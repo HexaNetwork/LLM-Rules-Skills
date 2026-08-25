@@ -216,6 +216,35 @@ async function route(
       return { mode, containerName: name, running: false };
     }
   }
+  const imageMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/image(?:\/([^/]+))?$/);
+  if (imageMatch) {
+    const runId = decodeURIComponent(imageMatch[1]!);
+    const imageAction = imageMatch[2];
+    const loadRun = async () => {
+      const identity = await ctx.store.readIdentity(runId);
+      if (!identity) throw new HttpError(404, `Unknown run: ${runId}`);
+      return ctx.runLifecycle.status(runId);
+    };
+    if (method === "GET" && !imageAction) {
+      const run = await loadRun();
+      return ctx.imageRepair.status(run);
+    }
+    if (method === "POST" && imageAction === "repair") {
+      const run = await loadRun();
+      const attempt = await ctx.imageRepair.repair(run, { force: true });
+      return { attempt, status: await ctx.imageRepair.status(run) };
+    }
+    if (method === "POST" && imageAction === "apply-main") {
+      const run = await loadRun();
+      const applied = await ctx.imageRepair.applyToMain(run);
+      return { applied, status: await ctx.imageRepair.status(run) };
+    }
+    if (method === "POST" && imageAction === "reset") {
+      const run = await loadRun();
+      await ctx.imageRepair.reset(run);
+      return { status: await ctx.imageRepair.status(run) };
+    }
+  }
   if (method === "POST" && url.pathname === "/api/runs") {
     const input = (body ?? {}) as {
       idea?: string;
@@ -293,7 +322,7 @@ export function dashboardPlugin(ctx: Context, config: DashboardConfig = {}): voi
 }
 
 Object.assign(dashboardPlugin, {
-  inject: ["runLifecycle", "git", "roleGuidance", "settings", "store", "sandbox"],
+  inject: ["runLifecycle", "git", "roleGuidance", "settings", "store", "sandbox", "imageRepair"],
 });
 
 export function dashboardRow(config: DashboardConfig = {}): ProfileRow {

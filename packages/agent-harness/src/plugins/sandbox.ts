@@ -1,7 +1,9 @@
 import { execFile, spawn } from "node:child_process";
+import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { Context } from "@deepseek-ai/cordis";
 import { buildDockerRunArgs } from "../domain/docker-run.js";
+import { packageRoot, runDockerfilePath, runImageTag } from "../domain/image-repair.js";
 import {
   buildRunSpec,
   containerName,
@@ -25,9 +27,12 @@ export type SandboxExec = {
 
 export type SandboxService = {
   mode: "none" | "docker";
+  readonly image: string;
   ensure(runId: string): Promise<ContainerSpec | undefined>;
   exec(runId: string, request: SandboxExec): Promise<ExecResult>;
-  destroy(runId: string): Promise<void>;
+  destroy(runId: string, options?: { purgeImage?: boolean }): Promise<void>;
+  buildImage(dockerfilePath: string, tag: string): Promise<string>;
+  removeImage(tag: string): Promise<void>;
   inspect(runId: string): Promise<{
     image: string;
     status: string;
@@ -46,16 +51,41 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
   const image = config.image ?? process.env.AGENT_HARNESS_WORKER_IMAGE ?? "node:22-bookworm-slim";
   const specs = new Map<string, ContainerSpec>();
 
+  const buildImage = async (dockerfilePath: string, tag: string): Promise<string> => {
+    const args = ["build", "-t", tag, "-f", dockerfilePath, packageRoot()];
+    try {
+      const { stdout, stderr } = await exec("docker", args, {
+        windowsHide: true,
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      return `${stdout}${stderr}`;
+    } catch (error) {
+      const failure = error as { stdout?: string; stderr?: string; message?: string };
+      const combined = `${failure.stdout ?? ""}${failure.stderr ?? ""}` || failure.message || "";
+      throw new Error(`docker build failed for ${tag}: ${combined}`);
+    }
+  };
+
+  const removeImage = async (tag: string): Promise<void> => {
+    await docker(["rmi", "-f", tag]).catch(() => undefined);
+  };
+
   return {
     mode,
+    image,
+    buildImage,
+    removeImage,
     async ensure(runId) {
       if (mode === "none") return undefined;
       if (specs.has(runId)) return specs.get(runId);
       const identity = await ctx.store.readIdentity(runId);
       if (!identity) throw new Error(`Cannot start sandbox for unknown run ${runId}`);
+      const effectiveImage = (await pathExists(runDockerfilePath(ctx.store.home, runId)))
+        ? runImageTag(runId)
+        : image;
       const spec = buildRunSpec({
         runId,
-        image,
+        image: effectiveImage,
         worktreeHost: identity.worktreePath,
         cursorApiKey: process.env.CURSOR_API_KEY,
       });
@@ -79,11 +109,14 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
       const name = containerName(runId);
       return runDockerExec(name, request.command, request.stdin);
     },
-    async destroy(runId) {
+    async destroy(runId, options) {
       if (mode === "none") return;
       const name = containerName(runId);
       await docker(["rm", "-f", name]).catch(() => undefined);
       specs.delete(runId);
+      if (options?.purgeImage) {
+        await removeImage(runImageTag(runId));
+      }
     },
     async inspect(runId) {
       const name = containerName(runId);
@@ -109,6 +142,16 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
 async function docker(args: string[]): Promise<string> {
   const { stdout } = await exec("docker", args, { windowsHide: true });
   return stdout;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function runProcess(file: string, args: string[], cwd?: string, stdin?: string): Promise<ExecResult> {

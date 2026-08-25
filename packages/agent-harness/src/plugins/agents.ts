@@ -135,6 +135,13 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
     case "scenario-writer":
     case "fixer":
       return { summary: "No repair required.", passed: true };
+    case "image-fixer": {
+      const input = packet.input as { dockerfile?: unknown } | undefined;
+      return {
+        summary: "No image repair required.",
+        dockerfile: typeof input?.dockerfile === "string" ? input.dockerfile : "",
+      };
+    }
     case "message-writer":
       return { title: idea.slice(0, 72) || "Feature", body: idea };
     default:

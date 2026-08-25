@@ -23,6 +23,7 @@ import { gitPlugin } from "./git.js";
 import { sandboxPlugin, type SandboxConfig } from "./sandbox.js";
 import { roleGuidancePlugin } from "./role-guidance.js";
 import { commandsPlugin } from "./commands.js";
+import { imageRepairPlugin } from "./image-repair.js";
 import { runLifecyclePlugin } from "./run-lifecycle.js";
 import type { WorkflowBundle } from "../domain/types.js";
 
@@ -66,6 +67,7 @@ export function hostRuntimeRows(options: RuntimeOptions = {}): ProfileRow[] {
       trusted: true,
     },
     { id: "host.commands", plugin: commandsPlugin, provides: ["commands"], trusted: true },
+    { id: "host.imageRepair", plugin: imageRepairPlugin, provides: ["imageRepair"], trusted: true },
     phaseRow("reflect", createReflectPhase),
     phaseRow("grill", createGrillPhase),
     phaseRow("glossary", createGlossaryPhase),
@@ -100,6 +102,7 @@ const PHASE_INJECT = [
   "sandbox",
   "store",
   "settings",
+  "imageRepair",
 ];
 
 function phaseRow(id: string, factory: (ctx: Context) => ReturnType<typeof createReflectPhase>): ProfileRow {

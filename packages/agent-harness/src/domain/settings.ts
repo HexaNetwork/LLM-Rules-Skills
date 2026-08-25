@@ -18,10 +18,16 @@ export const ProjectSettingsSchema = z.object({
     grillQuestionsPerBatch: z.number().int().min(1).max(8).default(3),
     maxWayfindingTurnsPerEpisode: z.number().int().min(1).default(6),
     maxPhaseHopsPerAdvance: z.number().int().min(1).default(16),
+    maxImplementationAttempts: z.number().int().min(1).default(3),
+    maxFinalReviewAttempts: z.number().int().min(1).default(3),
+    maxImageRepairAttempts: z.number().int().min(1).default(2),
   }).default({
     grillQuestionsPerBatch: 3,
     maxWayfindingTurnsPerEpisode: 6,
     maxPhaseHopsPerAdvance: 16,
+    maxImplementationAttempts: 3,
+    maxFinalReviewAttempts: 3,
+    maxImageRepairAttempts: 2,
   }),
   verification: z.object({
     command: z.string().min(1).optional(),

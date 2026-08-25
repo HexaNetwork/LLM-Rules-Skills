@@ -1,16 +1,25 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Phase, PhaseResult, Run } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
+import {
+  environmentBlock,
+  repairImageForEnvironmentFailure,
+  verificationCommand,
+} from "./verification.js";
 
 export function createScenarioTestPhase(ctx: Context): Phase {
   return {
     id: "scenario-test",
     async advance(run: Run): Promise<PhaseResult> {
-      const command =
-        (run.state.artifacts.verification as { command?: string } | undefined)?.command ??
-        run.settings.verification.command;
-      const verification = await ctx.commands.verify(run.identity.runId, command);
+      let verification = await ctx.commands.verify(run.identity.runId, verificationCommand(run));
+      if (verification && verification.classification === "environment_failure") {
+        verification = await repairImageForEnvironmentFailure(ctx, run, verification);
+      }
       if (verification && !verification.passed) {
+        run.state.artifacts.scenarioTest = verification;
+        if (verification.classification === "environment_failure") {
+          return { kind: "block", reason: environmentBlock(verification), retriable: true };
+        }
         const repair = asRecord(
           await invokeRole(ctx, run, "fixer", {
             failure: verification.output,

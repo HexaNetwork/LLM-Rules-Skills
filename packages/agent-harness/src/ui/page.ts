@@ -315,6 +315,10 @@ export function renderDashboardPage(): string {
     .sandbox-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
     .sandbox-env { list-style: none; margin: 0; padding: 0; font: 12px "Cascadia Mono", Consolas, monospace; }
     .sandbox-env li { padding: 4px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+    .image-diff-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .image-dockerfile { margin: 0; padding: 10px; border: 1px solid var(--line); border-radius: 7px; font: 11px "Cascadia Mono", Consolas, monospace; overflow: auto; max-height: 320px; white-space: pre; }
+    .image-proposal-summary { margin: 0 0 6px; font-size: 12px; line-height: 1.5; }
+    .image-actions { margin-top: 14px; }
     .panel { border-top: 2px solid var(--ink); padding-top: 13px; }
     .panel-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
     .panel h3 { margin: 0; font-size: 15px; letter-spacing: .02em; }
@@ -510,7 +514,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", usageTab: "totals", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", lastSoundStatus: null };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", usageTab: "totals", sandbox: {}, sandboxPending: {}, imageStatus: {}, imageStatusPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", lastSoundStatus: null };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -1344,6 +1348,43 @@ export function renderDashboardPage(): string {
       return '<section class="panel"><div class="panel-title"><h3>Docker sandbox</h3>' +
         (info && !info.error && info.status ? '<span class="count">' + esc(info.status) + '</span>' : '') + '</div>' + body + '</section>';
     }
+    function renderImageStatus(run) {
+      const info = app.imageStatus[run.identity.runId];
+      let body;
+      if (!info) {
+        body = '<div class="empty-inline">Loading image status…</div>';
+      } else if (info.error) {
+        body = '<div class="empty-inline">Image status unavailable: ' + esc(info.error) + '</div>';
+      } else if (info.mode !== "docker") {
+        body = '<div class="empty-inline">Sandbox mode is not docker; image repair unavailable.</div>';
+      } else {
+        body = '<dl class="sandbox-meta">' +
+          '<div><dt>Effective image</dt><dd>' + esc(info.effectiveImage) + (info.hasOverride ? ' (run override)' : '') + '</dd></div>' +
+          '<div><dt>Main image</dt><dd>' + esc(info.mainImage) + '</dd></div>' +
+          '<div><dt>Repair attempts</dt><dd>' + esc(info.attempts) + '/' + esc(info.maxAttempts) + '</dd></div></dl>';
+        const proposal = info.proposal;
+        if (proposal) {
+          body += '<h4 class="sandbox-subhead">Proposed main image update</h4>' +
+            '<p class="image-proposal-summary">' + esc(proposal.summary) + '</p>' +
+            '<div class="empty-inline">Proposed ' + esc(relative(proposal.at)) + ' → ' + esc(proposal.image) + '</div>' +
+            (proposal.appliedToMainAt ? '<div class="empty-inline">Applied to main image at ' + esc(proposal.appliedToMainAt) + '</div>' : '');
+        }
+        if (info.hasOverride && info.mainDockerfile && info.runDockerfile) {
+          body += '<details class="artifact"><summary>Compare Dockerfiles</summary>' +
+            '<div class="image-diff-grid"><div><h4 class="sandbox-subhead">Main Dockerfile</h4><pre class="image-dockerfile">' + esc(info.mainDockerfile) + '</pre></div>' +
+            '<div><h4 class="sandbox-subhead">Run Dockerfile</h4><pre class="image-dockerfile">' + esc(info.runDockerfile) + '</pre></div></div></details>';
+        }
+        body += '<div class="actions image-actions">' +
+          '<button class="secondary" type="button" data-image-action="repair"' + (app.busy ? ' disabled' : '') + '>Repair now</button>' +
+          (info.hasOverride
+            ? '<button class="secondary" type="button" data-image-action="apply-main"' + (app.busy ? ' disabled' : '') + '>Apply to main image</button>' +
+              '<button class="danger" type="button" data-image-action="reset"' + (app.busy ? ' disabled' : '') + '>Revert to main image</button>'
+            : '') +
+          '</div>';
+      }
+      return '<section class="panel"><div class="panel-title"><h3>Worker image</h3>' +
+        (info && !info.error && info.hasOverride ? '<span class="count">run override</span>' : '') + '</div>' + body + '</section>';
+    }
     function renderOverview(run) {
       const gateHtml = renderGate(run);
       const usageHtml = '<section class="panel"><div class="panel-title"><h3>Usage & cost</h3></div>' + renderUsage(app.usage) + '</section>';
@@ -1369,7 +1410,7 @@ export function renderDashboardPage(): string {
           renderActivity(app.activity) + '</section>';
       }
       if (app.runTab === "docker") {
-        return renderSandbox(run);
+        return renderSandbox(run) + renderImageStatus(run);
       }
       return renderOverview(run);
     }
@@ -1386,6 +1427,42 @@ export function renderDashboardPage(): string {
         delete app.sandboxPending[runId];
         if (app.view === "run" && app.run && app.selectedId === runId && app.runTab === "docker") renderDetail();
       });
+    }
+    function loadImageStatus(runId, refresh) {
+      if (app.imageStatusPending[runId]) return;
+      if (!refresh && app.imageStatus[runId]) return;
+      app.imageStatusPending[runId] = true;
+      api("/api/runs/" + encodeURIComponent(runId) + "/image").then((data) => {
+        app.imageStatus[runId] = data;
+      }).catch((error) => {
+        app.imageStatus[runId] = { error: error.message || "request failed" };
+      }).finally(() => {
+        delete app.imageStatusPending[runId];
+        if (app.view === "run" && app.run && app.selectedId === runId && app.runTab === "docker") renderDetail();
+      });
+    }
+    async function runImageAction(action) {
+      const run = app.run;
+      if (!run || app.busy) return;
+      const runId = run.identity.runId;
+      if (action === "apply-main" && !confirm("Overwrite docker/worker/Dockerfile with this run's repaired Dockerfile and rebuild the main image?")) return;
+      if (action === "reset" && !confirm("Revert this run to the main worker image and discard its run-scoped Dockerfile?")) return;
+      try {
+        toastBusy(action === "repair" ? "Repairing worker image…" : action === "apply-main" ? "Applying repaired Dockerfile to the main image…" : "Reverting to the main image…");
+        const result = await api("/api/runs/" + encodeURIComponent(runId) + "/image/" + action, { method: "POST", body: "{}" });
+        if (result && result.attempt && !result.attempt.repaired) {
+          toast("Repair not applied: " + (result.attempt.reason || "unknown reason"), true);
+        } else {
+          toast(action === "repair" ? "Worker image repaired" : action === "apply-main" ? "Main image updated" : "Run reverted to the main image");
+        }
+        delete app.imageStatus[runId];
+        delete app.sandbox[runId];
+        loadImageStatus(runId, true);
+        maybeLoadSandbox(run, true);
+        renderDetail();
+      } catch (error) {
+        toast(error.message, true);
+      }
     }
     function renderDetail() {
       const run = app.run;
@@ -1414,7 +1491,10 @@ export function renderDashboardPage(): string {
         (run.state.block && !gateHiddenWhileBusy(run) ? '<div class="block"><strong>Run blocked.</strong> ' + esc(run.state.block.reason) + '</div>' : '') +
         renderTabContent(run);
       autosizeReflectFields();
-      if (app.runTab === "docker") maybeLoadSandbox(run);
+      if (app.runTab === "docker") {
+        maybeLoadSandbox(run);
+        loadImageStatus(run.identity.runId);
+      }
     }
     async function loadProjects() {
       app.projects = await api("/api/projects");
@@ -1464,6 +1544,7 @@ export function renderDashboardPage(): string {
         if (app.runTab === "docker") {
           const terminal = run.state.status === "completed" || run.state.status === "cancelled";
           maybeLoadSandbox(run, !terminal);
+          loadImageStatus(id, !terminal);
         }
       }
       maybePlayStatusSound(run.state.status);
@@ -1476,6 +1557,7 @@ export function renderDashboardPage(): string {
         app.runs = app.runs.filter((run) => run.identity.runId !== runId);
         delete app.drafts[runId];
         delete app.sandbox[runId];
+        delete app.imageStatus[runId];
         app.selectedId = null;
         app.run = null;
         app.activity = [];
@@ -1746,6 +1828,12 @@ export function renderDashboardPage(): string {
           draft.answers[fieldId] = entries.join("\\n");
         }
         replaceReflectList(fieldId, draft);
+        return;
+      }
+      const imageAction = event.target.closest("[data-image-action]");
+      if (imageAction) {
+        if (imageAction.disabled || app.busy) return;
+        runImageAction(imageAction.dataset.imageAction);
         return;
       }
       const action = event.target.closest("[data-action]");

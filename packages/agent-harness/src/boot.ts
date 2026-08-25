@@ -19,6 +19,7 @@ export const HOST_SERVICE_NAMES = [
   "sandbox",
   "roleGuidance",
   "commands",
+  "imageRepair",
   "runLifecycle",
 ] as const;
 

@@ -1,6 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Phase, PhaseResult, Question, QuestionOption, Run } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
+import { environmentBlock, repairImageForEnvironmentFailure } from "./verification.js";
 
 export type SpecificVerificationCommand = {
   id: string;
@@ -53,6 +54,13 @@ export function createVerificationSettingsPhase(ctx: Context): Phase {
         selection,
         proposal,
       };
+      const preflight = await ctx.commands.verify(run.identity.runId, selected);
+      if (preflight && preflight.classification === "environment_failure") {
+        const repaired = await repairImageForEnvironmentFailure(ctx, run, preflight);
+        if (repaired.classification === "environment_failure") {
+          return { kind: "block", reason: environmentBlock(repaired), retriable: true };
+        }
+      }
       return { kind: "continue" };
     },
   };

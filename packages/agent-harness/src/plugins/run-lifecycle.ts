@@ -262,7 +262,7 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
       await setWorking(runId, workingOn("Deleting run", { phase: identity?.workflowBundleId }));
       try {
         await Promise.all([
-          ctx.sandbox.destroy(runId).catch(() => undefined),
+          ctx.sandbox.destroy(runId, { purgeImage: true }).catch(() => undefined),
           identity ? ctx.git.removeWorktree(identity).catch(() => undefined) : Promise.resolve(),
         ]);
         await ctx.store.deleteRun(runId);

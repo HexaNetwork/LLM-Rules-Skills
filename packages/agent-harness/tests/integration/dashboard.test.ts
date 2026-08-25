@@ -316,6 +316,76 @@ describe("dashboard as runLifecycle client", () => {
     }
   });
 
+  it("exposes worker image status and repair actions in sandbox mode none", async () => {
+    const home = await createTempDir("harness-ui-image-");
+    const repo = await createTempRepo();
+    const baseBranch = (
+      await exec("git", ["branch", "--show-current"], { cwd: repo, windowsHide: true })
+    ).stdout.trim();
+    const host = await bootHost({
+      home,
+      extraRows: [
+        ...hostRuntimeRows({ agents: { mode: "fake" }, sandbox: { mode: "none" } }),
+        dashboardRow({ port: 0 }),
+      ],
+    });
+    try {
+      const dashboard = host.ctx.dashboard;
+      if (!dashboard) throw new Error("dashboard missing");
+      const url = await dashboard.start();
+      const token = dashboard.token;
+
+      const missing = await fetch(new URL("/api/runs/no-such-run/image", url), {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(missing.status).toBe(404);
+      expect(await missing.json()).toEqual({ error: "Unknown run: no-such-run" });
+
+      const registered = await fetchJson(new URL("/api/projects", url), token, {
+        method: "POST",
+        body: JSON.stringify({ controlRoot: repo }),
+      });
+      const started = await fetchJson(new URL("/api/runs", url), token, {
+        method: "POST",
+        body: JSON.stringify({
+          idea: "Inspect worker image status",
+          projectKey: registered.projectKey,
+          baseBranch,
+        }),
+      });
+      const runId = started.identity.runId;
+
+      const status = await fetchJson(new URL(`/api/runs/${runId}/image`, url), token, {});
+      expect(status.mode).toBe("none");
+      expect(typeof status.mainImage).toBe("string");
+      expect(status.mainImage.length).toBeGreaterThan(0);
+      expect(status.hasOverride).toBe(false);
+      expect(status.attempts).toBe(0);
+
+      const repaired = await fetchJson(new URL(`/api/runs/${runId}/image/repair`, url), token, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      expect(repaired.attempt.attempted).toBe(false);
+      expect(repaired.attempt.repaired).toBe(false);
+      expect(String(repaired.attempt.reason)).toMatch(/docker/i);
+      expect(repaired.status.mode).toBe("none");
+
+      const applied = await fetch(new URL(`/api/runs/${runId}/image/apply-main`, url), {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(applied.status).toBe(400);
+      const appliedBody = await applied.json();
+      expect(typeof appliedBody.error).toBe("string");
+      expect(String(appliedBody.error)).toContain("No run-scoped image repair");
+    } finally {
+      await host.ctx.dashboard?.stop();
+      await host.dispose();
+    }
+  });
+
   it("returns running false when docker inspect fails for a known run", async () => {
     const home = await createTempDir("harness-ui-sandbox-docker-");
     const repo = await createTempRepo();

@@ -12,6 +12,7 @@ export const AGENT_ROLES = [
   "task-reviewer",
   "reviewer",
   "fixer",
+  "image-fixer",
   "message-writer",
   "project-profiler",
 ] as const;
@@ -88,6 +89,12 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "Make only the minimal change needed; do not expand scope.",
     "Return exactly one raw JSON object matching the expected output contract.",
   ],
+  "image-fixer": [
+    "Repair the worker Dockerfile so the missing tool or runtime from the verification failure becomes available; make only the minimal addition.",
+    "Preserve the base image, the harness install steps, USER 10001:10001, WORKDIR /workspace, and the sleep-infinity CMD.",
+    "Return the complete repaired Dockerfile, never a diff or fragment.",
+    "Return exactly one raw JSON object matching the expected output contract.",
+  ],
   "message-writer": [
     "Do not run git commands.",
     "Describe only verified changes present in the packet.",
@@ -121,6 +128,7 @@ export const ROLE_OUTPUT_CONTRACTS: Record<AgentRole, string> = {
   "task-reviewer": '{verdict:"approve"|"reject",summary:string}',
   reviewer: '{verdict:"approve"|"reject",summary:string}',
   fixer: "{summary:string,passed:boolean}",
+  "image-fixer": "{summary:string,dockerfile:string}",
   "message-writer": "{title:string,body:string}",
   "project-profiler":
     "{command:string,testGlobs:[string],rationale?:string,specificCommands?:[{id:string,label:string,command:string,rationale?:string}]}",

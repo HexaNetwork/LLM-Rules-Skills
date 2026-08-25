@@ -11,6 +11,7 @@ import type { RoleGuidanceService } from "./plugins/role-guidance.js";
 import type { CommandService } from "./plugins/commands.js";
 import type { RunLifecycleService } from "./plugins/run-lifecycle.js";
 import type { DashboardService } from "./plugins/dashboard.js";
+import type { ImageRepairService } from "./plugins/image-repair.js";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -26,6 +27,7 @@ declare module "@deepseek-ai/cordis" {
     roleGuidance: RoleGuidanceService;
     commands: CommandService;
     runLifecycle: RunLifecycleService;
+    imageRepair: ImageRepairService;
     dashboard?: DashboardService;
   }
 }

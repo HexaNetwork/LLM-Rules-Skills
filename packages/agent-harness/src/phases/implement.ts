@@ -4,6 +4,11 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Phase, PhaseResult, Run, Task } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
 import { normalizeTasks } from "./slice.js";
+import {
+  environmentBlock,
+  repairImageForEnvironmentFailure,
+  verifyWithHarness,
+} from "./verification.js";
 
 export function createImplementPhase(ctx: Context): Phase {
   return {
@@ -14,28 +19,113 @@ export function createImplementPhase(ctx: Context): Phase {
       }
     },
     async advance(run: Run): Promise<PhaseResult> {
-      const task = run.state.tasks.find((item) => item.status === "pending" || item.status === "in_progress");
-      if (!task) return { kind: "continue" };
+      const maxAttempts = run.settings.workflow.maxImplementationAttempts;
+      const task = selectTask(run, maxAttempts);
+      if (!task) {
+        const blocked = run.state.tasks.find((item) => item.status === "blocked");
+        if (blocked) {
+          return {
+            kind: "block",
+            reason: `Task ${blocked.id} is blocked after ${blocked.attempts?.implementation ?? 0} implementation attempts; raise workflow.maxImplementationAttempts and retry to resume it.`,
+            retriable: true,
+          };
+        }
+        return { kind: "continue" };
+      }
       task.status = "in_progress";
-      const implemented = asRecord(
-        await invokeRole(ctx, run, "implementer", {
+      task.attempts ??= { implementation: 0, review: 0 };
+
+      // After an environment block the implementer already ran; re-verify before
+      // spending another implementation turn.
+      let implemented: Record<string, unknown> | undefined;
+      const envRecheck =
+        task.verification?.classification === "environment_failure" && !task.reviewSummary;
+      if (!envRecheck) {
+        implemented = asRecord(
+          await invokeRole(ctx, run, "implementer", {
+            task,
+            brief: run.state.artifacts.reflectBrief,
+            plan: run.state.artifacts.plan,
+            reviewFeedback: task.reviewSummary,
+            verification: task.verification,
+          }),
+        );
+        await writeImplementationNote(run, task, implemented);
+      }
+
+      let evidence = await verifyWithHarness(ctx, run);
+      if (evidence) {
+        if (evidence.classification === "environment_failure") {
+          evidence = await repairImageForEnvironmentFailure(ctx, run, evidence);
+        }
+        task.verification = evidence;
+        if (evidence.classification === "environment_failure") {
+          return { kind: "block", reason: environmentBlock(evidence), retriable: true };
+        }
+        if (!evidence.passed) {
+          return requestRepair(
+            task,
+            maxAttempts,
+            `failed verification \`${evidence.command}\``,
+            evidence.output,
+          );
+        }
+      }
+
+      const review = asRecord(
+        await invokeRole(ctx, run, "task-reviewer", {
           task,
-          brief: run.state.artifacts.reflectBrief,
-          plan: run.state.artifacts.plan,
+          implemented,
+          verification: task.verification,
         }),
       );
-      await writeImplementationNote(run, task, implemented);
-      const review = asRecord(await invokeRole(ctx, run, "task-reviewer", { task, implemented }));
+      task.attempts.review += 1;
       if (String(review.verdict ?? "approve") !== "approve") {
-        task.status = "blocked";
-        return { kind: "block", reason: `Task ${task.id} failed review`, retriable: true };
+        const summary = String(review.summary ?? "Reviewer requested changes without a summary.");
+        task.reviewSummary = summary;
+        return requestRepair(task, maxAttempts, "was rejected in review", summary);
       }
+
       const sha = await ctx.git.commit(run.identity, `${task.title}\n\n${task.description}`);
       task.status = "committed";
       task.commitSha = sha;
+      task.reviewSummary = undefined;
       run.state.artifacts.lastCommit = sha;
       return this.advance(run, { reason: "continue" });
     },
+  };
+}
+
+function selectTask(run: Run, maxAttempts: number): Task | undefined {
+  return (
+    run.state.tasks.find((item) => item.status === "pending" || item.status === "in_progress") ??
+    run.state.tasks.find(
+      (item) => item.status === "blocked" && (item.attempts?.implementation ?? 0) < maxAttempts,
+    )
+  );
+}
+
+function requestRepair(
+  task: Task,
+  maxAttempts: number,
+  cause: string,
+  feedback: string,
+): PhaseResult {
+  const attempts = (task.attempts ??= { implementation: 0, review: 0 });
+  attempts.implementation += 1;
+  if (attempts.implementation < maxAttempts) {
+    task.status = "in_progress";
+    return {
+      kind: "block",
+      reason: `Task ${task.id} ${cause} (attempt ${attempts.implementation}/${maxAttempts}); retry resumes the implementer with this feedback: ${feedback}`,
+      retriable: true,
+    };
+  }
+  task.status = "blocked";
+  return {
+    kind: "block",
+    reason: `Task ${task.id} ${cause} after ${maxAttempts} implementation attempts: ${feedback}`,
+    retriable: true,
   };
 }
 

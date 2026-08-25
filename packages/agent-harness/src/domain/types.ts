@@ -90,6 +90,16 @@ export type Task = {
   description: string;
   status: TaskStatus;
   commitSha?: string;
+  attempts?: { implementation: number; review: number };
+  reviewSummary?: string;
+  verification?: VerificationEvidence;
+};
+
+export type VerificationEvidence = {
+  command: string;
+  passed: boolean;
+  output: string;
+  classification: "passed" | "project_failure" | "environment_failure";
 };
 
 export type RunState = {

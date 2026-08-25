@@ -483,7 +483,7 @@ export function renderDashboardPage(): string {
         <div class="section-head"><h2>Runs</h2><button class="quiet" id="refresh" type="button">Refresh</button></div>
         <div class="run-list" id="runs"></div>
       </section>
-      <footer class="sidebar-foot"><span>Loopback only · token authenticated</span><button type="button" class="sound-toggle" id="soundMuteBtn" title="Toggle notification sounds">Sound on</button></footer>
+      <footer class="sidebar-foot"><span>Local only</span><button type="button" class="sound-toggle" id="soundMuteBtn" title="Toggle notification sounds">Sound on</button></footer>
     </aside>
     <main class="workspace" id="detail">
       <div class="empty-state"><div class="empty-copy"><svg class="waypoint" viewBox="0 0 16 18" aria-hidden="true"><polygon points="8,1 15,4.5 15,13.5 8,17 1,13.5 1,4.5"/><polygon class="hex-core" points="8,6.5 10.5,7.75 10.5,10.25 8,11.5 5.5,10.25 5.5,7.75"/></svg><h2>Choose a run or chart a new one.</h2><p>The dashboard follows the host lifecycle. Gates, fog, evidence, and task progress remain durable between visits.</p><button class="primary" data-action="compose" type="button">Start a new run</button></div></div>

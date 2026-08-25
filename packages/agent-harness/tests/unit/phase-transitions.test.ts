@@ -50,7 +50,7 @@ describe("phase transitions", () => {
     }
   });
 
-  it("lists default and ticket bundles without changing runLifecycle", () => {
+  it("lists Feature and ticket bundles without changing runLifecycle", () => {
     expect(DEFAULT_WORKFLOW.phases[0]).toBe("reflect");
     expect(TICKET_WORKFLOW.phases).toEqual(["implement", "scenario-test", "publish"]);
   });

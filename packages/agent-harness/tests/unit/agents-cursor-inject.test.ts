@@ -10,6 +10,7 @@ function cursorPacket(runId: string): WorkPacket {
     role: "implementer",
     runId,
     phase: "implement",
+    model: "composer-2.5",
     input: { idea: "unblock live invoke" },
     guidance: "",
     retrieval: "",
@@ -42,7 +43,25 @@ describe("agentsPlugin cursor mode", () => {
 
       const exec = vi.fn().mockResolvedValue({
         exitCode: 0,
-        stdout: JSON.stringify({ summary: "from-sandbox" }),
+        stdout: JSON.stringify({
+          protocolVersion: 1,
+          output: { summary: "from-sandbox" },
+          submittedPrompt: "Role: implementer\n\nInput: {}",
+          telemetry: {
+            provider: "cursor",
+            model: "composer-2.5",
+            agentId: "agent-1",
+            providerRunId: "run-provider-1",
+            usage: {
+              inputTokens: 100,
+              outputTokens: 20,
+              cacheReadTokens: 50,
+              cacheWriteTokens: 0,
+              totalTokens: 120,
+            },
+            cost: { rawCostCents: 1.5, chargedCents: 1.2 },
+          },
+        }),
         stderr: "",
       });
       host.ctx.sandbox.exec = exec;
@@ -63,11 +82,21 @@ describe("agentsPlugin cursor mode", () => {
         endedAt: string;
         at: string;
         output: unknown;
+        submittedPrompt?: string;
+        telemetry: unknown;
       }>(runId);
       expect(sessions).toHaveLength(1);
       expect(sessions[0]).toMatchObject({
         status: "completed",
         output: { summary: "from-sandbox" },
+        submittedPrompt: "Role: implementer\n\nInput: {}",
+        telemetry: {
+          provider: "cursor",
+          model: "composer-2.5",
+          agentId: "agent-1",
+          usage: { totalTokens: 120 },
+          cost: { chargedCents: 1.2 },
+        },
       });
       expect(sessions[0]!.sessionId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,

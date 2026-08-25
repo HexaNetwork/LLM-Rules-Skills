@@ -76,6 +76,15 @@ describe("dashboard as runLifecycle client", () => {
       expect(sessions[0].packet).toMatchObject({ phase: "reflect", role: "reflector" });
       expect(sessions[0].output).toBeTruthy();
       expect(agentEvent.sessionId).toBe(sessions[0].sessionId);
+      const usage = await fetchJson(
+        new URL(`/api/runs/${started.identity.runId}/usage`, url),
+        token,
+        {},
+      );
+      expect(usage.total.sessions).toBe(sessions.length);
+      expect(usage.byAgentType).toEqual(
+        expect.arrayContaining([expect.objectContaining({ key: "reflector" })]),
+      );
       const answered = await fetchJson(
         new URL(`/api/runs/${started.identity.runId}/answer`, url),
         token,
@@ -162,6 +171,9 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain('["docker", "Docker"');
       expect(html).toContain("function renderOverview");
       expect(html).toContain("needs-input");
+      expect(html).toContain("Run identity");
+      expect(html).toContain("Copy worktree path");
+      expect(html).not.toContain("if (gateHtml) return gateHtml");
       expect(html).not.toContain("gate-banner");
       expect(html).toContain("formatGateScenarios");
       expect(html).toContain('data-session="');
@@ -169,6 +181,8 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain('details.session[data-session]');
       expect(html).toContain('event.kind === "agent"');
       expect(html).toContain("session-status");
+      expect(html).toContain("Usage & cost");
+      expect(html).toContain("By agent type");
       const roles = await fetchJson(new URL("/api/guidance/roles", url), token, {});
       expect(roles.roles.length).toBeGreaterThan(0);
       const reflectorEntry = roles.roles.find((entry: { role: string }) => entry.role === "reflector");

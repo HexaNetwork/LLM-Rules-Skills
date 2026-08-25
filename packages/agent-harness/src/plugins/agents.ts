@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import { formatCursorAgentFailure } from "../domain/cursor-agent-error.js";
 import type { AgentInvocation, WorkPacket } from "../domain/types.js";
+import type { WorkerInvokeResult } from "../worker/invoke.js";
 
 export type AgentsService = {
   invoke(role: string, packet: WorkPacket): Promise<unknown>;
@@ -172,28 +173,39 @@ export function createCursorAgents(ctx: Context): AgentsService {
 export function agentsPlugin(ctx: Context, config: AgentsConfig = {}): void {
   const mode = config.mode ?? (process.env.AGENT_HARNESS_AGENTS === "cursor" ? "cursor" : "fake");
   const service = mode === "cursor" ? createCursorAgents(ctx) : createFakeAgents(config.scripted ?? {});
-  ctx.provide("agents", wrapWithSessions(ctx, service));
+  ctx.provide("agents", wrapWithSessions(ctx, service, mode));
 }
 
 Object.assign(agentsPlugin, { inject: ["store", "sandbox"] });
 
-function wrapWithSessions(ctx: Context, inner: AgentsService): AgentsService {
+function wrapWithSessions(
+  ctx: Context,
+  inner: AgentsService,
+  mode: "fake" | "cursor",
+): AgentsService {
   return {
     async invoke(role, packet) {
       const sessionId = randomUUID();
       const startedAt = new Date().toISOString();
       try {
-        const output = await inner.invoke(role, packet);
+        const result = await inner.invoke(role, packet);
+        const worker = isWorkerInvokeResult(result) ? result : undefined;
+        const output = worker ? worker.output : result;
         const endedAt = new Date().toISOString();
         const invocation: AgentInvocation = {
           sessionId,
           role,
           packet,
+          ...(worker?.submittedPrompt ? { submittedPrompt: worker.submittedPrompt } : {}),
           output,
           startedAt,
           endedAt,
           at: endedAt,
           status: "completed",
+          telemetry: worker?.telemetry ?? {
+            provider: mode,
+            model: mode === "fake" ? "fake" : packet.model,
+          },
         };
         await persistSession(ctx, packet, invocation);
         return output;
@@ -215,6 +227,12 @@ function wrapWithSessions(ctx: Context, inner: AgentsService): AgentsService {
       }
     },
   };
+}
+
+function isWorkerInvokeResult(value: unknown): value is WorkerInvokeResult {
+  if (!value || typeof value !== "object") return false;
+  const row = value as { protocolVersion?: unknown; telemetry?: unknown };
+  return row.protocolVersion === 1 && Boolean(row.telemetry);
 }
 
 async function persistSession(

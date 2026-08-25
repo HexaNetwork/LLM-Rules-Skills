@@ -191,6 +191,9 @@ async function route(
   if (method === "GET" && runMatch?.[2] === "sessions") {
     return ctx.runLifecycle.sessions(decodeURIComponent(runMatch[1]!));
   }
+  if (method === "GET" && runMatch?.[2] === "usage") {
+    return ctx.runLifecycle.usage(decodeURIComponent(runMatch[1]!));
+  }
   if (method === "GET" && runMatch?.[2] === "sandbox") {
     const runId = decodeURIComponent(runMatch[1]!);
     const identity = await ctx.store.readIdentity(runId);

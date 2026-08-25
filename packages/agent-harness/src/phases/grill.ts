@@ -161,7 +161,13 @@ export function createGrillPhase(ctx: Context): Phase {
         noteParts.push(`Clarification requested on grill question:\nQ: ${prompt}\nAsk: ${ask}`);
       }
       if (noteParts.length > 0) run.state.artifacts.operatorNotes = noteParts.join("\n\n");
-      return this.advance(run, { reason: "continue" });
+      // Hand control back to the lifecycle so answers + cleared gate are
+      // persisted before the next griller invoke. Calling advance here kept the
+      // prior gate on disk for the whole agent turn, so a refresh resurfaced
+      // the same unanswered questions.
+      run.state.gate = undefined;
+      delete run.state.artifacts.grillBatch;
+      return { kind: "continue", next: "grill" };
     },
   };
 }

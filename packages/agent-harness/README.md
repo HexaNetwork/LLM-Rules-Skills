@@ -49,11 +49,25 @@ advance. Per-role guidance is resolved live from project, harness-home, or
 packaged `GUIDANCE.md`. A run pins only identity: `runId`, workflow bundle id,
 worktree, `baseSha`.
 
+## Session audit and usage
+
+Every model invocation is written beneath the external harness home at
+`runs/<runId>/sessions/<sessionId>.json`. The record contains the complete work
+packet, configured and provider-resolved model, role (agent type), timestamps,
+provider run identifiers, output or error, token telemetry, and provider-billed
+cost when Cursor reports it. Failed calls are retained too.
+
+The dashboard **Sessions** tab shows usage totals broken down by model and agent
+type, plus the individual audit records.
+`GET /api/runs/<runId>/usage` exposes the same aggregate.
+Missing or eventually-consistent provider cost is marked as unavailable and is
+never estimated from a local price table.
+
 ## Workflows
 
 | Bundle | Phases |
 | --- | --- |
-| `default` | reflect through publish |
+| Feature (`default`) | reflect through publish |
 | `ticket` | implement → scenario-test → publish |
 
 ```bash

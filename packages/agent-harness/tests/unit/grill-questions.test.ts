@@ -126,6 +126,143 @@ describe("grill clarifications", () => {
   });
 });
 
+describe("grill answer consumption", () => {
+  it("persists cleared gate before the next griller turn so refresh cannot revive answered questions", async () => {
+    const repo = await createTempRepo();
+    let grillerTurns = 0;
+    let releaseSecondTurn: (() => void) | undefined;
+    const secondTurnStarted = new Promise<void>((resolve) => {
+      releaseSecondTurn = resolve;
+    });
+    let finishSecondTurn: (value: unknown) => void = () => undefined;
+    const secondTurnGate = new Promise<unknown>((resolve) => {
+      finishSecondTurn = resolve;
+    });
+    const { host } = await bootTestHost({
+      agents: {
+        mode: "fake",
+        scripted: {
+          griller: async (_role, packet) => {
+            grillerTurns += 1;
+            const fog = (packet.input as { fog: Array<{ id: string; status: string }> }).fog;
+            const open = fog.filter((entry) => entry.status === "fog" || entry.status === "asked");
+            if (grillerTurns === 1) {
+              return {
+                questions: [
+                  {
+                    id: "users",
+                    fogIds: [open[0]!.id],
+                    prompt: "Who are the primary users?",
+                    options: [
+                      { id: "end-users", label: "End users", description: "" },
+                      { id: "maintainers", label: "Maintainers", description: "" },
+                    ],
+                    recommendedOptionId: "end-users",
+                  },
+                ],
+                newUnknowns: [],
+                resolvedUnknowns: [],
+              };
+            }
+            releaseSecondTurn?.();
+            return secondTurnGate;
+          },
+        },
+      },
+    });
+    try {
+      const project = await host.ctx.projects.add(repo);
+      let run = await host.ctx.runLifecycle.start({
+        idea: "Add a status endpoint",
+        projectKey: project.projectKey,
+        baseBranch: await currentBranch(repo),
+      });
+      run = await host.ctx.runLifecycle.answer(run.identity.runId, { answers: { restatement: "yes" } });
+      expect(run.state.gate?.questions.map((question) => question.id)).toEqual(["users"]);
+      const answeredFogId = run.state.gate!.questions[0]!.fogIds![0]!;
+
+      const answering = host.ctx.runLifecycle.answer(run.identity.runId, {
+        answers: { users: "End users" },
+      });
+      await secondTurnStarted;
+
+      // Simulate a page refresh while the next griller invoke is still running.
+      const midFlight = await host.ctx.runLifecycle.status(run.identity.runId);
+      expect(midFlight.state.gate).toBeUndefined();
+      expect(midFlight.state.artifacts.grillBatch).toBeUndefined();
+      expect(midFlight.state.status).toBe("active");
+      expect(midFlight.state.fog.find((entry) => entry.id === answeredFogId)).toMatchObject({
+        status: "resolved",
+        resolution: { source: "user" },
+      });
+
+      finishSecondTurn({ questions: [], newUnknowns: [], resolvedUnknowns: [] });
+      run = await answering;
+      expect(run.state.status).toBe("blocked");
+      expect(run.state.gate).toBeUndefined();
+    } finally {
+      await host.dispose();
+    }
+  });
+
+  it("does not leave the prior grill gate when the next griller turn blocks", async () => {
+    const repo = await createTempRepo();
+    let grillerTurns = 0;
+    const { host } = await bootTestHost({
+      agents: {
+        mode: "fake",
+        scripted: {
+          griller: (_role, packet) => {
+            grillerTurns += 1;
+            const fog = (packet.input as { fog: Array<{ id: string; status: string }> }).fog;
+            const open = fog.filter((entry) => entry.status === "fog" || entry.status === "asked");
+            if (grillerTurns === 1) {
+              return {
+                questions: [
+                  {
+                    id: "users",
+                    fogIds: [open[0]!.id],
+                    prompt: "Who are the primary users?",
+                    options: [
+                      { id: "end-users", label: "End users", description: "" },
+                      { id: "maintainers", label: "Maintainers", description: "" },
+                    ],
+                    recommendedOptionId: "end-users",
+                  },
+                ],
+                newUnknowns: [],
+                resolvedUnknowns: [],
+              };
+            }
+            return { questions: [], newUnknowns: [], resolvedUnknowns: [] };
+          },
+        },
+      },
+    });
+    try {
+      const project = await host.ctx.projects.add(repo);
+      let run = await host.ctx.runLifecycle.start({
+        idea: "Add a status endpoint",
+        projectKey: project.projectKey,
+        baseBranch: await currentBranch(repo),
+      });
+      run = await host.ctx.runLifecycle.answer(run.identity.runId, { answers: { restatement: "yes" } });
+      const answeredFogId = run.state.gate!.questions[0]!.fogIds![0]!;
+      run = await host.ctx.runLifecycle.answer(run.identity.runId, {
+        answers: { users: "End users" },
+      });
+      run = await host.ctx.runLifecycle.status(run.identity.runId);
+      expect(run.state.status).toBe("blocked");
+      expect(run.state.gate).toBeUndefined();
+      expect(run.state.artifacts.grillBatch).toBeUndefined();
+      expect(run.state.fog.find((entry) => entry.id === answeredFogId)?.status).toBe("resolved");
+      expect(run.state.block?.reason).toMatch(/no questions while .+ unknowns remain open/);
+    } finally {
+      await host.dispose();
+    }
+  });
+});
+
 describe("grill fog safety", () => {
   it("blocks an empty griller response while unknowns remain", async () => {
     const repo = await createTempRepo();

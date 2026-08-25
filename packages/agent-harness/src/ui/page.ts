@@ -493,7 +493,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", lastSoundStatus: null };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", sandbox: {}, sandboxPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", lastSoundStatus: null };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -647,7 +647,7 @@ export function renderDashboardPage(): string {
         '<form class="compose" id="start-form">' +
         '<label>Idea<textarea id="idea" required placeholder="Describe the outcome, constraint, or ticket…"' + (starting ? " disabled" : "") + '>' + esc(draft.idea) + '</textarea></label>' +
         '<div class="compose-grid"><label>Project<select id="project"' + (starting ? " disabled" : "") + '></select></label>' +
-        '<label>Workflow<select id="workflow"' + (starting ? " disabled" : "") + '><option value="default">Default</option><option value="ticket">Ticket</option></select></label></div>' +
+        '<label>Workflow<select id="workflow"' + (starting ? " disabled" : "") + '><option value="default">Feature</option><option value="ticket">Ticket</option></select></label></div>' +
         '<div class="field"><label>Base branch<select id="base-branch"' + (starting ? " disabled" : "") + '><option value="">Select a project first</option></select></label></div>' +
         (hasProjects ? "" : '<p class="empty-inline">Register a local repository in the sidebar first.</p>') +
         '<button class="primary' + (starting ? " busy-pulse" : "") + '" type="submit"' + (hasProjects && !starting ? "" : " disabled") + '>' + (starting ? esc(app.busy.label) : "Begin wayfinding") + '</button></form>';
@@ -1223,10 +1223,12 @@ export function renderDashboardPage(): string {
         const packet = session.packet || {};
         const body =
           renderSessionSection("Error", session.error ? cappedPre(session.error, "error") : "", "session-error") +
+          renderSessionSection("Submitted prompt", session.submittedPrompt ? cappedPre(session.submittedPrompt, "prompt") : "") +
           renderSessionSection("Packet input", packet.input !== undefined ? cappedPre(packet.input, "input") : "") +
           renderSessionSection("Guidance", packet.guidance ? cappedPre(packet.guidance, "guidance") : "") +
           renderSessionSection("Retrieval", packet.retrieval ? cappedPre(packet.retrieval, "retrieval") : "") +
           renderSessionSection("Budget", packet.budget ? cappedPre(packet.budget, "budget") : "") +
+          renderSessionSection("Provider telemetry", session.telemetry ? cappedPre(session.telemetry, "telemetry") : "") +
           renderSessionSection("Output", session.output !== undefined && session.output !== null ? cappedPre(session.output, "output") : "");
         return '<details class="session"' + (app.sessionOpen[sessionOpenKey(id)] ? " open" : "") + ' data-session="' + esc(id) + '">' +
           '<summary><span class="session-title">' + esc(words(session.role || "agent session")) + '</span>' +
@@ -1234,6 +1236,24 @@ export function renderDashboardPage(): string {
           (meta ? '<span class="session-meta">' + esc(meta) + '</span>' : '') +
           '</summary><div class="session-body">' + (body || '<div class="empty-inline">No packet details recorded.</div>') + '</div></details>';
       }).join("") : '<div class="empty-inline">No agent sessions recorded yet.</div>';
+    }
+    function formatTokens(value) {
+      return Number(value || 0).toLocaleString();
+    }
+    function formatCents(value) {
+      return "$" + (Number(value || 0) / 100).toFixed(4);
+    }
+    function renderUsageTable(title, rows) {
+      return '<div class="session-section"><h4>' + esc(title) + '</h4><table class="sandbox-table"><thead><tr><th>Name</th><th>Sessions</th><th>Input</th><th>Output</th><th>Cache read</th><th>Total</th><th>Charged</th></tr></thead><tbody>' +
+        rows.map((row) => '<tr><td>' + esc(words(row.key)) + '</td><td>' + formatTokens(row.sessions) + '</td><td>' + formatTokens(row.usage.inputTokens) + '</td><td>' + formatTokens(row.usage.outputTokens) + '</td><td>' + formatTokens(row.usage.cacheReadTokens) + '</td><td>' + formatTokens(row.usage.totalTokens) + '</td><td>' + formatCents(row.cost.chargedCents) + (row.costReportedSessions < row.sessions ? ' <span title="Cost telemetry pending or unavailable">*</span>' : '') + '</td></tr>').join("") +
+        '</tbody></table></div>';
+    }
+    function renderUsage(report) {
+      if (!report || !report.total || !report.total.sessions) return '<div class="empty-inline">Usage telemetry will appear after an agent session.</div>';
+      const total = report.total;
+      return '<div class="item-copy"><strong>' + formatTokens(total.usage.totalTokens) + '</strong> tokens &middot; <strong>' + formatCents(total.cost.chargedCents) + '</strong> charged' +
+        (total.usageReportedSessions < total.sessions || total.costReportedSessions < total.sessions ? '<br><small>* Some provider telemetry is pending or unavailable; reported totals are not estimates.</small>' : '') + '</div>' +
+        renderUsageTable("By model", report.byModel) + renderUsageTable("By agent type", report.byAgentType);
     }
     function copyPathBtn(value, ariaLabel) {
       if (!value) return "";
@@ -1300,8 +1320,8 @@ export function renderDashboardPage(): string {
     }
     function renderOverview(run) {
       const gateHtml = renderGate(run);
-      if (gateHtml) return gateHtml;
-      return '<div class="content-grid"><section class="panel"><div class="panel-title"><h3>Unknowns & fog</h3><span class="count">' + run.state.fog.length + '</span></div>' +
+      return (gateHtml || "") +
+        '<div class="content-grid"><section class="panel"><div class="panel-title"><h3>Unknowns & fog</h3><span class="count">' + run.state.fog.length + '</span></div>' +
         renderFog(run.state.fog) + '</section><aside class="panel"><div class="panel-title"><h3>Run identity</h3></div>' +
         renderIdentity(run) + '</aside></div>';
     }
@@ -1315,8 +1335,8 @@ export function renderDashboardPage(): string {
           renderTasks(run.state.tasks) + '</section>';
       }
       if (app.runTab === "sessions") {
-        return '<section class="panel"><div class="panel-title"><h3>Agent sessions</h3><span class="count">' + app.sessions.length + '</span></div>' +
-          renderSessions(app.sessions) + '</section>';
+        return '<section class="panel"><div class="panel-title"><h3>Usage & cost</h3></div>' + renderUsage(app.usage) + '</section>' +
+          '<section class="panel"><div class="panel-title"><h3>Agent sessions</h3><span class="count">' + app.sessions.length + '</span></div>' + renderSessions(app.sessions) + '</section>';
       }
       if (app.runTab === "activity") {
         return '<section class="panel"><div class="panel-title"><h3>Activity</h3><span class="count">' + app.activity.length + ' events</span></div>' +
@@ -1400,16 +1420,17 @@ export function renderDashboardPage(): string {
     async function openRun(id, force) {
       if (app.selectedId !== id) app.runTab = "overview";
       app.selectedId = id;
-      const [run, activity, sessions] = await Promise.all([
+      const [run, activity, sessions, usage] = await Promise.all([
         api("/api/runs/" + encodeURIComponent(id)),
         api("/api/runs/" + encodeURIComponent(id) + "/activity"),
         api("/api/runs/" + encodeURIComponent(id) + "/sessions"),
+        api("/api/runs/" + encodeURIComponent(id) + "/usage"),
       ]);
       if (app.selectedId !== id) return;
       app.view = "run";
       const workingKey = workingSummary(run) + ":" + ((run.state.working && run.state.working.startedAt) || "");
-      const signature = id + ":" + run.state.revision + ":" + run.state.status + ":" + run.state.phase + ":" + activity.length + ":" + sessions.length + ":" + workingKey + ":" + (app.busy ? app.busy.action : "");
-      app.run = run; app.activity = activity; app.sessions = sessions;
+      const signature = id + ":" + run.state.revision + ":" + run.state.status + ":" + run.state.phase + ":" + activity.length + ":" + sessions.length + ":" + usage.total.usage.totalTokens + ":" + usage.total.cost.chargedCents + ":" + workingKey + ":" + (app.busy ? app.busy.action : "");
+      app.run = run; app.activity = activity; app.sessions = sessions; app.usage = usage;
       renderRuns();
       if (force || signature !== app.signature) {
         app.signature = signature;
@@ -1433,6 +1454,7 @@ export function renderDashboardPage(): string {
         app.run = null;
         app.activity = [];
         app.sessions = [];
+        app.usage = null;
         app.signature = "";
         renderRuns();
         const next = app.runs[0];

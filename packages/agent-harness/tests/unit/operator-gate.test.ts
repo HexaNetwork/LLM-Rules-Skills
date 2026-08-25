@@ -54,6 +54,14 @@ describe("operator gate UI", () => {
     expect(html).not.toContain("Operator input is waiting on Overview.");
     expect(html).toContain("Notes are required when requesting changes.");
 
+    const overviewStart = html.indexOf("function renderOverview(run)");
+    const overviewEnd = html.indexOf("function renderTabContent(run)", overviewStart);
+    const overviewFn = html.slice(overviewStart, overviewEnd);
+    expect(overviewFn).toContain("renderGate(run)");
+    expect(overviewFn).toContain("renderIdentity(run)");
+    expect(overviewFn).toContain("renderFog(run.state.fog)");
+    expect(overviewFn).not.toMatch(/if \(gateHtml\) return gateHtml/);
+
     const start = html.indexOf("function renderOperatorGate");
     const end = html.indexOf("function renderGate(run)", start);
     const operatorFn = html.slice(start, end);

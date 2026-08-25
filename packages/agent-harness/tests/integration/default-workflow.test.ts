@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { bootTestHost, createTempRepo, currentBranch } from "../helpers.js";
 
-describe("default workflow", () => {
+describe("Feature workflow", () => {
   it("walks idea to publish with a fake agent on a temporary git repo", async () => {
     const repo = await createTempRepo();
     const { host } = await bootTestHost();

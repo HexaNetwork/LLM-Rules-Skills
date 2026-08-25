@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import { workingOn, type RunWorking } from "../domain/working.js";
+import { summarizeSessionUsage, type SessionUsageReport } from "../domain/session-usage.js";
 import type {
+  AgentInvocation,
   AnswerBatch,
   PhaseResult,
   ProjectRegistration,
@@ -24,6 +26,7 @@ export type RunLifecycleService = {
   list(): Promise<Run[]>;
   activity(runId: string): Promise<unknown[]>;
   sessions(runId: string): Promise<unknown[]>;
+  usage(runId: string): Promise<SessionUsageReport>;
 };
 
 export function createRunLifecycle(ctx: Context): RunLifecycleService {
@@ -271,6 +274,10 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
     status: load,
     activity: (runId) => ctx.store.readJsonl(`runs/${runId}/events.jsonl`),
     sessions: (runId) => ctx.store.readSessions(runId),
+    async usage(runId) {
+      const sessions = await ctx.store.readSessions<AgentInvocation>(runId);
+      return summarizeSessionUsage(sessions);
+    },
     async list() {
       const ids = await ctx.store.listRunIds();
       const runs: Run[] = [];

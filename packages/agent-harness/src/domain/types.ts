@@ -150,6 +150,8 @@ export type WorkPacket = {
   role: string;
   runId: string;
   phase: string;
+  /** Configured model selection for this invocation; provider telemetry records the resolved model. */
+  model: string;
   input: unknown;
   guidance: string;
   retrieval: string;
@@ -161,10 +163,36 @@ export type WorkPacket = {
   };
 };
 
+export type TokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  reasoningTokens?: number;
+};
+
+export type UsageCost = {
+  rawCostCents: number;
+  chargedCents: number;
+};
+
+export type ProviderTelemetry = {
+  provider: "cursor" | "fake";
+  model: string;
+  agentId?: string;
+  providerRunId?: string;
+  requestId?: string;
+  usage?: TokenUsage;
+  cost?: UsageCost;
+};
+
 export type AgentInvocation = {
   sessionId: string;
   role: string;
   packet: WorkPacket;
+  /** Exact prompt submitted to the provider, when returned by the worker. */
+  submittedPrompt?: string;
   /** Present on completed invokes; omitted or null on hard failure. */
   output?: unknown;
   startedAt: string;
@@ -173,6 +201,8 @@ export type AgentInvocation = {
   at: string;
   status: "completed" | "failed";
   error?: string;
+  /** Provider identifiers and billed usage captured for this exact invocation. */
+  telemetry?: ProviderTelemetry;
 };
 
 export type ProjectRegistration = {

@@ -30,6 +30,7 @@ export function createPacketService(): PacketService {
         role: input.role,
         runId: input.runId,
         phase: input.phase,
+        model: input.role === "message-writer" ? input.settings.models.small : input.settings.models.default,
         input: clippedInput === serialized ? input.input : clippedInput,
         guidance,
         retrieval,

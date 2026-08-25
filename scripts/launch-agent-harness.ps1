@@ -27,6 +27,7 @@ $HarnessRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Cli = Join-Path $HarnessRoot "packages\agent-harness\dist\cli.js"
 $NoPullWasSpecified = $PSBoundParameters.ContainsKey("NoPull")
 $NoBuildWasSpecified = $PSBoundParameters.ContainsKey("NoBuild")
+$script:BuildWorkerOnLaunch = $false
 
 function Write-LauncherHeader {
   Clear-Host
@@ -79,6 +80,7 @@ function Invoke-LauncherBuild {
   $launchDefaults = Get-AgentHarnessLaunchDefaults
   $doPull = if ($NoPullWasSpecified) { -not $NoPull } else { [bool]$launchDefaults.pullOnStart }
   $doBuild = if ($NoBuildWasSpecified) { -not $NoBuild } else { [bool]$launchDefaults.buildOnStart }
+  $script:BuildWorkerOnLaunch = $doBuild
 
   Set-Location -LiteralPath $HarnessRoot
   if ($doPull) {
@@ -164,7 +166,13 @@ if ([string]::IsNullOrWhiteSpace($env:CURSOR_API_KEY)) {
   $env:CURSOR_API_KEY = [Environment]::GetEnvironmentVariable("CURSOR_API_KEY", "User")
 }
 
-[void](Set-AgentHarnessLiveLaunchEnv)
+$liveMode = Set-AgentHarnessLiveLaunchEnv
+if ($liveMode) {
+  if ($script:BuildWorkerOnLaunch) {
+    Invoke-AgentHarnessWorkerPrepare -HarnessRoot $HarnessRoot
+  }
+  Invoke-AgentHarnessWorkerProbe
+}
 
 $uiDefaults = Get-AgentHarnessUiDefaults
 $uiArgs = [System.Collections.Generic.List[string]]::new()

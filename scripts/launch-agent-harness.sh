@@ -7,7 +7,7 @@
 #
 # Flags:
 #   --no-pull    skip git pull
-#   --no-build   skip npm install / build
+#   --no-build   skip npm install, host build, and worker image rebuild
 #   --config     dump the host composition
 #   -h, --help   show help
 
@@ -31,8 +31,8 @@ usage() {
   cat <<'EOF'
 Usage: bash scripts/launch-agent-harness.sh [project-path] [--no-pull] [--no-build] [--config]
 
-  Updates the checkout, rebuilds the harness CLI, registers the project,
-  then starts the loopback dashboard.
+  Updates the checkout, rebuilds the harness CLI and live worker image,
+  registers the project, then starts the loopback dashboard.
 EOF
 }
 
@@ -85,4 +85,10 @@ if [[ -z "${CURSOR_API_KEY:-}" ]]; then
 fi
 
 ah_set_live_launch_env
+if [[ "${AGENT_HARNESS_AGENTS:-}" == "cursor" ]]; then
+  if [[ "$DO_BUILD" -eq 1 ]]; then
+    ah_worker_prepare "$HARNESS_ROOT"
+  fi
+  ah_worker_probe
+fi
 exec node "$CLI" ui --repository "$PROJECT_PATH"

@@ -121,13 +121,19 @@ describe("host composition after launch defaults", () => {
 });
 
 describe("launch and install scripts", () => {
-  it("launch scripts apply live-ready env before starting ui", () => {
+  it("launch scripts prepare live worker images before starting ui", () => {
     const ps1 = readFileSync(path.join(repoRoot, "scripts/launch-agent-harness.ps1"), "utf8");
     const sh = readFileSync(path.join(repoRoot, "scripts/launch-agent-harness.sh"), "utf8");
     expect(ps1).toMatch(/lib\\live-ready\.ps1/);
     expect(ps1).toMatch(/Set-AgentHarnessLiveLaunchEnv/);
+    expect(ps1).toMatch(/Invoke-AgentHarnessWorkerPrepare/);
+    expect(ps1).toMatch(/Invoke-AgentHarnessWorkerProbe/);
+    expect(ps1.indexOf("Invoke-AgentHarnessWorkerPrepare")).toBeLessThan(ps1.lastIndexOf("& node $Cli @uiArgs"));
     expect(sh).toMatch(/lib\/live-ready\.sh/);
     expect(sh).toMatch(/ah_set_live_launch_env/);
+    expect(sh).toMatch(/ah_worker_prepare/);
+    expect(sh).toMatch(/ah_worker_probe/);
+    expect(sh.indexOf("ah_worker_prepare")).toBeLessThan(sh.lastIndexOf('exec node "$CLI" ui'));
   });
 
   it("install scripts prepare and probe the worker image", () => {

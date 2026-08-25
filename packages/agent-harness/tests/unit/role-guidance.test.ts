@@ -27,7 +27,11 @@ describe("role prompt rules", () => {
 
   it("requires explicit code provenance in griller resolutions", () => {
     expect(outputContractFor("griller")).toContain('source:"code"');
-    expect(ROLE_RULES.griller.join("\n")).toContain("ask every independent unresolved product");
+    const rules = ROLE_RULES.griller.join("\n");
+    expect(rules).toContain("ask every independent unresolved product");
+    expect(rules).toContain("opaque identifier");
+    expect(rules).toContain("Never partially resolve a fog entry");
+    expect(rules).toContain("both questions and resolvedUnknowns");
   });
 });
 
@@ -55,6 +59,9 @@ describe("dedicated role guidance service", () => {
     expect(reflector.source).toBe("packaged");
     expect(reflector.body).toContain("Reflector guidance");
     expect(reflector.packagedBody).toBe(reflector.body);
+    const griller = await service.read("griller");
+    expect(griller.body).toContain("Treat supplied fog IDs as opaque");
+    expect(griller.body).toContain("Resolve an existing fog entry only when code settles the whole entry");
   });
 
   it("prefers the harness-home override over the packaged default", async () => {

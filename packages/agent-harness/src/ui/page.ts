@@ -1067,7 +1067,7 @@ export function renderDashboardPage(): string {
           (q.context ? '<div class="question-context">' + esc(q.context) + '</div>' : '') +
           answerControl(q, draft) + '</div>'
         ).join("") + '</div><div class="gate-footer">' +
-        '<button class="primary" type="button" data-action="answer">Submit</button></div></section>';
+        '<div class="gate-actions"><button class="primary" type="button" data-action="answer">Submit</button></div></div></section>';
     }
     function selectBatchOption(qid, optionId) {
       const draft = ensureDraft(app.selectedId);

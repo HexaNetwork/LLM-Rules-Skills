@@ -22,6 +22,24 @@ describe("packet budgets", () => {
     expect(typeof packet.input === "string" ? packet.input.length : 0).toBe(40);
     expect(packet.budget.truncated).toEqual(["guidance", "retrieval", "input"]);
     expect(packet.model).toBe(DEFAULT_SETTINGS.models.default);
+    expect(packet.agentTimeoutMs).toBe(30 * 60_000);
+  });
+
+  it("applies the configured timeout to every role packet", () => {
+    const packets = createPacketService();
+    for (const role of ["reflector", "docs-writer", "implementer", "task-reviewer"]) {
+      const packet = packets.build({
+        role,
+        runId: `run-${role}`,
+        phase: "test",
+        input: {},
+        settings: {
+          ...DEFAULT_SETTINGS,
+          workflow: { ...DEFAULT_SETTINGS.workflow, agentTimeoutMinutes: 7 },
+        },
+      });
+      expect(packet.agentTimeoutMs).toBe(7 * 60_000);
+    }
   });
 
   it("routes non-authoritative message writing to the configured small model", () => {
@@ -29,6 +47,20 @@ describe("packet budgets", () => {
       role: "message-writer",
       runId: "run-2",
       phase: "publish",
+      input: {},
+      settings: {
+        ...DEFAULT_SETTINGS,
+        models: { default: "large-model", small: "small-model" },
+      },
+    });
+    expect(packet.model).toBe("small-model");
+  });
+
+  it("routes docs-writer to the configured small model", () => {
+    const packet = createPacketService().build({
+      role: "docs-writer",
+      runId: "run-3",
+      phase: "prd",
       input: {},
       settings: {
         ...DEFAULT_SETTINGS,

@@ -1,5 +1,6 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { ProjectSettings } from "../domain/settings.js";
+import { maxAgentTokensFor } from "../domain/settings.js";
 import type { WorkPacket } from "../domain/types.js";
 
 export type PacketInput = {
@@ -30,10 +31,15 @@ export function createPacketService(): PacketService {
         role: input.role,
         runId: input.runId,
         phase: input.phase,
-        model: input.role === "message-writer" ? input.settings.models.small : input.settings.models.default,
+        model:
+          input.role === "message-writer" || input.role === "docs-writer"
+            ? input.settings.models.small
+            : input.settings.models.default,
         input: clippedInput === serialized ? input.input : clippedInput,
         guidance,
         retrieval,
+        maxAgentTokens: maxAgentTokensFor(input.role, input.settings),
+        agentTimeoutMs: input.settings.workflow.agentTimeoutMinutes * 60_000,
         budget: {
           guidanceTokens: input.settings.budgets.guidanceTokens,
           inputTokens: input.settings.budgets.inputTokens,

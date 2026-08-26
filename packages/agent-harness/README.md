@@ -44,10 +44,16 @@ idea → reflect → grill → glossary → verification-settings
 
 Stops: `awaiting_input`, `blocked`, `cancelled`, `completed`.
 
-Settings (verification command, budgets, and models) are re-read on every
+Settings (verification command, budgets, models, and the all-agent wall-clock
+timeout) are re-read on every
 advance. Per-role guidance is resolved live from project, harness-home, or
 packaged `GUIDANCE.md`. A run pins only identity: `runId`, workflow bundle id,
 worktree, `baseSha`.
+
+The dashboard Settings page edits `workflow.agentTimeoutMinutes` globally or
+as a project override. The default is 30 minutes; valid values are 1–1440.
+When the deadline expires, the worker cancels the provider run when supported,
+exits, and the host also enforces a short process-level fallback deadline.
 
 ## Session audit and usage
 

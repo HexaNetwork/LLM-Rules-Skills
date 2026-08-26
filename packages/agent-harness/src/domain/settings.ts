@@ -9,12 +9,18 @@ export const ProjectSettingsSchema = z.object({
     guidanceTokens: z.number().int().positive().default(4000),
     inputTokens: z.number().int().positive().default(6000),
     graphifyTokens: z.number().int().nonnegative().default(1500),
+    maxAgentTokens: z.number().int().positive().optional(),
+    roleMaxAgentTokens: z.record(z.string(), z.number().int().positive()).default({
+      "docs-writer": 50_000,
+    }),
   }).default({
     guidanceTokens: 4000,
     inputTokens: 6000,
     graphifyTokens: 1500,
+    roleMaxAgentTokens: { "docs-writer": 50_000 },
   }),
   workflow: z.object({
+    agentTimeoutMinutes: z.number().int().min(1).max(1440).default(30),
     grillQuestionsPerBatch: z.number().int().min(1).max(8).default(3),
     maxWayfindingTurnsPerEpisode: z.number().int().min(1).default(6),
     maxPhaseHopsPerAdvance: z.number().int().min(1).default(16),
@@ -22,6 +28,7 @@ export const ProjectSettingsSchema = z.object({
     maxFinalReviewAttempts: z.number().int().min(1).default(3),
     maxImageRepairAttempts: z.number().int().min(1).default(2),
   }).default({
+    agentTimeoutMinutes: 30,
     grillQuestionsPerBatch: 3,
     maxWayfindingTurnsPerEpisode: 6,
     maxPhaseHopsPerAdvance: 16,
@@ -52,6 +59,12 @@ export function mergeSettings(
     deepMerge(merged, layer as Record<string, unknown>);
   }
   return ProjectSettingsSchema.parse(merged);
+}
+
+export function maxAgentTokensFor(role: string, settings: ProjectSettings): number | undefined {
+  const roleCap = settings.budgets.roleMaxAgentTokens?.[role];
+  if (roleCap !== undefined) return roleCap;
+  return settings.budgets.maxAgentTokens;
 }
 
 function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {

@@ -86,9 +86,11 @@ export function defaultFakeReply(role: string, packet: WorkPacket): unknown {
       };
     }
     case "docs-writer":
-      return packet.phase === "prd"
-        ? { title: idea.slice(0, 72) || "Feature", body: `# PRD\n\n${idea}\n` }
-        : { glossary: [{ term: "Run", definition: "A durable idea-to-feature execution." }] };
+      return {
+        glossary: [{ term: "Run", definition: "A durable idea-to-feature execution." }],
+        title: idea.slice(0, 72) || "Feature",
+        body: `# PRD\n\n${idea}\n`,
+      };
     case "project-profiler": {
       const slug = idea
         .toLowerCase()
@@ -167,8 +169,19 @@ export function createCursorAgents(ctx: Context): AgentsService {
       if (!run) throw new Error(`Cannot invoke agent for unknown run ${packet.runId}`);
       const result = await ctx.sandbox.exec(run.runId, {
         command: ["node", "/opt/agent-harness/dist/worker/invoke.js"],
-        stdin: JSON.stringify({ role, packet }),
+        stdin: JSON.stringify({
+          role,
+          packet,
+          maxAgentTokens: packet.maxAgentTokens,
+          agentTimeoutMs: packet.agentTimeoutMs,
+        }),
+        // Give the worker a short grace period to cancel the provider run and exit.
+        timeoutMs: packet.agentTimeoutMs + 10_000,
       });
+      if (result.timedOut) {
+        await ctx.sandbox.destroy(run.runId);
+        throw new Error(`Agent timed out (${role}) after ${packet.agentTimeoutMs}ms`);
+      }
       if (result.exitCode !== 0) {
         throw new Error(formatCursorAgentFailure(role, result));
       }

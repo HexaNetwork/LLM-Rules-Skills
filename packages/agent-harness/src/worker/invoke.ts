@@ -1,5 +1,5 @@
 import { Agent, type AgentUsage, type TokenUsage, type UsageCost } from "@cursor/sdk";
-import { roleRulesFor } from "../domain/agent-roles.js";
+import { invokeModeFor, roleRulesFor } from "../domain/agent-roles.js";
 import { formatInvokeError } from "../domain/cursor-agent-error.js";
 import { REFLECT_EXPECTED_OUTPUT } from "../domain/reflect.js";
 
@@ -12,6 +12,8 @@ type InvokeRequest = {
     guidance?: string;
     retrieval?: string;
   };
+  maxAgentTokens?: number;
+  agentTimeoutMs?: number;
 };
 
 export function buildCursorInvokePrompt(request: InvokeRequest): string {
@@ -41,21 +43,39 @@ export type WorkerInvokeResult = {
     requestId?: string;
     usage?: TokenUsage;
     cost?: UsageCost;
+    tokenCapExceeded?: boolean;
   };
 };
 
 export async function invokeCursorAgent(request: InvokeRequest): Promise<WorkerInvokeResult> {
   const prompt = buildCursorInvokePrompt(request);
   const requestedModel = resolveModel(request.packet.model);
+  const mode = invokeModeFor(request.role);
 
+  if (mode === "completion") {
+    return invokeCompletion(prompt, request, requestedModel);
+  }
+  return invokeAgentSession(prompt, request, requestedModel);
+}
+
+async function invokeAgentSession(
+  prompt: string,
+  request: InvokeRequest,
+  requestedModel: string,
+): Promise<WorkerInvokeResult> {
   await using agent = await Agent.create({
     apiKey: process.env.CURSOR_API_KEY,
     model: { id: requestedModel },
     local: { cwd: "/workspace" },
   });
   const run = await agent.send(prompt);
-  const result = await run.wait();
-  const text = extractText(run);
+  const result = await withAgentTimeout(
+    run.wait(),
+    request.agentTimeoutMs,
+    () => run.cancel(),
+    request.role,
+  );
+  const text = extractText(result);
   let output: unknown;
   try {
     output = JSON.parse(text);
@@ -63,6 +83,8 @@ export async function invokeCursorAgent(request: InvokeRequest): Promise<WorkerI
     output = { text };
   }
   const billed = await readUsage(agent);
+  const usage = result.usage ?? run.usage ?? billed?.usage;
+  const tokenCapExceeded = checkTokenCap(request.role, usage, request.maxAgentTokens);
   return {
     protocolVersion: 1,
     output,
@@ -73,12 +95,92 @@ export async function invokeCursorAgent(request: InvokeRequest): Promise<WorkerI
       agentId: agent.agentId,
       providerRunId: run.id,
       ...(run.requestId ? { requestId: run.requestId } : {}),
-      ...(result.usage ?? run.usage ?? billed?.usage
-        ? { usage: result.usage ?? run.usage ?? billed?.usage }
-        : {}),
+      ...(usage ? { usage } : {}),
       ...(billed?.cost ? { cost: billed.cost } : {}),
+      ...(tokenCapExceeded ? { tokenCapExceeded: true } : {}),
     },
   };
+}
+
+async function invokeCompletion(
+  prompt: string,
+  request: InvokeRequest,
+  requestedModel: string,
+): Promise<WorkerInvokeResult> {
+  const run = await withAgentTimeout(
+    Agent.prompt(prompt, {
+      apiKey: process.env.CURSOR_API_KEY,
+      model: { id: requestedModel },
+    }),
+    request.agentTimeoutMs,
+    undefined,
+    request.role,
+  );
+  const text = extractText(run);
+  let output: unknown;
+  try {
+    output = JSON.parse(text);
+  } catch {
+    output = { text };
+  }
+  const usage = run.usage;
+  const tokenCapExceeded = checkTokenCap(request.role, usage, request.maxAgentTokens);
+  return {
+    protocolVersion: 1,
+    output,
+    submittedPrompt: prompt,
+    telemetry: {
+      provider: "cursor",
+      model: run.model?.id ?? requestedModel,
+      agentId: "completion",
+      providerRunId: run.id ?? "completion",
+      ...(run.requestId ? { requestId: run.requestId } : {}),
+      ...(usage ? { usage } : {}),
+      ...(tokenCapExceeded ? { tokenCapExceeded: true } : {}),
+    },
+  };
+}
+
+export function checkTokenCap(
+  role: string,
+  usage: TokenUsage | undefined,
+  maxAgentTokens: number | undefined,
+): boolean {
+  if (!maxAgentTokens || !usage) return false;
+  const total =
+    usage.totalTokens ??
+    usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+  if (total <= maxAgentTokens) return false;
+  process.stderr.write(
+    `WARN: ${role} exceeded agent token cap: ${total} > ${maxAgentTokens}\n`,
+  );
+  return true;
+}
+
+export async function withAgentTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number | undefined,
+  cancel: (() => Promise<void>) | undefined,
+  role: string,
+): Promise<T> {
+  if (!timeoutMs) return operation;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      void cancel?.().catch(() => undefined);
+      reject(new Error(`Agent timed out (${role}) after ${timeoutMs}ms`));
+    }, timeoutMs);
+    timer.unref();
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function resolveModel(configured: string | undefined): string {
@@ -118,7 +220,6 @@ async function main(): Promise<void> {
 const entry = process.argv[1] ?? "";
 if (entry.endsWith("invoke.js") || entry.endsWith("invoke.ts")) {
   void main().catch((error) => {
-    process.stderr.write(`${formatInvokeError(error)}\n`);
-    process.exitCode = 1;
+    process.stderr.write(`${formatInvokeError(error)}\n`, () => process.exit(1));
   });
 }

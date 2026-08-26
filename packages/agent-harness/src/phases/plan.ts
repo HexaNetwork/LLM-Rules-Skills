@@ -9,7 +9,7 @@ export function createPlanPhase(ctx: Context): Phase {
       const output = asRecord(
         await invokeRole(ctx, run, "planner", {
           brief: run.state.artifacts.reflectBrief,
-          glossary: run.state.artifacts.glossary,
+          glossary: run.state.artifacts.glossaryContext ?? run.state.artifacts.glossary,
           resolutions: run.state.artifacts.resolutions,
           fog: run.state.fog,
           fogResolutions: run.state.artifacts.fogResolutions,

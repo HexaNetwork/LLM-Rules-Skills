@@ -131,6 +131,18 @@ async function route(
     if (!controlRoot) throw new Error("Project path is required");
     return ctx.runLifecycle.addProject(controlRoot);
   }
+  if (url.pathname === "/api/settings/agent-timeout") {
+    const projectKey = url.searchParams.get("projectKey")?.trim() || undefined;
+    if (method === "GET") return ctx.settings.readAgentTimeout(projectKey);
+    if (method === "PUT") {
+      const input = (body ?? {}) as { timeoutMinutes?: number | null };
+      const timeoutMinutes = input.timeoutMinutes;
+      if (timeoutMinutes !== null && typeof timeoutMinutes !== "number") {
+        throw new Error("timeoutMinutes must be a number or null");
+      }
+      return ctx.settings.writeAgentTimeout(timeoutMinutes, projectKey);
+    }
+  }
   const projectBranches = url.pathname.match(/^\/api\/projects\/([^/]+)\/branches$/);
   if (method === "GET" && projectBranches) {
     const projectKey = decodeURIComponent(projectBranches[1]!);

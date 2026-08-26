@@ -493,6 +493,7 @@ export function renderDashboardPage(): string {
       </header>
       <button class="new-run-toggle" id="new-run-toggle" type="button" aria-pressed="false">Start a new run</button>
       <button class="nav-link" id="guidance-toggle" type="button" aria-pressed="false">Agent contexts</button>
+      <button class="nav-link" id="settings-toggle" type="button" aria-pressed="false">Settings</button>
       <details class="project-box">
         <summary>Registered projects</summary>
         <div id="projects" class="project-list"></div>
@@ -515,7 +516,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", usageTab: "totals", sandbox: {}, sandboxPending: {}, imageStatus: {}, imageStatusPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", lastSoundStatus: null };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", usageTab: "totals", sandbox: {}, sandboxPending: {}, imageStatus: {}, imageStatusPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", settingsScope: "global", settingsProjectKey: "", timeoutConfig: null, lastSoundStatus: null };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -639,6 +640,8 @@ export function renderDashboardPage(): string {
       el("new-run-toggle").setAttribute("aria-pressed", active ? "true" : "false");
       el("guidance-toggle").classList.toggle("active", app.view === "guidance");
       el("guidance-toggle").setAttribute("aria-pressed", app.view === "guidance" ? "true" : "false");
+      el("settings-toggle").classList.toggle("active", app.view === "settings");
+      el("settings-toggle").setAttribute("aria-pressed", app.view === "settings" ? "true" : "false");
     }
     function renderProjects() {
       el("projects").innerHTML = app.projects.length ? app.projects.map((project) =>
@@ -829,6 +832,75 @@ export function renderDashboardPage(): string {
     function showGuidance() {
       if (app.busy) return;
       renderGuidance();
+    }
+    function settingsProjectQuery() {
+      return app.settingsScope === "project" && app.settingsProjectKey
+        ? "?projectKey=" + encodeURIComponent(app.settingsProjectKey)
+        : "";
+    }
+    function renderSettingsForm() {
+      const host = el("settingsForm");
+      if (!host || !app.timeoutConfig) return;
+      const config = app.timeoutConfig;
+      const projectOptions = app.projects.map((project) =>
+        '<option value="' + esc(project.projectKey) + '"' + (project.projectKey === app.settingsProjectKey ? " selected" : "") + '>' + esc(project.controlRoot) + '</option>'
+      ).join("");
+      const isProject = app.settingsScope === "project";
+      const override = isProject ? config.projectMinutes : config.globalMinutes;
+      host.innerHTML =
+        '<div class="panel-title"><h3>Agent deadline</h3><span class="count">all roles</span></div>' +
+        '<p class="lede">Every agent invocation is stopped when this wall-clock deadline expires. A host-side worker deadline provides a final fallback.</p>' +
+        '<div class="compose-grid">' +
+          '<label>Scope<select id="settings-scope"><option value="global"' + (!isProject ? " selected" : "") + '>All projects</option><option value="project"' + (isProject ? " selected" : "") + '>Project override</option></select></label>' +
+          '<label>Project<select id="settings-project"' + (!isProject ? " disabled" : "") + '>' + (projectOptions || '<option value="">No projects registered</option>') + '</select></label>' +
+        '</div>' +
+        '<div class="field"><label>Timeout in minutes<input id="agent-timeout-minutes" type="number" min="1" max="1440" step="1" value="' + esc(override == null ? "" : override) + '" placeholder="' + esc(config.effectiveMinutes) + '" /></label></div>' +
+        '<p class="faint">Effective timeout: ' + esc(config.effectiveMinutes) + ' minutes. Default: ' + esc(config.defaultMinutes) + ' minutes.' + (isProject && override == null ? ' This project currently inherits the global value.' : '') + '</p>' +
+        '<div class="guidance-actions"><button class="primary" type="button" data-settings-save>Save timeout</button>' +
+          '<button class="secondary" type="button" data-settings-reset>Use inherited default</button></div>';
+    }
+    async function loadAgentTimeoutSettings() {
+      app.timeoutConfig = await api("/api/settings/agent-timeout" + settingsProjectQuery());
+      renderSettingsForm();
+    }
+    function renderSettings() {
+      app.view = "settings";
+      app.selectedId = null;
+      app.run = null;
+      app.signature = "";
+      if (!app.settingsProjectKey && app.projects[0]) app.settingsProjectKey = app.projects[0].projectKey;
+      setComposeActive(false);
+      document.body.classList.remove("nav-open");
+      renderRuns();
+      el("detail").innerHTML =
+        '<header class="topbar"><div><div class="eyebrow">Runtime configuration</div><h2 class="run-heading">Settings</h2>' +
+        '<p class="lede">Live settings are read before every workflow advance.</p></div></header>' +
+        '<section class="panel compose" id="settingsForm"><div class="empty-inline">Loading settingsâ€¦</div></section>';
+      void loadAgentTimeoutSettings().catch((error) => {
+        const host = el("settingsForm");
+        if (host) host.innerHTML = '<div class="empty-inline">' + esc(error.message) + '</div>';
+      });
+    }
+    function showSettings() {
+      if (app.busy) return;
+      renderSettings();
+    }
+    async function saveAgentTimeoutSettings(reset) {
+      if (app.settingsScope === "project" && !app.settingsProjectKey) {
+        throw new Error("Select a project before saving a project timeout");
+      }
+      const field = el("agent-timeout-minutes");
+      const raw = reset || !field ? "" : field.value.trim();
+      const timeoutMinutes = raw === "" ? null : Number(raw);
+      if (timeoutMinutes !== null && (!Number.isInteger(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > 1440)) {
+        throw new Error("Timeout must be a whole number from 1 to 1440 minutes");
+      }
+      await api("/api/settings/agent-timeout" + settingsProjectQuery(), {
+        method: "PUT",
+        body: JSON.stringify({ timeoutMinutes }),
+      });
+      toast(timeoutMinutes === null ? "Timeout override removed" : "Agent timeout saved");
+      await loadAgentTimeoutSettings();
     }
     function renderPhases(run) {
       const bundle = run.identity.workflowBundleId === "ticket" ? ["implement","scenario-test","publish"] : phases;
@@ -1608,6 +1680,7 @@ export function renderDashboardPage(): string {
     }
     el("new-run-toggle").onclick = () => { if (!app.busy) showCompose(); };
     el("guidance-toggle").onclick = () => showGuidance();
+    el("settings-toggle").onclick = () => showSettings();
     el("nav-toggle").onclick = () => document.body.classList.toggle("nav-open");
     el("soundMuteBtn").onclick = () => setSoundsMuted(!soundsMuted());
     setSoundsMuted(soundsMuted());
@@ -1709,6 +1782,16 @@ export function renderDashboardPage(): string {
         app.guidanceScope = event.target.value;
         return;
       }
+      if (event.target.id === "settings-scope") {
+        app.settingsScope = event.target.value;
+        renderSettings();
+        return;
+      }
+      if (event.target.id === "settings-project") {
+        app.settingsProjectKey = event.target.value;
+        void loadAgentTimeoutSettings().catch((error) => toast(error.message, true));
+        return;
+      }
       if (!saveComposeDraft(event.target)) return;
       if (event.target.id === "project") {
         app.compose.baseBranch = "";
@@ -1765,6 +1848,16 @@ export function renderDashboardPage(): string {
       if (guidanceReset) {
         if (!confirm("Remove this override and restore the packaged default?")) return;
         resetGuidanceOverride().catch((error) => toast(error.message, true));
+        return;
+      }
+      const settingsSave = event.target.closest("[data-settings-save]");
+      if (settingsSave) {
+        saveAgentTimeoutSettings(false).catch((error) => toast(error.message, true));
+        return;
+      }
+      const settingsReset = event.target.closest("[data-settings-reset]");
+      if (settingsReset) {
+        saveAgentTimeoutSettings(true).catch((error) => toast(error.message, true));
         return;
       }
       const composeAction = event.target.closest('[data-action="compose"]');

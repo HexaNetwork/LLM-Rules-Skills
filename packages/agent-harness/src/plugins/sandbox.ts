@@ -17,12 +17,14 @@ export type ExecResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
+  timedOut?: boolean;
 };
 
 export type SandboxExec = {
   command: string[];
   stdin?: string;
   cwd?: string;
+  timeoutMs?: number;
 };
 
 export type SandboxService = {
@@ -103,11 +105,16 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
       if (mode === "none") {
         const identity = await ctx.store.readIdentity(runId);
         if (!identity) throw new Error(`Unknown run ${runId}`);
-        return runLocal(request.command, request.cwd ?? identity.worktreePath, request.stdin);
+        return runLocal(
+          request.command,
+          request.cwd ?? identity.worktreePath,
+          request.stdin,
+          request.timeoutMs,
+        );
       }
       await this.ensure(runId);
       const name = containerName(runId);
-      return runDockerExec(name, request.command, request.stdin);
+      return runDockerExec(name, request.command, request.stdin, request.timeoutMs);
     },
     async destroy(runId, options) {
       if (mode === "none") return;
@@ -154,11 +161,36 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function runProcess(file: string, args: string[], cwd?: string, stdin?: string): Promise<ExecResult> {
+function runProcess(
+  file: string,
+  args: string[],
+  cwd?: string,
+  stdin?: string,
+  timeoutMs?: number,
+): Promise<ExecResult> {
   return new Promise((resolve) => {
     const child = spawn(file, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const finish = (result: ExecResult): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = timeoutMs
+      ? setTimeout(() => {
+          child.kill();
+          finish({
+            exitCode: 124,
+            stdout,
+            stderr: `${stderr}${stderr ? "\n" : ""}Agent worker timed out after ${timeoutMs}ms`,
+            timedOut: true,
+          });
+        }, timeoutMs)
+      : undefined;
+    timer?.unref();
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
     });
@@ -167,20 +199,30 @@ function runProcess(file: string, args: string[], cwd?: string, stdin?: string):
     });
     child.stdin.end(stdin ?? "");
     child.on("error", (error) => {
-      resolve({ exitCode: 1, stdout, stderr: error.message });
+      finish({ exitCode: 1, stdout, stderr: error.message });
     });
     child.on("close", (code) => {
-      resolve({ exitCode: code ?? 1, stdout, stderr });
+      finish({ exitCode: code ?? 1, stdout, stderr });
     });
   });
 }
 
-function runLocal(command: string[], cwd: string, stdin?: string): Promise<ExecResult> {
-  return runProcess(command[0]!, command.slice(1), cwd, stdin);
+function runLocal(
+  command: string[],
+  cwd: string,
+  stdin?: string,
+  timeoutMs?: number,
+): Promise<ExecResult> {
+  return runProcess(command[0]!, command.slice(1), cwd, stdin, timeoutMs);
 }
 
-function runDockerExec(name: string, command: string[], stdin?: string): Promise<ExecResult> {
-  return runProcess("docker", ["exec", "-i", name, ...command], undefined, stdin);
+function runDockerExec(
+  name: string,
+  command: string[],
+  stdin?: string,
+  timeoutMs?: number,
+): Promise<ExecResult> {
+  return runProcess("docker", ["exec", "-i", name, ...command], undefined, stdin, timeoutMs);
 }
 
 export function sandboxPlugin(ctx: Context, config: SandboxConfig = {}): void {

@@ -12,6 +12,27 @@ describe("live settings", () => {
     expect(live.budgets.inputTokens).toBe(200);
     expect(live.budgets.graphifyTokens).toBe(1500);
     expect(live.verification.command).toBe("npm test");
+    expect(live.workflow.agentTimeoutMinutes).toBe(30);
+  });
+
+  it("writes global and project agent timeout overrides", async () => {
+    const { host } = await bootTestHost();
+    try {
+      const global = await host.ctx.settings.writeAgentTimeout(45);
+      expect(global.globalMinutes).toBe(45);
+      expect(global.effectiveMinutes).toBe(45);
+
+      const projectKey = "project-timeout-test";
+      const project = await host.ctx.settings.writeAgentTimeout(12, projectKey);
+      expect(project.projectMinutes).toBe(12);
+      expect(project.effectiveMinutes).toBe(12);
+
+      const inherited = await host.ctx.settings.writeAgentTimeout(null, projectKey);
+      expect(inherited.projectMinutes).toBeUndefined();
+      expect(inherited.effectiveMinutes).toBe(45);
+    } finally {
+      await host.dispose();
+    }
   });
 
   it("re-reads project settings on every advance and audits the snapshot", async () => {

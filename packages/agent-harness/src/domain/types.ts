@@ -171,6 +171,10 @@ export type WorkPacket = {
     graphifyTokens: number;
     truncated: string[];
   };
+  /** Per-role agent token cap enforced after the worker run completes. */
+  maxAgentTokens?: number;
+  /** Wall-clock deadline applied to every agent invocation. */
+  agentTimeoutMs: number;
 };
 
 export type TokenUsage = {

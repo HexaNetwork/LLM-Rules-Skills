@@ -20,6 +20,25 @@ export const AGENT_ROLES = [
 export const AgentRoleSchema = z.enum(AGENT_ROLES);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 
+export type RoleInvokeMode = "agent" | "completion";
+
+/** How the worker invokes Cursor: durable agent session vs one-shot completion. */
+export const ROLE_INVOKE_MODES: Partial<Record<AgentRole, RoleInvokeMode>> = {
+  "docs-writer": "completion",
+  planner: "completion",
+  "scenario-planner": "completion",
+  "issue-slicer": "completion",
+  "task-reviewer": "completion",
+  reviewer: "completion",
+  "message-writer": "completion",
+  "image-fixer": "completion",
+};
+
+export function invokeModeFor(role: string): RoleInvokeMode {
+  if (role in ROLE_INVOKE_MODES) return ROLE_INVOKE_MODES[role as AgentRole]!;
+  return "agent";
+}
+
 export const ROLE_RULES: Record<AgentRole, string[]> = {
   reflector: [
     "Write restatement as the feature itself in plain language; do not invent requirements.",
@@ -46,10 +65,10 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "Return exactly one JSON object matching the expected output contract. Do not write Markdown interview prose.",
   ],
   "docs-writer": [
-    "Edit the working tree but never commit, push, or open a pull request.",
-    "Update only glossary/PRD artifacts from the confirmed brief, operator resolutions, and evidence-backed fog resolutions.",
+    "Do not read, grep, search, or explore the repository; use only the packet.",
+    "Synthesize glossary and PRD content from the confirmed brief, operator resolutions, and evidence-backed fog resolutions.",
+    "Return delta glossary entries only; omit unchanged existing terms supplied in the packet.",
     "Do not describe a resolved fog entry as open, and do not invent new open items after the grill gate.",
-    "Preserve existing glossary entries unless a grill resolution sharpens or replaces them.",
     "Return exactly one raw JSON object matching the expected output contract.",
   ],
   planner: [
@@ -120,7 +139,7 @@ export const ROLE_OUTPUT_CONTRACTS: Record<AgentRole, string> = {
   griller:
     '{questions:[{id:string,fogIds:[string],prompt:string,context?:string,options:[{id:string,label:string,description:string}],recommendedOptionId:string,recommendation:string}],newUnknowns:[{id:string,text:string}],resolvedUnknowns:[{id:string,source:"code",reason:string}]}',
   "docs-writer":
-    "glossary phase: {glossary:[{term:string,definition:string}]}; prd phase: {title:string,body:string}",
+    "{glossary:[{term:string,definition:string,avoid?:[string]}],title:string,body:string}",
   planner: "{plan:string}",
   "scenario-planner": "{scenarios:[{id:string,title:string,steps:[string]}]}",
   "issue-slicer": "{tasks:[{id:string,title:string,description:string}]}",

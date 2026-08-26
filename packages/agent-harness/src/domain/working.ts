@@ -3,6 +3,8 @@ export type RunWorking = {
   phase?: string;
   role?: string;
   status?: "working" | "stalled" | "reconciling";
+  /** Host process that owns the in-flight operation, for startup recovery. */
+  ownerPid?: number;
   startedAt: string;
 };
 
@@ -19,6 +21,7 @@ export function workingOn(
     phase: extras.phase,
     role: extras.role,
     status: extras.status ?? "working",
+    ownerPid: process.pid,
     startedAt: new Date().toISOString(),
   };
 }

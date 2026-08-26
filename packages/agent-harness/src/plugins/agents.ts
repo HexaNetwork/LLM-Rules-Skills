@@ -4,6 +4,7 @@ import { formatCursorAgentFailure } from "../domain/cursor-agent-error.js";
 import { invokeModeFor } from "../domain/agent-roles.js";
 import { readRoleAgents } from "../domain/role-agents.js";
 import type { AgentInvocation, WorkPacket } from "../domain/types.js";
+import { workingOn } from "../domain/working.js";
 import {
   parseWorkerStdout,
   type WorkerControlEvent,
@@ -195,7 +196,7 @@ export function createCursorAgents(ctx: Context): AgentsService {
         await persistAgentStreamEvent(ctx, packet, meta.sessionId, parsed);
       };
 
-      const result = await ctx.sandbox.exec(run.runId, {
+      const execution = ctx.sandbox.exec(run.runId, {
         command: ["node", "/opt/agent-harness/dist/worker/invoke.js"],
         stdin: JSON.stringify({
           role,
@@ -208,6 +209,11 @@ export function createCursorAgents(ctx: Context): AgentsService {
         timeoutMs: packet.agentTimeoutMs + 10_000,
         onStdoutLine: (line) => handleStdoutLine(line),
       });
+      const reconciled = meta?.sessionId
+        ? await awaitWorkerOrFinalizedSession(ctx, packet, meta.sessionId, execution)
+        : { result: await execution };
+      if (reconciled.worker) return reconciled.worker;
+      const result = reconciled.result!;
 
       if (result.timedOut) {
         await ctx.sandbox.destroy(run.runId);
@@ -224,6 +230,104 @@ export function createCursorAgents(ctx: Context): AgentsService {
       return workerResult;
     },
   };
+}
+
+const FINALIZED_WORKER_GRACE_MS = 10_000;
+const RECONCILE_POLL_MS = 1_000;
+
+async function awaitWorkerOrFinalizedSession(
+  ctx: Context,
+  packet: WorkPacket,
+  sessionId: string,
+  execution: ReturnType<Context["sandbox"]["exec"]>,
+): Promise<{ result?: Awaited<typeof execution>; worker?: WorkerInvokeResult }> {
+  let executionSettled = false;
+  const trackedExecution = execution.finally(() => {
+    executionSettled = true;
+  });
+  const watchdog = (async (): Promise<WorkerInvokeResult> => {
+    let finalizedAt = 0;
+    while (!executionSettled) {
+      await delay(RECONCILE_POLL_MS);
+      const events = await ctx.store.readSessionEvents<Record<string, unknown>>(
+        packet.runId,
+        sessionId,
+      );
+      if (!finalizedAt && hasFinalizedProvider(events)) finalizedAt = Date.now();
+      if (!finalizedAt || Date.now() - finalizedAt < FINALIZED_WORKER_GRACE_MS) continue;
+
+      const recovered = recoverFinalizedWorker(events);
+      if (!recovered) {
+        throw new Error(
+          `Finalized agent session ${sessionId} did not contain a recoverable JSON result`,
+        );
+      }
+      await ctx.store.writeProgress(
+        packet.runId,
+        workingOn(`Recovering finalized ${packet.role}`, {
+          phase: packet.phase,
+          role: packet.role,
+          status: "reconciling",
+        }),
+      );
+      // The provider is finalized but the worker has not returned. Tear down
+      // the dedicated run container to release a hung SDK disposer/stream.
+      await ctx.sandbox.destroy(packet.runId).catch(() => undefined);
+      return recovered;
+    }
+    return new Promise<WorkerInvokeResult>(() => undefined);
+  })();
+
+  const outcome = await Promise.race([
+    trackedExecution.then((result) => ({ kind: "process" as const, result })),
+    watchdog.then((worker) => ({ kind: "recovered" as const, worker })),
+  ]);
+  return outcome.kind === "recovered" ? { worker: outcome.worker } : { result: outcome.result };
+}
+
+function hasFinalizedProvider(events: Array<Record<string, unknown>>): boolean {
+  return events.some(
+    (event) => event.kind === "provider_status" && event.status === "finalized",
+  );
+}
+
+export function recoverFinalizedWorker(events: Array<Record<string, unknown>>): WorkerInvokeResult | undefined {
+  let output: unknown;
+  let agentId = "reconciled";
+  let providerRunId = "reconciled";
+  let requestId: string | undefined;
+  for (const event of events) {
+    if (typeof event.agentId === "string") agentId = event.agentId;
+    if (event.kind === "run_status") {
+      if (typeof event.runId === "string") providerRunId = event.runId;
+      if (typeof event.requestId === "string") requestId = event.requestId;
+    }
+    if (event.kind !== "step" || !event.step || typeof event.step !== "object") continue;
+    const step = event.step as { type?: unknown; message?: { text?: unknown } };
+    if (step.type !== "assistantMessage" || typeof step.message?.text !== "string") continue;
+    try {
+      output = JSON.parse(step.message.text);
+    } catch {
+      output = { text: step.message.text };
+    }
+  }
+  if (output === undefined) return undefined;
+  return {
+    protocolVersion: 1,
+    output,
+    submittedPrompt: "[recovered from finalized session event stream]",
+    telemetry: {
+      provider: "cursor",
+      model: "reconciled",
+      agentId,
+      providerRunId,
+      ...(requestId ? { requestId } : {}),
+    },
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function agentsPlugin(ctx: Context, config: AgentsConfig = {}): void {
@@ -264,6 +368,7 @@ function wrapWithSessions(
         packet: packetSummary,
       });
 
+      let terminalPersisted = false;
       try {
         const result = await inner.invoke(role, packet, { sessionId });
         const worker = isWorkerInvokeResult(result) ? result : undefined;
@@ -295,6 +400,7 @@ function wrapWithSessions(
           status: "completed",
           packet: packetSummary,
         });
+        terminalPersisted = true;
         return output;
       } catch (error) {
         const endedAt = new Date().toISOString();
@@ -319,7 +425,32 @@ function wrapWithSessions(
           status: "failed",
           packet: packetSummary,
         });
+        terminalPersisted = true;
         throw error;
+      } finally {
+        if (!terminalPersisted) {
+          const endedAt = new Date().toISOString();
+          const invocation: AgentInvocation = {
+            sessionId,
+            role,
+            packet,
+            startedAt,
+            endedAt,
+            at: endedAt,
+            status: "failed",
+            error: "Agent invocation ended before terminal state could be persisted",
+          };
+          await persistSession(ctx, packet, invocation).catch(() => undefined);
+          await ctx.store.appendEvent(packet.runId, {
+            kind: "agent",
+            at: endedAt,
+            sessionId,
+            role,
+            phase: packet.phase,
+            status: "failed",
+            packet: packetSummary,
+          }).catch(() => undefined);
+        }
       }
     },
   };
@@ -370,6 +501,16 @@ async function persistAgentStreamEvent(
   // Stream ticks stay on the session log only. Run Activity keeps lifecycle + agent
   // start/complete (with packet summary) so the feed stays readable.
   await ctx.store.appendSessionEvent(packet.runId, sessionId, event);
+  if (event.kind === "heartbeat") {
+    await ctx.store.writeProgress(
+      packet.runId,
+      workingOn(`Invoking ${packet.role}`, {
+        phase: packet.phase,
+        role: packet.role,
+        status: "working",
+      }),
+    );
+  }
 }
 
 export type PacketSummary = {

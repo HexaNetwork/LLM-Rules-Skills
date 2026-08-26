@@ -211,9 +211,7 @@ async function openAgentSession(
     apiKey: process.env.CURSOR_API_KEY,
     model: { id: requestedModel },
     local: { cwd: "/workspace" },
-    ...(request.role === "project-profiler"
-      ? { tools: ["read", "grep", "glob", "ls"] }
-      : {}),
+    ...(toolsForRole(request.role) ? { tools: toolsForRole(request.role) } : {}),
   };
   if (resumeAgentId) {
     emitControl(emit, "provider_status", { status: "resuming_agent", agentId: resumeAgentId });
@@ -304,10 +302,12 @@ function emitDeltaToolEvents(emit: ControlEmitter, update: InteractionUpdate): v
         const shellResult = update.toolCall.result;
         if (!shellResult) break;
         if (shellResult.status === "success") {
+          const timedOut = shellToolTimedOut(update.toolCall.args, shellResult.value);
           emitControl(emit, "shell_finish", {
             callId: update.callId,
-            status: shellResult.status,
-            exitCode: shellResult.value.exitCode,
+            status: timedOut ? "timed_out" : shellResult.status,
+            exitCode: timedOut ? 124 : shellResult.value.exitCode,
+            ...(timedOut ? { timedOut: true } : {}),
             stdout: truncateShellText(shellResult.value.stdout),
             stderr: truncateShellText(shellResult.value.stderr),
             executionTime: shellResult.value.executionTime,
@@ -386,8 +386,10 @@ export async function withAgentTimeout<T>(
   if (!timeoutMs) return operation;
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      void cancel?.().catch(() => undefined);
-      reject(new Error(`Agent timed out (${role}) after ${timeoutMs}ms`));
+      void (async () => {
+        await cancel?.().catch(() => undefined);
+        reject(new Error(`Agent timed out (${role}) after ${timeoutMs}ms`));
+      })();
     }, timeoutMs);
     timer.unref();
     operation.then(
@@ -401,6 +403,26 @@ export async function withAgentTimeout<T>(
       },
     );
   });
+}
+
+/**
+ * Cursor currently may surface a shell deadline as success/0 while the command
+ * remains alive. Normalize the deadline boundary for harness telemetry.
+ */
+export function shellToolTimedOut(
+  args: { timeout?: unknown },
+  result: { executionTime?: unknown },
+): boolean {
+  return (
+    typeof args.timeout === "number" &&
+    args.timeout > 0 &&
+    typeof result.executionTime === "number" &&
+    result.executionTime >= args.timeout
+  );
+}
+
+export function toolsForRole(role: string): string[] | undefined {
+  return role === "project-profiler" ? ["read", "grep", "glob", "ls"] : undefined;
 }
 
 function resolveModel(configured: string | undefined): string {

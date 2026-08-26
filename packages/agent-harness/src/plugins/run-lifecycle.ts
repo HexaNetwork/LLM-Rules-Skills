@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import { workingOn, type RunWorking } from "../domain/working.js";
+import { recoverFinalizedWorker } from "./agents.js";
 import { summarizeSessionUsage, type SessionUsageReport } from "../domain/session-usage.js";
 import type {
   AgentInvocation,
@@ -38,7 +39,11 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
       delete run.state.working;
       return run;
     }
-    run.state.working = working;
+    const age = Date.now() - Date.parse(working.startedAt);
+    run.state.working =
+      working.status !== "reconciling" && Number.isFinite(age) && age > 45_000
+        ? { ...working, status: "stalled" }
+        : working;
     return run;
   };
 
@@ -352,8 +357,101 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
 export const runLifecyclePlugin = Object.assign(
   (ctx: Context) => {
     ctx.provide("runLifecycle", createRunLifecycle(ctx));
+    // Any invocation that predates this host process is orphaned by
+    // definition. Reconcile it at startup so stale progress cannot survive a
+    // coordinator restart indefinitely.
+    queueMicrotask(() => {
+      void recoverOrphanedRuns(ctx);
+    });
   },
   {
     inject: ["store", "settings", "projects", "workflow", "phases", "git", "sandbox"],
   },
 );
+
+export async function recoverOrphanedRuns(ctx: Context): Promise<void> {
+  for (const runId of await ctx.store.listRunIds()) {
+    const [state, progress, sessions] = await Promise.all([
+      ctx.store.readState(runId),
+      ctx.store.readProgress(runId),
+      ctx.store.readSessions<AgentInvocation>(runId),
+    ]);
+    if (!state || !progress || state.status !== "active") continue;
+    // A second CLI/dashboard process must not reclaim work owned by a live
+    // coordinator. Legacy progress has no owner and is safe to reconcile.
+    if (progress.ownerPid && processIsAlive(progress.ownerPid)) continue;
+    const session = [...sessions].reverse().find((entry) => entry.status === "running");
+    if (!session) {
+      await ctx.store.clearProgress(runId);
+      continue;
+    }
+
+    await ctx.store.writeProgress(
+      runId,
+      workingOn(`Recovering orphaned ${session.role}`, {
+        phase: session.packet.phase,
+        role: session.role,
+        status: "reconciling",
+      }),
+    );
+    const events = await ctx.store.readSessionEvents<Record<string, unknown>>(
+      runId,
+      session.sessionId,
+    );
+    const recovered = recoverFinalizedWorker(events);
+    const endedAt = new Date().toISOString();
+    const terminal: AgentInvocation = recovered
+      ? {
+          ...session,
+          output: recovered.output,
+          telemetry: recovered.telemetry,
+          endedAt,
+          at: endedAt,
+          status: "completed",
+        }
+      : {
+          ...session,
+          endedAt,
+          at: endedAt,
+          status: "failed",
+          error: "Coordinator restarted before the agent invocation reached a terminal state",
+        };
+    await ctx.store.writeSession(runId, session.sessionId, terminal);
+    await ctx.store.appendEvent(runId, {
+      kind: "agent",
+      at: endedAt,
+      sessionId: session.sessionId,
+      role: session.role,
+      phase: session.packet.phase,
+      status: terminal.status,
+    });
+    state.status = "blocked";
+    state.block = {
+      reason: recovered
+        ? `Recovered finalized ${session.role} output after coordinator restart; retry this phase to continue safely`
+        : `Recovered orphaned ${session.role} invocation after coordinator restart; retry this phase`,
+      retriable: true,
+    };
+    state.revision += 1;
+    state.updatedAt = endedAt;
+    await ctx.store.writeState(state);
+    await ctx.store.appendEvent(runId, {
+      at: endedAt,
+      revision: state.revision,
+      status: state.status,
+      phase: state.phase,
+      recovered: true,
+    });
+    await ctx.sandbox.destroy(runId).catch(() => undefined);
+    await ctx.store.clearProgress(runId);
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}

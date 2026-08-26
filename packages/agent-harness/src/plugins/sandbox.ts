@@ -207,7 +207,7 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function runProcess(
+export function runProcess(
   file: string,
   args: string[],
   cwd?: string,
@@ -225,6 +225,7 @@ function runProcess(
     });
     let stdout = "";
     let stdoutRemainder = "";
+    let stdoutDrain = Promise.resolve();
     let stderr = "";
     let settled = false;
     const finish = (result: ExecResult): void => {
@@ -274,7 +275,7 @@ function runProcess(
       stdout += text;
       if (!onStdoutLine) return;
       stdoutRemainder += text;
-      void drainStdoutLines();
+      stdoutDrain = stdoutDrain.then(drainStdoutLines);
     });
     child.stderr.on("data", (chunk) => {
       stderr += String(chunk);
@@ -284,14 +285,13 @@ function runProcess(
       finish({ exitCode: 1, stdout, stderr: error.message });
     });
     child.on("close", (code) => {
-      if (onStdoutLine && stdoutRemainder.length > 0) {
-        void flushStdoutLine(stdoutRemainder).finally(() => {
+      void stdoutDrain.finally(async () => {
+        if (onStdoutLine && stdoutRemainder.length > 0) {
+          await flushStdoutLine(stdoutRemainder);
           stdoutRemainder = "";
-          finish({ exitCode: code ?? 1, stdout, stderr });
-        });
-        return;
-      }
-      finish({ exitCode: code ?? 1, stdout, stderr });
+        }
+        finish({ exitCode: code ?? 1, stdout, stderr });
+      });
     });
   });
 }

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseWorkerStdout, selectUsageTelemetry } from "../../src/worker/invoke.js";
+import {
+  parseWorkerStdout,
+  selectUsageTelemetry,
+  shellToolTimedOut,
+} from "../../src/worker/invoke.js";
 
 describe("parseWorkerStdout", () => {
   it("reads the trailing result line from a JSONL worker stream", () => {
@@ -37,6 +41,13 @@ describe("parseWorkerStdout", () => {
     });
     const parsed = parseWorkerStdout(stdout);
     expect(parsed?.output).toEqual({ summary: "legacy" });
+  });
+});
+
+describe("shell timeout normalization", () => {
+  it("recognizes a nominal success that reached the tool deadline", () => {
+    expect(shellToolTimedOut({ timeout: 180_000 }, { executionTime: 180_034 })).toBe(true);
+    expect(shellToolTimedOut({ timeout: 180_000 }, { executionTime: 12_000 })).toBe(false);
   });
 });
 

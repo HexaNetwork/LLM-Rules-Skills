@@ -79,4 +79,54 @@ describe("docker isolation", () => {
       delete process.env.GITHUB_TOKEN;
     }
   });
+
+  it("reuses an existing worker container when ensure is called again after restart", async () => {
+    const skip = await dockerSkipReason();
+    if (skip) {
+      console.warn(skip);
+      return;
+    }
+    const home = await createTempDir("harness-docker-restart-");
+    const repo = await createTempRepo();
+    process.env.CURSOR_API_KEY = "cursor-test-key";
+    const host = await bootHost({
+      home,
+      extraRows: hostRuntimeRows({
+        agents: { mode: "fake" },
+        sandbox: { mode: "docker", image: "node:22-bookworm-slim" },
+      }),
+    });
+    const runId = "22222222-3333-4444-8555-666666666666";
+    try {
+      const project = await host.ctx.projects.add(repo);
+      const baseBranch = await currentBranch(repo);
+      const { worktreePath, baseSha } = await host.ctx.git.createWorktree(project, runId, baseBranch);
+      await host.ctx.store.writeIdentity({
+        runId,
+        projectKey: project.projectKey,
+        workflowBundleId: "default",
+        controlRoot: project.controlRoot,
+        worktreePath,
+        baseSha,
+        baseBranch,
+        createdAt: new Date().toISOString(),
+      });
+      await host.ctx.sandbox.ensure(runId);
+      await host.dispose();
+
+      const restarted = await bootHost({
+        home,
+        extraRows: hostRuntimeRows({
+          agents: { mode: "fake" },
+          sandbox: { mode: "docker", image: "node:22-bookworm-slim" },
+        }),
+      });
+      await expect(restarted.ctx.sandbox.ensure(runId)).resolves.toBeDefined();
+      const inspected = await restarted.ctx.sandbox.inspect(runId);
+      expect(inspected.status).toBe("running");
+      await restarted.dispose();
+    } finally {
+      await exec("docker", ["rm", "-f", containerName(runId)], { windowsHide: true }).catch(() => undefined);
+    }
+  });
 });

@@ -4,17 +4,46 @@
   User-local agent-harness settings (AppData), outside any project checkout.
 
 .DESCRIPTION
-  Path: %LOCALAPPDATA%\agent-harness\settings.json
+  Path: %LOCALAPPDATA%\agent-harness\launcher-settings.json
   Stores remembered projects and machine launch/UI defaults.
   Never stores secrets (CURSOR_API_KEY stays in User env / shell profile).
 #>
 
-function Get-AgentHarnessSettingsPath {
+function Get-AgentHarnessHomeDir {
   $base = $env:LOCALAPPDATA
   if ([string]::IsNullOrWhiteSpace($base)) {
     $base = Join-Path $env:USERPROFILE "AppData\Local"
   }
-  return (Join-Path $base "agent-harness\settings.json")
+  return (Join-Path $base "agent-harness")
+}
+
+function Get-AgentHarnessSettingsPath {
+  return (Join-Path (Get-AgentHarnessHomeDir) "launcher-settings.json")
+}
+
+function Migrate-AgentHarnessLauncherSettings {
+  $homeDir = Get-AgentHarnessHomeDir
+  $target = Join-Path $homeDir "launcher-settings.json"
+  if (Test-Path -LiteralPath $target) { return }
+
+  $legacy = Join-Path $homeDir "settings.json"
+  if (-not (Test-Path -LiteralPath $legacy)) { return }
+
+  try {
+    $text = Get-Content -LiteralPath $legacy -Raw -ErrorAction Stop
+    if ($text.Length -gt 0 -and [int][char]$text[0] -eq 0xFEFF) {
+      $text = $text.Substring(1)
+    }
+    if ([string]::IsNullOrWhiteSpace($text)) { return }
+    $raw = $text | ConvertFrom-Json
+    if (-not ($raw.PSObject.Properties["version"] -and $raw.PSObject.Properties["projects"])) { return }
+    if (-not (Test-Path -LiteralPath $homeDir)) {
+      New-Item -ItemType Directory -Path $homeDir -Force | Out-Null
+    }
+    Copy-Item -LiteralPath $legacy -Destination $target -Force
+  } catch {
+    Write-Warning "Could not migrate launcher settings from $legacy; using defaults. $($_.Exception.Message)"
+  }
 }
 
 function New-AgentHarnessDefaultSettings {
@@ -118,6 +147,7 @@ function Merge-AgentHarnessSettings {
 }
 
 function Get-AgentHarnessSettings {
+  Migrate-AgentHarnessLauncherSettings
   $path = Get-AgentHarnessSettingsPath
   if (-not (Test-Path -LiteralPath $path)) {
     return (New-AgentHarnessDefaultSettings)

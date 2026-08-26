@@ -521,9 +521,21 @@ export function renderDashboardPage(): string {
   </div>
   <div class="toast" id="toast" role="status"><span class="toast-msg" id="toast-msg"></span><button class="toast-close" id="toast-close" type="button" aria-label="Dismiss">X</button></div>
   <script>
-    const token = new URLSearchParams(location.search).get("token") || "";
-    const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, sessionEvents: {}, sessionEventsPending: {}, view: "empty", runTab: "overview", usageTab: "totals", sandbox: {}, sandboxPending: {}, imageStatus: {}, imageStatusPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", settingsScope: "global", settingsProjectKey: "", timeoutConfig: null, lastSoundStatus: null };
+    const TOKEN_KEY = "agent-harness-dashboard-token";
+    function readDashboardToken() {
+      const fromUrl = new URLSearchParams(location.search).get("token");
+      if (fromUrl) {
+        try { sessionStorage.setItem(TOKEN_KEY, fromUrl); } catch (error) { /* ignore */ }
+        return fromUrl;
+      }
+      try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch (error) { return ""; }
+    }
+    function clearDashboardToken() {
+      try { sessionStorage.removeItem(TOKEN_KEY); } catch (error) { /* ignore */ }
+    }
+    let token = readDashboardToken();
+    const authHeaders = () => ({ Authorization: "Bearer " + token, "Content-Type": "application/json" });
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, sessionEvents: {}, sessionEventsPending: {}, view: "empty", runTab: "overview", usageTab: "totals", sandbox: {}, sandboxPending: {}, imageStatus: {}, imageStatusPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", settingsScope: "global", settingsProjectKey: "", timeoutConfig: null, lastSoundStatus: null, authFailed: false };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -560,9 +572,17 @@ export function renderDashboardPage(): string {
     }
     el("toast-close").onclick = () => { el("toast").className = "toast"; };
     async function api(path, options = {}) {
-      const res = await fetch(path, { ...options, headers: { ...headers, ...(options.headers || {}) } });
+      const res = await fetch(path, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
       const data = await res.json();
+      if (res.status === 401) {
+        app.authFailed = true;
+        clearDashboardToken();
+        token = "";
+        renderRuns();
+        throw new Error("Dashboard session expired. Reopen the tokenized URL printed by agent-harness ui.");
+      }
       if (!res.ok) throw new Error(data.error || res.statusText);
+      app.authFailed = false;
       return data;
     }
     function runLabel(run) {
@@ -634,6 +654,10 @@ export function renderDashboardPage(): string {
       else if (status === "completed") playTone("completed");
     }
     function renderRuns() {
+      if (app.authFailed) {
+        el("runs").innerHTML = '<div class="empty-inline" style="padding:14px 11px">Session expired. Reopen the tokenized URL printed when you start <code>agent-harness ui</code>.</div>';
+        return;
+      }
       const sorted = [...app.runs].sort((a, b) => String(b.state.updatedAt).localeCompare(String(a.state.updatedAt)));
       el("runs").innerHTML = sorted.length ? sorted.map((run) =>
         '<button type="button" class="run-row' + (app.selectedId === run.identity.runId ? ' selected' : '') + '" data-run="' + esc(run.identity.runId) + '">' +
@@ -1135,7 +1159,7 @@ export function renderDashboardPage(): string {
     function truncatePreflightOutput(text, maxChars) {
       const raw = String(text || "").trim();
       if (raw.length <= maxChars) return raw;
-      return raw.slice(0, maxChars) + "\n… (truncated)";
+      return raw.slice(0, maxChars) + "\\n… (truncated)";
     }
     function renderVerificationPreflightGate(run, gate, draft) {
       const ctx = (run.state.artifacts && run.state.artifacts.verificationPreflight) || {};

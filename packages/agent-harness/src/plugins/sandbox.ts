@@ -116,7 +116,7 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
         harnessHome: ctx.store.home,
         siblingRunRoots: siblings.map((id) => `${ctx.store.home}/runs/${id}`),
       });
-      await docker(buildDockerRunArgs(spec));
+      await ensureDockerContainer(spec);
       specs.set(runId, spec);
       return spec;
     },
@@ -171,6 +171,18 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
 async function docker(args: string[]): Promise<string> {
   const { stdout } = await exec("docker", args, { windowsHide: true });
   return stdout;
+}
+
+/** Reuse a healthy container or replace a stale one after process restart / retry. */
+async function ensureDockerContainer(spec: ContainerSpec): Promise<void> {
+  try {
+    const raw = await docker(["inspect", "-f", "{{.State.Running}}", spec.name]);
+    if (raw.trim() === "true") return;
+    await docker(["rm", "-f", spec.name]);
+  } catch {
+    // Container does not exist yet.
+  }
+  await docker(buildDockerRunArgs(spec));
 }
 
 async function pathExists(path: string): Promise<boolean> {

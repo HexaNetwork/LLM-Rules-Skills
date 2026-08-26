@@ -38,16 +38,21 @@ export function verificationCommandsForRun(
 }
 
 /**
- * Runs the configured verification command in the sandbox. Returns undefined when no
- * command is configured — a missing configuration is not a broken environment, so
- * callers proceed to review without command evidence instead of blocking.
+ * Runs fixCommand (when configured) then the main verification command in the sandbox.
+ * Returns undefined when no command is configured — a missing configuration is not a
+ * broken environment, so callers proceed to review without command evidence instead of
+ * blocking.
  */
 export async function verifyWithHarness(
   ctx: Context,
   run: Run,
+  priorEvidence?: VerificationEvidence | Record<string, unknown>,
 ): Promise<VerificationEvidence | undefined> {
-  const command = verificationCommand(run);
+  const { command, fixCommand } = verificationCommandsForRun(run, priorEvidence);
   if (!command?.trim()) return undefined;
+  if (fixCommand) {
+    await ctx.commands.verify(run.identity.runId, fixCommand);
+  }
   const result = await ctx.commands.verify(run.identity.runId, command);
   if (!result) {
     return {
@@ -79,33 +84,4 @@ export async function repairImageForEnvironmentFailure(
     current = attempt.evidence;
   }
   return current;
-}
-
-export type ImplementerVerificationRequest = {
-  runFix?: boolean;
-  runVerify?: boolean;
-};
-
-/** Run implementer-requested fix/verify commands in the harness sandbox before the mandatory gate. */
-export async function runImplementerHarnessVerification(
-  ctx: Context,
-  run: Run,
-  implemented: Record<string, unknown> | undefined,
-  priorEvidence?: VerificationEvidence | Record<string, unknown>,
-): Promise<{ fix?: VerificationEvidence; verify?: VerificationEvidence }> {
-  const commands = verificationCommandsForRun(run, priorEvidence);
-  const request = (implemented?.verification ?? {}) as ImplementerVerificationRequest;
-  const runFix = request.runFix !== false && Boolean(commands.fixCommand);
-  const runVerify = request.runVerify === true && Boolean(commands.command);
-
-  const result: { fix?: VerificationEvidence; verify?: VerificationEvidence } = {};
-  if (runFix && commands.fixCommand) {
-    const fix = await ctx.commands.verify(run.identity.runId, commands.fixCommand);
-    if (fix) result.fix = fix;
-  }
-  if (runVerify && commands.command) {
-    const verify = await ctx.commands.verify(run.identity.runId, commands.command);
-    if (verify) result.verify = verify;
-  }
-  return result;
 }

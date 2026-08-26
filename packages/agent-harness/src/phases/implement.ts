@@ -8,7 +8,6 @@ import { normalizeTasks } from "./slice.js";
 import {
   environmentBlock,
   repairImageForEnvironmentFailure,
-  runImplementerHarnessVerification,
   verificationCommandsForRun,
   verifyWithHarness,
 } from "./verification.js";
@@ -60,21 +59,9 @@ export function createImplementPhase(ctx: Context): Phase {
           ),
         );
         await writeImplementationNote(run, task, implemented);
-        const harnessVerification = await runImplementerHarnessVerification(
-          ctx,
-          run,
-          implemented,
-          task.verification,
-        );
-        if (harnessVerification.fix) {
-          run.state.artifacts.implementerVerificationFix = harnessVerification.fix;
-        }
-        if (harnessVerification.verify) {
-          run.state.artifacts.implementerVerificationPreview = harnessVerification.verify;
-        }
       }
 
-      let evidence = await verifyWithHarness(ctx, run);
+      let evidence = await verifyWithHarness(ctx, run, task.verification);
       if (evidence) {
         if (evidence.classification === "environment_failure") {
           evidence = await repairImageForEnvironmentFailure(ctx, run, evidence);

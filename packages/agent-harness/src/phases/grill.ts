@@ -6,6 +6,7 @@ import {
   openFog,
   reconcileFog,
 } from "../domain/fog.js";
+import { clearRoleAgent } from "../domain/role-agents.js";
 import { buildGrillerInput } from "../domain/role-packets.js";
 import type {
   AnswerBatch,
@@ -85,12 +86,13 @@ export function createGrillPhase(ctx: Context): Phase {
         run.state.artifacts.fogResolutions = [...prior, ...resolutions];
       }
       if (questions.length === 0 && openFog(nextFog).length === 0) {
+        clearRoleAgent(run, "griller");
         return { kind: "continue" };
       }
       if (questions.length === 0) {
         return {
           kind: "block",
-          reason: `Griller returned no questions while ${openFog(nextFog).length} unknowns remain open`,
+          reason: `Griller returned no questions while ${openFog(nextFog).length} unknowns remain open; Retry recalls the griller to continue`,
           retriable: true,
         };
       }

@@ -1,4 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
+import { readRoleAgents } from "../domain/role-agents.js";
 import type { Run } from "../domain/types.js";
 import { workingOn } from "../domain/working.js";
 
@@ -18,6 +19,7 @@ export async function invokeRole(
     projectKey: run.identity.projectKey,
     maxCharacters: run.settings.budgets.guidanceTokens * CHARS_PER_TOKEN,
   });
+  const roleAgents = readRoleAgents(run.state.artifacts);
   const packet = ctx.packets.build({
     role,
     runId: run.identity.runId,
@@ -25,8 +27,14 @@ export async function invokeRole(
     input,
     guidance: context.text,
     settings: run.settings,
+    resumeAgentId: roleAgents[role],
   });
-  return ctx.agents.invoke(role, packet);
+  const output = await ctx.agents.invoke(role, packet);
+  const state = await ctx.store.readState(run.identity.runId);
+  if (state?.artifacts.roleAgents) {
+    run.state.artifacts.roleAgents = state.artifacts.roleAgents;
+  }
+  return output;
 }
 
 export function asRecord(value: unknown): Record<string, unknown> {

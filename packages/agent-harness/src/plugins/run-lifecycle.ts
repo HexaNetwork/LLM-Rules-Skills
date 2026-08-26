@@ -5,6 +5,7 @@ import { summarizeSessionUsage, type SessionUsageReport } from "../domain/sessio
 import type {
   AgentInvocation,
   AnswerBatch,
+  AdvanceInput,
   PhaseResult,
   ProjectRegistration,
   Run,
@@ -69,7 +70,12 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
     });
   };
 
-  const apply = async (run: Run, result: PhaseResult, hops = 0): Promise<Run> => {
+  const apply = async (
+    run: Run,
+    result: PhaseResult,
+    hops = 0,
+    advanceReason: AdvanceInput["reason"] = "continue",
+  ): Promise<Run> => {
     if (hops > run.settings.workflow.maxPhaseHopsPerAdvance) {
       run.state.status = "blocked";
       run.state.block = { reason: "Phase hop budget exceeded", retriable: true };
@@ -116,8 +122,22 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
     await phase.enter?.(run);
     await persist(run);
     await setWorking(run.identity.runId, workingOn(`Running ${next}`, { phase: next }));
-    const again = await phase.advance(run, { reason: "continue" });
-    return apply(run, again, hops + 1);
+    try {
+      const again = await phase.advance(run, { reason: advanceReason });
+      return apply(run, again, hops + 1, advanceReason);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return apply(
+        run,
+        {
+          kind: "block",
+          reason: `Agent failed during ${next}: ${detail}`,
+          retriable: true,
+        },
+        hops,
+        advanceReason,
+      );
+    }
   };
 
   const withLiveSettings = async (
@@ -195,8 +215,18 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
         await setWorking(runId, workingOn(`Entering ${first}`, { phase: first }));
         await phase.enter?.(run);
         await setWorking(runId, workingOn(`Running ${first}`, { phase: first }));
-        const result = await phase.advance(run, { reason: "start" });
-        return apply(run, result);
+        let result: PhaseResult;
+        try {
+          result = await phase.advance(run, { reason: "start" });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          result = {
+            kind: "block",
+            reason: `Agent failed during ${first}: ${detail}`,
+            retriable: true,
+          };
+        }
+        return apply(run, result, 0, "start");
       } finally {
         await clearWorking(runId);
       }
@@ -209,8 +239,18 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
           async () => {
             if (run.state.status === "completed" || run.state.status === "cancelled") return run;
             await setWorking(runId, workingOn(`Running ${run.state.phase}`, { phase: run.state.phase }));
-            const result = await ctx.phases.get(run.state.phase).advance(run, { reason: "continue" });
-            return apply(run, result);
+            let result: PhaseResult;
+            try {
+              result = await ctx.phases.get(run.state.phase).advance(run, { reason: "continue" });
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : String(error);
+              result = {
+                kind: "block",
+                reason: `Agent failed during ${run.state.phase}: ${detail}`,
+                retriable: true,
+              };
+            }
+            return apply(run, result, 0, "continue");
           },
         ),
       ),
@@ -223,7 +263,7 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
             const phase = ctx.phases.get(run.state.phase);
             if (!phase.onAnswer) throw new Error(`Phase "${phase.id}" does not accept answers`);
             const result = await phase.onAnswer(run, batch);
-            return apply(run, result);
+            return apply(run, result, 0, "continue");
           },
         ),
       ),
@@ -237,8 +277,18 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
             run.state.status = "active";
             run.state.block = undefined;
             await setWorking(runId, workingOn(`Running ${run.state.phase}`, { phase: run.state.phase }));
-            const result = await ctx.phases.get(run.state.phase).advance(run, { reason: "retry" });
-            return apply(run, result);
+            let result: PhaseResult;
+            try {
+              result = await ctx.phases.get(run.state.phase).advance(run, { reason: "retry" });
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : String(error);
+              result = {
+                kind: "block",
+                reason: `Agent failed during ${run.state.phase}: ${detail}`,
+                retriable: true,
+              };
+            }
+            return apply(run, result, 0, "retry");
           },
         ),
       ),

@@ -135,7 +135,19 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
       }
       await this.ensure(runId);
       const name = containerName(runId);
-      return runDockerExec(name, request.command, request.stdin, request.timeoutMs, request.onStdoutLine);
+      const result = await runDockerExec(
+        name,
+        request.command,
+        request.stdin,
+        request.timeoutMs,
+        request.onStdoutLine,
+      );
+      if (result.timedOut) {
+        // A timed-out docker exec is terminated by removing the dedicated run
+        // container. Forget the cached spec so the next call recreates it.
+        specs.delete(runId);
+      }
+      return result;
     },
     async destroy(runId, options) {
       if (mode === "none") return;
@@ -202,9 +214,15 @@ function runProcess(
   stdin?: string,
   timeoutMs?: number,
   onStdoutLine?: (line: string) => void | Promise<void>,
+  onTimeout?: () => Promise<void>,
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
-    const child = spawn(file, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(file, args, {
+      cwd,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    });
     let stdout = "";
     let stdoutRemainder = "";
     let stderr = "";
@@ -236,13 +254,18 @@ function runProcess(
     };
     const timer = timeoutMs
       ? setTimeout(() => {
-          child.kill();
-          finish({
-            exitCode: 124,
-            stdout,
-            stderr: `${stderr}${stderr ? "\n" : ""}Agent worker timed out after ${timeoutMs}ms`,
-            timedOut: true,
-          });
+          void (async () => {
+            await onTimeout?.().catch(() => undefined);
+            await terminateProcessTree(child.pid).catch(() => undefined);
+            finish({
+              // Timeouts are never successful, regardless of a shell or pipe's
+              // last observed exit code.
+              exitCode: 124,
+              stdout,
+              stderr: `${stderr}${stderr ? "\n" : ""}Agent worker timed out after ${timeoutMs}ms`,
+              timedOut: true,
+            });
+          })();
         }, timeoutMs)
       : undefined;
     timer?.unref();
@@ -290,7 +313,40 @@ function runDockerExec(
   timeoutMs?: number,
   onStdoutLine?: (line: string) => void | Promise<void>,
 ): Promise<ExecResult> {
-  return runProcess("docker", ["exec", "-i", name, ...command], undefined, stdin, timeoutMs, onStdoutLine);
+  return runProcess(
+    "docker",
+    ["exec", "-i", name, ...command],
+    undefined,
+    stdin,
+    timeoutMs,
+    onStdoutLine,
+    async () => {
+      // Killing the docker CLI does not kill the exec'd process. This container
+      // is dedicated to one run, so removing it is the only reliable tree kill.
+      await docker(["rm", "-f", name]).catch(() => undefined);
+    },
+  );
+}
+
+async function terminateProcessTree(pid: number | undefined): Promise<void> {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    await exec("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      windowsHide: true,
+    }).catch(() => undefined);
+    return;
+  }
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  await new Promise<void>((resolve) => setTimeout(resolve, 250));
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // The process group already exited after SIGTERM.
+  }
 }
 
 export function sandboxPlugin(ctx: Context, config: SandboxConfig = {}): void {

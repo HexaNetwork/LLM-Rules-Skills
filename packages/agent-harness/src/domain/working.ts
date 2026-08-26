@@ -2,17 +2,23 @@ export type RunWorking = {
   summary: string;
   phase?: string;
   role?: string;
+  status?: "working" | "stalled" | "reconciling";
   startedAt: string;
 };
 
 export function workingOn(
   summary: string,
-  extras: { phase?: string; role?: string } = {},
+  extras: {
+    phase?: string;
+    role?: string;
+    status?: RunWorking["status"];
+  } = {},
 ): RunWorking {
   return {
     summary,
     phase: extras.phase,
     role: extras.role,
+    status: extras.status ?? "working",
     startedAt: new Date().toISOString(),
   };
 }

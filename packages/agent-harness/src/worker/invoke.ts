@@ -21,6 +21,7 @@ type InvokeRequest = {
     guidance?: string;
     retrieval?: string;
   };
+  resumeAgentId?: string;
   maxAgentTokens?: number;
   agentTimeoutMs?: number;
 };
@@ -99,13 +100,32 @@ async function invokeAgentSession(
   requestedModel: string,
   emit: ControlEmitter,
 ): Promise<WorkerInvokeResult> {
-  emitControl(emit, "provider_status", { status: "creating_agent" });
-  await using agent = await Agent.create({
-    apiKey: process.env.CURSOR_API_KEY,
-    model: { id: requestedModel },
-    local: { cwd: "/workspace" },
-  });
-  emitControl(emit, "provider_status", { status: "agent_created", agentId: agent.agentId });
+  const agent = await openAgentSession(request, requestedModel, emit);
+  try {
+    return await runAgentSession(agent, prompt, request, requestedModel, emit);
+  } finally {
+    await withAgentTimeout(
+      Promise.resolve(agent[Symbol.asyncDispose]()),
+      5_000,
+      undefined,
+      `${request.role} disposal`,
+    ).catch((error) => {
+      emitControl(emit, "provider_status", {
+        status: "dispose_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+}
+
+async function runAgentSession(
+  agent: Awaited<ReturnType<typeof Agent.create>>,
+  prompt: string,
+  request: InvokeRequest,
+  requestedModel: string,
+  emit: ControlEmitter,
+): Promise<WorkerInvokeResult> {
+  emitControl(emit, "provider_status", { status: "agent_ready", agentId: agent.agentId });
 
   const run = await agent.send(prompt, {
     onStep: ({ step }) => emitControl(emit, "step", { step }),
@@ -179,6 +199,38 @@ async function invokeAgentSession(
       ...(tokenCapExceeded ? { tokenCapExceeded: true } : {}),
     },
   };
+}
+
+async function openAgentSession(
+  request: InvokeRequest,
+  requestedModel: string,
+  emit: ControlEmitter,
+): Promise<Awaited<ReturnType<typeof Agent.create>>> {
+  const resumeAgentId = request.resumeAgentId?.trim();
+  const createOptions = {
+    apiKey: process.env.CURSOR_API_KEY,
+    model: { id: requestedModel },
+    local: { cwd: "/workspace" },
+    ...(request.role === "project-profiler"
+      ? { tools: ["read", "grep", "glob", "ls"] }
+      : {}),
+  };
+  if (resumeAgentId) {
+    emitControl(emit, "provider_status", { status: "resuming_agent", agentId: resumeAgentId });
+    try {
+      return await Agent.resume(resumeAgentId, createOptions);
+    } catch (error) {
+      emitControl(emit, "provider_status", {
+        status: "resume_failed",
+        agentId: resumeAgentId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  emitControl(emit, "provider_status", { status: "creating_agent" });
+  const agent = await Agent.create(createOptions);
+  emitControl(emit, "provider_status", { status: "agent_created", agentId: agent.agentId });
+  return agent;
 }
 
 async function invokeCompletion(

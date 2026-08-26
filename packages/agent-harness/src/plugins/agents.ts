@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import { formatCursorAgentFailure } from "../domain/cursor-agent-error.js";
+import { invokeModeFor } from "../domain/agent-roles.js";
+import { readRoleAgents } from "../domain/role-agents.js";
 import type { AgentInvocation, WorkPacket } from "../domain/types.js";
 import {
   parseWorkerStdout,
@@ -198,6 +200,7 @@ export function createCursorAgents(ctx: Context): AgentsService {
         stdin: JSON.stringify({
           role,
           packet,
+          resumeAgentId: packet.resumeAgentId,
           maxAgentTokens: packet.maxAgentTokens,
           agentTimeoutMs: packet.agentTimeoutMs,
         }),
@@ -282,6 +285,7 @@ function wrapWithSessions(
           },
         };
         await persistSession(ctx, packet, invocation);
+        await persistRoleAgentId(ctx, packet.runId, role, worker?.telemetry?.agentId, mode);
         await ctx.store.appendEvent(packet.runId, {
           kind: "agent",
           at: endedAt,
@@ -325,6 +329,28 @@ function isWorkerInvokeResult(value: unknown): value is WorkerInvokeResult {
   if (!value || typeof value !== "object") return false;
   const row = value as { protocolVersion?: unknown; telemetry?: unknown };
   return row.protocolVersion === 1 && Boolean(row.telemetry);
+}
+
+async function persistRoleAgentId(
+  ctx: Context,
+  runId: string,
+  role: string,
+  agentId: string | undefined,
+  mode: "fake" | "cursor",
+): Promise<void> {
+  const resolved =
+    agentId && agentId !== "completion"
+      ? agentId
+      : mode === "fake" && invokeModeFor(role) === "agent"
+        ? `fake-${role}`
+        : undefined;
+  if (!resolved) return;
+  const state = await ctx.store.readState(runId);
+  if (!state) return;
+  const roleAgents = readRoleAgents(state.artifacts);
+  roleAgents[role] = resolved;
+  state.artifacts.roleAgents = roleAgents;
+  await ctx.store.writeState(state);
 }
 
 async function persistSession(

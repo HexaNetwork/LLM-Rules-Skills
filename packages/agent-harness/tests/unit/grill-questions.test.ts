@@ -264,6 +264,61 @@ describe("grill answer consumption", () => {
 });
 
 describe("grill fog safety", () => {
+  it("recalls the griller agent on retry after blocking with open unknowns", async () => {
+    const repo = await createTempRepo();
+    let grillerInvokes = 0;
+    const { host } = await bootTestHost({
+      agents: {
+        mode: "fake",
+        scripted: {
+          griller: (_role, packet) => {
+            grillerInvokes += 1;
+            if (grillerInvokes === 1) {
+              return { questions: [], newUnknowns: [], resolvedUnknowns: [] };
+            }
+            expect(packet.resumeAgentId).toBe("fake-griller");
+            const fog = (packet.input as { fog: Array<{ id: string; status: string }> }).fog;
+            const open = fog.filter((entry) => entry.status === "fog" || entry.status === "asked");
+            return {
+              questions: [
+                {
+                  id: "users",
+                  fogIds: [open[0]!.id],
+                  prompt: "Who are the primary users?",
+                  options: [
+                    { id: "end-users", label: "End users", description: "" },
+                    { id: "maintainers", label: "Maintainers", description: "" },
+                  ],
+                  recommendedOptionId: "end-users",
+                },
+              ],
+              newUnknowns: [],
+              resolvedUnknowns: [],
+            };
+          },
+        },
+      },
+    });
+    try {
+      const project = await host.ctx.projects.add(repo);
+      let run = await host.ctx.runLifecycle.start({
+        idea: "Add a status endpoint",
+        projectKey: project.projectKey,
+        baseBranch: await currentBranch(repo),
+      });
+      run = await host.ctx.runLifecycle.answer(run.identity.runId, { answers: { restatement: "yes" } });
+      expect(run.state.status).toBe("blocked");
+      expect(run.state.block?.reason).toMatch(/no questions while .+ unknowns remain open/);
+
+      run = await host.ctx.runLifecycle.retry(run.identity.runId);
+      expect(grillerInvokes).toBe(2);
+      expect(run.state.status).toBe("awaiting_input");
+      expect(run.state.gate?.id).toBe("grill-batch");
+    } finally {
+      await host.dispose();
+    }
+  });
+
   it("blocks an empty griller response while unknowns remain", async () => {
     const repo = await createTempRepo();
     const { host } = await bootTestHost({

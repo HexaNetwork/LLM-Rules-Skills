@@ -1683,13 +1683,15 @@ export function renderDashboardPage(): string {
       const busyLocked = Boolean(app.busy && app.busy.runId === run.identity.runId);
       const answering = app.busy && app.busy.action === "answer" && app.busy.runId === run.identity.runId;
       const progressText = workingSummary(run) || (busyLocked && app.busy.message ? app.busy.message : "");
+      const workingStatus = run.state.working && run.state.working.status;
+      const workingLabel = workingStatus === "reconciling" ? "Reconciling" : workingStatus === "stalled" ? "Stalled" : "Working";
       const statusLabel = deleting ? "Deleting" : (answering ? "Active" : words(run.state.status));
       const statusClass = deleting ? "blocked" : (answering ? "active" : run.state.status);
       el("detail").innerHTML =
         '<header class="topbar"><div><div class="eyebrow">' + esc(run.identity.projectKey) + ' · ' + esc(run.identity.workflowBundleId) + ' workflow</div>' +
         '<h2 class="run-heading">' + esc(runLabel(run)) + '</h2>' + (runIdea(run) ? '<p class="lede">' + esc(runIdea(run)) + '</p>' : '') + '<div class="top-meta"><span class="status ' + esc(statusClass) + (deleting || answering ? " busy-pulse" : "") + '">' + esc(statusLabel) + '</span>' +
         '<span>' + esc(words(run.state.phase)) + '</span><span>rev ' + esc(run.state.revision) + '</span><span>' + esc(relative(run.state.updatedAt)) + '</span></div>' +
-        (progressText ? '<div class="working-line busy-pulse"><strong>Working</strong><span>' + esc(progressText) + '</span></div>' : '') +
+        (progressText ? '<div class="working-line' + (workingStatus === "working" || !workingStatus ? " busy-pulse" : "") + '"><strong>' + esc(workingLabel) + '</strong><span>' + esc(progressText) + '</span></div>' : '') +
         '</div>' +
         '<div class="actions"><button class="secondary" data-action="continue" type="button"' + (busyLocked || terminal || run.state.status === "awaiting_input" || workingSummary(run) ? ' disabled' : '') + '>' + (app.busy && app.busy.action === "continue" && app.busy.runId === run.identity.runId ? esc(app.busy.label) : "Continue") + '</button>' +
         '<button class="secondary' + (app.busy && app.busy.action === "retry" && app.busy.runId === run.identity.runId ? " busy-pulse" : "") + '" data-action="retry" type="button"' + (busyLocked || !blocked || run.state.block && !run.state.block.retriable ? ' disabled' : '') + '>' + (app.busy && app.busy.action === "retry" && app.busy.runId === run.identity.runId ? esc(app.busy.label) : "Retry") + '</button>' +

@@ -11,6 +11,7 @@ export type PacketInput = {
   guidance?: string;
   retrieval?: string;
   settings: ProjectSettings;
+  resumeAgentId?: string;
 };
 
 export type PacketService = {
@@ -27,7 +28,7 @@ export function createPacketService(): PacketService {
       const retrieval = clip(input.retrieval ?? "", input.settings.budgets.graphifyTokens, "retrieval", truncated);
       const serialized = JSON.stringify(input.input ?? {});
       const clippedInput = clip(serialized, input.settings.budgets.inputTokens, "input", truncated);
-      return {
+      const packet: WorkPacket = {
         role: input.role,
         runId: input.runId,
         phase: input.phase,
@@ -47,6 +48,8 @@ export function createPacketService(): PacketService {
           truncated,
         },
       };
+      if (input.resumeAgentId) packet.resumeAgentId = input.resumeAgentId;
+      return packet;
     },
   };
 }

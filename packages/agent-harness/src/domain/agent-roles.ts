@@ -120,6 +120,8 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
     "Return exactly one raw JSON object matching the expected output contract.",
   ],
   "project-profiler": [
+    "Use repository reads, globs, and text search only. Never invoke a shell, build, formatter, test runner, package manager, or subprocess.",
+    "Do not edit the working tree, launch subagents, access the network, or call MCP tools.",
     "Infer verification commands and test globs from the repository; do not invent tooling.",
     "Propose only commands that can run in the packet runtime (Linux container when mode is docker; host-local when mode is none).",
     "Use the slim brief only for optional feature-specific commands; use liveVerification as a hint when it matches repo and runtime evidence.",

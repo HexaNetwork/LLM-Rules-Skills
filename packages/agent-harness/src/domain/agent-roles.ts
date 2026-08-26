@@ -153,7 +153,7 @@ export const ROLE_OUTPUT_CONTRACTS: Record<AgentRole, string> = {
   "image-fixer": "{summary:string,dockerfile:string}",
   "message-writer": "{title:string,body:string}",
   "project-profiler":
-    "{command:string,testGlobs:[string],rationale?:string,specificCommands?:[{id:string,label:string,command:string,rationale?:string}]}",
+    "{command:string,fixCommand?:string,testGlobs:[string],rationale?:string,specificCommands?:[{id:string,label:string,command:string,rationale?:string}]}",
 };
 
 export function outputContractFor(role: string): string | undefined {

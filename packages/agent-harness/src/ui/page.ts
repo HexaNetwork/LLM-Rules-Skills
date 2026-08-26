@@ -1132,6 +1132,30 @@ export function renderDashboardPage(): string {
         '</div></div></section>';
     }
 
+    function truncatePreflightOutput(text, maxChars) {
+      const raw = String(text || "").trim();
+      if (raw.length <= maxChars) return raw;
+      return raw.slice(0, maxChars) + "\n… (truncated)";
+    }
+    function renderVerificationPreflightGate(run, gate, draft) {
+      const ctx = (run.state.artifacts && run.state.artifacts.verificationPreflight) || {};
+      const evidence = ctx.evidence || {};
+      const fixCommand = String(ctx.fixCommand || "").trim();
+      const output = truncatePreflightOutput(evidence.output, 1800);
+      return '<section class="gate" data-testid="verification-preflight"><header class="gate-head"><div class="eyebrow">Operator input required</div><h3>' + esc(gate.title) + '</h3></header>' +
+        '<div class="gate-review">' +
+          '<div class="gate-review-block"><h4>Verification command</h4>' + formatGateArtifact("command", ctx.command) + '</div>' +
+          (fixCommand ? '<div class="gate-review-block"><h4>Suggested fix</h4>' + formatGateArtifact("fixCommand", fixCommand) + '</div>' : '') +
+          '<div class="gate-review-block"><h4>Failure output</h4>' + (output ? '<pre class="artifact-body">' + esc(output) + '</pre>' : '<div class="gate-review-missing">Missing</div>') + '</div>' +
+        '</div>' +
+        '<div class="gate-feedback" id="gateFeedback"' + (draft.gateFeedback ? '' : ' hidden') + '>' + esc(draft.gateFeedback || '') + '</div>' +
+        '<div class="gate-footer operator-gate-footer"><div class="gate-actions">' +
+          '<button class="secondary" type="button" data-action="answer" data-decision="retry" data-testid="preflight-retry">Retry verification</button>' +
+          '<button class="secondary" type="button" data-action="answer" data-decision="fix" data-testid="preflight-fix"' + (fixCommand ? '' : ' disabled') + '>Fix &amp; re-verify</button>' +
+          '<button class="primary" type="button" data-action="answer" data-decision="continue" data-testid="preflight-continue">Continue anyway</button>' +
+        '</div></div></section>';
+    }
+
     function renderGate(run) {
       if (gateHiddenWhileBusy(run)) return "";
       const gate = run.state.gate;
@@ -1140,6 +1164,7 @@ export function renderDashboardPage(): string {
       if (gate.id === "reflect-confirm") return renderReflectGate(run, gate, draft);
       if (gate.id === "grill-batch") return renderGrillGate(gate, draft);
       if (gate.id === "operator-gate") return renderOperatorGate(run, gate, draft);
+      if (gate.id === "verification-preflight") return renderVerificationPreflightGate(run, gate, draft);
       return '<section class="gate"><header class="gate-head"><div class="eyebrow">Operator input required</div><h3>' + esc(gate.title) + '</h3></header>' +
         '<div class="questions">' + gate.questions.map((q) =>
           '<div class="question"><div class="question-title"><span>' + esc(q.prompt) + '</span></div>' +
@@ -2061,6 +2086,17 @@ export function renderDashboardPage(): string {
           }
           draft.gateFeedback = "";
           mutate("answer", { answers: { decision }, notes: draft.notes });
+          return;
+        }
+        if (gate && gate.id === "verification-preflight") {
+          const decision = action.dataset.decision || "";
+          if (!decision) {
+            draft.gateFeedback = "Choose Retry verification, Fix & re-verify, or Continue anyway.";
+            renderDetail();
+            return;
+          }
+          draft.gateFeedback = "";
+          mutate("answer", { answers: { decision } });
           return;
         }
         const parked = Object.keys(draft.parked).filter((key) => draft.parked[key]);

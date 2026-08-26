@@ -38,6 +38,7 @@ export const ProjectSettingsSchema = z.object({
   }),
   verification: z.object({
     command: z.string().min(1).optional(),
+    fixCommand: z.string().min(1).optional(),
     testGlobs: z.array(z.string().min(1)).default([]),
   }).default({ testGlobs: [] }),
   coverage: z.object({

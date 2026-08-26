@@ -98,6 +98,7 @@ export function buildImplementerInput(input: {
   plan: unknown;
   reviewFeedback?: unknown;
   verification?: VerificationEvidence | Record<string, unknown>;
+  verificationCommands?: { command?: string; fixCommand?: string };
 }): Record<string, unknown> {
   return packet({
     task: slimTask(input.task),
@@ -105,6 +106,7 @@ export function buildImplementerInput(input: {
     plan: input.plan,
     reviewFeedback: input.reviewFeedback,
     verification: slimVerification(input.verification),
+    verificationCommands: slimVerificationCommands(input.verificationCommands),
   });
 }
 
@@ -113,13 +115,24 @@ export function buildImplementerRepairInput(input: {
   finalReview: unknown;
   plan: unknown;
   tasks: Array<Task | Record<string, unknown>>;
+  verificationCommands?: { command?: string; fixCommand?: string };
 }): Record<string, unknown> {
   return packet({
     repair: input.repair ?? true,
     finalReview: input.finalReview,
     plan: input.plan,
     tasks: slimTasks(input.tasks),
+    verificationCommands: slimVerificationCommands(input.verificationCommands),
   });
+}
+
+function slimVerificationCommands(commands: { command?: string; fixCommand?: string } | undefined):
+  | { command: string; fixCommand?: string }
+  | undefined {
+  if (!commands?.command?.trim()) return undefined;
+  const slim: { command: string; fixCommand?: string } = { command: commands.command.trim() };
+  if (commands.fixCommand?.trim()) slim.fixCommand = commands.fixCommand.trim();
+  return slim;
 }
 
 export function buildTaskReviewerInput(input: {

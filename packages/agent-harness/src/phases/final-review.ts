@@ -5,6 +5,7 @@ import { asRecord, invokeRole } from "./helpers.js";
 import {
   environmentBlock,
   repairImageForEnvironmentFailure,
+  verificationCommandsForRun,
   verifyWithHarness,
 } from "./verification.js";
 
@@ -34,6 +35,7 @@ export function createFinalReviewPhase(ctx: Context): Phase {
             finalReview: review,
             plan: run.state.artifacts.plan,
             tasks: run.state.tasks,
+            verificationCommands: verificationCommandsForRun(run),
           }),
         );
         let evidence = await verifyWithHarness(ctx, run);

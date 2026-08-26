@@ -90,7 +90,8 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
   implementer: [
     "Edit the working tree but never commit, push, or open a pull request.",
     "Do not write, edit, weaken, delete, or bypass tests during implementation.",
-    "Do not run verification, test suites, or build commands; the harness verifies after you return.",
+    "Request harness sandbox runs via verification.runFix and verification.runVerify in your JSON; do not run verificationCommands in the host shell.",
+    "runFix defaults to true when verificationCommands.fixCommand is set; the harness also runs the full verification command after you return.",
     "Return exactly one raw JSON object matching the expected output contract.",
   ],
   "task-reviewer": [
@@ -146,7 +147,8 @@ export const ROLE_OUTPUT_CONTRACTS: Record<AgentRole, string> = {
   planner: "{plan:string}",
   "scenario-planner": "{scenarios:[{id:string,title:string,steps:[string]}]}",
   "issue-slicer": "{tasks:[{id:string,title:string,description:string}]}",
-  implementer: "{summary:string,files:[string],note?:string}",
+  implementer:
+    "{summary:string,files:[string],note?:string,verification?:{runFix?:boolean,runVerify?:boolean}}",
   "task-reviewer": '{verdict:"approve"|"reject",summary:string}',
   reviewer: '{verdict:"approve"|"reject",summary:string}',
   fixer: "{summary:string,passed:boolean}",

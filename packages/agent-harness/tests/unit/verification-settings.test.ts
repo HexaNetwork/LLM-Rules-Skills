@@ -4,11 +4,11 @@ import { DEFAULT_SETTINGS } from "../../src/domain/settings.js";
 import type { Run, VerificationEvidence } from "../../src/domain/types.js";
 import {
   createVerificationSettingsPhase,
-  inferFixCommandFromOutput,
   normalizeProposal,
   resolveFixCommand,
   type VerificationProposal,
 } from "../../src/phases/verification-settings.js";
+import { inferFixCommandFromOutput } from "../../src/phases/verification.js";
 import { renderDashboardPage } from "../../src/ui/page.js";
 
 describe("verification proposal normalization", () => {

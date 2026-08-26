@@ -136,6 +136,36 @@ describe("role packet builders", () => {
     expect(packet).not.toHaveProperty("status");
   });
 
+  it("buildImplementerInput includes verificationCommands when configured", () => {
+    const packet = buildImplementerInput({
+      task: { id: "t1", title: "Wire route", description: "Add GET /status" },
+      brief,
+      plan: "1. Implement",
+      verificationCommands: {
+        command: "./gradlew spotlessCheck test",
+        fixCommand: "./gradlew :civcraft:spotlessApply",
+      },
+    });
+    expect(packet.verificationCommands).toEqual({
+      command: "./gradlew spotlessCheck test",
+      fixCommand: "./gradlew :civcraft:spotlessApply",
+    });
+  });
+
+  it("buildImplementerRepairInput includes verificationCommands when configured", () => {
+    const packet = buildImplementerRepairInput({
+      repair: true,
+      finalReview: { verdict: "reject", summary: "missing guard" },
+      plan: "plan",
+      tasks: [{ id: "t1", title: "Task", description: "Do thing" }],
+      verificationCommands: { command: "npm test", fixCommand: "npm run lint:fix" },
+    });
+    expect(packet.verificationCommands).toEqual({
+      command: "npm test",
+      fixCommand: "npm run lint:fix",
+    });
+  });
+
   it("buildImplementerRepairInput slims tasks", () => {
     const packet = buildImplementerRepairInput({
       repair: true,

@@ -4,6 +4,7 @@ import type { Phase, PhaseResult, Question, QuestionOption, Run, VerificationEvi
 import { resolveVerificationRuntime } from "../domain/verification-runtime.js";
 import { asRecord, invokeRole } from "./helpers.js";
 import { environmentBlock, repairImageForEnvironmentFailure } from "./verification.js";
+import { inferFixCommandFromOutput } from "./verification.js";
 
 export type SpecificVerificationCommand = {
   id: string;
@@ -169,16 +170,6 @@ async function runPreflightCheck(
 /** Prefer profiler/settings fixCommand; fall back to tool hints in verify output. */
 export function resolveFixCommand(proposal: VerificationProposal, output: string): string | undefined {
   return proposal.fixCommand || inferFixCommandFromOutput(output);
-}
-
-export function inferFixCommandFromOutput(output: string): string | undefined {
-  const spotless = output.match(/Run ['"]([^'"]*spotlessApply[^'"]*)['"] to fix/i);
-  if (spotless?.[1]) return spotless[1];
-
-  const prettier = output.match(/Run ['"]([^'"]*(?:prettier|format)[^'"]*)['"]/i);
-  if (prettier?.[1]) return prettier[1];
-
-  return undefined;
 }
 
 async function proposeVerification(ctx: Context, run: Run): Promise<VerificationProposal> {

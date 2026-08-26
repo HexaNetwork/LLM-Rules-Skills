@@ -7,6 +7,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["tests/docker/**/*.test.ts"],
+    globalSetup: ["tests/global-setup.ts"],
     environment: "node",
     testTimeout: 180_000,
     fileParallelism: false,

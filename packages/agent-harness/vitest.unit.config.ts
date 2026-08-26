@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["tests/unit/**/*.test.ts"],
+    globalSetup: ["tests/global-setup.ts"],
     environment: "node",
     testTimeout: 10_000,
     // Several unit files spawn many Git processes against temporary repositories.

@@ -9,6 +9,7 @@ const maxWorkers = process.env.VITEST_MAX_WORKERS
 export default defineConfig({
   test: {
     include: ["tests/integration/**/*.test.ts"],
+    globalSetup: ["tests/global-setup.ts"],
     environment: "node",
     testTimeout: 30_000,
     ...(maxWorkers != null && Number.isFinite(maxWorkers) ? { maxWorkers } : {}),

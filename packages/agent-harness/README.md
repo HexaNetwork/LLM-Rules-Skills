@@ -117,3 +117,7 @@ npm run test:unit
 npm run test:integration
 npm run test:docker
 ```
+
+Test repositories, harness homes, and other fixtures are created beneath
+`<OS temp>/agent-harness/test-runs/<run-id>/`. Vitest removes only its own
+run directory at teardown, so parallel test commands remain isolated.

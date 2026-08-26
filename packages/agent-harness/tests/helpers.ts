@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { bootHost, type BootedHost } from "../src/boot.js";
@@ -11,7 +10,11 @@ import type { WorkflowBundle } from "../src/domain/types.js";
 const exec = promisify(execFile);
 
 export async function createTempDir(prefix: string): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), prefix));
+  const root = process.env.AGENT_HARNESS_TEST_TEMP_ROOT;
+  if (!root) {
+    throw new Error("AGENT_HARNESS_TEST_TEMP_ROOT is not set; run tests through Vitest");
+  }
+  return mkdtemp(path.join(root, prefix));
 }
 
 export async function createTempRepo(): Promise<string> {

@@ -1,12 +1,12 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { dumpHostConfig, redact } from "../../src/dump-config.js";
+import { createTempDir } from "../helpers.js";
 
 describe("dump-config", () => {
   it("renders the trusted host profile with live settings and redaction", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "harness-dump-"));
+    const home = await createTempDir("dump-");
     await writeFile(
       path.join(home, "settings.json"),
       JSON.stringify({ models: { default: "secret-model" } }),

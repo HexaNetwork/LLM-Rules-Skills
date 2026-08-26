@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { outputContractFor, invokeModeFor } from "../../src/domain/agent-roles.js";
@@ -17,6 +16,7 @@ import { maxAgentTokensFor } from "../../src/domain/settings.js";
 import { DEFAULT_SETTINGS } from "../../src/domain/settings.js";
 import { createPacketService } from "../../src/plugins/packets.js";
 import { checkTokenCap } from "../../src/worker/invoke.js";
+import { createTempDir } from "../helpers.js";
 
 describe("buildDocsWriterInput", () => {
   it("slims the brief and omits the fog register", () => {
@@ -67,7 +67,7 @@ describe("buildDocsWriterInput", () => {
 
 describe("glossary helpers", () => {
   it("parses, merges, and writes glossary and PRD artifacts", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "docs-writer-"));
+    const dir = await createTempDir("docs-writer-");
     const existing = `# CivCraft Emperor
 
 Shared language for gameplay.
@@ -134,7 +134,7 @@ Existing.
   });
 
   it("passes only referenced or capped existing glossary context", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "docs-writer-context-"));
+    const dir = await createTempDir("docs-writer-context-");
     const terms = Array.from({ length: 30 }, (_, index) => ({
       term: `Term${index}`,
       definition: `Definition ${index}.`,

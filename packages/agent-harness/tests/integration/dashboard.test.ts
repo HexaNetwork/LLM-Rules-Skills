@@ -52,14 +52,30 @@ describe("dashboard as runLifecycle client", () => {
       );
       expect(activity.at(-1)).toMatchObject({ phase: "reflect", status: "awaiting_input" });
       expect(activity.some((event: { kind?: string }) => event.kind === "agent")).toBe(true);
-      const agentEvent = activity.find((event: { kind?: string }) => event.kind === "agent");
+      expect(
+        activity.some(
+          (event: { kind?: string; status?: string }) =>
+            event.kind === "agent" && event.status === "running",
+        ),
+      ).toBe(true);
+      const agentEvent = activity.find(
+        (event: { kind?: string; status?: string }) =>
+          event.kind === "agent" && event.status === "completed",
+      );
       expect(agentEvent).toMatchObject({
         kind: "agent",
         role: "reflector",
         phase: "reflect",
         status: "completed",
+        packet: expect.objectContaining({
+          model: expect.any(String),
+          inputKind: expect.any(String),
+        }),
       });
       expect(typeof agentEvent.sessionId).toBe("string");
+      expect(activity.every((event: { kind?: string }) => event.kind !== "agent_stream")).toBe(
+        true,
+      );
       const sessions = await fetchJson(
         new URL(`/api/runs/${started.identity.runId}/sessions`, url),
         token,
@@ -76,6 +92,15 @@ describe("dashboard as runLifecycle client", () => {
       expect(sessions[0].packet).toMatchObject({ phase: "reflect", role: "reflector" });
       expect(sessions[0].output).toBeTruthy();
       expect(agentEvent.sessionId).toBe(sessions[0].sessionId);
+      const sessionEvents = await fetchJson(
+        new URL(
+          `/api/runs/${started.identity.runId}/sessions/${sessions[0].sessionId}/events`,
+          url,
+        ),
+        token,
+        {},
+      );
+      expect(Array.isArray(sessionEvents)).toBe(true);
       const usage = await fetchJson(
         new URL(`/api/runs/${started.identity.runId}/usage`, url),
         token,

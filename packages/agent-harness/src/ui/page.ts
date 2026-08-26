@@ -367,6 +367,7 @@ export function renderDashboardPage(): string {
     .event.failed::before { border-color: var(--danger); }
     .event.failed .event-main { color: var(--danger); }
     .event-main { font-size: 12px; font-weight: 600; }
+    .event-meta { margin-top: 3px; color: var(--muted); font: 11px/1.4 "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
     .event-time { margin-top: 3px; color: var(--faint); font: 10px "Cascadia Mono", Consolas, monospace; }
     .session { margin: 0 0 10px; border: 1px solid var(--line); background: rgba(0, 0, 0, .16); }
     .session > summary {
@@ -396,6 +397,12 @@ export function renderDashboardPage(): string {
       font: 12px/1.55 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
     }
     .session-error pre { border-color: var(--danger-line); color: #f0b4ae; background: var(--danger-soft); }
+    .session-stream-summary { margin: 0 0 8px; color: var(--muted); font: 11px/1.45 "Cascadia Mono", Consolas, monospace; }
+    .session-stream { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow: auto; border: 1px solid var(--line); background: rgba(0, 0, 0, .22); }
+    .session-stream li { padding: 6px 10px; border-bottom: 1px solid var(--line); font: 11px/1.4 "Cascadia Mono", Consolas, monospace; }
+    .session-stream li:last-child { border-bottom: 0; }
+    .session-stream .stream-kind { color: var(--accent); font-weight: 700; }
+    .session-stream .stream-at { color: var(--faint); }
     .empty-inline { color: var(--faint); font-size: 12px; line-height: 1.5; }
     .project-box { margin: 0 16px 13px; padding-top: 12px; border-top: 1px solid var(--line); }
     .project-box summary { color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
@@ -516,7 +523,7 @@ export function renderDashboardPage(): string {
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, view: "empty", runTab: "overview", usageTab: "totals", sandbox: {}, sandboxPending: {}, imageStatus: {}, imageStatusPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", settingsScope: "global", settingsProjectKey: "", timeoutConfig: null, lastSoundStatus: null };
+    const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, sessionEvents: {}, sessionEventsPending: {}, view: "empty", runTab: "overview", usageTab: "totals", sandbox: {}, sandboxPending: {}, imageStatus: {}, imageStatusPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", settingsScope: "global", settingsProjectKey: "", timeoutConfig: null, lastSoundStatus: null };
     const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
@@ -1273,13 +1280,38 @@ export function renderDashboardPage(): string {
         if (event.kind === "agent") {
           const failed = event.status === "failed";
           const label = esc(words(event.role || "agent")) + " · " + esc(words(event.phase || "phase")) + " · " + esc(words(event.status || "completed"));
+          const packetMeta = formatPacketSummary(event.packet);
           return '<div class="event agent' + (failed ? " failed" : "") + '"' + (event.sessionId ? ' data-session-ref="' + esc(event.sessionId) + '"' : "") + '>' +
             '<div class="event-main">' + label + '</div>' +
+            (packetMeta ? '<div class="event-meta">' + esc(packetMeta) + '</div>' : '') +
             '<div class="event-time">' + esc(relative(event.at)) + (event.sessionId ? ' · ' + esc(event.sessionId.slice(0, 8)) : '') + '</div></div>';
+        }
+        if (event.kind === "verification") {
+          const failed = event.status === "failed";
+          return '<div class="event' + (failed ? " failed" : "") + '"><div class="event-main">Verification · ' + esc(words(event.status || "updated")) + '</div>' +
+            (event.command ? '<div class="event-meta">' + esc(event.command) + '</div>' : '') +
+            '<div class="event-time">' + esc(relative(event.at)) + '</div></div>';
         }
         return '<div class="event"><div class="event-main">' + esc(words(event.phase || "run")) + ' · ' + esc(words(event.status || "updated")) + '</div>' +
           '<div class="event-time">' + esc(relative(event.at)) + (event.revision != null ? ' · revision ' + esc(event.revision) : '') + '</div></div>';
       }).join("") + '</div>' : '<div class="empty-inline">No lifecycle activity recorded yet.</div>';
+    }
+    function formatPacketSummary(packet) {
+      if (!packet || typeof packet !== "object") return "";
+      const parts = [];
+      if (packet.model) parts.push(String(packet.model));
+      if (Array.isArray(packet.inputKeys) && packet.inputKeys.length) {
+        parts.push("input:" + packet.inputKeys.slice(0, 8).join(","));
+      } else if (packet.inputKind) {
+        parts.push("input:" + packet.inputKind);
+      }
+      if (packet.inputChars != null) parts.push(packet.inputChars + "c in");
+      if (packet.guidanceChars) parts.push(packet.guidanceChars + "c guidance");
+      if (packet.retrievalChars) parts.push(packet.retrievalChars + "c retrieval");
+      if (Array.isArray(packet.truncated) && packet.truncated.length) {
+        parts.push("truncated:" + packet.truncated.join(","));
+      }
+      return parts.join(" · ");
     }
     function sessionOpenKey(sessionId) {
       return (app.selectedId || "") + ":" + sessionId;
@@ -1305,6 +1337,52 @@ export function renderDashboardPage(): string {
       if (!content) return "";
       return '<div class="session-section' + (extraClass ? " " + extraClass : "") + '"><h4>' + esc(title) + '</h4>' + content + '</div>';
     }
+    const SESSION_STREAM_NOISE = { delta: true, sdk_message: true, heartbeat: true };
+    function renderSessionStream(sessionId) {
+      const key = sessionOpenKey(sessionId);
+      const pending = app.sessionEventsPending[key];
+      const payload = app.sessionEvents[key];
+      if (pending && !payload) return '<div class="empty-inline">Loading stream…</div>';
+      if (!payload) return '<div class="empty-inline">Open to load session stream.</div>';
+      if (payload.error) return '<div class="empty-inline">' + esc(payload.error) + '</div>';
+      const events = Array.isArray(payload.events) ? payload.events : [];
+      if (!events.length) return '<div class="empty-inline">No stream events recorded for this session.</div>';
+      const counts = {};
+      const signal = [];
+      for (const event of events) {
+        const kind = event && event.kind ? String(event.kind) : "unknown";
+        counts[kind] = (counts[kind] || 0) + 1;
+        if (!SESSION_STREAM_NOISE[kind]) signal.push(event);
+      }
+      const summary = Object.keys(counts).sort().map((kind) => counts[kind] + " " + kind).join(" · ");
+      const recent = signal.slice(-120).reverse();
+      const list = recent.length
+        ? '<ul class="session-stream">' + recent.map((event) => {
+            const kind = event && event.kind ? String(event.kind) : "event";
+            const at = event && event.at ? relative(event.at) : "";
+            return '<li><span class="stream-kind">' + esc(kind) + '</span>' +
+              (at ? ' <span class="stream-at">' + esc(at) + '</span>' : '') + '</li>';
+          }).join("") + '</ul>'
+        : '<div class="empty-inline">Only token/status noise recorded (deltas hidden).</div>';
+      return '<div class="session-stream-summary">' + esc(events.length + " events") + (summary ? " · " + esc(summary) : "") +
+        (signal.length > recent.length ? " · showing latest " + recent.length + " signal events" : "") +
+        '</div>' + list;
+    }
+    function loadSessionEvents(sessionId, force) {
+      if (!app.selectedId || !sessionId) return;
+      const key = sessionOpenKey(sessionId);
+      if (app.sessionEventsPending[key]) return;
+      if (!force && app.sessionEvents[key] && !app.sessionEvents[key].error) return;
+      app.sessionEventsPending[key] = true;
+      api("/api/runs/" + encodeURIComponent(app.selectedId) + "/sessions/" + encodeURIComponent(sessionId) + "/events").then((events) => {
+        app.sessionEvents[key] = { events: Array.isArray(events) ? events : [] };
+      }).catch((error) => {
+        app.sessionEvents[key] = { error: error.message || "request failed", events: [] };
+      }).finally(() => {
+        delete app.sessionEventsPending[key];
+        if (app.view === "run" && app.runTab === "sessions" && app.sessionOpen[key]) renderDetail();
+      });
+    }
     function renderSessions(sessions) {
       const recent = [...sessions].reverse();
       return recent.length ? recent.map((session, index) => {
@@ -1315,8 +1393,11 @@ export function renderDashboardPage(): string {
         const duration = sessionDuration(session);
         const meta = [phase ? phase + " phase" : "", ended ? relative(ended) : "", duration].filter(Boolean).join(" · ");
         const packet = session.packet || {};
+        const open = Boolean(app.sessionOpen[sessionOpenKey(id)]);
+        if (open) loadSessionEvents(id);
         const body =
           renderSessionSection("Error", session.error ? cappedPre(session.error, "error") : "", "session-error") +
+          renderSessionSection("Stream", renderSessionStream(id)) +
           renderSessionSection("Submitted prompt", session.submittedPrompt ? cappedPre(session.submittedPrompt, "prompt") : "") +
           renderSessionSection("Packet input", packet.input !== undefined ? cappedPre(packet.input, "input") : "") +
           renderSessionSection("Guidance", packet.guidance ? cappedPre(packet.guidance, "guidance") : "") +
@@ -1324,7 +1405,7 @@ export function renderDashboardPage(): string {
           renderSessionSection("Budget", packet.budget ? cappedPre(packet.budget, "budget") : "") +
           renderSessionSection("Provider telemetry", session.telemetry ? cappedPre(session.telemetry, "telemetry") : "") +
           renderSessionSection("Output", session.output !== undefined && session.output !== null ? cappedPre(session.output, "output") : "");
-        return '<details class="session"' + (app.sessionOpen[sessionOpenKey(id)] ? " open" : "") + ' data-session="' + esc(id) + '">' +
+        return '<details class="session"' + (open ? " open" : "") + ' data-session="' + esc(id) + '">' +
           '<summary><span class="session-title">' + esc(words(session.role || "agent session")) + '</span>' +
           '<span class="session-status ' + esc(status) + '">' + esc(status) + '</span>' +
           (meta ? '<span class="session-meta">' + esc(meta) + '</span>' : '') +
@@ -1598,7 +1679,11 @@ export function renderDashboardPage(): string {
       else if (app.view !== "compose" && app.view !== "guidance") renderEmpty();
     }
     async function openRun(id, force) {
-      if (app.selectedId !== id) app.runTab = "overview";
+      if (app.selectedId !== id) {
+        app.runTab = "overview";
+        app.sessionEvents = {};
+        app.sessionEventsPending = {};
+      }
       app.selectedId = id;
       const [run, activity, sessions, usage] = await Promise.all([
         api("/api/runs/" + encodeURIComponent(id)),
@@ -1637,6 +1722,8 @@ export function renderDashboardPage(): string {
         app.activity = [];
         app.sessions = [];
         app.usage = null;
+        app.sessionEvents = {};
+        app.sessionEventsPending = {};
         app.signature = "";
         renderRuns();
         const next = app.runs[0];
@@ -1776,6 +1863,7 @@ export function renderDashboardPage(): string {
       const session = event.target.closest && event.target.closest("details.session[data-session]");
       if (!session || session !== event.target) return;
       app.sessionOpen[sessionOpenKey(session.dataset.session)] = session.open;
+      if (session.open) loadSessionEvents(session.dataset.session);
     }, true);
     el("detail").addEventListener("change", (event) => {
       if (event.target.id === "guidance-scope") {

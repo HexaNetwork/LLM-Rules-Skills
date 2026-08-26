@@ -1,4 +1,13 @@
-import { Agent, type AgentUsage, type TokenUsage, type UsageCost } from "@cursor/sdk";
+import {
+  Agent,
+  type AgentUsage,
+  type InteractionUpdate,
+  type Run,
+  type RunResult,
+  type SDKMessage,
+  type TokenUsage,
+  type UsageCost,
+} from "@cursor/sdk";
 import { invokeModeFor, roleRulesFor } from "../domain/agent-roles.js";
 import { formatInvokeError } from "../domain/cursor-agent-error.js";
 import { REFLECT_EXPECTED_OUTPUT } from "../domain/reflect.js";
@@ -15,6 +24,17 @@ type InvokeRequest = {
   maxAgentTokens?: number;
   agentTimeoutMs?: number;
 };
+
+export type WorkerControlEvent = {
+  stream: "control";
+  at: string;
+  kind: string;
+  [key: string]: unknown;
+};
+
+export type WorkerResultLine = WorkerInvokeResult & { stream: "result" };
+
+export type WorkerStreamLine = WorkerControlEvent | WorkerResultLine;
 
 export function buildCursorInvokePrompt(request: InvokeRequest): string {
   const roleRules = roleRulesFor(request.role).map((rule) => `- ${rule}`);
@@ -47,34 +67,75 @@ export type WorkerInvokeResult = {
   };
 };
 
-export async function invokeCursorAgent(request: InvokeRequest): Promise<WorkerInvokeResult> {
+type ControlEmitter = (event: WorkerControlEvent) => void;
+
+const USAGE_LOOKUP_TIMEOUT_MS = 5_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const MAX_SHELL_OUTPUT_CHARS = 8_000;
+
+export async function invokeCursorAgent(
+  request: InvokeRequest,
+  emitControl?: ControlEmitter,
+): Promise<WorkerInvokeResult> {
   const prompt = buildCursorInvokePrompt(request);
   const requestedModel = resolveModel(request.packet.model);
   const mode = invokeModeFor(request.role);
+  const emit = emitControl ?? (() => undefined);
 
   if (mode === "completion") {
-    return invokeCompletion(prompt, request, requestedModel);
+    return invokeCompletion(prompt, request, requestedModel, emit);
   }
-  return invokeAgentSession(prompt, request, requestedModel);
+  return invokeAgentSession(prompt, request, requestedModel, emit);
 }
 
 async function invokeAgentSession(
   prompt: string,
   request: InvokeRequest,
   requestedModel: string,
+  emit: ControlEmitter,
 ): Promise<WorkerInvokeResult> {
+  emitControl(emit, "provider_status", { status: "creating_agent" });
   await using agent = await Agent.create({
     apiKey: process.env.CURSOR_API_KEY,
     model: { id: requestedModel },
     local: { cwd: "/workspace" },
   });
-  const run = await agent.send(prompt);
+  emitControl(emit, "provider_status", { status: "agent_created", agentId: agent.agentId });
+
+  const run = await agent.send(prompt, {
+    onStep: ({ step }) => emitControl(emit, "step", { step }),
+    onDelta: ({ update }) => {
+      emitControl(emit, "delta", { update });
+      emitDeltaToolEvents(emit, update);
+    },
+  });
+  emitControl(emit, "run_status", { status: "sent", runId: run.id, requestId: run.requestId });
+
+  const statusUnsub = run.onDidChangeStatus((status) => emitControl(emit, "run_status", { status }));
+  const heartbeat = setInterval(() => emitControl(emit, "heartbeat"), HEARTBEAT_INTERVAL_MS);
+  heartbeat.unref();
+
+  const streamTask = consumeRunStream(run, emit);
   const result = await withAgentTimeout(
     run.wait(),
     request.agentTimeoutMs,
     () => run.cancel(),
     request.role,
   );
+  clearInterval(heartbeat);
+  statusUnsub();
+  await streamTask.catch(() => undefined);
+
+  if (result.status === "error") {
+    emitControl(emit, "run_status", {
+      status: "error",
+      message: result.error?.message,
+      code: result.error?.code,
+    });
+  } else {
+    emitControl(emit, "run_status", { status: result.status });
+  }
+
   const text = extractText(result);
   let output: unknown;
   try {
@@ -82,9 +143,17 @@ async function invokeAgentSession(
   } catch {
     output = { text };
   }
-  const billed = await readUsage(agent);
+
+  const billed = await withAgentTimeout(
+    readUsage(agent),
+    USAGE_LOOKUP_TIMEOUT_MS,
+    undefined,
+    "usage",
+  ).catch(() => undefined);
   const usage = result.usage ?? run.usage ?? billed?.usage;
   const tokenCapExceeded = checkTokenCap(request.role, usage, request.maxAgentTokens);
+  emitControl(emit, "provider_status", { status: "finalized" });
+
   return {
     protocolVersion: 1,
     output,
@@ -106,7 +175,9 @@ async function invokeCompletion(
   prompt: string,
   request: InvokeRequest,
   requestedModel: string,
+  emit: ControlEmitter,
 ): Promise<WorkerInvokeResult> {
+  emitControl(emit, "provider_status", { status: "completion_start" });
   const run = await withAgentTimeout(
     Agent.prompt(prompt, {
       apiKey: process.env.CURSOR_API_KEY,
@@ -116,6 +187,7 @@ async function invokeCompletion(
     undefined,
     request.role,
   );
+  emitControl(emit, "run_status", { status: run.status, runId: run.id, requestId: run.requestId });
   const text = extractText(run);
   let output: unknown;
   try {
@@ -125,6 +197,7 @@ async function invokeCompletion(
   }
   const usage = run.usage;
   const tokenCapExceeded = checkTokenCap(request.role, usage, request.maxAgentTokens);
+  emitControl(emit, "provider_status", { status: "finalized" });
   return {
     protocolVersion: 1,
     output,
@@ -139,6 +212,91 @@ async function invokeCompletion(
       ...(tokenCapExceeded ? { tokenCapExceeded: true } : {}),
     },
   };
+}
+
+function emitControl(emit: ControlEmitter, kind: string, payload: Record<string, unknown> = {}): void {
+  emit({ stream: "control", at: new Date().toISOString(), kind, ...payload });
+}
+
+function emitDeltaToolEvents(emit: ControlEmitter, update: InteractionUpdate): void {
+  switch (update.type) {
+    case "tool-call-started":
+      emitControl(emit, "tool_start", {
+        callId: update.callId,
+        toolCall: update.toolCall,
+      });
+      if (update.toolCall.type === "shell") {
+        emitControl(emit, "shell_start", {
+          callId: update.callId,
+          command: update.toolCall.args.command,
+          workingDirectory: update.toolCall.args.workingDirectory,
+        });
+      }
+      return;
+    case "tool-call-completed":
+      emitControl(emit, "tool_finish", {
+        callId: update.callId,
+        toolCall: update.toolCall,
+      });
+      if (update.toolCall.type === "shell") {
+        const shellResult = update.toolCall.result;
+        if (!shellResult) break;
+        if (shellResult.status === "success") {
+          emitControl(emit, "shell_finish", {
+            callId: update.callId,
+            status: shellResult.status,
+            exitCode: shellResult.value.exitCode,
+            stdout: truncateShellText(shellResult.value.stdout),
+            stderr: truncateShellText(shellResult.value.stderr),
+            executionTime: shellResult.value.executionTime,
+          });
+        } else {
+          emitControl(emit, "shell_finish", {
+            callId: update.callId,
+            status: shellResult.status,
+            error: shellResult.error,
+          });
+        }
+      }
+      return;
+    case "shell-output-delta":
+      emitControl(emit, "shell_output", {
+        event: update.event,
+      });
+      return;
+    default:
+      return;
+  }
+}
+
+async function consumeRunStream(run: Run, emit: ControlEmitter): Promise<void> {
+  if (!run.supports("stream")) return;
+  for await (const message of run.stream()) {
+    emitSdkMessage(emit, message);
+  }
+}
+
+function emitSdkMessage(emit: ControlEmitter, message: SDKMessage): void {
+  if (message.type === "tool_call") {
+    emitControl(emit, "sdk_tool_call", {
+      callId: message.call_id,
+      name: message.name,
+      status: message.status,
+      args: message.args,
+      result: message.result,
+    });
+    return;
+  }
+  if (message.type === "status") {
+    emitControl(emit, "sdk_status", { status: message.status, message: message.message });
+    return;
+  }
+  emitControl(emit, "sdk_message", { messageType: message.type });
+}
+
+function truncateShellText(text: string): string {
+  if (text.length <= MAX_SHELL_OUTPUT_CHARS) return text;
+  return `${text.slice(0, MAX_SHELL_OUTPUT_CHARS)}\n…[truncated]`;
 }
 
 export function checkTokenCap(
@@ -195,12 +353,11 @@ async function readUsage(agent: { getUsage(): Promise<AgentUsage> }): Promise<Ag
   try {
     return await agent.getUsage();
   } catch {
-    // Terminal run telemetry is still useful when the eventually-consistent billing call is unavailable.
     return undefined;
   }
 }
 
-function extractText(run: { result?: unknown }): string {
+function extractText(run: RunResult | { result?: unknown }): string {
   const result = run.result;
   if (typeof result === "string") return result;
   if (result && typeof result === "object" && "text" in result) {
@@ -209,12 +366,42 @@ function extractText(run: { result?: unknown }): string {
   return JSON.stringify(result ?? {});
 }
 
+export function parseWorkerStdout(stdout: string): WorkerInvokeResult | undefined {
+  const lines = stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]!;
+    try {
+      const parsed = JSON.parse(line) as WorkerStreamLine;
+      if (parsed.stream === "result" && parsed.protocolVersion === 1) {
+        return parsed;
+      }
+    } catch {
+      continue;
+    }
+  }
+  if (lines.length === 1) {
+    try {
+      const parsed = JSON.parse(lines[0]!) as WorkerInvokeResult;
+      if (parsed.protocolVersion === 1) return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
   const request = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as InvokeRequest;
-  const output = await invokeCursorAgent(request);
-  process.stdout.write(`${JSON.stringify(output)}\n`);
+  const emit = (event: WorkerControlEvent): void => {
+    process.stdout.write(`${JSON.stringify(event)}\n`);
+  };
+  const output = await invokeCursorAgent(request, emit);
+  process.stdout.write(`${JSON.stringify({ stream: "result", ...output })}\n`);
 }
 
 const entry = process.argv[1] ?? "";

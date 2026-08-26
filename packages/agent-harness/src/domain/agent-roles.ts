@@ -90,6 +90,7 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
   implementer: [
     "Edit the working tree but never commit, push, or open a pull request.",
     "Do not write, edit, weaken, delete, or bypass tests during implementation.",
+    "Do not run verification, test suites, or build commands; the harness verifies after you return.",
     "Return exactly one raw JSON object matching the expected output contract.",
   ],
   "task-reviewer": [

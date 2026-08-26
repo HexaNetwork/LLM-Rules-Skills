@@ -100,6 +100,10 @@ export type VerificationEvidence = {
   passed: boolean;
   output: string;
   classification: "passed" | "project_failure" | "environment_failure";
+  startedAt?: string;
+  endedAt?: string;
+  durationMs?: number;
+  exitCode?: number;
 };
 
 export type RunState = {
@@ -213,7 +217,7 @@ export type AgentInvocation = {
   endedAt: string;
   /** Same as `endedAt`; kept for older UI/API consumers. */
   at: string;
-  status: "completed" | "failed";
+  status: "running" | "completed" | "failed";
   error?: string;
   /** Provider identifiers and billed usage captured for this exact invocation. */
   telemetry?: ProviderTelemetry;

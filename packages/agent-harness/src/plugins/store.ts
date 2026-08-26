@@ -27,6 +27,8 @@ export type StoreService = {
   appendSettingsAudit(runId: string, entry: SettingsAuditEntry): Promise<void>;
   readSettingsAudit(runId: string): Promise<SettingsAuditEntry[]>;
   writeSession(runId: string, sessionId: string, value: unknown): Promise<void>;
+  appendSessionEvent(runId: string, sessionId: string, event: unknown): Promise<void>;
+  readSessionEvents<T = unknown>(runId: string, sessionId: string): Promise<T[]>;
   readSessions<T = unknown>(runId: string): Promise<T[]>;
   writeArtifact(runId: string, name: string, value: unknown): Promise<void>;
   readArtifact<T>(runId: string, name: string): Promise<T | undefined>;
@@ -138,6 +140,10 @@ export function createFileStore(home: string): StoreService {
       readJsonl<SettingsAuditEntry>(`runs/${runId}/settings-audit.jsonl`),
     writeSession: (runId, sessionId, value) =>
       writeJson(`runs/${runId}/sessions/${sessionId}.json`, value),
+    appendSessionEvent: (runId, sessionId, event) =>
+      appendJsonl(`runs/${runId}/sessions/${sessionId}.events.jsonl`, event),
+    readSessionEvents: (runId, sessionId) =>
+      readJsonl(`runs/${runId}/sessions/${sessionId}.events.jsonl`),
     async readSessions<T>(runId: string) {
       try {
         const names = (await readdir(resolve("runs", runId, "sessions"))).filter((name) =>

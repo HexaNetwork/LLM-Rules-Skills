@@ -94,7 +94,18 @@ describe("host composition after launch defaults", () => {
       });
       const execMock = vi.fn().mockResolvedValue({
         exitCode: 0,
-        stdout: JSON.stringify({ summary: "from-sandbox" }),
+        stdout: JSON.stringify({
+          stream: "result",
+          protocolVersion: 1,
+          output: { summary: "from-sandbox" },
+          submittedPrompt: "Role: implementer",
+          telemetry: {
+            provider: "cursor",
+            model: "composer-2.5",
+            agentId: "agent-1",
+            providerRunId: "run-1",
+          },
+        }),
         stderr: "",
       });
       host.ctx.sandbox.exec = execMock;

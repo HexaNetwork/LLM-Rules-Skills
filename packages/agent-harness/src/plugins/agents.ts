@@ -2,10 +2,19 @@ import { randomUUID } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import { formatCursorAgentFailure } from "../domain/cursor-agent-error.js";
 import type { AgentInvocation, WorkPacket } from "../domain/types.js";
-import type { WorkerInvokeResult } from "../worker/invoke.js";
+import {
+  parseWorkerStdout,
+  type WorkerControlEvent,
+  type WorkerInvokeResult,
+  type WorkerResultLine,
+} from "../worker/invoke.js";
+
+export type AgentInvokeMeta = {
+  sessionId: string;
+};
 
 export type AgentsService = {
-  invoke(role: string, packet: WorkPacket): Promise<unknown>;
+  invoke(role: string, packet: WorkPacket, meta?: AgentInvokeMeta): Promise<unknown>;
 };
 
 export type ScriptedReply = unknown | ((role: string, packet: WorkPacket) => unknown);
@@ -164,9 +173,26 @@ export function createFakeAgents(scripted: Record<string, ScriptedReply> = {}): 
 
 export function createCursorAgents(ctx: Context): AgentsService {
   return {
-    async invoke(role, packet) {
+    async invoke(role, packet, meta) {
       const run = await ctx.store.readIdentity(packet.runId);
       if (!run) throw new Error(`Cannot invoke agent for unknown run ${packet.runId}`);
+
+      let workerResult: WorkerInvokeResult | undefined;
+      const handleStdoutLine = async (line: string): Promise<void> => {
+        let parsed: WorkerControlEvent | WorkerResultLine;
+        try {
+          parsed = JSON.parse(line) as WorkerControlEvent | WorkerResultLine;
+        } catch {
+          return;
+        }
+        if (parsed.stream === "result") {
+          workerResult = parsed;
+          return;
+        }
+        if (parsed.stream !== "control" || !meta?.sessionId) return;
+        await persistAgentStreamEvent(ctx, packet, meta.sessionId, parsed);
+      };
+
       const result = await ctx.sandbox.exec(run.runId, {
         command: ["node", "/opt/agent-harness/dist/worker/invoke.js"],
         stdin: JSON.stringify({
@@ -177,7 +203,9 @@ export function createCursorAgents(ctx: Context): AgentsService {
         }),
         // Give the worker a short grace period to cancel the provider run and exit.
         timeoutMs: packet.agentTimeoutMs + 10_000,
+        onStdoutLine: (line) => handleStdoutLine(line),
       });
+
       if (result.timedOut) {
         await ctx.sandbox.destroy(run.runId);
         throw new Error(`Agent timed out (${role}) after ${packet.agentTimeoutMs}ms`);
@@ -185,7 +213,12 @@ export function createCursorAgents(ctx: Context): AgentsService {
       if (result.exitCode !== 0) {
         throw new Error(formatCursorAgentFailure(role, result));
       }
-      return JSON.parse(result.stdout) as unknown;
+
+      workerResult ??= parseWorkerStdout(result.stdout);
+      if (!workerResult) {
+        throw new Error(`Agent worker (${role}) returned no result line`);
+      }
+      return workerResult;
     },
   };
 }
@@ -207,8 +240,29 @@ function wrapWithSessions(
     async invoke(role, packet) {
       const sessionId = randomUUID();
       const startedAt = new Date().toISOString();
+      const runningInvocation: AgentInvocation = {
+        sessionId,
+        role,
+        packet,
+        startedAt,
+        endedAt: startedAt,
+        at: startedAt,
+        status: "running",
+      };
+      await persistSession(ctx, packet, runningInvocation);
+      const packetSummary = summarizePacket(packet);
+      await ctx.store.appendEvent(packet.runId, {
+        kind: "agent",
+        at: startedAt,
+        sessionId,
+        role,
+        phase: packet.phase,
+        status: "running",
+        packet: packetSummary,
+      });
+
       try {
-        const result = await inner.invoke(role, packet);
+        const result = await inner.invoke(role, packet, { sessionId });
         const worker = isWorkerInvokeResult(result) ? result : undefined;
         const output = worker ? worker.output : result;
         const endedAt = new Date().toISOString();
@@ -228,6 +282,15 @@ function wrapWithSessions(
           },
         };
         await persistSession(ctx, packet, invocation);
+        await ctx.store.appendEvent(packet.runId, {
+          kind: "agent",
+          at: endedAt,
+          sessionId,
+          role,
+          phase: packet.phase,
+          status: "completed",
+          packet: packetSummary,
+        });
         return output;
       } catch (error) {
         const endedAt = new Date().toISOString();
@@ -243,6 +306,15 @@ function wrapWithSessions(
           error: message,
         };
         await persistSession(ctx, packet, invocation);
+        await ctx.store.appendEvent(packet.runId, {
+          kind: "agent",
+          at: endedAt,
+          sessionId,
+          role,
+          phase: packet.phase,
+          status: "failed",
+          packet: packetSummary,
+        });
         throw error;
       }
     },
@@ -261,14 +333,52 @@ async function persistSession(
   invocation: AgentInvocation,
 ): Promise<void> {
   await ctx.store.writeSession(packet.runId, invocation.sessionId, invocation);
-  await ctx.store.appendEvent(packet.runId, {
-    kind: "agent",
-    at: invocation.endedAt,
-    sessionId: invocation.sessionId,
-    role: invocation.role,
-    phase: packet.phase,
-    status: invocation.status,
-  });
+}
+
+async function persistAgentStreamEvent(
+  ctx: Context,
+  packet: WorkPacket,
+  sessionId: string,
+  event: WorkerControlEvent,
+): Promise<void> {
+  // Stream ticks stay on the session log only. Run Activity keeps lifecycle + agent
+  // start/complete (with packet summary) so the feed stays readable.
+  await ctx.store.appendSessionEvent(packet.runId, sessionId, event);
+}
+
+export type PacketSummary = {
+  model: string;
+  inputKind: string;
+  inputKeys?: string[];
+  inputChars: number;
+  guidanceChars: number;
+  retrievalChars: number;
+  truncated: string[];
+  maxAgentTokens?: number;
+  agentTimeoutMs: number;
+};
+
+/** Compact packet fingerprint for run Activity — full packet lives on the session. */
+export function summarizePacket(packet: WorkPacket): PacketSummary {
+  const inputJson = JSON.stringify(packet.input ?? null);
+  const summary: PacketSummary = {
+    model: packet.model,
+    inputKind: Array.isArray(packet.input)
+      ? "array"
+      : packet.input === null
+        ? "null"
+        : typeof packet.input,
+    inputChars: inputJson.length,
+    guidanceChars: packet.guidance.length,
+    retrievalChars: packet.retrieval.length,
+    truncated: [...packet.budget.truncated],
+    agentTimeoutMs: packet.agentTimeoutMs,
+  };
+  if (packet.maxAgentTokens != null) summary.maxAgentTokens = packet.maxAgentTokens;
+  if (packet.input && typeof packet.input === "object" && !Array.isArray(packet.input)) {
+    summary.inputKeys = Object.keys(packet.input as Record<string, unknown>).slice(0, 24);
+  }
+  return summary;
 }
 
 function extractIdea(input: unknown): string {

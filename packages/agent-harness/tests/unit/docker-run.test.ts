@@ -9,6 +9,7 @@ describe("buildDockerRunArgs", () => {
       image: "agent-harness-worker:local",
       worktreeHost: "D:/data/worktree",
       cursorApiKey: "key",
+      gradleCacheHost: "D:/data/gradle-cache",
     });
     const args = buildDockerRunArgs(spec);
     expect(args).toContain("--dns");
@@ -18,5 +19,7 @@ describe("buildDockerRunArgs", () => {
     expect(args.indexOf("--dns")).toBeLessThan(args.indexOf(spec.image));
     expect(args).toContain("--read-only");
     expect(args).toContain(`${spec.worktreeHost}:/workspace`);
+    expect(args).toContain("D:/data/gradle-cache:/gradle-cache");
+    expect(args).toContain("GRADLE_USER_HOME=/gradle-cache");
   });
 });

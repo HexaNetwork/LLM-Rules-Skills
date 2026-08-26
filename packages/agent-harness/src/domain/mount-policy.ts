@@ -26,15 +26,21 @@ export function buildRunSpec(input: {
   image: string;
   worktreeHost: string;
   cursorApiKey?: string;
+  gradleCacheHost?: string;
 }): ContainerSpec {
+  const mounts: Mount[] = [{ host: input.worktreeHost, container: "/workspace" }];
+  if (input.gradleCacheHost) {
+    mounts.push({ host: input.gradleCacheHost, container: "/gradle-cache" });
+  }
   return {
     name: containerName(input.runId),
     image: input.image,
     worktreeHost: input.worktreeHost,
-    mounts: [{ host: input.worktreeHost, container: "/workspace" }],
+    mounts,
     env: {
       CURSOR_API_KEY: input.cursorApiKey,
       HOME: "/tmp",
+      ...(input.gradleCacheHost ? { GRADLE_USER_HOME: "/gradle-cache" } : {}),
     },
   };
 }
@@ -57,6 +63,7 @@ export function validateMounts(spec: ContainerSpec, policy: IsolationPolicy): vo
   for (const mount of spec.mounts) {
     const host = normalize(mount.host);
     if (host === normalize(spec.worktreeHost)) continue;
+    if (mount.container === "/gradle-cache" && isGradleCacheMount(host, policy.harnessHome)) continue;
     if (containedBy(host, normalize(policy.harnessHome))) {
       throw new Error("Harness home must not be mounted into the sandbox");
     }
@@ -84,4 +91,14 @@ function normalize(value: string): string {
 
 function containedBy(pathValue: string, root: string): boolean {
   return pathValue === root || pathValue.startsWith(`${root}/`);
+}
+
+function isGradleCacheMount(host: string, harnessHome: string): boolean {
+  const normalized = normalize(host);
+  const home = normalize(harnessHome);
+  const prefix = `${home}/projects/`;
+  if (!normalized.startsWith(prefix)) return false;
+  const rest = normalized.slice(prefix.length);
+  const parts = rest.split("/");
+  return parts.length === 2 && parts[1] === "gradle-cache";
 }

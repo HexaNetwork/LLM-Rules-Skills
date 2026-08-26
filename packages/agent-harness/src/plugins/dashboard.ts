@@ -203,6 +203,17 @@ async function route(
   if (method === "GET" && runMatch?.[2] === "sessions") {
     return ctx.runLifecycle.sessions(decodeURIComponent(runMatch[1]!));
   }
+  const sessionEventsMatch = url.pathname.match(
+    /^\/api\/runs\/([^/]+)\/sessions\/([^/]+)\/events$/,
+  );
+  if (method === "GET" && sessionEventsMatch) {
+    const runId = decodeURIComponent(sessionEventsMatch[1]!);
+    const sessionId = decodeURIComponent(sessionEventsMatch[2]!);
+    if (deletingRuns.has(runId)) throw new HttpError(404, `Unknown run: ${runId}`);
+    const identity = await ctx.store.readIdentity(runId);
+    if (!identity) throw new HttpError(404, `Unknown run: ${runId}`);
+    return ctx.runLifecycle.sessionEvents(runId, sessionId);
+  }
   if (method === "GET" && runMatch?.[2] === "usage") {
     return ctx.runLifecycle.usage(decodeURIComponent(runMatch[1]!));
   }

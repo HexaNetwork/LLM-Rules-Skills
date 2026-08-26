@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
+import path from "node:path";
 import { promisify } from "node:util";
 import type { Context } from "@deepseek-ai/cordis";
 import { buildDockerRunArgs } from "../domain/docker-run.js";
@@ -10,6 +11,7 @@ import {
   validateMounts,
   type ContainerSpec,
 } from "../domain/mount-policy.js";
+import { normalizeShellWrappers } from "../domain/shell-wrappers.js";
 
 const exec = promisify(execFile);
 
@@ -25,6 +27,7 @@ export type SandboxExec = {
   stdin?: string;
   cwd?: string;
   timeoutMs?: number;
+  onStdoutLine?: (line: string) => void | Promise<void>;
 };
 
 export type SandboxService = {
@@ -52,6 +55,13 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
   const mode = config.mode ?? (process.env.AGENT_HARNESS_SANDBOX === "docker" ? "docker" : "none");
   const image = config.image ?? process.env.AGENT_HARNESS_WORKER_IMAGE ?? "node:22-bookworm-slim";
   const specs = new Map<string, ContainerSpec>();
+  const wrappersNormalized = new Set<string>();
+
+  const ensureShellWrappers = async (runId: string, worktreePath: string): Promise<void> => {
+    if (wrappersNormalized.has(runId)) return;
+    await normalizeShellWrappers(worktreePath);
+    wrappersNormalized.add(runId);
+  };
 
   const buildImage = async (dockerfilePath: string, tag: string): Promise<string> => {
     const args = ["build", "-t", tag, "-f", dockerfilePath, packageRoot()];
@@ -82,14 +92,23 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
       if (specs.has(runId)) return specs.get(runId);
       const identity = await ctx.store.readIdentity(runId);
       if (!identity) throw new Error(`Cannot start sandbox for unknown run ${runId}`);
+      await ensureShellWrappers(runId, identity.worktreePath);
       const effectiveImage = (await pathExists(runDockerfilePath(ctx.store.home, runId)))
         ? runImageTag(runId)
         : image;
+      const gradleCacheHost = path.join(
+        ctx.store.home,
+        "projects",
+        identity.projectKey,
+        "gradle-cache",
+      );
+      await mkdir(gradleCacheHost, { recursive: true });
       const spec = buildRunSpec({
         runId,
         image: effectiveImage,
         worktreeHost: identity.worktreePath,
         cursorApiKey: process.env.CURSOR_API_KEY,
+        gradleCacheHost,
       });
       const siblings = (await ctx.store.listRunIds()).filter((id) => id !== runId);
       validateMounts(spec, {
@@ -105,22 +124,25 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
       if (mode === "none") {
         const identity = await ctx.store.readIdentity(runId);
         if (!identity) throw new Error(`Unknown run ${runId}`);
+        await ensureShellWrappers(runId, identity.worktreePath);
         return runLocal(
           request.command,
           request.cwd ?? identity.worktreePath,
           request.stdin,
           request.timeoutMs,
+          request.onStdoutLine,
         );
       }
       await this.ensure(runId);
       const name = containerName(runId);
-      return runDockerExec(name, request.command, request.stdin, request.timeoutMs);
+      return runDockerExec(name, request.command, request.stdin, request.timeoutMs, request.onStdoutLine);
     },
     async destroy(runId, options) {
       if (mode === "none") return;
       const name = containerName(runId);
       await docker(["rm", "-f", name]).catch(() => undefined);
       specs.delete(runId);
+      wrappersNormalized.delete(runId);
       if (options?.purgeImage) {
         await removeImage(runImageTag(runId));
       }
@@ -167,10 +189,12 @@ function runProcess(
   cwd?: string,
   stdin?: string,
   timeoutMs?: number,
+  onStdoutLine?: (line: string) => void | Promise<void>,
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
     const child = spawn(file, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
+    let stdoutRemainder = "";
     let stderr = "";
     let settled = false;
     const finish = (result: ExecResult): void => {
@@ -178,6 +202,25 @@ function runProcess(
       settled = true;
       if (timer) clearTimeout(timer);
       resolve(result);
+    };
+    const flushStdoutLine = async (line: string): Promise<void> => {
+      if (!onStdoutLine) return;
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        await onStdoutLine(trimmed);
+      } catch {
+        // Streaming persistence must not abort the worker process.
+      }
+    };
+    const drainStdoutLines = async (): Promise<void> => {
+      let newlineIndex = stdoutRemainder.indexOf("\n");
+      while (newlineIndex >= 0) {
+        const line = stdoutRemainder.slice(0, newlineIndex);
+        stdoutRemainder = stdoutRemainder.slice(newlineIndex + 1);
+        await flushStdoutLine(line);
+        newlineIndex = stdoutRemainder.indexOf("\n");
+      }
     };
     const timer = timeoutMs
       ? setTimeout(() => {
@@ -192,7 +235,11 @@ function runProcess(
       : undefined;
     timer?.unref();
     child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
+      const text = String(chunk);
+      stdout += text;
+      if (!onStdoutLine) return;
+      stdoutRemainder += text;
+      void drainStdoutLines();
     });
     child.stderr.on("data", (chunk) => {
       stderr += String(chunk);
@@ -202,6 +249,13 @@ function runProcess(
       finish({ exitCode: 1, stdout, stderr: error.message });
     });
     child.on("close", (code) => {
+      if (onStdoutLine && stdoutRemainder.length > 0) {
+        void flushStdoutLine(stdoutRemainder).finally(() => {
+          stdoutRemainder = "";
+          finish({ exitCode: code ?? 1, stdout, stderr });
+        });
+        return;
+      }
       finish({ exitCode: code ?? 1, stdout, stderr });
     });
   });
@@ -212,8 +266,9 @@ function runLocal(
   cwd: string,
   stdin?: string,
   timeoutMs?: number,
+  onStdoutLine?: (line: string) => void | Promise<void>,
 ): Promise<ExecResult> {
-  return runProcess(command[0]!, command.slice(1), cwd, stdin, timeoutMs);
+  return runProcess(command[0]!, command.slice(1), cwd, stdin, timeoutMs, onStdoutLine);
 }
 
 function runDockerExec(
@@ -221,8 +276,9 @@ function runDockerExec(
   command: string[],
   stdin?: string,
   timeoutMs?: number,
+  onStdoutLine?: (line: string) => void | Promise<void>,
 ): Promise<ExecResult> {
-  return runProcess("docker", ["exec", "-i", name, ...command], undefined, stdin, timeoutMs);
+  return runProcess("docker", ["exec", "-i", name, ...command], undefined, stdin, timeoutMs, onStdoutLine);
 }
 
 export function sandboxPlugin(ctx: Context, config: SandboxConfig = {}): void {

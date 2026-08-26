@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Context } from "@deepseek-ai/cordis";
+import { normalizeShellWrappers } from "../domain/shell-wrappers.js";
 import type { ProjectRegistration, RunIdentity } from "../domain/types.js";
 
 const exec = promisify(execFile);
@@ -38,6 +39,8 @@ export function createGitService(): GitService {
       const worktreePath = path.join(registration.worktreeRoot, safe(runId));
       await mkdir(path.dirname(worktreePath), { recursive: true });
       await git(registration.controlRoot, ["worktree", "add", "--detach", worktreePath, baseSha]);
+      // Windows autocrlf can leave Unix wrappers unusable inside the Linux Docker worker.
+      await normalizeShellWrappers(worktreePath);
       return { worktreePath, baseSha, baseBranch: resolved };
     },
     async removeWorktree(identity) {

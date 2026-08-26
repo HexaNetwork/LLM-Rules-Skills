@@ -14,8 +14,10 @@ describe("mount policy", () => {
       image: "node:22-bookworm-slim",
       worktreeHost: "D:/data/agent-harness/projects/app/worktrees/run-1",
       cursorApiKey: "key",
+      gradleCacheHost: "D:/data/agent-harness/projects/app/gradle-cache",
     });
     expect(spec.env.CURSOR_API_KEY).toBe("key");
+    expect(spec.env.GRADLE_USER_HOME).toBe("/gradle-cache");
     expect(() => validateMounts(spec, policy)).not.toThrow();
   });
 

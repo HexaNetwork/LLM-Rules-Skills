@@ -26,6 +26,7 @@ export type RunLifecycleService = {
   list(): Promise<Run[]>;
   activity(runId: string): Promise<unknown[]>;
   sessions(runId: string): Promise<unknown[]>;
+  sessionEvents(runId: string, sessionId: string): Promise<unknown[]>;
   usage(runId: string): Promise<SessionUsageReport>;
 };
 
@@ -272,8 +273,13 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
       }
     },
     status: load,
-    activity: (runId) => ctx.store.readJsonl(`runs/${runId}/events.jsonl`),
+    async activity(runId) {
+      const events = await ctx.store.readJsonl<{ kind?: string }>(`runs/${runId}/events.jsonl`);
+      // Drop legacy agent_stream mirrors; streams live on session event logs.
+      return events.filter((event) => event.kind !== "agent_stream");
+    },
     sessions: (runId) => ctx.store.readSessions(runId),
+    sessionEvents: (runId, sessionId) => ctx.store.readSessionEvents(runId, sessionId),
     async usage(runId) {
       const sessions = await ctx.store.readSessions<AgentInvocation>(runId);
       return summarizeSessionUsage(sessions);

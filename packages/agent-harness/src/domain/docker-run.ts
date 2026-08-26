@@ -18,22 +18,24 @@ export function buildDockerRunArgs(spec: ContainerSpec): string[] {
     "ALL",
     "--security-opt",
     "no-new-privileges",
-    "-v",
-    `${spec.worktreeHost}:/workspace`,
   ];
+  for (const mount of spec.mounts) {
+    const suffix = mount.readOnly ? ":ro" : "";
+    args.push("-v", `${mount.host}:${mount.container}${suffix}`);
+  }
   for (const dns of WORKER_DNS_SERVERS) {
     args.push("--dns", dns);
   }
-  args.push(
-    "-e",
-    `CURSOR_API_KEY=${spec.env.CURSOR_API_KEY ?? ""}`,
-    "-e",
-    "HOME=/tmp",
-    "-w",
-    "/workspace",
-    spec.image,
-    "sleep",
-    "infinity",
-  );
+  const envEntries: Array<[string, string]> = [
+    ["CURSOR_API_KEY", spec.env.CURSOR_API_KEY ?? ""],
+    ["HOME", spec.env.HOME ?? "/tmp"],
+  ];
+  if (spec.env.GRADLE_USER_HOME) {
+    envEntries.push(["GRADLE_USER_HOME", spec.env.GRADLE_USER_HOME]);
+  }
+  for (const [name, value] of envEntries) {
+    args.push("-e", `${name}=${value}`);
+  }
+  args.push("-w", "/workspace", spec.image, "sleep", "infinity");
   return args;
 }

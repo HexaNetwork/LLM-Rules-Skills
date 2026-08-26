@@ -536,7 +536,7 @@ export function renderDashboardPage(): string {
     let token = readDashboardToken();
     const authHeaders = () => ({ Authorization: "Bearer " + token, "Content-Type": "application/json" });
     const app = { runs: [], projects: [], selectedId: null, run: null, activity: [], sessions: [], usage: null, signature: "", drafts: {}, artifactOpen: {}, sessionOpen: {}, sessionEvents: {}, sessionEventsPending: {}, view: "empty", runTab: "overview", usageTab: "totals", sandbox: {}, sandboxPending: {}, imageStatus: {}, imageStatusPending: {}, compose: { idea: "", projectKey: "", workflow: "default", baseBranch: "" }, busy: null, guidanceRoles: [], guidanceRole: null, guidanceDoc: null, guidanceScope: "home", settingsScope: "global", settingsProjectKey: "", timeoutConfig: null, lastSoundStatus: null, authFailed: false };
-    const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","operator-gate","slice","implement","scenario-test","crystallize","final-review","publish"];
+    const phases = ["reflect","grill","glossary","verification-settings","plan","prd","scenarios","slice","implement","scenario-test","crystallize","final-review","publish"];
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
     const words = (value) => String(value || "").replace(/[-_]/g, " ");

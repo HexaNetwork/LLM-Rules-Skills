@@ -10,7 +10,6 @@ export const DEFAULT_WORKFLOW: WorkflowBundle = {
     "plan",
     "prd",
     "scenarios",
-    "operator-gate",
     "slice",
     "implement",
     "scenario-test",

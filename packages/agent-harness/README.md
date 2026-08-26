@@ -36,7 +36,7 @@ Pre-rewrite runs are unsupported.
 
 ```text
 idea → reflect → grill → glossary → verification-settings
-    → plan + PRD + scenarios → operator-gate → slice
+    → plan + PRD + scenarios (operator review) → slice
     → implement (per-task review, host commit)
     → scenario-test → crystallize (optional coverage)
     → final-review → publish (host push + PR)

@@ -25,7 +25,8 @@ describe("Feature workflow", () => {
       run = await host.ctx.runLifecycle.answer(run.identity.runId, {
         answers: { selection: "generic" },
       });
-      expect(run.state.phase).toBe("operator-gate");
+      expect(run.state.phase).toBe("scenarios");
+      expect(run.state.gate?.id).toBe("operator-gate");
       expect(
         (run.state.artifacts.verification as { command?: string } | undefined)?.command,
       ).toBe("npm test");

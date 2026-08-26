@@ -7,7 +7,6 @@ import { createVerificationSettingsPhase } from "../phases/verification-settings
 import { createPlanPhase } from "../phases/plan.js";
 import { createPrdPhase } from "../phases/prd.js";
 import { createScenariosPhase } from "../phases/scenarios.js";
-import { createOperatorGatePhase } from "../phases/operator-gate.js";
 import { createSlicePhase } from "../phases/slice.js";
 import { createImplementPhase } from "../phases/implement.js";
 import { createScenarioTestPhase } from "../phases/scenario-test.js";
@@ -75,13 +74,6 @@ export function hostRuntimeRows(options: RuntimeOptions = {}): ProfileRow[] {
     phaseRow("plan", createPlanPhase),
     phaseRow("prd", createPrdPhase),
     phaseRow("scenarios", createScenariosPhase),
-    {
-      id: "host.phase.operator-gate",
-      plugin: Object.assign((ctx: Context) => ctx.phases.register(createOperatorGatePhase()), {
-        inject: PHASE_INJECT,
-      }),
-      trusted: true,
-    },
     phaseRow("slice", createSlicePhase),
     phaseRow("implement", createImplementPhase),
     phaseRow("scenario-test", createScenarioTestPhase),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../src/domain/settings.js";
 import type { Run } from "../../src/domain/types.js";
-import { createOperatorGatePhase } from "../../src/phases/operator-gate.js";
+import { createScenariosPhase } from "../../src/phases/scenarios.js";
 import { renderDashboardPage } from "../../src/ui/page.js";
 import { bootTestHost, createTempRepo, currentBranch } from "../helpers.js";
 
@@ -20,10 +20,15 @@ function gateRun(artifacts: Record<string, unknown> = {}): Run {
     state: {
       runId: "run-operator-gate",
       status: "awaiting_input",
-      phase: "operator-gate",
+      phase: "scenarios",
       idea: "Ship a clearer operator gate",
       revision: 1,
       updatedAt: new Date().toISOString(),
+      gate: {
+        id: "operator-gate",
+        title: "Review plan, PRD, and scenarios",
+        questions: [],
+      },
       artifacts,
       fog: [],
       tasks: [],
@@ -53,6 +58,7 @@ describe("operator gate UI", () => {
     expect(html).not.toContain("gate-banner");
     expect(html).not.toContain("Operator input is waiting on Overview.");
     expect(html).toContain("Notes are required when requesting changes.");
+    expect(html).not.toContain('"operator-gate","slice"');
 
     const overviewStart = html.indexOf("function renderOverview(run)");
     const overviewEnd = html.indexOf("function renderTabContent(run)", overviewStart);
@@ -87,7 +93,7 @@ describe("operator gate UI", () => {
 });
 
 describe("operator gate onAnswer", () => {
-  const phase = createOperatorGatePhase();
+  const phase = createScenariosPhase({} as never);
 
   it("approves with empty notes and continues", async () => {
     const run = gateRun();
@@ -142,7 +148,7 @@ describe("operator gate request-changes loop", () => {
       bundles: [
         {
           id: "operator-loop",
-          phases: ["plan", "prd", "scenarios", "operator-gate", "publish"],
+          phases: ["plan", "prd", "scenarios", "publish"],
         },
       ],
     });
@@ -154,7 +160,8 @@ describe("operator gate request-changes loop", () => {
         workflowBundleId: "operator-loop",
         baseBranch: await currentBranch(repo),
       });
-      expect(run.state.phase).toBe("operator-gate");
+      expect(run.state.phase).toBe("scenarios");
+      expect(run.state.gate?.id).toBe("operator-gate");
       expect(run.state.artifacts.plan).toBeTruthy();
       expect(run.state.artifacts.prd).toBeTruthy();
       expect(run.state.artifacts.scenarios).toBeTruthy();
@@ -163,7 +170,8 @@ describe("operator gate request-changes loop", () => {
         answers: { decision: "request_changes" },
         notes: "Make scenarios more concrete",
       });
-      expect(run.state.phase).toBe("operator-gate");
+      expect(run.state.phase).toBe("scenarios");
+      expect(run.state.gate?.id).toBe("operator-gate");
       expect(run.state.artifacts.planningFeedback).toBe("Make scenarios more concrete");
       expect(String(run.state.artifacts.operatorNotes)).toContain("Make scenarios more concrete");
 

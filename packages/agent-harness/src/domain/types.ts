@@ -179,6 +179,8 @@ export type WorkPacket = {
   maxAgentTokens?: number;
   /** Wall-clock deadline applied to every agent invocation. */
   agentTimeoutMs: number;
+  /** Resume a prior Cursor agent session for this role when present. */
+  resumeAgentId?: string;
 };
 
 export type TokenUsage = {
@@ -201,7 +203,14 @@ export type ProviderTelemetry = {
   agentId?: string;
   providerRunId?: string;
   requestId?: string;
+  /** Effective usage used by run summaries and budget reporting. */
   usage?: TokenUsage;
+  /** Cumulative usage reported by the completed SDK turn. */
+  reportedUsage?: TokenUsage;
+  /** Reconciled billed usage returned by the provider usage endpoint. */
+  billedUsage?: TokenUsage;
+  /** Identifies which source supplied `usage`. Absent on legacy sessions. */
+  usageSource?: "reported" | "billed";
   cost?: UsageCost;
 };
 

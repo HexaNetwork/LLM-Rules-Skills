@@ -1483,10 +1483,15 @@ export function renderDashboardPage(): string {
       let content;
       if (app.usageTab === "model") content = renderUsageTable(report.byModel);
       else if (app.usageTab === "agent-type") content = renderUsageTable(report.byAgentType);
-      else content = '<div class="usage-summary"><div class="usage-metric"><span class="usage-metric-label">Tokens</span><strong class="usage-metric-value">' + formatTokens(total.usage.totalTokens) + '</strong></div>' +
-        '<div class="usage-metric"><span class="usage-metric-label">Cached tokens</span><strong class="usage-metric-value">' + formatTokens(total.usage.cacheReadTokens) + '</strong></div>' +
-        '<div class="usage-metric"><span class="usage-metric-label">Charged</span><strong class="usage-metric-value">' + formatCents(total.cost.chargedCents) + '</strong></div>' +
-        (total.usageReportedSessions < total.sessions || total.costReportedSessions < total.sessions ? '<div class="usage-note">* Some provider telemetry is pending or unavailable; reported totals are not estimates.</div>' : '') + '</div>';
+      else {
+        const notes = [];
+        if (total.usageReportedSessions < total.sessions) notes.push('Usage coverage: ' + formatTokens(total.usageReportedSessions) + ' of ' + formatTokens(total.sessions) + ' sessions. Active, failed, or unreconciled sessions are excluded.');
+        if (total.costReportedSessions < total.sessions) notes.push('Cost coverage: ' + formatTokens(total.costReportedSessions) + ' of ' + formatTokens(total.sessions) + ' sessions.');
+        content = '<div class="usage-summary"><div class="usage-metric"><span class="usage-metric-label">Reported tokens</span><strong class="usage-metric-value">' + formatTokens(total.usage.totalTokens) + '</strong></div>' +
+          '<div class="usage-metric"><span class="usage-metric-label">Cached tokens</span><strong class="usage-metric-value">' + formatTokens(total.usage.cacheReadTokens) + '</strong></div>' +
+          '<div class="usage-metric"><span class="usage-metric-label">Charged</span><strong class="usage-metric-value">' + formatCents(total.cost.chargedCents) + '</strong></div>' +
+          (notes.length ? '<div class="usage-note">' + notes.join(' ') + ' Reported totals are not estimates.</div>' : '') + '</div>';
+      }
       return tabsHtml + content;
     }
     function copyPathBtn(value, ariaLabel) {

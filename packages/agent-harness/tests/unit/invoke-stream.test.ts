@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseWorkerStdout } from "../../src/worker/invoke.js";
+import { parseWorkerStdout, selectUsageTelemetry } from "../../src/worker/invoke.js";
 
 describe("parseWorkerStdout", () => {
   it("reads the trailing result line from a JSONL worker stream", () => {
@@ -37,5 +37,36 @@ describe("parseWorkerStdout", () => {
     });
     const parsed = parseWorkerStdout(stdout);
     expect(parsed?.output).toEqual({ summary: "legacy" });
+  });
+});
+
+describe("selectUsageTelemetry", () => {
+  const reported = {
+    inputTokens: 100,
+    outputTokens: 20,
+    cacheReadTokens: 50,
+    cacheWriteTokens: 0,
+    totalTokens: 170,
+  };
+
+  it("prefers reconciled billed usage", () => {
+    const billed = { ...reported, inputTokens: 180, totalTokens: 250 };
+    expect(selectUsageTelemetry(reported, billed)).toEqual({ usage: billed, source: "billed" });
+  });
+
+  it("keeps reported usage while billed telemetry is still lagging", () => {
+    const billed = { ...reported, inputTokens: 30, totalTokens: 100 };
+    expect(selectUsageTelemetry(reported, billed)).toEqual({ usage: reported, source: "reported" });
+  });
+
+  it("uses whichever single source is available", () => {
+    expect(selectUsageTelemetry(reported, undefined)).toEqual({
+      usage: reported,
+      source: "reported",
+    });
+    expect(selectUsageTelemetry(undefined, reported)).toEqual({
+      usage: reported,
+      source: "billed",
+    });
   });
 });

@@ -62,6 +62,9 @@ export type WorkerInvokeResult = {
     providerRunId: string;
     requestId?: string;
     usage?: TokenUsage;
+    reportedUsage?: TokenUsage;
+    billedUsage?: TokenUsage;
+    usageSource?: "reported" | "billed";
     cost?: UsageCost;
     tokenCapExceeded?: boolean;
   };
@@ -70,6 +73,8 @@ export type WorkerInvokeResult = {
 type ControlEmitter = (event: WorkerControlEvent) => void;
 
 const USAGE_LOOKUP_TIMEOUT_MS = 5_000;
+const USAGE_RETRY_INTERVAL_MS = 500;
+const USAGE_RECONCILE_WINDOW_MS = 4_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_SHELL_OUTPUT_CHARS = 8_000;
 
@@ -144,13 +149,15 @@ async function invokeAgentSession(
     output = { text };
   }
 
+  const reportedUsage = result.usage ?? run.usage;
   const billed = await withAgentTimeout(
-    readUsage(agent),
+    readReconciledUsage(agent, reportedUsage),
     USAGE_LOOKUP_TIMEOUT_MS,
     undefined,
     "usage",
   ).catch(() => undefined);
-  const usage = result.usage ?? run.usage ?? billed?.usage;
+  const selected = selectUsageTelemetry(reportedUsage, billed?.usage);
+  const usage = selected.usage;
   const tokenCapExceeded = checkTokenCap(request.role, usage, request.maxAgentTokens);
   emitControl(emit, "provider_status", { status: "finalized" });
 
@@ -165,6 +172,9 @@ async function invokeAgentSession(
       providerRunId: run.id,
       ...(run.requestId ? { requestId: run.requestId } : {}),
       ...(usage ? { usage } : {}),
+      ...(reportedUsage ? { reportedUsage } : {}),
+      ...(billed?.usage ? { billedUsage: billed.usage } : {}),
+      ...(selected.source ? { usageSource: selected.source } : {}),
       ...(billed?.cost ? { cost: billed.cost } : {}),
       ...(tokenCapExceeded ? { tokenCapExceeded: true } : {}),
     },
@@ -346,7 +356,7 @@ function resolveModel(configured: string | undefined): string {
   if (configured === "small" && process.env.AGENT_HARNESS_SMALL_MODEL) {
     return process.env.AGENT_HARNESS_SMALL_MODEL;
   }
-  return process.env.AGENT_HARNESS_MODEL ?? "composer-2.5";
+  return process.env.AGENT_HARNESS_MODEL ?? "auto";
 }
 
 async function readUsage(agent: { getUsage(): Promise<AgentUsage> }): Promise<AgentUsage | undefined> {
@@ -355,6 +365,35 @@ async function readUsage(agent: { getUsage(): Promise<AgentUsage> }): Promise<Ag
   } catch {
     return undefined;
   }
+}
+
+async function readReconciledUsage(
+  agent: { getUsage(): Promise<AgentUsage> },
+  reportedUsage: TokenUsage | undefined,
+): Promise<AgentUsage | undefined> {
+  const deadline = Date.now() + USAGE_RECONCILE_WINDOW_MS;
+  let latest = await readUsage(agent);
+  while (
+    reportedUsage &&
+    Date.now() < deadline &&
+    (!latest || latest.usage.totalTokens < reportedUsage.totalTokens)
+  ) {
+    await new Promise<void>((resolve) => setTimeout(resolve, USAGE_RETRY_INTERVAL_MS));
+    latest = (await readUsage(agent)) ?? latest;
+  }
+  return latest;
+}
+
+export function selectUsageTelemetry(
+  reportedUsage: TokenUsage | undefined,
+  billedUsage: TokenUsage | undefined,
+): { usage?: TokenUsage; source?: "reported" | "billed" } {
+  if (billedUsage && (!reportedUsage || billedUsage.totalTokens >= reportedUsage.totalTokens)) {
+    return { usage: billedUsage, source: "billed" };
+  }
+  if (reportedUsage) return { usage: reportedUsage, source: "reported" };
+  if (billedUsage) return { usage: billedUsage, source: "billed" };
+  return {};
 }
 
 function extractText(run: RunResult | { result?: unknown }): string {

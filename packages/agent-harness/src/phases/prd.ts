@@ -1,9 +1,9 @@
 import type { Context } from "@deepseek-ai/cordis";
 import {
-  buildDocsWriterInput,
   normalizeDocsWriterOutput,
   writeDocsWriterArtifacts,
 } from "../domain/docs-writer.js";
+import { buildDocsWriterInput } from "../domain/role-packets.js";
 import type { FogResolution, Phase, PhaseResult, Run } from "../domain/types.js";
 import { invokeRole } from "./helpers.js";
 

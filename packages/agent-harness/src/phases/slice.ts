@@ -1,4 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
+import { buildIssueSlicerInput } from "../domain/role-packets.js";
 import type { Phase, PhaseResult, Run, Task } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
 
@@ -7,11 +8,16 @@ export function createSlicePhase(ctx: Context): Phase {
     id: "slice",
     async advance(run: Run): Promise<PhaseResult> {
       const output = asRecord(
-        await invokeRole(ctx, run, "issue-slicer", {
-          plan: run.state.artifacts.plan,
-          prd: run.state.artifacts.prd,
-          scenarios: run.state.artifacts.scenarios,
-        }),
+        await invokeRole(
+          ctx,
+          run,
+          "issue-slicer",
+          buildIssueSlicerInput({
+            plan: run.state.artifacts.plan,
+            prd: run.state.artifacts.prd,
+            scenarios: run.state.artifacts.scenarios,
+          }),
+        ),
       );
       const tasks = normalizeTasks(output.tasks, run.state.idea);
       run.state.tasks = tasks;

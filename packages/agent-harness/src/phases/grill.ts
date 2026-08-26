@@ -6,6 +6,7 @@ import {
   openFog,
   reconcileFog,
 } from "../domain/fog.js";
+import { buildGrillerInput } from "../domain/role-packets.js";
 import type {
   AnswerBatch,
   FogDraft,
@@ -23,12 +24,17 @@ export function createGrillPhase(ctx: Context): Phase {
     id: "grill",
     async advance(run: Run): Promise<PhaseResult> {
       const output = asRecord(
-        await invokeRole(ctx, run, "griller", {
-          brief: run.state.artifacts.reflectBrief,
-          fog: run.state.fog,
-          notes: run.state.artifacts.operatorNotes,
-          resolutions: run.state.artifacts.resolutions,
-        }),
+        await invokeRole(
+          ctx,
+          run,
+          "griller",
+          buildGrillerInput({
+            brief: run.state.artifacts.reflectBrief,
+            fog: run.state.fog,
+            notes: run.state.artifacts.operatorNotes,
+            resolutions: run.state.artifacts.resolutions,
+          }),
+        ),
       );
       let nextFog;
       let resolutions: FogResolution[];

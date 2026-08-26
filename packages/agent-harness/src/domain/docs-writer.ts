@@ -1,6 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { flattenResolutions, slimBrief } from "./packet-slim.js";
 import type { FogResolution } from "./types.js";
+
+export { flattenResolutions, slimBrief } from "./packet-slim.js";
 
 export type GlossaryEntry = {
   term: string;
@@ -42,39 +45,6 @@ export function buildDocsWriterInput(input: DocsWriterPacketInput): Record<strin
   if (input.planningFeedback !== undefined) packet.planningFeedback = input.planningFeedback;
   if (input.operatorNotes !== undefined) packet.operatorNotes = input.operatorNotes;
   return packet;
-}
-
-export function slimBrief(reflectBrief: unknown): string | Record<string, unknown> {
-  if (typeof reflectBrief === "string") return reflectBrief;
-  if (!reflectBrief || typeof reflectBrief !== "object") {
-    return String(reflectBrief ?? "");
-  }
-  const record = reflectBrief as Record<string, unknown>;
-  if (typeof record.confirmed === "string" && record.confirmed.trim()) {
-    return record.confirmed.trim();
-  }
-  const structured = asRecord(record.structured) ?? asRecord(record.confirmedStructured);
-  if (structured) {
-    return {
-      restatement: structured.restatement,
-      goal: structured.goal,
-      inScope: structured.inScope,
-      outOfScope: structured.outOfScope,
-      assumptions: structured.assumptions,
-    };
-  }
-  return record;
-}
-
-function flattenResolutions(resolutions: unknown): Record<string, string> {
-  if (!resolutions || typeof resolutions !== "object" || Array.isArray(resolutions)) {
-    return {};
-  }
-  const flat: Record<string, string> = {};
-  for (const [key, value] of Object.entries(resolutions as Record<string, unknown>)) {
-    if (typeof value === "string") flat[key] = value;
-  }
-  return flat;
 }
 
 export async function loadGlossaryContext(

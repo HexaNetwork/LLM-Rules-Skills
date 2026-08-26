@@ -122,6 +122,8 @@ export const ROLE_RULES: Record<AgentRole, string[]> = {
   ],
   "project-profiler": [
     "Infer verification commands and test globs from the repository; do not invent tooling.",
+    "Propose only commands that can run in the packet runtime (Linux container when mode is docker; host-local when mode is none).",
+    "Use the slim brief only for optional feature-specific commands; use liveVerification as a hint when it matches repo and runtime evidence.",
     "Always return a generic project-wide command when the repo has one, even if you also propose feature-specific commands.",
     "Feature-specific commands are optional; only include them when a narrower command clearly covers this brief.",
     "Return exactly one raw JSON object matching the expected output contract.",

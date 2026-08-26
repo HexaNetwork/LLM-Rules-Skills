@@ -1,4 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
+import { buildMessageWriterInput } from "../domain/role-packets.js";
 import type { Phase, PhaseResult, Run } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
 
@@ -7,10 +8,16 @@ export function createPublishPhase(ctx: Context): Phase {
     id: "publish",
     async advance(run: Run): Promise<PhaseResult> {
       const copy = asRecord(
-        await invokeRole(ctx, run, "message-writer", {
-          idea: run.state.idea,
-          plan: run.state.artifacts.plan,
-        }),
+        await invokeRole(
+          ctx,
+          run,
+          "message-writer",
+          buildMessageWriterInput({
+            idea: run.state.idea,
+            plan: run.state.artifacts.plan,
+            tasks: run.state.tasks,
+          }),
+        ),
       );
       const title = String(copy.title ?? run.state.idea).slice(0, 72);
       const body = String(copy.body ?? run.state.idea);

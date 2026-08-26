@@ -7,6 +7,7 @@ import {
   formatReflectRestatement,
   type ReflectOutput,
 } from "../domain/reflect.js";
+import { buildReflectorInput } from "../domain/role-packets.js";
 import type { AnswerBatch, Phase, PhaseResult, Question, Run } from "../domain/types.js";
 import { invokeRole } from "./helpers.js";
 
@@ -20,7 +21,7 @@ export function createReflectPhase(ctx: Context): Phase {
       let output: ReflectOutput;
       try {
         output = coerceReflectOutput(
-          await invokeRole(ctx, run, "reflector", { idea: run.state.idea }),
+          await invokeRole(ctx, run, "reflector", buildReflectorInput({ idea: run.state.idea })),
         );
       } catch (error) {
         return contractBlock(error);

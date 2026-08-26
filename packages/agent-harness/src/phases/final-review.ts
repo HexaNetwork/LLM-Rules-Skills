@@ -1,5 +1,6 @@
 import type { Context } from "@deepseek-ai/cordis";
-import type { Phase, PhaseResult, Run } from "../domain/types.js";
+import { buildImplementerRepairInput, buildReviewerInput } from "../domain/role-packets.js";
+import type { Phase, PhaseResult, Run, VerificationEvidence } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
 import {
   environmentBlock,
@@ -24,12 +25,17 @@ export function createFinalReviewPhase(ctx: Context): Phase {
             retriable: true,
           };
         }
-        await invokeRole(ctx, run, "implementer", {
-          repair: true,
-          finalReview: review,
-          plan: run.state.artifacts.plan,
-          tasks: run.state.tasks,
-        });
+        await invokeRole(
+          ctx,
+          run,
+          "implementer",
+          buildImplementerRepairInput({
+            repair: true,
+            finalReview: review,
+            plan: run.state.artifacts.plan,
+            tasks: run.state.tasks,
+          }),
+        );
         let evidence = await verifyWithHarness(ctx, run);
         if (evidence && evidence.classification === "environment_failure") {
           evidence = await repairImageForEnvironmentFailure(ctx, run, evidence);
@@ -49,12 +55,19 @@ export function createFinalReviewPhase(ctx: Context): Phase {
 
 async function reviewSlice(ctx: Context, run: Run): Promise<Record<string, unknown>> {
   const review = asRecord(
-    await invokeRole(ctx, run, "reviewer", {
-      plan: run.state.artifacts.plan,
-      tasks: run.state.tasks,
-      scenarios: run.state.artifacts.scenarioTest,
-      verification: run.state.artifacts.finalReviewVerification,
-    }),
+    await invokeRole(
+      ctx,
+      run,
+      "reviewer",
+      buildReviewerInput({
+        plan: run.state.artifacts.plan,
+        tasks: run.state.tasks,
+        scenarioTest: run.state.artifacts.scenarioTest,
+        verification: run.state.artifacts.finalReviewVerification as
+          | VerificationEvidence
+          | undefined,
+      }),
+    ),
   );
   run.state.artifacts.finalReview = review;
   return review;

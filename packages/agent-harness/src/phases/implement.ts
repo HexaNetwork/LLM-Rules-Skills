@@ -1,6 +1,7 @@
 import { appendFile } from "node:fs/promises";
 import path from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
+import { buildImplementerInput, buildTaskReviewerInput } from "../domain/role-packets.js";
 import type { Phase, PhaseResult, Run, Task } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
 import { normalizeTasks } from "./slice.js";
@@ -42,13 +43,18 @@ export function createImplementPhase(ctx: Context): Phase {
         task.verification?.classification === "environment_failure" && !task.reviewSummary;
       if (!envRecheck) {
         implemented = asRecord(
-          await invokeRole(ctx, run, "implementer", {
-            task,
-            brief: run.state.artifacts.reflectBrief,
-            plan: run.state.artifacts.plan,
-            reviewFeedback: task.reviewSummary,
-            verification: task.verification,
-          }),
+          await invokeRole(
+            ctx,
+            run,
+            "implementer",
+            buildImplementerInput({
+              task,
+              brief: run.state.artifacts.reflectBrief,
+              plan: run.state.artifacts.plan,
+              reviewFeedback: task.reviewSummary,
+              verification: task.verification,
+            }),
+          ),
         );
         await writeImplementationNote(run, task, implemented);
       }
@@ -73,11 +79,16 @@ export function createImplementPhase(ctx: Context): Phase {
       }
 
       const review = asRecord(
-        await invokeRole(ctx, run, "task-reviewer", {
-          task,
-          implemented,
-          verification: task.verification,
-        }),
+        await invokeRole(
+          ctx,
+          run,
+          "task-reviewer",
+          buildTaskReviewerInput({
+            task,
+            implemented,
+            verification: task.verification,
+          }),
+        ),
       );
       task.attempts.review += 1;
       if (String(review.verdict ?? "approve") !== "approve") {

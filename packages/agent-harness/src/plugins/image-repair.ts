@@ -10,6 +10,7 @@ import {
   validateRepairedDockerfile,
   writeRunDockerfile,
 } from "../domain/image-repair.js";
+import { buildImageFixerInput } from "../domain/role-packets.js";
 import type { Run, VerificationEvidence } from "../domain/types.js";
 import { asRecord, invokeRole } from "../phases/helpers.js";
 import { verificationCommand } from "../phases/verification.js";
@@ -97,12 +98,17 @@ export function createImageRepairService(ctx: Context): ImageRepairService {
       let reply: Record<string, unknown>;
       try {
         reply = asRecord(
-          await invokeRole(ctx, run, "image-fixer", {
-            command,
-            output,
-            dockerfile: base,
-            image: runImageTag(runId),
-          }),
+          await invokeRole(
+            ctx,
+            run,
+            "image-fixer",
+            buildImageFixerInput({
+              command,
+              output,
+              dockerfile: base,
+              image: runImageTag(runId),
+            }),
+          ),
         );
       } catch (error) {
         return {

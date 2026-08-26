@@ -1,5 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
+import { buildProjectProfilerInput } from "../domain/role-packets.js";
 import type { Phase, PhaseResult, Question, QuestionOption, Run } from "../domain/types.js";
+import { resolveVerificationRuntime } from "../domain/verification-runtime.js";
 import { asRecord, invokeRole } from "./helpers.js";
 import { environmentBlock, repairImageForEnvironmentFailure } from "./verification.js";
 
@@ -70,13 +72,16 @@ async function proposeVerification(ctx: Context, run: Run): Promise<Verification
   const live = run.settings.verification;
   try {
     const output = asRecord(
-      await invokeRole(ctx, run, "project-profiler", {
-        brief: run.state.artifacts.reflectBrief,
-        idea: run.state.idea,
-        liveVerification: live,
-        fog: run.state.fog,
-        resolutions: run.state.artifacts.resolutions,
-      }),
+      await invokeRole(
+        ctx,
+        run,
+        "project-profiler",
+        buildProjectProfilerInput({
+          brief: run.state.artifacts.reflectBrief,
+          liveVerification: live,
+          runtime: await resolveVerificationRuntime(ctx, run),
+        }),
+      ),
     );
     return normalizeProposal(output, live);
   } catch {

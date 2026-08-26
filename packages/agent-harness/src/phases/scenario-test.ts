@@ -1,4 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
+import { buildFixerInput } from "../domain/role-packets.js";
 import type { Phase, PhaseResult, Run } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
 import {
@@ -21,10 +22,15 @@ export function createScenarioTestPhase(ctx: Context): Phase {
           return { kind: "block", reason: environmentBlock(verification), retriable: true };
         }
         const repair = asRecord(
-          await invokeRole(ctx, run, "fixer", {
-            failure: verification.output,
-            scenarios: run.state.artifacts.scenarios,
-          }),
+          await invokeRole(
+            ctx,
+            run,
+            "fixer",
+            buildFixerInput({
+              failure: verification.output,
+              scenarios: run.state.artifacts.scenarios,
+            }),
+          ),
         );
         run.state.artifacts.scenarioRepair = repair;
         if (repair.passed === true) return { kind: "continue" };

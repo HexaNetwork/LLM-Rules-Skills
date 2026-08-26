@@ -152,7 +152,7 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
       const workflowBundleId = input.workflowBundleId ?? "default";
       const first = ctx.workflow.firstPhase(workflowBundleId);
       const runId = randomUUID();
-      await setWorking(runId, workingOn("Creating worktree", { phase: first }));
+      await setWorking(runId, workingOn("Updating base branch", { phase: first }));
       try {
         const requested = input.baseBranch?.trim();
         const baseBranch =

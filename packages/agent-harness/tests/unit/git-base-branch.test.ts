@@ -55,4 +55,60 @@ describe("GitService base branch", () => {
     expect(await git(created.worktreePath, ["rev-parse", "HEAD"])).toBe(featureSha);
     expect(await git(created.worktreePath, ["status", "--porcelain"])).toBe("");
   });
+
+  it("pullBranch fast-forwards a stale local branch from origin before createWorktree", async () => {
+    const repo = await createTempRepo();
+    const worktreeRoot = await createTempDir("harness-wt-");
+    const remoteDir = await createTempDir("remote-");
+    const defaultBranch = await git(repo, ["branch", "--show-current"]);
+    await git(remoteDir, ["init", "--bare"]);
+    await git(repo, ["remote", "add", "origin", remoteDir]);
+    await git(repo, ["push", "-u", "origin", defaultBranch]);
+
+    await git(repo, ["checkout", "-b", "sync-base"]);
+    await writeFile(path.join(repo, "BASE.md"), "shared base\n", "utf8");
+    await git(repo, ["add", "BASE.md"]);
+    await git(repo, ["commit", "-m", "shared base"]);
+    await git(repo, ["push", "-u", "origin", "sync-base"]);
+    const staleSha = await git(repo, ["rev-parse", "sync-base"]);
+
+    const remoteWork = await createTempDir("remote-work-");
+    await git(remoteWork, ["clone", remoteDir, "."]);
+    await git(remoteWork, ["checkout", "sync-base"]);
+    await writeFile(path.join(remoteWork, "REMOTE.md"), "remote tip\n", "utf8");
+    await git(remoteWork, ["add", "REMOTE.md"]);
+    await git(remoteWork, ["commit", "-m", "remote tip"]);
+    await git(remoteWork, ["push", "origin", "sync-base"]);
+    const remoteSha = await git(remoteWork, ["rev-parse", "sync-base"]);
+    expect(remoteSha).not.toBe(staleSha);
+
+    const gitService = createGitService();
+    const created = await gitService.createWorktree(
+      {
+        projectKey: "toy",
+        controlRoot: repo,
+        worktreeRoot,
+        createdAt: new Date().toISOString(),
+      },
+      "run-pull-1",
+      "sync-base",
+    );
+
+    expect(created.baseSha).toBe(remoteSha);
+    expect(await git(repo, ["rev-parse", "sync-base"])).toBe(remoteSha);
+    expect(await git(created.worktreePath, ["rev-parse", "HEAD"])).toBe(remoteSha);
+  });
+
+  it("pullBranch is a no-op when the repository has no remotes", async () => {
+    const repo = await createTempRepo();
+    const gitService = createGitService();
+    const defaultBranch = await git(repo, ["branch", "--show-current"]);
+    await writeFile(path.join(repo, "ONLY-LOCAL.md"), "local\n", "utf8");
+    await git(repo, ["add", "ONLY-LOCAL.md"]);
+    await git(repo, ["commit", "-m", "local only"]);
+    const tip = await git(repo, ["rev-parse", defaultBranch]);
+
+    await expect(gitService.pullBranch(repo, defaultBranch)).resolves.toBeUndefined();
+    expect(await git(repo, ["rev-parse", defaultBranch])).toBe(tip);
+  });
 });

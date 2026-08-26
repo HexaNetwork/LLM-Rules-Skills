@@ -54,7 +54,7 @@ describe("run working progress", () => {
         }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      expect(working?.summary).toMatch(/Invoking reflector|Running reflect|Creating worktree|Entering reflect/);
+      expect(working?.summary).toMatch(/Invoking reflector|Running reflect|Updating base branch|Entering reflect/);
       if (working?.summary?.includes("Invoking")) {
         expect(working.role).toBe("reflector");
         expect(working.phase).toBe("reflect");

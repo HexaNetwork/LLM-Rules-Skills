@@ -355,14 +355,13 @@ export function createRunLifecycle(ctx: Context): RunLifecycleService {
 }
 
 export const runLifecyclePlugin = Object.assign(
-  (ctx: Context) => {
+  async (ctx: Context) => {
     ctx.provide("runLifecycle", createRunLifecycle(ctx));
     // Any invocation that predates this host process is orphaned by
     // definition. Reconcile it at startup so stale progress cannot survive a
-    // coordinator restart indefinitely.
-    queueMicrotask(() => {
-      void recoverOrphanedRuns(ctx);
-    });
+    // coordinator restart indefinitely. Await here so short-lived CLI commands
+    // finish recovery before the host context is disposed.
+    await recoverOrphanedRuns(ctx);
   },
   {
     inject: ["store", "settings", "projects", "workflow", "phases", "git", "sandbox"],

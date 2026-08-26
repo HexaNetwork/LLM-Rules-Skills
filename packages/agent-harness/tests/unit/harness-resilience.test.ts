@@ -28,6 +28,13 @@ describe("worker process timeouts", () => {
   });
 });
 
+describe("startup recovery lifecycle", () => {
+  it("does not throw when disposing immediately after boot", async () => {
+    const { host } = await bootTestHost();
+    await expect(host.dispose()).resolves.toBeUndefined();
+  });
+});
+
 describe("finalized session reconciliation", () => {
   it("recovers the final structured assistant output", () => {
     const result = recoverFinalizedWorker([

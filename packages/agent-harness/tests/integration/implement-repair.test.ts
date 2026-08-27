@@ -20,15 +20,19 @@ const REVIEW_ONLY: WorkflowBundle = { id: "review-only", phases: ["implement", "
 
 type Recorder = {
   inputs: unknown[];
+  packets: WorkPacket[];
   reply: (role: string, packet: WorkPacket) => unknown;
 };
 
 function recorder(reply: (input: Record<string, unknown>, calls: number) => unknown): Recorder {
   const inputs: unknown[] = [];
+  const packets: WorkPacket[] = [];
   return {
     inputs,
+    packets,
     reply: (_role, packet) => {
       inputs.push(packet.input);
+      packets.push(packet);
       return reply((packet.input ?? {}) as Record<string, unknown>, inputs.length);
     },
   };
@@ -78,6 +82,8 @@ describe("implement phase repair loop", () => {
       expect(run.state.status).toBe("completed");
       expect(implementer.inputs).toHaveLength(2);
       expect(lastInput(implementer).reviewFeedback).toBe("Missing validation");
+      expect(reviewer.packets[0]?.resumeAgentId).toBeUndefined();
+      expect(reviewer.packets[1]?.resumeAgentId).toBe("fake-task-reviewer");
       const done = run.state.tasks[0]!;
       expect(done.status).toBe("committed");
       expect(done.reviewSummary).toBeUndefined();
@@ -434,6 +440,8 @@ describe("final-review repair loop", () => {
       expect(run.state.artifacts.finalReviewAttempts).toBe(1);
       expect(implementer.inputs).toHaveLength(2);
       expect(reviewer.inputs).toHaveLength(2);
+      expect(reviewer.packets[0]?.resumeAgentId).toBeUndefined();
+      expect(reviewer.packets[1]?.resumeAgentId).toBe("fake-reviewer");
       const repair = lastInput(implementer);
       expect(repair.repair).toBe(true);
       expect((repair.finalReview as { summary?: string } | undefined)?.summary).toBe(

@@ -28,11 +28,16 @@ export const ROLE_INVOKE_MODES: Partial<Record<AgentRole, RoleInvokeMode>> = {
   planner: "completion",
   "scenario-planner": "completion",
   "issue-slicer": "completion",
-  "task-reviewer": "completion",
-  reviewer: "completion",
   "message-writer": "completion",
   "image-fixer": "completion",
 };
+
+/**
+ * Agent-session resume policy (completion roles are always one-shot):
+ * - griller, reflector: resume every turn in the phase
+ * - implementer: resume only when retrying the same task / final-review repair loop
+ * - task-reviewer, reviewer: resume when re-reviewing after a rejected pass on the same task or slice
+ */
 
 export function invokeModeFor(role: string): RoleInvokeMode {
   if (role in ROLE_INVOKE_MODES) return ROLE_INVOKE_MODES[role as AgentRole]!;

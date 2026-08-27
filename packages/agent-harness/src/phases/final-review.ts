@@ -1,5 +1,6 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { buildImplementerRepairInput, buildReviewerInput } from "../domain/role-packets.js";
+import { shouldResumeFinalReviewer } from "../domain/role-agents.js";
 import type { Phase, PhaseResult, Run, VerificationEvidence } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
 import {
@@ -37,6 +38,7 @@ export function createFinalReviewPhase(ctx: Context): Phase {
             tasks: run.state.tasks,
             verificationCommands: verificationCommandsForRun(run),
           }),
+          { resumeAgent: attempt > 1 },
         );
         let evidence = await verifyWithHarness(ctx, run);
         if (evidence && evidence.classification === "environment_failure") {
@@ -69,6 +71,7 @@ async function reviewSlice(ctx: Context, run: Run): Promise<Record<string, unkno
           | VerificationEvidence
           | undefined,
       }),
+      { resumeAgent: shouldResumeFinalReviewer(run) },
     ),
   );
   run.state.artifacts.finalReview = review;

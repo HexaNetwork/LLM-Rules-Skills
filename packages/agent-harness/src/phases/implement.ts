@@ -2,6 +2,7 @@ import { appendFile } from "node:fs/promises";
 import path from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import { buildImplementerInput, buildTaskReviewerInput } from "../domain/role-packets.js";
+import { shouldResumeImplementer, shouldResumeTaskReviewer } from "../domain/role-agents.js";
 import type { Phase, PhaseResult, Run, Task } from "../domain/types.js";
 import { asRecord, invokeRole } from "./helpers.js";
 import { normalizeTasks } from "./slice.js";
@@ -56,6 +57,7 @@ export function createImplementPhase(ctx: Context): Phase {
               verification: task.verification,
               verificationCommands: verificationCommandsForRun(run, task.verification),
             }),
+            { resumeAgent: shouldResumeImplementer(task) },
           ),
         );
         await writeImplementationNote(run, task, implemented);
@@ -90,6 +92,7 @@ export function createImplementPhase(ctx: Context): Phase {
             implemented,
             verification: task.verification,
           }),
+          { resumeAgent: shouldResumeTaskReviewer(task) },
         ),
       );
       task.attempts.review += 1;

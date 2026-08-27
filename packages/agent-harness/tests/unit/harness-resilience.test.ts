@@ -57,6 +57,31 @@ describe("finalized session reconciliation", () => {
     });
   });
 
+  it("recovers completion-mode output persisted before finalized", () => {
+    const result = recoverFinalizedWorker([
+      { kind: "provider_status", status: "completion_start" },
+      { kind: "run_status", status: "finished", runId: "run-2", requestId: "request-2" },
+      {
+        kind: "worker_result",
+        output: { verdict: "approve", summary: "Slice matches the plan." },
+        telemetry: {
+          provider: "cursor",
+          model: "auto",
+          agentId: "completion",
+          providerRunId: "run-2",
+          requestId: "request-2",
+        },
+      },
+      { kind: "provider_status", status: "finalized" },
+    ]);
+    expect(result?.output).toEqual({ verdict: "approve", summary: "Slice matches the plan." });
+    expect(result?.telemetry).toMatchObject({
+      agentId: "completion",
+      providerRunId: "run-2",
+      requestId: "request-2",
+    });
+  });
+
   it("turns a startup orphan into a retriable blocked run", async () => {
     const { host } = await bootTestHost();
     const runId = "orphaned-run";

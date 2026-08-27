@@ -1,15 +1,21 @@
 import type { Context } from "@deepseek-ai/cordis";
-import { readRoleAgents } from "../domain/role-agents.js";
+import { clearRoleAgent, readRoleAgents } from "../domain/role-agents.js";
 import type { Run } from "../domain/types.js";
 import { workingOn } from "../domain/working.js";
 
 const CHARS_PER_TOKEN = 4;
+
+export type InvokeRoleOptions = {
+  /** Resume the persisted Cursor agent for this role (grill turns, same-task retries). Default false. */
+  resumeAgent?: boolean;
+};
 
 export async function invokeRole(
   ctx: Context,
   run: Run,
   role: string,
   input: unknown,
+  options: InvokeRoleOptions = {},
 ): Promise<unknown> {
   await ctx.store.writeProgress(
     run.identity.runId,
@@ -19,6 +25,8 @@ export async function invokeRole(
     projectKey: run.identity.projectKey,
     maxCharacters: run.settings.budgets.guidanceTokens * CHARS_PER_TOKEN,
   });
+  const resumeAgent = options.resumeAgent === true;
+  if (!resumeAgent) clearRoleAgent(run, role);
   const roleAgents = readRoleAgents(run.state.artifacts);
   const packet = ctx.packets.build({
     role,
@@ -27,7 +35,7 @@ export async function invokeRole(
     input,
     guidance: context.text,
     settings: run.settings,
-    resumeAgentId: roleAgents[role],
+    resumeAgentId: resumeAgent ? roleAgents[role] : undefined,
   });
   const output = await ctx.agents.invoke(role, packet);
   const state = await ctx.store.readState(run.identity.runId);

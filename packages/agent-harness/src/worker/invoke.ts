@@ -179,25 +179,27 @@ async function runAgentSession(
   const selected = selectUsageTelemetry(reportedUsage, billed?.usage);
   const usage = selected.usage;
   const tokenCapExceeded = checkTokenCap(request.role, usage, request.maxAgentTokens);
+  const telemetry: WorkerInvokeResult["telemetry"] = {
+    provider: "cursor",
+    model: result.model?.id ?? run.model?.id ?? requestedModel,
+    agentId: agent.agentId,
+    providerRunId: run.id,
+    ...(run.requestId ? { requestId: run.requestId } : {}),
+    ...(usage ? { usage } : {}),
+    ...(reportedUsage ? { reportedUsage } : {}),
+    ...(billed?.usage ? { billedUsage: billed.usage } : {}),
+    ...(selected.source ? { usageSource: selected.source } : {}),
+    ...(billed?.cost ? { cost: billed.cost } : {}),
+    ...(tokenCapExceeded ? { tokenCapExceeded: true } : {}),
+  };
+  emitWorkerResult(emit, output, telemetry);
   emitControl(emit, "provider_status", { status: "finalized" });
 
   return {
     protocolVersion: 1,
     output,
     submittedPrompt: prompt,
-    telemetry: {
-      provider: "cursor",
-      model: result.model?.id ?? run.model?.id ?? requestedModel,
-      agentId: agent.agentId,
-      providerRunId: run.id,
-      ...(run.requestId ? { requestId: run.requestId } : {}),
-      ...(usage ? { usage } : {}),
-      ...(reportedUsage ? { reportedUsage } : {}),
-      ...(billed?.usage ? { billedUsage: billed.usage } : {}),
-      ...(selected.source ? { usageSource: selected.source } : {}),
-      ...(billed?.cost ? { cost: billed.cost } : {}),
-      ...(tokenCapExceeded ? { tokenCapExceeded: true } : {}),
-    },
+    telemetry,
   };
 }
 
@@ -257,25 +259,36 @@ async function invokeCompletion(
   }
   const usage = run.usage;
   const tokenCapExceeded = checkTokenCap(request.role, usage, request.maxAgentTokens);
+  const telemetry: WorkerInvokeResult["telemetry"] = {
+    provider: "cursor",
+    model: run.model?.id ?? requestedModel,
+    agentId: "completion",
+    providerRunId: run.id ?? "completion",
+    ...(run.requestId ? { requestId: run.requestId } : {}),
+    ...(usage ? { usage } : {}),
+    ...(tokenCapExceeded ? { tokenCapExceeded: true } : {}),
+  };
+  emitWorkerResult(emit, output, telemetry);
   emitControl(emit, "provider_status", { status: "finalized" });
   return {
     protocolVersion: 1,
     output,
     submittedPrompt: prompt,
-    telemetry: {
-      provider: "cursor",
-      model: run.model?.id ?? requestedModel,
-      agentId: "completion",
-      providerRunId: run.id ?? "completion",
-      ...(run.requestId ? { requestId: run.requestId } : {}),
-      ...(usage ? { usage } : {}),
-      ...(tokenCapExceeded ? { tokenCapExceeded: true } : {}),
-    },
+    telemetry,
   };
 }
 
 function emitControl(emit: ControlEmitter, kind: string, payload: Record<string, unknown> = {}): void {
   emit({ stream: "control", at: new Date().toISOString(), kind, ...payload });
+}
+
+/** Persist parsed output before finalized so hung workers can still be reconciled. */
+function emitWorkerResult(
+  emit: ControlEmitter,
+  output: unknown,
+  telemetry: WorkerInvokeResult["telemetry"],
+): void {
+  emitControl(emit, "worker_result", { output, telemetry });
 }
 
 function emitDeltaToolEvents(emit: ControlEmitter, update: InteractionUpdate): void {

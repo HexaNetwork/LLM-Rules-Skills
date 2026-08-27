@@ -296,11 +296,20 @@ export function recoverFinalizedWorker(events: Array<Record<string, unknown>>): 
   let agentId = "reconciled";
   let providerRunId = "reconciled";
   let requestId: string | undefined;
+  let recoveredTelemetry: WorkerInvokeResult["telemetry"] | undefined;
   for (const event of events) {
     if (typeof event.agentId === "string") agentId = event.agentId;
     if (event.kind === "run_status") {
       if (typeof event.runId === "string") providerRunId = event.runId;
       if (typeof event.requestId === "string") requestId = event.requestId;
+    }
+    if (event.kind === "worker_result" && "output" in event) {
+      output = event.output;
+      const telemetry = event.telemetry;
+      if (telemetry && typeof telemetry === "object") {
+        recoveredTelemetry = telemetry as WorkerInvokeResult["telemetry"];
+      }
+      continue;
     }
     if (event.kind !== "step" || !event.step || typeof event.step !== "object") continue;
     const step = event.step as { type?: unknown; message?: { text?: unknown } };
@@ -316,13 +325,15 @@ export function recoverFinalizedWorker(events: Array<Record<string, unknown>>): 
     protocolVersion: 1,
     output,
     submittedPrompt: "[recovered from finalized session event stream]",
-    telemetry: {
-      provider: "cursor",
-      model: "reconciled",
-      agentId,
-      providerRunId,
-      ...(requestId ? { requestId } : {}),
-    },
+    telemetry:
+      recoveredTelemetry ??
+      ({
+        provider: "cursor",
+        model: "reconciled",
+        agentId,
+        providerRunId,
+        ...(requestId ? { requestId } : {}),
+      } satisfies WorkerInvokeResult["telemetry"]),
   };
 }
 

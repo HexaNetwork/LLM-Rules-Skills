@@ -21,7 +21,13 @@ export function createReflectPhase(ctx: Context): Phase {
       let output: ReflectOutput;
       try {
         output = coerceReflectOutput(
-          await invokeRole(ctx, run, "reflector", buildReflectorInput({ idea: run.state.idea })),
+          await invokeRole(
+            ctx,
+            run,
+            "reflector",
+            buildReflectorInput({ idea: run.state.idea }),
+            { resumeAgent: true },
+          ),
         );
       } catch (error) {
         return contractBlock(error);

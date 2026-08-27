@@ -179,7 +179,7 @@ export type WorkPacket = {
   maxAgentTokens?: number;
   /** Wall-clock deadline applied to every agent invocation. */
   agentTimeoutMs: number;
-  /** Resume a prior Cursor agent session for this role when present. */
+  /** Resume a persisted Cursor agent when retrying the same unit of work (not for each new task). */
   resumeAgentId?: string;
 };
 

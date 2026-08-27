@@ -35,6 +35,7 @@ export function createGrillPhase(ctx: Context): Phase {
             notes: run.state.artifacts.operatorNotes,
             resolutions: run.state.artifacts.resolutions,
           }),
+          { resumeAgent: true },
         ),
       );
       let nextFog;

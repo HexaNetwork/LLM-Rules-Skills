@@ -3,7 +3,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { formatCursorAgentFailure } from "../domain/cursor-agent-error.js";
 import { invokeModeFor } from "../domain/agent-roles.js";
 import { readRoleAgents } from "../domain/role-agents.js";
-import type { AgentInvocation, WorkPacket } from "../domain/types.js";
+import type { AgentInvocation, ProviderTelemetry, TokenUsage, UsageCost, WorkPacket } from "../domain/types.js";
 import { workingOn } from "../domain/working.js";
 import {
   parseWorkerStdout,
@@ -399,6 +399,7 @@ function wrapWithSessions(
           phase: packet.phase,
           status: "completed",
           packet: packetSummary,
+          telemetry: summarizeTelemetry(invocation.telemetry),
         });
         terminalPersisted = true;
         return output;
@@ -520,10 +521,27 @@ export type PacketSummary = {
   inputChars: number;
   guidanceChars: number;
   retrievalChars: number;
+  budgetInputTokens: number;
+  budgetGuidanceTokens: number;
+  budgetGraphifyTokens: number;
   truncated: string[];
   maxAgentTokens?: number;
   agentTimeoutMs: number;
 };
+
+export type ActivityTelemetrySummary = {
+  usage?: TokenUsage;
+  cost?: UsageCost;
+};
+
+/** Compact usage/cost snapshot for terminal agent activity events. */
+export function summarizeTelemetry(telemetry?: ProviderTelemetry): ActivityTelemetrySummary | undefined {
+  if (!telemetry) return undefined;
+  const summary: ActivityTelemetrySummary = {};
+  if (telemetry.usage) summary.usage = telemetry.usage;
+  if (telemetry.cost) summary.cost = telemetry.cost;
+  return summary.usage || summary.cost ? summary : undefined;
+}
 
 /** Compact packet fingerprint for run Activity — full packet lives on the session. */
 export function summarizePacket(packet: WorkPacket): PacketSummary {
@@ -538,6 +556,9 @@ export function summarizePacket(packet: WorkPacket): PacketSummary {
     inputChars: inputJson.length,
     guidanceChars: packet.guidance.length,
     retrievalChars: packet.retrieval.length,
+    budgetInputTokens: packet.budget.inputTokens,
+    budgetGuidanceTokens: packet.budget.guidanceTokens,
+    budgetGraphifyTokens: packet.budget.graphifyTokens,
     truncated: [...packet.budget.truncated],
     agentTimeoutMs: packet.agentTimeoutMs,
   };

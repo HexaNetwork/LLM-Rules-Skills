@@ -1325,11 +1325,15 @@ export function renderDashboardPage(): string {
     }
     function renderActivity(activity) {
       const recent = [...activity].reverse();
+      const sessionTelemetry = {};
+      for (const session of app.sessions || []) {
+        if (session.sessionId) sessionTelemetry[session.sessionId] = session.telemetry;
+      }
       return recent.length ? '<div class="activity">' + recent.map((event) => {
         if (event.kind === "agent") {
           const failed = event.status === "failed";
           const label = esc(words(event.role || "agent")) + " · " + esc(words(event.phase || "phase")) + " · " + esc(words(event.status || "completed"));
-          const packetMeta = formatPacketSummary(event.packet);
+          const packetMeta = formatActivityMeta(event, sessionTelemetry);
           return '<div class="event agent' + (failed ? " failed" : "") + '"' + (event.sessionId ? ' data-session-ref="' + esc(event.sessionId) + '"' : "") + '>' +
             '<div class="event-main">' + label + '</div>' +
             (packetMeta ? '<div class="event-meta">' + esc(packetMeta) + '</div>' : '') +
@@ -1345,7 +1349,17 @@ export function renderDashboardPage(): string {
           '<div class="event-time">' + esc(relative(event.at)) + (event.revision != null ? ' · revision ' + esc(event.revision) : '') + '</div></div>';
       }).join("") + '</div>' : '<div class="empty-inline">No lifecycle activity recorded yet.</div>';
     }
-    function formatPacketSummary(packet) {
+    function formatActivityMeta(event, sessionTelemetry) {
+      const parts = [];
+      const telemetry = event.telemetry || (event.sessionId ? sessionTelemetry[event.sessionId] : undefined);
+      const hasUsage = Boolean(telemetry && telemetry.usage && telemetry.usage.totalTokens);
+      const packetMeta = formatPacketSummary(event.packet, event.status, hasUsage);
+      if (packetMeta) parts.push(packetMeta);
+      const usageMeta = formatTelemetryUsage(telemetry);
+      if (usageMeta) parts.push(usageMeta);
+      return parts.join(" · ");
+    }
+    function formatPacketSummary(packet, status, hasUsage) {
       if (!packet || typeof packet !== "object") return "";
       const parts = [];
       if (packet.model) parts.push(String(packet.model));
@@ -1354,12 +1368,32 @@ export function renderDashboardPage(): string {
       } else if (packet.inputKind) {
         parts.push("input:" + packet.inputKind);
       }
-      if (packet.inputChars != null) parts.push(packet.inputChars + "c in");
-      if (packet.guidanceChars) parts.push(packet.guidanceChars + "c guidance");
-      if (packet.retrievalChars) parts.push(packet.retrievalChars + "c retrieval");
+      const terminal = status === "completed" || status === "failed";
+      if (!terminal && packet.budgetInputTokens != null) {
+        parts.push(formatTokens(packet.budgetInputTokens) + " input budget");
+        if (packet.budgetGuidanceTokens) parts.push(formatTokens(packet.budgetGuidanceTokens) + " guidance budget");
+        if (packet.budgetGraphifyTokens) parts.push(formatTokens(packet.budgetGraphifyTokens) + " retrieval budget");
+      } else if (!hasUsage) {
+        if (packet.inputChars != null) parts.push(formatTokens(packet.inputChars) + " chars in");
+        if (packet.guidanceChars) parts.push(formatTokens(packet.guidanceChars) + " chars guidance");
+        if (packet.retrievalChars) parts.push(formatTokens(packet.retrievalChars) + " chars retrieval");
+      }
       if (Array.isArray(packet.truncated) && packet.truncated.length) {
         parts.push("truncated:" + packet.truncated.join(","));
       }
+      return parts.join(" · ");
+    }
+    function formatTelemetryUsage(telemetry) {
+      if (!telemetry || typeof telemetry !== "object") return "";
+      const usage = telemetry.usage;
+      if (!usage || typeof usage !== "object") return "";
+      const parts = [formatTokens(usage.totalTokens) + " tokens"];
+      if (usage.inputTokens || usage.outputTokens) {
+        parts.push(formatTokens(usage.inputTokens) + " in / " + formatTokens(usage.outputTokens) + " out");
+      }
+      if (usage.cacheReadTokens) parts.push(formatTokens(usage.cacheReadTokens) + " cache read");
+      const cost = telemetry.cost;
+      if (cost && cost.chargedCents) parts.push(formatCents(cost.chargedCents));
       return parts.join(" · ");
     }
     function sessionOpenKey(sessionId) {

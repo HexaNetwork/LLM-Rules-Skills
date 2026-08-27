@@ -129,6 +129,10 @@ describe("agentsPlugin cursor mode", () => {
             status: "completed",
             sessionId: sessions[0]!.sessionId,
             packet: expect.objectContaining({ model: "composer-2.5" }),
+            telemetry: expect.objectContaining({
+              usage: expect.objectContaining({ totalTokens: 120 }),
+              cost: expect.objectContaining({ chargedCents: 1.2 }),
+            }),
           }),
         ]),
       );

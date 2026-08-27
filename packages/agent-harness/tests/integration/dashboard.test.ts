@@ -205,6 +205,8 @@ describe("dashboard as runLifecycle client", () => {
       expect(html).toContain("sessionOpen");
       expect(html).toContain('details.session[data-session]');
       expect(html).toContain('event.kind === "agent"');
+      expect(html).toContain("formatTelemetryUsage");
+      expect(html).toContain("input budget");
       expect(html).toContain("session-status");
       expect(html).toContain("Usage & cost");
       expect(html).toContain('data-usage-tab="');

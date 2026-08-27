@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { summarizePacket } from "../../src/plugins/agents.js";
+import { summarizePacket, summarizeTelemetry } from "../../src/plugins/agents.js";
 import type { WorkPacket } from "../../src/domain/types.js";
 
 function packet(overrides: Partial<WorkPacket> = {}): WorkPacket {
@@ -32,9 +32,32 @@ describe("summarizePacket", () => {
       inputChars: JSON.stringify({ idea: "ship it", fog: [] }).length,
       guidanceChars: "be brief".length,
       retrievalChars: 0,
+      budgetInputTokens: 200,
+      budgetGuidanceTokens: 100,
+      budgetGraphifyTokens: 50,
       truncated: ["guidance"],
       maxAgentTokens: 40_000,
       agentTimeoutMs: 600_000,
     });
+  });
+});
+
+describe("summarizeTelemetry", () => {
+  it("keeps usage and cost for activity events", () => {
+    expect(
+      summarizeTelemetry({
+        provider: "cursor",
+        model: "composer-2.5",
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        cost: { rawCostCents: 2, chargedCents: 1.5 },
+      }),
+    ).toEqual({
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      cost: { rawCostCents: 2, chargedCents: 1.5 },
+    });
+  });
+
+  it("returns undefined when no usage or cost is present", () => {
+    expect(summarizeTelemetry({ provider: "fake", model: "fake" })).toBeUndefined();
   });
 });

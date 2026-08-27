@@ -1352,14 +1352,22 @@ export function renderDashboardPage(): string {
     function formatActivityMeta(event, sessionTelemetry) {
       const parts = [];
       const telemetry = event.telemetry || (event.sessionId ? sessionTelemetry[event.sessionId] : undefined);
-      const hasUsage = Boolean(telemetry && telemetry.usage && telemetry.usage.totalTokens);
-      const packetMeta = formatPacketSummary(event.packet, event.status, hasUsage);
+      const packetMeta = formatPacketSummary(event.packet);
       if (packetMeta) parts.push(packetMeta);
       const usageMeta = formatTelemetryUsage(telemetry);
       if (usageMeta) parts.push(usageMeta);
       return parts.join(" · ");
     }
-    function formatPacketSummary(packet, status, hasUsage) {
+    function packetTokenEstimate(packet, field) {
+      if (packet[field] != null) return Number(packet[field]) || 0;
+      const legacy = field === "inputTokens" ? "inputChars"
+        : field === "guidanceTokens" ? "guidanceChars"
+        : field === "retrievalTokens" ? "retrievalChars"
+        : null;
+      if (legacy && packet[legacy] != null) return Math.ceil(Number(packet[legacy]) / 4);
+      return null;
+    }
+    function formatPacketSummary(packet) {
       if (!packet || typeof packet !== "object") return "";
       const parts = [];
       if (packet.model) parts.push(String(packet.model));
@@ -1368,16 +1376,12 @@ export function renderDashboardPage(): string {
       } else if (packet.inputKind) {
         parts.push("input:" + packet.inputKind);
       }
-      const terminal = status === "completed" || status === "failed";
-      if (!terminal && packet.budgetInputTokens != null) {
-        parts.push(formatTokens(packet.budgetInputTokens) + " input budget");
-        if (packet.budgetGuidanceTokens) parts.push(formatTokens(packet.budgetGuidanceTokens) + " guidance budget");
-        if (packet.budgetGraphifyTokens) parts.push(formatTokens(packet.budgetGraphifyTokens) + " retrieval budget");
-      } else if (!hasUsage) {
-        if (packet.inputChars != null) parts.push(formatTokens(packet.inputChars) + " chars in");
-        if (packet.guidanceChars) parts.push(formatTokens(packet.guidanceChars) + " chars guidance");
-        if (packet.retrievalChars) parts.push(formatTokens(packet.retrievalChars) + " chars retrieval");
-      }
+      const inputTokens = packetTokenEstimate(packet, "inputTokens");
+      const guidanceTokens = packetTokenEstimate(packet, "guidanceTokens");
+      const retrievalTokens = packetTokenEstimate(packet, "retrievalTokens");
+      if (inputTokens != null) parts.push(formatTokens(inputTokens) + " tokens in");
+      if (guidanceTokens) parts.push(formatTokens(guidanceTokens) + " tokens guidance");
+      if (retrievalTokens) parts.push(formatTokens(retrievalTokens) + " tokens retrieval");
       if (Array.isArray(packet.truncated) && packet.truncated.length) {
         parts.push("truncated:" + packet.truncated.join(","));
       }

@@ -164,18 +164,13 @@ async function route(
   if (method === "GET" && guidanceRole) {
     const role = decodeURIComponent(guidanceRole[1]!);
     const projectKey = url.searchParams.get("projectKey")?.trim() || undefined;
-    const settings = await ctx.settings.readLive(projectKey);
-    const compiled = await ctx.roleGuidance.compileRoleContext(role, {
-      projectKey,
-      maxCharacters: settings.budgets.guidanceTokens * 4,
-    });
+    const compiled = await ctx.roleGuidance.compileRoleContext(role, { projectKey });
     const document = await ctx.roleGuidance.read(role, projectKey);
     return {
       ...document,
       roleRules: [...roleRulesFor(role)],
       contract: outputContractFor(role),
       promptPreview: compiled.text,
-      truncated: compiled.truncated,
     };
   }
   if (method === "PUT" && guidanceRole) {

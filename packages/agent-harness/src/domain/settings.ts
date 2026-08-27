@@ -6,16 +6,12 @@ export const ProjectSettingsSchema = z.object({
     small: z.string().min(1).default("small"),
   }).default({ default: "default", small: "small" }),
   budgets: z.object({
-    guidanceTokens: z.number().int().positive().default(4000),
-    inputTokens: z.number().int().positive().default(6000),
     graphifyTokens: z.number().int().nonnegative().default(1500),
     maxAgentTokens: z.number().int().positive().optional(),
     roleMaxAgentTokens: z.record(z.string(), z.number().int().positive()).default({
       "docs-writer": 50_000,
     }),
   }).default({
-    guidanceTokens: 4000,
-    inputTokens: 6000,
     graphifyTokens: 1500,
     roleMaxAgentTokens: { "docs-writer": 50_000 },
   }),

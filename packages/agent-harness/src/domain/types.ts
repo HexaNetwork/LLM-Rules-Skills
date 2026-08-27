@@ -170,8 +170,7 @@ export type WorkPacket = {
   guidance: string;
   retrieval: string;
   budget: {
-    guidanceTokens: number;
-    inputTokens: number;
+    /** Retrieval excerpt cap (graphify / repository intelligence). */
     graphifyTokens: number;
     truncated: string[];
   };

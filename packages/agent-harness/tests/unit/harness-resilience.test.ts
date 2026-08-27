@@ -95,7 +95,7 @@ describe("finalized session reconciliation", () => {
       input: {},
       guidance: "",
       retrieval: "",
-      budget: { guidanceTokens: 1, inputTokens: 1, graphifyTokens: 1, truncated: [] },
+      budget: { graphifyTokens: 1, truncated: [] },
       agentTimeoutMs: 30_000,
     };
     try {

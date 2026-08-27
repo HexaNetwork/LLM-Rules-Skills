@@ -23,12 +23,10 @@ export type CompiledRoleContext = {
   role: string;
   source: RoleGuidanceSource;
   text: string;
-  truncated?: { before: number; after: number };
 };
 
 export type CompileRoleContextOptions = {
   projectKey?: string;
-  maxCharacters: number;
 };
 
 export type RoleGuidanceService = {
@@ -156,17 +154,9 @@ export function createRoleGuidanceService(home: string): RoleGuidanceService {
     },
 
     async compileRoleContext(role, options) {
-      const document = await read(role, options.projectKey);
+      const document = await resolve(role, options.projectKey);
       const text = renderRoleContext(role, document.body);
-      if (options.maxCharacters <= 0 || text.length <= options.maxCharacters) {
-        return { role, source: document.source, text };
-      }
-      return {
-        role,
-        source: document.source,
-        text: text.slice(0, options.maxCharacters),
-        truncated: { before: text.length, after: options.maxCharacters },
-      };
+      return { role, source: document.source, text };
     },
   };
 }

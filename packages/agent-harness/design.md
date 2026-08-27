@@ -34,9 +34,8 @@ loopback dashboard are the product — not a single app’s domain.
 ### 3. Precise, short agent context — clear outputs
 
 - Keep worker prompts short: role identity, hard rules, **EXPECTED OUTPUT**
-  contract, then the effective `GUIDANCE.md` body. Respect
-  `budgets.guidanceTokens` (and packet budgets). Prefer cutting guidance over
-  stuffing more prose.
+  contract, then the effective `GUIDANCE.md` body. Shape inputs in phase
+  builders; cap only external retrieval excerpts (`budgets.graphifyTokens`).
 - Every role has an explicit JSON output contract (`ROLE_OUTPUT_CONTRACTS`).
   Phases parse and validate that shape; vague free-form reports are a defect.
 - Work packets must state inputs, constraints, and the expected return value

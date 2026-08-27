@@ -14,7 +14,7 @@ function cursorPacket(runId: string): WorkPacket {
     input: { idea: "unblock live invoke" },
     guidance: "",
     retrieval: "",
-    budget: { guidanceTokens: 0, inputTokens: 0, graphifyTokens: 0, truncated: [] },
+    budget: { graphifyTokens: 0, truncated: [] },
   };
 }
 

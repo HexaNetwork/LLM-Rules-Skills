@@ -111,7 +111,7 @@ describe("dedicated role guidance service", () => {
   it("compiles the worker context from rules, contract, and guidance body", async () => {
     const home = await createTempDir("harness-guidance-");
     const service = createRoleGuidanceService(home);
-    const compiled = await service.compileRoleContext("reflector", { maxCharacters: 16000 });
+    const compiled = await service.compileRoleContext("reflector", {});
     expect(compiled.source).toBe("packaged");
     expect(compiled.text).toContain("You are the reflector worker");
     expect(compiled.text).toContain(ROLE_RULES.reflector[0]!);
@@ -119,16 +119,14 @@ describe("dedicated role guidance service", () => {
     expect(compiled.text).toContain(outputContractFor("reflector")!);
     expect(compiled.text).toContain("GUIDANCE");
     expect(compiled.text).toContain("Reflector guidance");
-    expect(compiled.truncated).toBeUndefined();
   });
 
-  it("truncates the compiled context to the character budget", async () => {
+  it("returns the full compiled context without truncation", async () => {
     const home = await createTempDir("harness-guidance-");
     const service = createRoleGuidanceService(home);
-    const compiled = await service.compileRoleContext("implementer", { maxCharacters: 120 });
-    expect(compiled.text.length).toBe(120);
-    expect(compiled.truncated?.after).toBe(120);
-    expect(compiled.truncated!.before).toBeGreaterThan(120);
+    const compiled = await service.compileRoleContext("implementer", {});
+    expect(compiled.text.length).toBeGreaterThan(120);
+    expect(compiled.text).toContain("GUIDANCE");
   });
 });
 

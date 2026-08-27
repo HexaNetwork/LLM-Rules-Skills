@@ -19,7 +19,7 @@ describe("dump-config", () => {
       home: string;
       workflowBundles: string[];
       requiredServices: string[];
-      settings: { models: { default: string }; budgets: { guidanceTokens: number } };
+      settings: { models: { default: string }; budgets: { graphifyTokens: number } };
       rows: Array<{ id: string; trusted: boolean; provides: string[] }>;
     };
     expect(dumped.profile).toBe("host");
@@ -30,7 +30,7 @@ describe("dump-config", () => {
     expect(dumped.requiredServices).toContain("store");
     expect(dumped.requiredServices).toContain("runLifecycle");
     expect(dumped.settings.models.default).toBe("secret-model");
-    expect(dumped.settings.budgets.guidanceTokens).toBe(4000);
+    expect(dumped.settings.budgets.graphifyTokens).toBe(1500);
     expect(redact({ CURSOR_API_KEY: "abc", nested: { token: "x" } })).toEqual({
       CURSOR_API_KEY: "[REDACTED]",
       nested: { token: "[REDACTED]" },

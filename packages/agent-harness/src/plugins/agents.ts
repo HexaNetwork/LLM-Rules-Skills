@@ -3,6 +3,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { formatCursorAgentFailure } from "../domain/cursor-agent-error.js";
 import { invokeModeFor } from "../domain/agent-roles.js";
 import { readRoleAgents } from "../domain/role-agents.js";
+import { estimateTokens } from "../domain/token-estimate.js";
 import type { AgentInvocation, ProviderTelemetry, TokenUsage, UsageCost, WorkPacket } from "../domain/types.js";
 import { workingOn } from "../domain/working.js";
 import {
@@ -529,11 +530,9 @@ export type PacketSummary = {
   model: string;
   inputKind: string;
   inputKeys?: string[];
-  inputChars: number;
-  guidanceChars: number;
-  retrievalChars: number;
-  budgetInputTokens: number;
-  budgetGuidanceTokens: number;
+  inputTokens: number;
+  guidanceTokens: number;
+  retrievalTokens: number;
   budgetGraphifyTokens: number;
   truncated: string[];
   maxAgentTokens?: number;
@@ -564,11 +563,9 @@ export function summarizePacket(packet: WorkPacket): PacketSummary {
       : packet.input === null
         ? "null"
         : typeof packet.input,
-    inputChars: inputJson.length,
-    guidanceChars: packet.guidance.length,
-    retrievalChars: packet.retrieval.length,
-    budgetInputTokens: packet.budget.inputTokens,
-    budgetGuidanceTokens: packet.budget.guidanceTokens,
+    inputTokens: estimateTokens(inputJson),
+    guidanceTokens: estimateTokens(packet.guidance),
+    retrievalTokens: estimateTokens(packet.retrieval),
     budgetGraphifyTokens: packet.budget.graphifyTokens,
     truncated: [...packet.budget.truncated],
     agentTimeoutMs: packet.agentTimeoutMs,

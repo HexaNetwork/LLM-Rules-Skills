@@ -3,8 +3,6 @@ import { clearRoleAgent, readRoleAgents } from "../domain/role-agents.js";
 import type { Run } from "../domain/types.js";
 import { workingOn } from "../domain/working.js";
 
-const CHARS_PER_TOKEN = 4;
-
 export type InvokeRoleOptions = {
   /** Resume the persisted Cursor agent for this role (grill turns, same-task retries). Default false. */
   resumeAgent?: boolean;
@@ -23,7 +21,6 @@ export async function invokeRole(
   );
   const context = await ctx.roleGuidance.compileRoleContext(role, {
     projectKey: run.identity.projectKey,
-    maxCharacters: run.settings.budgets.guidanceTokens * CHARS_PER_TOKEN,
   });
   const resumeAgent = options.resumeAgent === true;
   if (!resumeAgent) clearRoleAgent(run, role);

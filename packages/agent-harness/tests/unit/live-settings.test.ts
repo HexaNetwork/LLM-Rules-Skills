@@ -5,12 +5,10 @@ import { bootTestHost, createTempRepo, currentBranch } from "../helpers.js";
 describe("live settings", () => {
   it("merges packaged defaults under global then project layers", () => {
     const live = mergeSettings(
-      { budgets: { guidanceTokens: 100 } },
-      { budgets: { inputTokens: 200 }, verification: { command: "npm test" } },
+      { budgets: { graphifyTokens: 2500 } },
+      { verification: { command: "npm test" } },
     );
-    expect(live.budgets.guidanceTokens).toBe(100);
-    expect(live.budgets.inputTokens).toBe(200);
-    expect(live.budgets.graphifyTokens).toBe(1500);
+    expect(live.budgets.graphifyTokens).toBe(2500);
     expect(live.verification.command).toBe("npm test");
     expect(live.workflow.agentTimeoutMinutes).toBe(30);
   });

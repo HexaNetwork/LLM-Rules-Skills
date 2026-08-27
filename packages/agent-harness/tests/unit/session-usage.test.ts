@@ -14,7 +14,7 @@ function session(overrides: Partial<AgentInvocation>): AgentInvocation {
       input: {},
       guidance: "",
       retrieval: "",
-      budget: { guidanceTokens: 1, inputTokens: 1, graphifyTokens: 1, truncated: [] },
+      budget: { graphifyTokens: 1, truncated: [] },
     },
     startedAt: "2026-01-01T00:00:00.000Z",
     endedAt: "2026-01-01T00:00:01.000Z",

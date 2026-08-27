@@ -1,7 +1,7 @@
 {
   "name": "@hexanetwork/agent-harness",
-  "version": "0.4.0",
-  "description": "Durable idea-to-feature orchestration with a centralized local dashboard",
+  "version": "1.0.0",
+  "description": "Container-only, durable idea-to-pull-request orchestration",
   "type": "module",
   "bin": {
     "agent-harness": "./dist/cli.js"
@@ -17,28 +17,26 @@
   "files": [
     "dist",
     "docker",
-    "templates"
+    "templates",
+    "ui"
   ],
   "scripts": {
     "clean": "node ./scripts/clean.mjs",
     "build": "npm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest",
+    "test": "npm run test:run",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:docker": "vitest run --config vitest.docker.config.ts",
+    "test:docker": "vitest run --config vitest.docker.config.ts --passWithNoTests",
+    "test:release": "npm run test:run && node ./scripts/test-release.mjs",
     "test:run": "npm run test:unit && npm run test:integration",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
-    "node": ">=20.3"
+    "node": ">=22.5"
   },
   "dependencies": {
     "@cursor/sdk": "~1.0.27",
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/cordis-plugin-group": "^1.0.1",
-    "@deepseek-ai/cordis-plugin-include": "^1.0.6",
-    "@deepseek-ai/cordis-plugin-loader": "^1.0.2",
     "commander": "^14.0.0",
     "zod": "^3.25.0"
   },

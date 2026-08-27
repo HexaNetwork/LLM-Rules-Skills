@@ -10,6 +10,7 @@
     "test:unit": "npm run test:unit -w @hexanetwork/agent-harness",
     "test:integration": "npm run test:integration -w @hexanetwork/agent-harness",
     "test:docker": "npm run test:docker -w @hexanetwork/agent-harness",
+    "test:release": "npm run test:release -w @hexanetwork/agent-harness",
     "test:run": "npm run test:run -w @hexanetwork/agent-harness",
     "typecheck": "npm run typecheck -w @hexanetwork/agent-harness",
     "lint": "npm run lint -w @hexanetwork/agent-harness"

@@ -15,6 +15,6 @@ export async function createApplication(home: string) {
   const containers = new ContainerRuntime({ runnerImage: config.runnerImage, buildRoot: path.join(home, "builds") });
   const agent = new AgentRuntime(containers); const environments = new EnvironmentManager(containers, store); const git = new GitRuntime(worktreeRoot);
   const engine = new WorkflowEngine({ store, workflows: WORKFLOWS, agent, containers, environments, git, worktreeRoot });
-  const coordinator = new Coordinator(store, engine, environments, worktreeRoot); const api = new ApiServer(store, coordinator, home);
+  const coordinator = new Coordinator(store, engine, environments, worktreeRoot); const api = new ApiServer(store, coordinator, home, containers);
   return { store, containers, agent, environments, git, engine, coordinator, api, async close() { await api.close().catch(() => undefined); await coordinator.stop(); store.close(); } };
 }

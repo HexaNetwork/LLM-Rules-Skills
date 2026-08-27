@@ -1,16 +1,49 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { CommandResult, EnvironmentSpec } from "./types.js";
 import { checked, runProcess } from "./process.js";
 
 export type ContainerRuntimeOptions = { runnerImage: string; buildRoot: string };
+export type DockerSetupStatus = {
+  docker: { cli: boolean; daemon: boolean; version?: string; error?: string };
+  runner: { image: string; ready: boolean; digest?: string; error?: string };
+};
 
 export class ContainerRuntime {
   constructor(private readonly options: ContainerRuntimeOptions) {}
 
   async available(): Promise<boolean> { return (await runProcess("docker", ["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 10_000 })).exitCode === 0; }
   containerName(runId: string): string { return `agent-harness-${runId.replace(/[^a-zA-Z0-9_.-]/g, "-")}`; }
+
+  async setupStatus(): Promise<DockerSetupStatus> {
+    let version;
+    try {
+      const cli = await runProcess("docker", ["--version"], { timeoutMs: 10_000 });
+      if (cli.exitCode !== 0) return { docker: { cli: false, daemon: false, error: bounded(cli.stderr || cli.stdout) }, runner: { image: this.options.runnerImage, ready: false } };
+      version = cli.stdout.trim();
+    } catch (error) {
+      return { docker: { cli: false, daemon: false, error: error instanceof Error ? error.message : String(error) }, runner: { image: this.options.runnerImage, ready: false } };
+    }
+    const daemon = await runProcess("docker", ["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 10_000 });
+    if (daemon.exitCode !== 0) return { docker: { cli: true, daemon: false, version, error: bounded(daemon.stderr || daemon.stdout) }, runner: { image: this.options.runnerImage, ready: false } };
+    const image = await runProcess("docker", ["image", "inspect", this.options.runnerImage, "--format", "{{index .RepoDigests 0}}|{{.Id}}"], { timeoutMs: 10_000 });
+    return {
+      docker: { cli: true, daemon: true, version },
+      runner: image.exitCode === 0
+        ? { image: this.options.runnerImage, ready: true, digest: image.stdout.trim() }
+        : { image: this.options.runnerImage, ready: false, error: bounded(image.stderr || image.stdout) },
+    };
+  }
+
+  async installRunner(): Promise<{ image: string; digest: string; log: string }> {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const dockerfile = path.join(root, "docker", "runner", "Dockerfile");
+    const result = await runProcess("docker", ["build", "--pull=false", "--tag", this.options.runnerImage, "--file", dockerfile, root], { timeoutMs: 20 * 60_000, maxOutput: 128_000 });
+    if (result.exitCode !== 0) throw new Error(`Runner image build failed:\n${bounded(result.stderr || result.stdout)}`);
+    return { image: this.options.runnerImage, digest: await this.imageDigest(this.options.runnerImage), log: result.stdout + result.stderr };
+  }
 
   environmentHash(spec: EnvironmentSpec, runnerDigest: string): string {
     return createHash("sha256").update(JSON.stringify(normalizeSpec(spec))).update(runnerDigest).digest("hex");

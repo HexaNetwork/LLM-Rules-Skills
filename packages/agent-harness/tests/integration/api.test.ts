@@ -7,11 +7,17 @@ import { ApiServer } from "../../src/api-server.js";
 
 const homes: string[] = [];
 afterEach(async () => Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true }))));
+function containerRuntime(ready = true) {
+  return {
+    setupStatus: async () => ({ docker: { cli: true, daemon: ready, version: "Docker test" }, runner: { image: "runner:test", ready, digest: ready ? "sha256:test" : undefined } }),
+    installRunner: async () => ({ image: "runner:test", digest: "sha256:test", log: "built in test" }),
+  } as never;
+}
 
 describe("API command boundary", () => {
   it("serves a dashboard that can add projects and start runs", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "harness-ui-")); homes.push(home); const store = await Store.open(home);
-    const coordinator = { notify() {} }; const api = new ApiServer(store, coordinator as never, home); const url = await api.listen(0);
+    const coordinator = { notify() {} }; const api = new ApiServer(store, coordinator as never, home, containerRuntime()); const url = await api.listen(0);
     const dashboard = await fetch(url);
     expect(dashboard.status).toBe(200);
     const dashboardHtml = await dashboard.text();
@@ -21,12 +27,18 @@ describe("API command boundary", () => {
     expect(dashboardHtml).toContain('id="usage-summary"');
     expect(dashboardHtml).toContain('id="sessions"');
     expect(dashboardHtml).toContain('id="artifacts"');
+    expect(dashboardHtml).toContain('id="setup-panel"');
     const stylesheet = await fetch(`${url}/ui/style.css`);
     expect(stylesheet.status).toBe(200);
     expect(stylesheet.headers.get("content-type")).toContain("text/css");
     const css = await stylesheet.text();
     expect(css).toContain("--accent: #b6f236");
     expect(css).toContain(".status.awaiting_user");
+    const setup = await (await fetch(`${url}/api/setup`)).json() as { ready: boolean; runner: { image: string } };
+    expect(setup).toMatchObject({ ready: true, runner: { image: "runner:test" } });
+    expect((await fetch(`${url}/api/setup/runner`, { method: "POST" })).status).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(await (await fetch(`${url}/api/setup`)).json()).toMatchObject({ build: { status: "succeeded", log: "built in test" } });
     const projectResponse = await fetch(`${url}/api/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Example", repositoryPath: path.join(home, "repo"), baseBranch: "main" }) });
     expect(projectResponse.status).toBe(201);
     const project = await projectResponse.json() as { id: string };
@@ -48,13 +60,24 @@ describe("API command boundary", () => {
 
   it("returns 202 and deduplicates identical operator commands", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "harness-api-")); homes.push(home); const store = await Store.open(home);
-    const coordinator = { notify() {} }; const api = new ApiServer(store, coordinator as never, home); const url = await api.listen(0);
+    const coordinator = { notify() {} }; const api = new ApiServer(store, coordinator as never, home, containerRuntime()); const url = await api.listen(0);
     const project = store.addProject({ name: "p", repositoryPath: path.join(home, "repo"), baseBranch: "main" });
     const run = store.createRun({ projectId: project.id, workflowId: "complete", firstStep: "clarify", input: { idea: "x" }, effectiveConfig: {} });
     const body = JSON.stringify({ kind: "cancel-run", payload: {} });
     const first = await fetch(`${url}/api/runs/${run.id}/commands`, { method: "POST", headers: { "content-type": "application/json" }, body });
     const second = await fetch(`${url}/api/runs/${run.id}/commands`, { method: "POST", headers: { "content-type": "application/json" }, body });
     expect(first.status).toBe(202); expect(second.status).toBe(202); expect((await first.json()).id).toBe((await second.json()).id);
+    await api.close(); store.close();
+  });
+
+  it("requires WebUI Docker and runner setup before accepting a run", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "harness-setup-")); homes.push(home); const store = await Store.open(home);
+    const api = new ApiServer(store, { notify() {} } as never, home, containerRuntime(false)); const url = await api.listen(0);
+    const project = store.addProject({ name: "p", repositoryPath: path.join(home, "repo"), baseBranch: "main" });
+    const response = await fetch(`${url}/api/runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, idea: "x" }) });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining("WebUI") });
+    expect(store.listRuns()).toHaveLength(0);
     await api.close(); store.close();
   });
 });

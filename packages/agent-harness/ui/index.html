@@ -59,6 +59,26 @@
         <span id="run-status" class="status idle"><i></i> Idle</span>
       </header>
 
+      <section id="setup-panel" class="panel setup-panel" aria-labelledby="setup-title">
+        <div class="panel-heading">
+          <div><div class="eyebrow">Runtime setup</div><h3 id="setup-title">Docker &amp; runner image</h3></div>
+          <span id="setup-status" class="status queued"><i></i> Checking</span>
+        </div>
+        <div class="setup-body">
+          <div class="setup-checks">
+            <div class="setup-check"><span>Docker CLI</span><strong id="docker-cli">Checking…</strong></div>
+            <div class="setup-check"><span>Docker daemon</span><strong id="docker-daemon">Checking…</strong></div>
+            <div class="setup-check"><span>Neutral runner</span><strong id="runner-image">Checking…</strong></div>
+          </div>
+          <p id="setup-guidance" class="setup-guidance">Checking the local container runtime.</p>
+          <div class="setup-actions">
+            <button id="build-runner" class="primary" type="button" disabled>Build runner image</button>
+            <button id="refresh-setup" class="secondary" type="button">Refresh status</button>
+          </div>
+          <details id="setup-log" class="setup-log" hidden><summary>Build diagnostics</summary><pre></pre></details>
+        </div>
+      </section>
+
       <section id="new-run-panel" class="panel launch-panel">
         <div class="panel-heading">
           <div><div class="eyebrow">New run</div><h3>What should the agents build?</h3></div>

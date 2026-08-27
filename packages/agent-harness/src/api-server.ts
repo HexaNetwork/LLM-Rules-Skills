@@ -5,14 +5,18 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Coordinator } from "./coordinator.js";
+import type { ContainerRuntime, DockerSetupStatus } from "./container-runtime.js";
 import type { Store } from "./store.js";
 import type { JsonObject, UserAnswers } from "./types.js";
 import { mergeConfig, readConfig } from "./config.js";
 import { summarizeUsage } from "./telemetry.js";
 
+type RunnerBuildStatus = { status: "idle" | "building" | "succeeded" | "failed"; startedAt?: string; finishedAt?: string; log?: string; error?: string };
+
 export class ApiServer {
   private readonly server = createServer((request, response) => void this.route(request, response));
-  constructor(private readonly store: Store, private readonly coordinator: Coordinator, private readonly home: string) {}
+  private runnerBuild: RunnerBuildStatus = { status: "idle" };
+  constructor(private readonly store: Store, private readonly coordinator: Coordinator, private readonly home: string, private readonly containers: ContainerRuntime) {}
   async listen(port: number, host = "127.0.0.1"): Promise<string> { await new Promise<void>((resolve, reject) => { this.server.once("error", reject); this.server.listen(port, host, resolve); }); const address = this.server.address(); const actual = typeof address === "object" && address ? address.port : port; return `http://${host}:${actual}`; }
   async close(): Promise<void> { await new Promise<void>((resolve, reject) => this.server.close((error) => error ? reject(error) : resolve())); }
 
@@ -20,6 +24,11 @@ export class ApiServer {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
       if (request.method === "GET" && url.pathname === "/api/health") return send(response, 200, { status: "ok" });
+      if (request.method === "GET" && url.pathname === "/api/setup") return send(response, 200, await this.setupStatus());
+      if (request.method === "POST" && url.pathname === "/api/setup/runner") {
+        if (this.runnerBuild.status !== "building") this.startRunnerBuild();
+        return send(response, 202, this.runnerBuild);
+      }
       if (request.method === "GET" && url.pathname === "/api/projects") return send(response, 200, this.store.listProjects());
       if (request.method === "POST" && url.pathname === "/api/projects") {
         const body = await bodyJson(request); const project = this.store.addProject({ name: String(body.name), repositoryPath: String(body.repositoryPath), baseBranch: String(body.baseBranch ?? "main"), settings: body.settings as JsonObject | undefined }); return send(response, 201, project);
@@ -27,6 +36,8 @@ export class ApiServer {
       if (request.method === "GET" && url.pathname === "/api/runs") return send(response, 200, this.store.listRuns());
       if (request.method === "GET" && url.pathname === "/api/telemetry") return send(response, 200, summarizeUsage(this.store.turns()));
       if (request.method === "POST" && url.pathname === "/api/runs") {
+        const setup = await this.setupStatus();
+        if (!setup.ready) return send(response, 409, { error: setup.build.status === "building" ? "Runner image build is still in progress" : "Complete Docker and runner image setup in the WebUI before starting a run", setup });
         const body = await bodyJson(request); const workflowId = String(body.workflowId ?? "complete");
         const projectId = String(body.projectId);
         const projectConfig = await readConfig(this.home, this.store.projectSettings(projectId));
@@ -61,6 +72,24 @@ export class ApiServer {
       if (request.method === "GET" && (url.pathname === "/" || url.pathname.startsWith("/ui/"))) return this.staticFile(url.pathname, response);
       send(response, 404, { error: "Not found" });
     } catch (error) { send(response, 500, { error: error instanceof Error ? error.message : String(error) }); }
+  }
+
+  private async setupStatus(): Promise<DockerSetupStatus & { build: RunnerBuildStatus; ready: boolean }> {
+    const status = await this.containers.setupStatus();
+    return { ...status, build: this.runnerBuild, ready: status.docker.daemon && status.runner.ready && this.runnerBuild.status !== "building" };
+  }
+
+  private startRunnerBuild(): void {
+    this.runnerBuild = { status: "building", startedAt: new Date().toISOString() };
+    this.store.appendEvent(undefined, "setup", "Building runner image from the WebUI");
+    void this.containers.installRunner().then((result) => {
+      this.runnerBuild = { status: "succeeded", startedAt: this.runnerBuild.startedAt, finishedAt: new Date().toISOString(), log: result.log };
+      this.store.appendEvent(undefined, "setup", `Runner image ready: ${result.image}`, { digest: result.digest });
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.runnerBuild = { status: "failed", startedAt: this.runnerBuild.startedAt, finishedAt: new Date().toISOString(), error: message };
+      this.store.appendEvent(undefined, "setup", "Runner image build failed", { error: message });
+    });
   }
 
   private streamEvents(response: ServerResponse, after: number, runId?: string): void {

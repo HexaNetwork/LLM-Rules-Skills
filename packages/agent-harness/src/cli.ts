@@ -8,7 +8,7 @@ import { Command } from "commander";
 import { defaultHarnessHome } from "./home.js";
 import { createApplication } from "./application.js";
 import { readConfig } from "./config.js";
-import { checked } from "./process.js";
+import { ContainerRuntime } from "./container-runtime.js";
 
 export function createCli(): Command {
   const program = new Command().name("agent-harness").description("Durable container-only idea-to-pull-request orchestration").option("--home <path>", "harness home", process.env.AGENT_HARNESS_HOME);
@@ -18,7 +18,7 @@ export function createCli(): Command {
     await signals(); await app.close();
   });
   program.command("reset-home").description("Delete the new development harness database and artifacts").action(async () => { const home = path.resolve(homeOf(program)); assertSafeHome(home); await rm(home, { recursive: true, force: true }); process.stdout.write(`Reset ${home}\n`); });
-  program.command("install-runner").description("Explicitly build the neutral runner image").action(async () => { const home = homeOf(program); const config = await readConfig(home); const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."); await checked("docker", ["build", "--tag", config.runnerImage, "--file", path.join(root, "docker", "runner", "Dockerfile"), root], { timeoutMs: 20 * 60_000 }); process.stdout.write(`${config.runnerImage}\n`); });
+  program.command("install-runner").description("Build the neutral runner image (the WebUI is preferred)").action(async () => { const home = homeOf(program); const config = await readConfig(home); const runtime = new ContainerRuntime({ runnerImage: config.runnerImage, buildRoot: path.join(home, "builds") }); await runtime.installRunner(); process.stdout.write(`${config.runnerImage}\n`); });
   const project = program.command("project");
   project.command("add").requiredOption("--repository <path>").requiredOption("--name <name>").option("--base-branch <name>", "base branch", "main").action(async (value) => print(await api(program, "/api/projects", { method: "POST", body: { repositoryPath: value.repository, name: value.name, baseBranch: value.baseBranch } })));
   project.command("list").action(async () => print(await api(program, "/api/projects")));

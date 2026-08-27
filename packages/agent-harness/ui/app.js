@@ -24,10 +24,21 @@ const elements = {
   sessionCount: document.querySelector("#session-count"),
   artifacts: document.querySelector("#artifacts"),
   artifactCount: document.querySelector("#artifact-count"),
+  setupPanel: document.querySelector("#setup-panel"),
+  setupStatus: document.querySelector("#setup-status"),
+  dockerCli: document.querySelector("#docker-cli"),
+  dockerDaemon: document.querySelector("#docker-daemon"),
+  runnerImage: document.querySelector("#runner-image"),
+  setupGuidance: document.querySelector("#setup-guidance"),
+  buildRunner: document.querySelector("#build-runner"),
+  refreshSetup: document.querySelector("#refresh-setup"),
+  setupLog: document.querySelector("#setup-log"),
 };
 
 let selected;
 let projects = new Map();
+let setupReady = false;
+let setupPolling;
 
 async function request(url, options) {
   const response = await fetch(url, options);
@@ -46,7 +57,7 @@ async function loadProjects(selectId) {
     return option;
   }));
   if (selectId) elements.projectSelect.value = selectId;
-  elements.startForm.querySelector("button").disabled = values.length === 0;
+  updateStartAvailability();
   if (values.length === 0) {
     const option = document.createElement("option");
     option.textContent = "Register a project first";
@@ -111,6 +122,51 @@ async function selectRun(id) {
   renderRunActions(run);
   renderGate(run);
   closeMobileNav();
+}
+
+function updateStartAvailability() {
+  elements.startForm.querySelector("button[type=submit]").disabled = projects.size === 0 || !setupReady;
+}
+
+async function loadSetup() {
+  const status = await request("/api/setup");
+  setupReady = Boolean(status.ready);
+  renderSetup(status);
+  updateStartAvailability();
+  if (status.build.status === "building" && !setupPolling) setupPolling = setInterval(() => void loadSetup().catch(renderSetupError), 2000);
+  if (status.build.status !== "building" && setupPolling) { clearInterval(setupPolling); setupPolling = undefined; }
+}
+
+function renderSetup(status) {
+  const building = status.build.status === "building";
+  const failed = status.build.status === "failed";
+  elements.setupPanel.className = `panel setup-panel ${failed ? "failed" : status.ready ? "ready" : ""}`;
+  elements.setupStatus.className = `status ${building ? "working" : failed ? "blocked" : status.ready ? "completed" : "blocked"}`;
+  elements.setupStatus.replaceChildren(document.createElement("i"), document.createTextNode(building ? "Building" : failed ? "Build failed" : status.ready ? "Ready" : "Setup required"));
+  setCheck(elements.dockerCli, status.docker.cli, status.docker.cli ? status.docker.version || "Available" : "Not found");
+  setCheck(elements.dockerDaemon, status.docker.daemon, status.docker.daemon ? "Running" : "Unavailable");
+  setCheck(elements.runnerImage, status.runner.ready, status.runner.ready ? status.runner.image : "Not built");
+  if (!status.docker.cli) elements.setupGuidance.textContent = "Install Docker Desktop (or Docker Engine) first, then return here and refresh. The WebUI will build the harness image.";
+  else if (!status.docker.daemon) elements.setupGuidance.textContent = "Start Docker with Linux containers, then refresh this check.";
+  else if (building) elements.setupGuidance.textContent = `Building ${status.runner.image}. This can take several minutes; you may leave this page open.`;
+  else if (failed && status.runner.ready) elements.setupGuidance.textContent = "The rebuild failed, but the previous runner image is still usable. Review the diagnostics or retry the build.";
+  else if (failed) elements.setupGuidance.textContent = "The runner image build failed. Review the diagnostics, correct the Docker issue, and retry here.";
+  else if (!status.runner.ready) elements.setupGuidance.textContent = "Docker is ready. Build the neutral runner image here before starting a run.";
+  else elements.setupGuidance.textContent = `Container execution is ready with ${status.runner.image}. Rebuild after updating the harness package.`;
+  elements.buildRunner.disabled = !status.docker.daemon || building;
+  elements.buildRunner.textContent = building ? "Building runner…" : status.runner.ready ? "Rebuild runner image" : "Build runner image";
+  const diagnostic = status.build.error || status.build.log || status.docker.error || status.runner.error;
+  elements.setupLog.hidden = !diagnostic;
+  elements.setupLog.querySelector("pre").textContent = diagnostic || "";
+}
+
+function setCheck(element, ok, label) { element.className = ok ? "ok" : "error"; element.textContent = label; }
+function renderSetupError(error) {
+  setupReady = false;
+  updateStartAvailability();
+  elements.setupGuidance.textContent = error.message;
+  elements.setupStatus.className = "status blocked";
+  elements.setupStatus.replaceChildren(document.createElement("i"), document.createTextNode("Check failed"));
 }
 
 function renderTelemetry(report) {
@@ -342,7 +398,7 @@ elements.startForm.onsubmit = async (event) => {
   } catch (error) {
     elements.startResult.textContent = error.message;
   } finally {
-    submit.disabled = projects.size === 0;
+    updateStartAvailability();
   }
 };
 
@@ -356,6 +412,13 @@ elements.navToggle.onclick = () => {
   const open = elements.sidebar.classList.toggle("open");
   elements.navToggle.setAttribute("aria-expanded", String(open));
 };
+
+elements.buildRunner.onclick = async () => {
+  elements.buildRunner.disabled = true;
+  try { await request("/api/setup/runner", { method: "POST" }); await loadSetup(); }
+  catch (error) { renderSetupError(error); }
+};
+elements.refreshSetup.onclick = () => void loadSetup().catch(renderSetupError);
 
 function closeMobileNav() {
   elements.sidebar.classList.remove("open");
@@ -373,12 +436,13 @@ source.onerror = () => {
 };
 source.onmessage = (message) => {
   const event = JSON.parse(message.data);
+  if (!event.runId) void loadSetup().catch(renderSetupError);
   if (event.runId === selected) {
     void selectRun(selected);
   } else void loadRuns();
 };
 
-void Promise.all([loadProjects(), loadRuns()]).catch((error) => {
+void Promise.all([loadProjects(), loadRuns(), loadSetup()]).catch((error) => {
   elements.connection.className = "connection reconnecting";
   elements.connection.lastChild.textContent = ` ${error.message}`;
 });

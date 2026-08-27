@@ -43,6 +43,14 @@ The dashboard is organized around five operator surfaces (see also `docs/plans/l
 
 The UI renders typed API resources and submits commands. It does not embed orchestration rules or maintain a separate in-memory run model.
 
+## WebUI design rules
+
+### No all-caps UI indicators
+
+Status badges, labels, eyebrows, section headers, table headers, timestamps, and other UI chrome must not use ALL CAPS or `text-transform: uppercase`.
+
+Write indicator text in sentence case or title case in source (HTML, JS, CSS). Use weight, color, spacing, and monospace accents for hierarchy — not shouting. API enum values may be formatted for display (for example `running` → `Running`), but the rendered result must stay mixed case.
+
 ## Related documents
 
 | Document | Scope |

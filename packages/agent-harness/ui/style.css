@@ -55,7 +55,7 @@ button:disabled { cursor: wait; opacity: .58; }
 .brand { padding: 24px 20px 18px; border-bottom: 1px solid var(--line); }
 .brand-mark { display: flex; align-items: center; gap: 10px; }
 .brand-mark h1 { margin: 0; font-size: 17px; line-height: 1.1; letter-spacing: .01em; }
-.brand-mark span { color: var(--muted); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+.brand-mark span { color: var(--muted); font-size: 11px; }
 .waypoint { width: 23px; height: 26px; flex: 0 0 auto; fill: none; stroke: var(--accent); stroke-width: 1.4; }
 .waypoint .hex-core { fill: var(--accent); stroke: none; }
 .connection {
@@ -65,8 +65,6 @@ button:disabled { cursor: wait; opacity: .58; }
   margin-top: 14px;
   color: var(--muted);
   font: 10px/1.2 "Cascadia Mono", Consolas, monospace;
-  letter-spacing: .08em;
-  text-transform: uppercase;
 }
 .connection i, .status i, .live-label i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
 .connection.live i, .live-label i { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-ring); }
@@ -103,11 +101,9 @@ button:disabled { cursor: wait; opacity: .58; }
 .project-meta { color: var(--muted); font: 10px/1.4 "Cascadia Mono", Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .project-section .project-box { margin: 0 0 10px; padding: 0 9px 10px; border-bottom: 1px solid var(--line); }
-.project-box summary { display: flex; justify-content: space-between; align-items: center; color: var(--muted); cursor: pointer; list-style: none; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.project-box summary::-webkit-details-marker { display: none; }
-.summary-action { color: var(--accent); font-size: 10px; letter-spacing: 0; text-transform: none; }
-.compact-form { margin-top: 12px; }
-label { display: block; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.project-box summary { display: flex; justify-content: space-between; align-items: center; color: var(--muted); cursor: pointer; list-style: none; font-size: 11px; font-weight: 700; }
+.summary-action { color: var(--accent); font-size: 10px; }
+label { display: block; color: var(--muted); font-size: 11px; font-weight: 700; }
 input, textarea, select {
   display: block;
   width: 100%;
@@ -128,7 +124,7 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.5; }
 .run-section { min-height: 0; display: flex; flex: 1; flex-direction: column; padding: 0 9px; overflow: hidden; }
 .section-head, .panel-title { display: flex; align-items: center; justify-content: space-between; }
 .section-head { padding: 0 9px 9px; }
-.section-head h2 { margin: 0; color: var(--muted); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+.section-head h2 { margin: 0; color: var(--muted); font-size: 11px; font-weight: 700; }
 .count { min-width: 22px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font: 10px/18px "Cascadia Mono", Consolas, monospace; text-align: center; }
 .run-list { overflow-y: auto; padding-bottom: 12px; scrollbar-color: var(--line-strong) transparent; }
 .run-row {
@@ -150,17 +146,17 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.5; }
 .status-bar.blocked, .status-bar.cancelled { background: var(--danger); }
 .status-bar.completed { background: var(--accent); }
 .run-name { display: block; overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.run-meta-row { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; color: var(--faint); font: 10px/1.3 "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+.run-meta-row { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; color: var(--faint); font: 10px/1.3 "Cascadia Mono", Consolas, monospace; }
 .empty-inline { padding: 16px 10px; color: var(--faint); font-size: 12px; text-align: center; }
-.sidebar-foot { display: flex; align-items: center; justify-content: space-between; padding: 13px 18px; border-top: 1px solid var(--line); color: var(--faint); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-.local-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-
-.workspace { width: 100%; min-width: 0; max-width: 1380px; margin: 0 auto; padding: 38px clamp(24px, 4vw, 64px) 64px; }
-.topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 25px; }
-.eyebrow { margin-bottom: 5px; color: var(--accent); font: 10px/1.2 "Cascadia Mono", Consolas, monospace; letter-spacing: .15em; text-transform: uppercase; }
-.topbar h2 { margin: 0; font-size: clamp(24px, 3vw, 34px); line-height: 1.15; letter-spacing: -.025em; }
-.lede { max-width: 700px; margin: 8px 0 0; color: var(--muted); }
-.status { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(255,255,255,.03); font: 10px/1 "Cascadia Mono", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.sidebar-foot { display: flex; align-items: center; justify-content: space-between; padding: 13px 18px; border-top: 1px solid var(--line); color: var(--faint); font-size: 10px; }
+.eyebrow { margin-bottom: 5px; color: var(--accent); font: 10px/1.2 "Cascadia Mono", Consolas, monospace; }
+.status { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(255,255,255,.03); font: 10px/1 "Cascadia Mono", Consolas, monospace; }
+.setup-check span { color: var(--faint); font-size: 10px; font-weight: 700; }
+.check { display: flex; align-items: flex-start; gap: 9px; color: var(--ink); cursor: pointer; }
+.event-list .event-time { display: block; margin-bottom: 3px; color: var(--faint); font: 10px/1 "Cascadia Mono", Consolas, monospace; }
+.metric span { display: block; margin-bottom: 7px; color: var(--faint); font-size: 10px; font-weight: 700; }
+.table-wrap th { color: var(--faint); font-size: 10px; font-weight: 700; }
+.session-body h4 { margin: 15px 0 6px; color: var(--faint); font-size: 10px; font-weight: 700; }
 .status.working, .status.starting, .status.queued { color: var(--info); }
 .status.working i, .status.starting i, .status.queued i { background: var(--info); }
 .status.awaiting_user, .status.stalled { color: var(--attention); border-color: var(--attention-line); background: var(--attention-soft); }
@@ -178,7 +174,7 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.5; }
 .setup-checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--line); }
 .setup-check { min-width: 0; padding: 13px 15px; background: var(--field); }
 .setup-check span, .setup-check strong { display: block; }
-.setup-check span { color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.setup-check span { color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .1em; }
 .setup-check strong { margin-top: 5px; overflow: hidden; color: var(--muted); font: 11px/1.4 "Cascadia Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .setup-check strong.ok { color: var(--accent); }
 .setup-check strong.error { color: var(--danger); }
@@ -236,22 +232,22 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.5; }
 .event-list li { position: relative; padding: 0 0 17px 1px; color: var(--muted); font-size: 12px; }
 .event-list li:not(:last-child)::after { content: ""; position: absolute; top: 13px; bottom: 0; left: -18px; width: 1px; background: var(--line-strong); }
 .event-list li::before { content: ""; position: absolute; top: 5px; left: -21px; z-index: 1; width: 7px; height: 7px; border: 2px solid var(--accent); border-radius: 50%; background: var(--surface); }
-.event-list .event-time { display: block; margin-bottom: 3px; color: var(--faint); font: 9px/1 "Cascadia Mono", Consolas, monospace; letter-spacing: .06em; text-transform: uppercase; }
+.event-list .event-time { display: block; margin-bottom: 3px; color: var(--faint); font: 9px/1 "Cascadia Mono", Consolas, monospace; letter-spacing: .06em; }
 .event-list .empty-event::before { border-color: var(--line-strong); }
 
 .diagnostics-panel { margin-top: 18px; }
 .observability-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; margin-top: 18px; }
 .telemetry-panel, .sessions-panel { min-width: 0; overflow: hidden; }
 .panel-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.count { color: var(--faint); font: 10px/1 "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+.count { color: var(--faint); font: 10px/1 "Cascadia Mono", Consolas, monospace; }
 .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); }
 .metric { padding: 17px 20px; background: var(--surface); }
-.metric span { display: block; margin-bottom: 7px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.metric span { display: block; margin-bottom: 7px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .1em; }
 .metric strong { font: 19px/1.2 "Cascadia Mono", Consolas, monospace; }
 .table-wrap { overflow-x: auto; }
 .table-wrap table { width: 100%; border-collapse: collapse; font: 11px/1.4 "Cascadia Mono", Consolas, monospace; }
 .table-wrap th, .table-wrap td { padding: 9px 12px; border-top: 1px solid var(--line); text-align: right; }
-.table-wrap th { color: var(--faint); font-size: 9px; text-transform: uppercase; }
+.table-wrap th { color: var(--faint); font-size: 9px; }
 .table-wrap th:first-child, .table-wrap td:first-child { text-align: left; }
 .session-list { max-height: 430px; overflow-y: auto; }
 .session { border-bottom: 1px solid var(--line); }
@@ -259,18 +255,18 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.5; }
 .session summary, .artifact summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 18px; cursor: pointer; list-style: none; }
 .session summary::-webkit-details-marker, .artifact summary::-webkit-details-marker { display: none; }
 .session-identity strong, .session-identity small { display: block; }
-.session-identity small { margin-top: 3px; color: var(--faint); font: 9px/1.3 "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
-.session-status { color: var(--info); font: 9px/1 "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+.session-identity small { margin-top: 3px; color: var(--faint); font: 9px/1.3 "Cascadia Mono", Consolas, monospace; }
+.session-status { color: var(--info); font: 9px/1 "Cascadia Mono", Consolas, monospace; }
 .session-status.completed { color: var(--accent); }
 .session-status.blocked, .session-status.stalled { color: var(--danger); }
 .session-body { padding: 0 18px 16px; }
 .session-body section[hidden] { display: none; }
-.session-body h4 { margin: 15px 0 6px; color: var(--faint); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; }
+.session-body h4 { margin: 15px 0 6px; color: var(--faint); font-size: 9px; letter-spacing: .1em; }
 .session-body pre, .artifact pre { max-height: 280px; margin: 0; padding: 11px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: rgba(0,0,0,.24); color: #c9ced5; font: 10px/1.5 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; }
 .artifacts-panel { margin-top: 18px; overflow: hidden; }
 .artifact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .artifact { min-width: 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.artifact summary span { color: var(--faint); font: 9px/1 "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+.artifact summary span { color: var(--faint); font: 9px/1 "Cascadia Mono", Consolas, monospace; }
 .artifact pre { margin: 0 14px 14px; }
 .diagnostics-panel summary { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; cursor: pointer; list-style: none; }
 .diagnostics-panel summary::-webkit-details-marker { display: none; }

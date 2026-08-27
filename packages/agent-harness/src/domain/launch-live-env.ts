@@ -4,6 +4,7 @@ export type LaunchLiveEnv = {
   AGENT_HARNESS_AGENTS: "cursor";
   AGENT_HARNESS_SANDBOX: "docker";
   AGENT_HARNESS_WORKER_IMAGE: string;
+  AGENT_HARNESS_WSL_WORKTREES: "1";
 };
 
 export type ResolveLaunchLiveEnvInput = {
@@ -18,5 +19,6 @@ export function resolveLaunchLiveEnv(input: ResolveLaunchLiveEnvInput): LaunchLi
     AGENT_HARNESS_AGENTS: "cursor",
     AGENT_HARNESS_SANDBOX: "docker",
     AGENT_HARNESS_WORKER_IMAGE: LIVE_WORKER_IMAGE,
+    AGENT_HARNESS_WSL_WORKTREES: "1",
   };
 }

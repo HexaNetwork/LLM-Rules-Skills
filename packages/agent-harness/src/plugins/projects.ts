@@ -2,6 +2,7 @@ import path from "node:path";
 import { stat } from "node:fs/promises";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ProjectRegistration } from "../domain/types.js";
+import { ensureWorktreeRoot, resolveWorktreeRoot } from "../domain/worktree-paths.js";
 import { projectKeyFor } from "../home.js";
 
 export type ProjectService = {
@@ -20,10 +21,12 @@ export function createProjectService(ctx: Context): ProjectService {
       const projectKey = projectKeyFor(resolved);
       const existing = await ctx.store.readRegistration(projectKey);
       if (existing) return existing;
+      const worktreeRoot = await resolveWorktreeRoot(ctx.store.home, projectKey);
+      await ensureWorktreeRoot(worktreeRoot);
       const registration: ProjectRegistration = {
         projectKey,
         controlRoot: resolved,
-        worktreeRoot: path.join(ctx.store.home, "projects", projectKey, "worktrees"),
+        worktreeRoot,
         createdAt: new Date().toISOString(),
       };
       await ctx.store.writeRegistration(registration);

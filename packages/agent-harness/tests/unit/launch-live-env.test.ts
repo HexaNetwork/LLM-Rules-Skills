@@ -17,6 +17,7 @@ const LIVE_ENV_KEYS = [
   "AGENT_HARNESS_AGENTS",
   "AGENT_HARNESS_SANDBOX",
   "AGENT_HARNESS_WORKER_IMAGE",
+  "AGENT_HARNESS_WSL_WORKTREES",
 ] as const;
 
 const previousEnv = Object.fromEntries(LIVE_ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -55,6 +56,7 @@ describe("resolveLaunchLiveEnv", () => {
       AGENT_HARNESS_AGENTS: "cursor",
       AGENT_HARNESS_SANDBOX: "docker",
       AGENT_HARNESS_WORKER_IMAGE: "agent-harness-worker:local",
+      AGENT_HARNESS_WSL_WORKTREES: "1",
     });
     expect(LIVE_WORKER_IMAGE).toBe("agent-harness-worker:local");
   });

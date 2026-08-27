@@ -1,7 +1,15 @@
+import {
+  GRADLE_SANDBOX_ENV,
+  gradleBuildVolumeName,
+  gradleCacheVolumeName,
+} from "./gradle-sandbox.js";
+
 export type Mount = {
   host: string;
   container: string;
   readOnly?: boolean;
+  /** Bind mount (host path) or Docker named volume. Defaults to bind. */
+  kind?: "bind" | "volume";
 };
 
 export type ContainerSpec = {
@@ -17,6 +25,7 @@ export type IsolationPolicy = {
   controlRoot: string;
   harnessHome: string;
   siblingRunRoots: string[];
+  projectKey?: string;
 };
 
 const FORBIDDEN_ENV = ["GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN"];
@@ -26,22 +35,26 @@ export function buildRunSpec(input: {
   image: string;
   worktreeHost: string;
   cursorApiKey?: string;
-  gradleCacheHost?: string;
+  projectKey?: string;
 }): ContainerSpec {
-  const mounts: Mount[] = [{ host: input.worktreeHost, container: "/workspace" }];
-  if (input.gradleCacheHost) {
-    mounts.push({ host: input.gradleCacheHost, container: "/gradle-cache" });
+  const mounts: Mount[] = [{ host: input.worktreeHost, container: "/workspace", kind: "bind" }];
+  const env: Record<string, string | undefined> = {
+    CURSOR_API_KEY: input.cursorApiKey,
+    HOME: "/tmp",
+  };
+  if (input.projectKey) {
+    mounts.push(
+      { host: gradleCacheVolumeName(input.projectKey), container: "/gradle-cache", kind: "volume" },
+      { host: gradleBuildVolumeName(input.projectKey), container: "/gradle-build", kind: "volume" },
+    );
+    Object.assign(env, GRADLE_SANDBOX_ENV);
   }
   return {
     name: containerName(input.runId),
     image: input.image,
     worktreeHost: input.worktreeHost,
     mounts,
-    env: {
-      CURSOR_API_KEY: input.cursorApiKey,
-      HOME: "/tmp",
-      ...(input.gradleCacheHost ? { GRADLE_USER_HOME: "/gradle-cache" } : {}),
-    },
+    env,
   };
 }
 
@@ -61,17 +74,27 @@ export function validateMounts(spec: ContainerSpec, policy: IsolationPolicy): vo
     throw new Error("Docker socket mounts are forbidden");
   }
   for (const mount of spec.mounts) {
-    const host = normalize(mount.host);
-    if (host === normalize(spec.worktreeHost)) continue;
-    if (mount.container === "/gradle-cache" && isGradleCacheMount(host, policy.harnessHome)) continue;
-    if (containedBy(host, normalize(policy.harnessHome))) {
+    const host = mount.host;
+    const normalizedHost = normalize(host);
+    if (mount.container === "/workspace") continue;
+    if (mount.kind === "volume") {
+      if (!isHarnessNamedVolume(host, mount.container, policy.projectKey)) {
+        throw new Error(`Unexpected named volume ${host} at ${mount.container}`);
+      }
+      continue;
+    }
+    if (mount.container === "/gradle-cache" || mount.container === "/gradle-build") {
+      throw new Error(`${mount.container} must use a Docker named volume, not a host bind mount`);
+    }
+    if (normalizedHost === normalize(spec.worktreeHost)) continue;
+    if (containedBy(normalizedHost, normalize(policy.harnessHome))) {
       throw new Error("Harness home must not be mounted into the sandbox");
     }
-    if (containedBy(host, normalize(policy.controlRoot))) {
+    if (containedBy(normalizedHost, normalize(policy.controlRoot))) {
       throw new Error("Control checkout must not be mounted into the sandbox");
     }
     for (const sibling of policy.siblingRunRoots) {
-      if (containedBy(host, normalize(sibling))) {
+      if (containedBy(normalizedHost, normalize(sibling))) {
         throw new Error("Sibling run paths must not be mounted into the sandbox");
       }
     }
@@ -93,12 +116,14 @@ function containedBy(pathValue: string, root: string): boolean {
   return pathValue === root || pathValue.startsWith(`${root}/`);
 }
 
-function isGradleCacheMount(host: string, harnessHome: string): boolean {
-  const normalized = normalize(host);
-  const home = normalize(harnessHome);
-  const prefix = `${home}/projects/`;
-  if (!normalized.startsWith(prefix)) return false;
-  const rest = normalized.slice(prefix.length);
-  const parts = rest.split("/");
-  return parts.length === 2 && parts[1] === "gradle-cache";
+function isHarnessNamedVolume(name: string, container: string, projectKey?: string): boolean {
+  if (container === "/gradle-cache") {
+    const expected = projectKey ? gradleCacheVolumeName(projectKey) : undefined;
+    return expected ? name === expected : /^agent-harness-gradle-[a-z0-9._-]+$/i.test(name);
+  }
+  if (container === "/gradle-build") {
+    const expected = projectKey ? gradleBuildVolumeName(projectKey) : undefined;
+    return expected ? name === expected : /^agent-harness-build-[a-z0-9._-]+$/i.test(name);
+  }
+  return false;
 }

@@ -1,9 +1,15 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdir, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { Context } from "@deepseek-ai/cordis";
 import { buildDockerRunArgs } from "../domain/docker-run.js";
+import {
+  buildGradleInitEnsureArgs,
+  buildVolumeCreateArgs,
+  gradleBuildVolumeName,
+  gradleCacheVolumeName,
+} from "../domain/gradle-sandbox.js";
 import { packageRoot, runDockerfilePath, runImageTag } from "../domain/image-repair.js";
 import {
   buildRunSpec,
@@ -96,25 +102,20 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
       const effectiveImage = (await pathExists(runDockerfilePath(ctx.store.home, runId)))
         ? runImageTag(runId)
         : image;
-      const gradleCacheHost = path.join(
-        ctx.store.home,
-        "projects",
-        identity.projectKey,
-        "gradle-cache",
-      );
-      await mkdir(gradleCacheHost, { recursive: true });
+      await ensureGradleSandboxVolumes(identity.projectKey, effectiveImage);
       const spec = buildRunSpec({
         runId,
         image: effectiveImage,
         worktreeHost: identity.worktreePath,
         cursorApiKey: process.env.CURSOR_API_KEY,
-        gradleCacheHost,
+        projectKey: identity.projectKey,
       });
       const siblings = (await ctx.store.listRunIds()).filter((id) => id !== runId);
       validateMounts(spec, {
         controlRoot: identity.controlRoot,
         harnessHome: ctx.store.home,
         siblingRunRoots: siblings.map((id) => `${ctx.store.home}/runs/${id}`),
+        projectKey: identity.projectKey,
       });
       await ensureDockerContainer(spec);
       specs.set(runId, spec);
@@ -183,6 +184,15 @@ export function createSandboxService(ctx: Context, config: SandboxConfig = {}): 
 async function docker(args: string[]): Promise<string> {
   const { stdout } = await exec("docker", args, { windowsHide: true });
   return stdout;
+}
+
+/** Project-scoped named volumes live in Docker Desktop's Linux VM (fast ext4). */
+async function ensureGradleSandboxVolumes(projectKey: string, image: string): Promise<void> {
+  const cacheVolume = gradleCacheVolumeName(projectKey);
+  const buildVolume = gradleBuildVolumeName(projectKey);
+  await docker(buildVolumeCreateArgs(cacheVolume));
+  await docker(buildVolumeCreateArgs(buildVolume));
+  await docker(buildGradleInitEnsureArgs(cacheVolume, image));
 }
 
 /** Reuse a healthy container or replace a stale one after process restart / retry. */

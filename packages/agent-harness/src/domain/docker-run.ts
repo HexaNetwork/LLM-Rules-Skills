@@ -30,8 +30,10 @@ export function buildDockerRunArgs(spec: ContainerSpec): string[] {
     ["CURSOR_API_KEY", spec.env.CURSOR_API_KEY ?? ""],
     ["HOME", spec.env.HOME ?? "/tmp"],
   ];
-  if (spec.env.GRADLE_USER_HOME) {
-    envEntries.push(["GRADLE_USER_HOME", spec.env.GRADLE_USER_HOME]);
+  for (const [name, value] of Object.entries(spec.env)) {
+    if (value === undefined) continue;
+    if (name === "CURSOR_API_KEY" || name === "HOME") continue;
+    envEntries.push([name, value]);
   }
   for (const [name, value] of envEntries) {
     args.push("-e", `${name}=${value}`);

@@ -1,3 +1,8 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Harness</title><link rel="stylesheet" href="/ui/style.css"></head>
-<body><header><h1>Agent Harness</h1><span id="connection">connecting</span></header><main><section><h2>Projects and runs</h2><div id="runs"></div></section><section><h2>Next action</h2><div id="action">Select a run.</div></section><section><h2>Timeline</h2><ol id="events"></ol></section><section><h2>Diagnostics</h2><pre id="diagnostics"></pre></section></main><script type="module" src="/ui/app.js"></script></body></html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Harness</title><link rel="stylesheet" href="/ui/style.css"></head>
+<body><header><h1>Agent Harness</h1><span id="connection">connecting</span></header><main>
+<section><h2>Start a run</h2><form id="start-run"><label>Project<select id="project" name="projectId" required></select></label><label>Idea<textarea name="idea" required placeholder="Describe the capability or change"></textarea></label><label class="check"><input type="checkbox" name="fresh"> Start from a fresh branch</label><button type="submit">Start run</button></form><p id="start-result" role="status"></p></section>
+<section><h2>Add a project</h2><form id="add-project"><label>Name<input name="name" required placeholder="Example"></label><label>Repository path<input name="repositoryPath" required placeholder="D:\path\to\repository"></label><label>Base branch<input name="baseBranch" value="main" required></label><button type="submit">Add project</button></form><p id="project-result" role="status"></p></section>
+<section><h2>Runs</h2><div id="runs"></div></section><section><h2>Next action</h2><div id="action">Select a run.</div><div id="run-actions"></div></section><section><h2>Timeline</h2><ol id="events"></ol></section><section><h2>Diagnostics</h2><pre id="diagnostics"></pre></section>
+</main><script type="module" src="/ui/app.js"></script></body></html>

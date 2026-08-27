@@ -36,7 +36,18 @@ const elements = {
   buildRunner: document.querySelector("#build-runner"),
   refreshSetup: document.querySelector("#refresh-setup"),
   setupLog: document.querySelector("#setup-log"),
+  ideaInput: document.querySelector("#idea"),
 };
+
+function autosizeIdeaInput() {
+  const node = elements.ideaInput;
+  if (!node) return;
+  node.style.height = "auto";
+  node.style.height = `${Math.max(node.scrollHeight, 132)}px`;
+}
+
+elements.ideaInput?.addEventListener("input", autosizeIdeaInput);
+autosizeIdeaInput();
 
 let selected;
 let projects = new Map();
@@ -476,7 +487,8 @@ elements.startForm.onsubmit = async (event) => {
     const baseBranch = String(values.baseBranch ?? "").trim();
     if (!baseBranch) throw new Error("Choose a base branch.");
     const run = await request("/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: values.projectId, idea: values.idea, fresh: values.fresh === "on", baseBranch }) });
-    elements.startForm.querySelector("textarea").value = "";
+    elements.ideaInput.value = "";
+    autosizeIdeaInput();
     elements.startResult.textContent = `Started run ${run.id.slice(0, 8)}.`;
     await selectRun(run.id);
   } catch (error) {
@@ -489,7 +501,7 @@ elements.startForm.onsubmit = async (event) => {
 document.querySelector("#new-run-toggle").onclick = () => {
   closeMobileNav();
   elements.newRunPanel.scrollIntoView({ behavior: "smooth", block: "start" });
-  elements.startForm.querySelector("textarea").focus({ preventScroll: true });
+  elements.ideaInput?.focus({ preventScroll: true });
 };
 
 elements.navToggle.onclick = () => {

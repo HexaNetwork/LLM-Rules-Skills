@@ -17,7 +17,7 @@ describe("restart recovery", () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "harness-restart-")); roots.push(root);
     const home = path.join(root, "home"); const worktreeRoot = path.join(home, "worktrees"); const repository = path.join(root, "fresh");
     const calls: string[] = [];
-    const agent: AgentDriver = { async invoke(request) { calls.push(request.role); if (request.role === "reflector") return { turnId: request.turnId, sessionId: "reflect-session", output: { brief: "brief" } }; if (request.role === "griller") return { turnId: request.turnId, sessionId: "grill-session", output: { resolved: true, questions: [], clarifiedBrief: { brief: "done" } } }; throw new Error(`Unexpected role: ${request.role}`); } };
+    const agent: AgentDriver = { async invoke(request) { calls.push(request.role); if (request.role === "reflector") return { turnId: request.turnId, sessionId: "reflect-session", output: { summary: "brief", restatement: "brief", goal: "goal", users: [], inScope: [], outOfScope: [], assumptions: [], unknowns: [] } }; if (request.role === "griller") return { turnId: request.turnId, sessionId: "grill-session", output: { resolved: true, questions: [], clarifiedBrief: { brief: "done" } } }; throw new Error(`Unexpected role: ${request.role}`); } };
 
     let store = await Store.open(home); const project = store.addProject({ name: "fresh", repositoryPath: repository, baseBranch: "main" });
     const run = store.createRun({ projectId: project.id, workflowId: "complete", firstStep: "clarify", input: { idea: "idea", fresh: true }, effectiveConfig: DEFAULT_CONFIG as unknown as Record<string, unknown> });
@@ -26,7 +26,7 @@ describe("restart recovery", () => {
     expect(calls).toEqual(["reflector"]); store.close();
 
     store = await Store.open(home); engine = makeEngine(store, worktreeRoot, agent);
-    store.enqueueCommand(run.id, "submit-answers", { gateId: "clarify-brief", answers: { brief: "edited" } }, `${run.id}/answer`);
+    store.enqueueCommand(run.id, "submit-answers", { gateId: "clarify-brief", answers: { restatement: "edited", goal: "goal", users: "", inScope: "", outOfScope: "", assumptions: "", unknowns: "" } }, `${run.id}/answer`);
     await drainUntil(store, engine, () => store.getRun(run.id).currentStep === "specify");
     expect(calls).toEqual(["reflector", "griller"]); store.close();
   });

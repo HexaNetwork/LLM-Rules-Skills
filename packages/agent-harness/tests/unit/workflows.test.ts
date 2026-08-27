@@ -5,13 +5,26 @@ import { ProvisionEnvironmentStep } from "../../src/workflows/provision.js";
 
 const input = { previous: {}, runInput: { idea: "Build a thing" }, effectiveConfig: { runnerImage: "runner:test" }, outputs: {} };
 
+const reflectOutput = {
+  proposedTitle: "Build a thing",
+  summary: "Build a thing",
+  restatement: "Build a thing for operators.",
+  goal: "Deliver the capability",
+  users: ["operators"],
+  inScope: ["core flow"],
+  outOfScope: ["nice-to-haves"],
+  assumptions: ["Existing repo"],
+  unknowns: ["Exact UI"],
+};
+
 describe("pure workflow steps", () => {
   it("clarifies through an editable gate and resumed question session", () => {
     const step = new ClarifyStep(); const started = step.start(input); expect(started.type).toBe("invoke-agent");
     if (started.type !== "invoke-agent") return;
-    const brief = step.onAgent(started.state, { turnId: "t", sessionId: "reflect", output: { brief: "brief" } }); expect(brief.type).toBe("await-user");
+    const brief = step.onAgent(started.state, { turnId: "t", sessionId: "reflect", output: reflectOutput }); expect(brief.type).toBe("await-user");
     if (brief.type !== "await-user") return;
-    const grill = step.onUser(brief.state, { gateId: brief.gate.id, answers: { brief: "edited" } }); expect(grill.type).toBe("invoke-agent");
+    expect(brief.gate.reflect?.goal).toBe("Deliver the capability");
+    const grill = step.onUser(brief.state, { gateId: brief.gate.id, answers: { goal: "Edited goal", restatement: reflectOutput.restatement, users: "operators", inScope: "core flow", outOfScope: "nice-to-haves", assumptions: "Existing repo", unknowns: "Exact UI" } }); expect(grill.type).toBe("invoke-agent");
     if (grill.type !== "invoke-agent") return;
     const questions = step.onAgent(grill.state, { turnId: "g", sessionId: "grill-session", output: { resolved: false, questions: [{ id: "q", prompt: "Question?" }], clarifiedBrief: {} } });
     expect(questions.type).toBe("await-user"); if (questions.type !== "await-user") return;

@@ -18,7 +18,7 @@ const ROLE_RULES: Record<WorkflowRole, readonly string[]> = {
   reflector: [
     "Restate the operator request without inventing scope.",
     "Surface users, assumptions, boundaries, and material unknowns.",
-    "Return one editable brief, not implementation steps.",
+    "Return structured fields: summary, restatement, goal, users, inScope, outOfScope, assumptions, unknowns, and optional proposedTitle.",
   ],
   griller: [
     "Ask only for material unknowns that block specification or delivery.",

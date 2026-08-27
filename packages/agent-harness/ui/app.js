@@ -478,34 +478,212 @@ function renderRunHeader(run) {
   elements.runStatus.replaceChildren(document.createElement("i"), document.createTextNode(words(run.status)));
 }
 
-function renderGate(run) {
-  if (!run.gate) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    const symbol = document.createElement("div");
-    symbol.className = "empty-symbol";
-    symbol.textContent = run.status === "blocked" ? "!" : "✓";
-    const title = document.createElement("strong");
-    title.textContent = run.status === "blocked" ? "Run needs intervention" : "No operator action required";
-    const copy = document.createElement("p");
-    copy.textContent = run.status === "blocked"
-      ? "Review the errors on this tab, then retry or cancel the run."
-      : "The coordinator will surface the next decision here.";
-    empty.append(symbol, title, copy);
-    elements.action.replaceChildren(empty);
-    return;
-  }
+const REFLECT_FIELDS = [
+  { id: "proposedTitle", label: "Feature title", list: false, single: true },
+  { id: "restatement", label: "Restatement", list: false, single: false },
+  { id: "goal", label: "Goal", list: false, single: false },
+  { id: "users", label: "Users", list: true, single: false },
+  { id: "inScope", label: "In scope", list: true, single: false },
+  { id: "outOfScope", label: "Out of scope", list: true, single: false },
+  { id: "assumptions", label: "Assumptions", list: true, single: false },
+  { id: "unknowns", label: "Unknowns", list: true, single: false },
+];
 
+function reflectFieldValue(reflect, id) {
+  const raw = reflect?.[id];
+  if (Array.isArray(raw)) return raw.join("\n");
+  return raw == null ? "" : String(raw);
+}
+
+function reflectListEntries(value) {
+  const raw = value == null ? "" : String(value);
+  return raw.length ? raw.split(/\r?\n/) : [""];
+}
+
+function autosizeTextarea(node) {
+  if (!node || node.tagName !== "TEXTAREA") return;
+  node.style.height = "auto";
+  node.style.height = `${Math.max(node.scrollHeight, 52)}px`;
+}
+
+function autosizeReflectFields(root) {
+  root?.querySelectorAll(".reflect-fields textarea, .brief-gate-notes").forEach(autosizeTextarea);
+}
+
+function syncReflectListAnswers(form, fieldId) {
+  const inputs = form.querySelectorAll(`[data-reflect-list-item="${CSS.escape(fieldId)}"]`);
+  return Array.from(inputs).map((input) => input.value).join("\n");
+}
+
+function replaceReflectList(form, fieldId, value) {
+  const host = form.querySelector(`[data-reflect-list="${CSS.escape(fieldId)}"]`);
+  if (!host) return;
+  host.replaceWith(reflectListNode(fieldId, value));
+}
+
+function reflectListNode(fieldId, value) {
+  const entries = reflectListEntries(value);
+  const list = document.createElement("div");
+  list.className = "reflect-list";
+  list.dataset.reflectList = fieldId;
+  for (const [index, entry] of entries.entries()) {
+    list.append(reflectListRow(fieldId, index, entry, entries.length));
+  }
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "secondary reflect-list-add";
+  add.dataset.reflectListAdd = fieldId;
+  add.textContent = "Add entry";
+  list.append(add);
+  return list;
+}
+
+function reflectListRow(fieldId, index, entry, count) {
+  const row = document.createElement("div");
+  row.className = "reflect-list-row";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.dataset.reflectListItem = fieldId;
+  input.dataset.index = String(index);
+  input.value = entry;
+  input.placeholder = "One entry";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "quiet";
+  remove.dataset.reflectListRemove = fieldId;
+  remove.dataset.index = String(index);
+  remove.title = "Remove";
+  remove.setAttribute("aria-label", "Remove");
+  remove.disabled = count <= 1;
+  remove.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" stroke="currentColor" stroke-width="2"/><path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  row.append(input, remove);
+  return row;
+}
+
+function reflectFieldNode(field, reflect) {
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  const label = document.createElement("label");
+  label.textContent = field.label;
+  if (field.list) {
+    label.append(reflectListNode(field.id, reflectFieldValue(reflect, field.id)));
+  } else if (field.single) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.name = field.id;
+    input.dataset.reflectField = field.id;
+    input.value = reflectFieldValue(reflect, field.id);
+    input.placeholder = "Short imperative run label";
+    label.append(input);
+  } else {
+    const textarea = document.createElement("textarea");
+    textarea.name = field.id;
+    textarea.dataset.reflectField = field.id;
+    textarea.rows = 1;
+    textarea.value = reflectFieldValue(reflect, field.id);
+    label.append(textarea);
+  }
+  wrap.append(label);
+  return wrap;
+}
+
+function readBriefGateAnswers(form) {
+  const answers = {};
+  for (const field of REFLECT_FIELDS) {
+    if (field.list) answers[field.id] = syncReflectListAnswers(form, field.id);
+    else answers[field.id] = form.elements[field.id]?.value ?? "";
+  }
+  const notes = form.querySelector(".brief-gate-notes");
+  if (notes?.value?.trim()) answers.notes = notes.value.trim();
+  return answers;
+}
+
+function wireBriefGateForm(form, run) {
+  form.addEventListener("input", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLTextAreaElement && target.dataset.reflectField) autosizeTextarea(target);
+    if (target instanceof HTMLTextAreaElement && target.classList.contains("brief-gate-notes")) autosizeTextarea(target);
+  });
+  form.addEventListener("click", (event) => {
+    const add = event.target.closest("[data-reflect-list-add]");
+    if (add) {
+      const fieldId = add.dataset.reflectListAdd;
+      const entries = reflectListEntries(syncReflectListAnswers(form, fieldId));
+      entries.push("");
+      replaceReflectList(form, fieldId, entries.join("\n"));
+      autosizeReflectFields(form);
+      const inputs = form.querySelectorAll(`[data-reflect-list-item="${CSS.escape(fieldId)}"]`);
+      inputs.at(-1)?.focus();
+      return;
+    }
+    const remove = event.target.closest("[data-reflect-list-remove]");
+    if (remove && !remove.disabled) {
+      const fieldId = remove.dataset.reflectListRemove;
+      const entries = reflectListEntries(syncReflectListAnswers(form, fieldId));
+      if (entries.length <= 1) replaceReflectList(form, fieldId, "");
+      else {
+        entries.splice(Number(remove.dataset.index), 1);
+        replaceReflectList(form, fieldId, entries.join("\n"));
+      }
+      autosizeReflectFields(form);
+    }
+  });
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector("button[type=submit]");
+    submit.disabled = true;
+    submit.textContent = "Submitting…";
+    try {
+      await command(run.id, "submit-answers", { gateId: run.gate.id, answers: readBriefGateAnswers(form) });
+      elements.action.textContent = "Brief confirmed. The coordinator is resuming the run.";
+    } catch (error) {
+      submit.textContent = error.message;
+      submit.disabled = false;
+    }
+  };
+  autosizeReflectFields(form);
+}
+
+function renderBriefGate(run) {
+  const reflect = run.gate.reflect;
+  const form = document.createElement("form");
+  form.className = "reflect-fields brief-gate-form";
+  form.id = "briefGateForm";
+  for (const field of REFLECT_FIELDS) form.append(reflectFieldNode(field, reflect));
+  const footer = document.createElement("div");
+  footer.className = "brief-gate-footer";
+  const notesLabel = document.createElement("label");
+  notesLabel.textContent = "Extra notes for the agent";
+  const notes = document.createElement("textarea");
+  notes.className = "brief-gate-notes";
+  notes.rows = 1;
+  notes.placeholder = "Optional context for the next agent turn";
+  notesLabel.append(notes);
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.className = "primary";
+  submit.textContent = "Confirm brief";
+  footer.append(notesLabel, submit);
+  form.append(footer);
+  wireBriefGateForm(form, run);
+  return form;
+}
+
+function renderDefaultGate(run) {
   const form = document.createElement("form");
   const heading = document.createElement("h3");
   heading.textContent = run.gate.title;
   form.append(heading);
   for (const question of run.gate.questions) {
     const label = document.createElement("label");
-    label.textContent = question.prompt;
+    label.textContent = question.prompt.length > 120 ? question.id : question.prompt;
     const textarea = document.createElement("textarea");
     textarea.name = question.id;
     textarea.required = question.required;
+    if (question.prompt.length > 120 || question.id === "brief") {
+      textarea.value = question.prompt;
+      label.textContent = question.id === "brief" ? "Brief" : words(question.id);
+    }
     textarea.placeholder = question.required ? "Required response" : "Optional response";
     label.append(textarea);
     form.append(label);
@@ -527,7 +705,33 @@ function renderGate(run) {
       submit.disabled = false;
     }
   };
-  elements.action.replaceChildren(form);
+  return form;
+}
+
+function renderGate(run) {
+  const actionPanel = elements.action.closest(".action-panel");
+  const briefGate = run.gate?.id === "clarify-brief" && run.gate.reflect;
+  actionPanel?.classList.toggle("brief-gate-active", Boolean(briefGate));
+
+  if (!run.gate) {
+    actionPanel?.classList.remove("brief-gate-active");
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    const symbol = document.createElement("div");
+    symbol.className = "empty-symbol";
+    symbol.textContent = run.status === "blocked" ? "!" : "✓";
+    const title = document.createElement("strong");
+    title.textContent = run.status === "blocked" ? "Run needs intervention" : "No operator action required";
+    const copy = document.createElement("p");
+    copy.textContent = run.status === "blocked"
+      ? "Review the errors on this tab, then retry or cancel the run."
+      : "The coordinator will surface the next decision here.";
+    empty.append(symbol, title, copy);
+    elements.action.replaceChildren(empty);
+    return;
+  }
+
+  elements.action.replaceChildren(briefGate ? renderBriefGate(run) : renderDefaultGate(run));
 }
 
 function renderRunActions(run) {

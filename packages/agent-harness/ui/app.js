@@ -6,6 +6,8 @@ const elements = {
   events: document.querySelector("#events"),
   diagnostics: document.querySelector("#diagnostics"),
   connection: document.querySelector("#connection"),
+  projects: document.querySelector("#projects"),
+  projectCount: document.querySelector("#project-count"),
   projectSelect: document.querySelector("#project"),
   projectForm: document.querySelector("#add-project"),
   projectResult: document.querySelector("#project-result"),
@@ -50,6 +52,7 @@ async function request(url, options) {
 async function loadProjects(selectId) {
   const values = await request("/api/projects");
   projects = new Map(values.map((project) => [project.id, project]));
+  renderProjects(values);
   elements.projectSelect.replaceChildren(...values.map((project) => {
     const option = document.createElement("option");
     option.value = project.id;
@@ -63,6 +66,32 @@ async function loadProjects(selectId) {
     option.textContent = "Register a project first";
     elements.projectSelect.replaceChildren(option);
   }
+}
+
+function renderProjects(values) {
+  elements.projectCount.textContent = String(values.length);
+  if (values.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-inline";
+    empty.textContent = "No registered projects.";
+    elements.projects.replaceChildren(empty);
+    return;
+  }
+  elements.projects.replaceChildren(...values.map(projectNode));
+}
+
+function projectNode(project) {
+  const row = document.createElement("div");
+  row.className = "project-row";
+  row.title = project.repositoryPath;
+  const name = document.createElement("span");
+  name.className = "project-name";
+  name.textContent = project.name;
+  const meta = document.createElement("span");
+  meta.className = "project-meta";
+  meta.textContent = `${project.repositoryPath} · ${project.baseBranch}`;
+  row.append(name, meta);
+  return row;
 }
 
 async function loadRuns() {

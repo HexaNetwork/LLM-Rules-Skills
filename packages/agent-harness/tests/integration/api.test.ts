@@ -22,6 +22,7 @@ describe("API command boundary", () => {
     expect(dashboard.status).toBe(200);
     const dashboardHtml = await dashboard.text();
     expect(dashboardHtml).toContain('id="add-project"');
+    expect(dashboardHtml).toContain('id="projects"');
     expect(dashboardHtml).toContain('class="shell"');
     expect(dashboardHtml).toContain('id="run-status"');
     expect(dashboardHtml).toContain('id="usage-summary"');

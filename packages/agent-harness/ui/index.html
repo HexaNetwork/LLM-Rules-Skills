@@ -30,8 +30,13 @@
         <span class="plus">+</span><span><strong>Start a new run</strong><small>Turn an idea into a pull request</small></span>
       </button>
 
+      <section class="project-section" aria-labelledby="projects-title">
+        <div class="section-head"><h2 id="projects-title">Projects</h2><span id="project-count" class="count">0</span></div>
+        <div id="projects" class="project-list"><div class="empty-inline">Loading projects…</div></div>
+      </section>
+
       <details class="project-box">
-        <summary><span>Projects</span><span class="summary-action">Add project</span></summary>
+        <summary><span>Add project</span><span class="summary-action">Register</span></summary>
         <form id="add-project" class="compact-form">
           <label>Name<input name="name" required placeholder="Example"></label>
           <label>Repository path<input name="repositoryPath" required placeholder="D:\path\to\repository"></label>

@@ -49,7 +49,22 @@ const elements = {
   guidanceRoles: document.querySelector("#guidance-roles"),
   guidanceDetail: document.querySelector("#guidance-detail"),
   workspaceMain: document.querySelector(".workspace"),
+  runDetail: document.querySelector("#run-detail"),
+  runInput: document.querySelector("#run-input"),
+  sessionTabCount: document.querySelector("#session-tab-count"),
+  artifactTabCount: document.querySelector("#artifact-tab-count"),
+  errorTabCount: document.querySelector("#error-tab-count"),
 };
+
+const runTabPanels = {
+  overview: document.querySelector("#run-tab-overview"),
+  timeline: document.querySelector("#run-tab-timeline"),
+  sessions: document.querySelector("#run-tab-sessions"),
+  outputs: document.querySelector("#run-tab-outputs"),
+  technical: document.querySelector("#run-tab-technical"),
+};
+
+let runTab = "overview";
 
 function autosizeIdeaInput() {
   const node = elements.ideaInput;
@@ -215,8 +230,10 @@ async function selectRun(id) {
   hideSettings();
   const run = await request(`/api/runs/${id}`);
   await loadRuns();
+  showRunDetail();
   renderRunHeader(run);
-  elements.diagnostics.textContent = JSON.stringify({ id: run.id, status: run.status, step: run.currentStep, revision: run.revision, workflow: run.workflowId }, null, 2);
+  renderRunInput(run);
+  elements.diagnostics.textContent = JSON.stringify({ id: run.id, status: run.status, step: run.currentStep, revision: run.revision, workflow: run.workflowId, input: run.input, outputs: run.outputs, errors: run.errors }, null, 2);
   renderErrors(run.errors || []);
   renderEvents(run.events);
   renderTelemetry(run.usage);
@@ -227,9 +244,68 @@ async function selectRun(id) {
   closeMobileNav();
 }
 
+function showRunDetail() {
+  elements.runDetail.classList.remove("hidden");
+  elements.runDetail.setAttribute("aria-hidden", "false");
+}
+
+function hideRunDetail() {
+  elements.runDetail.classList.add("hidden");
+  elements.runDetail.setAttribute("aria-hidden", "true");
+}
+
+function showRunTab(tab = runTab) {
+  runTab = tab;
+  for (const button of document.querySelectorAll(".run-tab")) {
+    const active = button.dataset.runTab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  }
+  for (const [name, panel] of Object.entries(runTabPanels)) {
+    const active = name === tab;
+    panel.classList.toggle("active", active);
+    panel.hidden = !active;
+  }
+}
+
+function renderRunInput(run) {
+  const idea = typeof run.input?.idea === "string" ? run.input.idea.trim() : "";
+  if (!idea) {
+    const empty = document.createElement("div");
+    empty.className = "empty-inline";
+    empty.textContent = "No input recorded for this run.";
+    elements.runInput.replaceChildren(empty);
+    return;
+  }
+  const body = document.createElement("div");
+  body.className = "run-input-copy";
+  const pre = document.createElement("pre");
+  pre.textContent = idea;
+  body.append(pre);
+  const meta = document.createElement("dl");
+  meta.className = "run-input-meta";
+  const fields = [
+    ["Base branch", run.input?.baseBranch],
+    ["Fresh project", run.input?.fresh ? "Yes" : "No"],
+    ["Title", run.input?.title],
+  ];
+  for (const [label, value] of fields) {
+    if (value === undefined || value === null || value === "") continue;
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = String(value);
+    meta.append(term, detail);
+  }
+  if (meta.children.length) body.append(meta);
+  elements.runInput.replaceChildren(body);
+}
+
 function renderErrors(errors) {
   const count = errors.length;
   elements.errorCount.textContent = String(count);
+  elements.errorTabCount.textContent = String(count);
+  elements.errorTabCount.classList.toggle("hidden", count === 0);
   elements.errorsPanel.classList.toggle("hidden", count === 0);
   elements.errorsPanel.classList.toggle("has-errors", count > 0);
   if (!count) {
@@ -314,7 +390,15 @@ function renderSetupError(error) {
 
 function renderTelemetry(report) {
   const total = report?.total;
-  if (!total) return;
+  if (!total) {
+    elements.telemetryCoverage.textContent = "0 sessions";
+    const empty = document.createElement("div");
+    empty.className = "empty-inline";
+    empty.textContent = "No usage reported yet.";
+    elements.usageSummary.replaceChildren(empty);
+    elements.usageBreakdown.replaceChildren();
+    return;
+  }
   elements.telemetryCoverage.textContent = `${total.usageReportedSessions} / ${total.sessions} reported`;
   const metrics = [
     ["Total tokens", formatNumber(total.usage.totalTokens)],
@@ -343,6 +427,7 @@ function renderTelemetry(report) {
 
 function renderSessions(turns) {
   elements.sessionCount.textContent = String(turns.length);
+  elements.sessionTabCount.textContent = String(turns.length);
   if (!turns.length) { const empty = document.createElement("div"); empty.className = "empty-inline"; empty.textContent = "No agent sessions recorded yet."; elements.sessions.replaceChildren(empty); return; }
   elements.sessions.replaceChildren(...[...turns].reverse().map((turn) => {
     const detail = document.createElement("details"); detail.className = "session";
@@ -365,6 +450,7 @@ function renderArtifacts(outputs, artifacts) {
     ...artifacts.map((artifact) => ({ stepId: artifact.stepId, name: artifact.name, value: { path: artifact.path, mediaType: artifact.mediaType, createdAt: artifact.createdAt } })),
   ];
   elements.artifactCount.textContent = String(entries.length);
+  elements.artifactTabCount.textContent = String(entries.length);
   if (!entries.length) { const empty = document.createElement("div"); empty.className = "empty-inline"; empty.textContent = "No durable outputs or artifacts yet."; elements.artifacts.replaceChildren(empty); return; }
   elements.artifacts.replaceChildren(...entries.map((entry) => {
     const detail = document.createElement("details"); detail.className = "artifact";
@@ -403,7 +489,7 @@ function renderGate(run) {
     title.textContent = run.status === "blocked" ? "Run needs intervention" : "No operator action required";
     const copy = document.createElement("p");
     copy.textContent = run.status === "blocked"
-      ? "Review the Errors panel above, then retry or cancel the run."
+      ? "Review the errors on this tab, then retry or cancel the run."
       : "The coordinator will surface the next decision here.";
     empty.append(symbol, title, copy);
     elements.action.replaceChildren(empty);
@@ -825,6 +911,10 @@ elements.settingsClose.onclick = () => hideSettings();
 document.querySelectorAll(".settings-tab").forEach((button) => {
   button.addEventListener("click", () => showSettings(button.dataset.settingsTab));
 });
+document.querySelectorAll(".run-tab").forEach((button) => {
+  button.addEventListener("click", () => showRunTab(button.dataset.runTab));
+});
+showRunTab("overview");
 
 function closeMobileNav() {
   elements.sidebar.classList.remove("open");

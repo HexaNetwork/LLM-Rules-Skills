@@ -102,46 +102,69 @@
         <p id="start-result" class="form-result" role="status"></p>
       </section>
 
-      <div class="detail-grid">
-        <section id="errors-panel" class="panel errors-panel hidden" aria-labelledby="errors-title">
-          <div class="panel-title"><div><div class="eyebrow">Failure detail</div><h3 id="errors-title">Errors</h3></div><span id="error-count" class="count danger">0</span></div>
-          <div id="errors" class="error-list"><div class="empty-inline">No errors recorded for this run.</div></div>
-        </section>
+      <div id="run-detail" class="run-detail hidden" aria-hidden="true">
+        <nav class="run-tabs" role="tablist" aria-label="Run detail">
+          <button type="button" class="run-tab active" data-run-tab="overview" role="tab" aria-selected="true" aria-controls="run-tab-overview" id="run-tab-overview-btn">Overview <span id="error-tab-count" class="tab-count danger hidden">0</span></button>
+          <button type="button" class="run-tab" data-run-tab="timeline" role="tab" aria-selected="false" aria-controls="run-tab-timeline" id="run-tab-timeline-btn">Timeline</button>
+          <button type="button" class="run-tab" data-run-tab="sessions" role="tab" aria-selected="false" aria-controls="run-tab-sessions" id="run-tab-sessions-btn">Sessions <span id="session-tab-count" class="tab-count">0</span></button>
+          <button type="button" class="run-tab" data-run-tab="outputs" role="tab" aria-selected="false" aria-controls="run-tab-outputs" id="run-tab-outputs-btn">Outputs &amp; artifacts <span id="artifact-tab-count" class="tab-count">0</span></button>
+          <button type="button" class="run-tab" data-run-tab="technical" role="tab" aria-selected="false" aria-controls="run-tab-technical" id="run-tab-technical-btn">Technical details</button>
+        </nav>
 
-        <section class="panel action-panel" aria-labelledby="action-title">
-          <div class="panel-title"><div><div class="eyebrow">Operator gate</div><h3 id="action-title">Next action</h3></div><span class="attention-mark" aria-hidden="true">!</span></div>
-          <div id="action" class="empty-state"><div class="empty-symbol">◇</div><strong>Select a run</strong><p>Required decisions and approvals will appear here.</p></div>
-          <div id="run-actions" class="run-actions"></div>
-        </section>
+        <div id="run-tab-overview" class="run-tab-panel active" role="tabpanel" aria-labelledby="run-tab-overview-btn">
+          <div class="overview-grid">
+            <section class="panel input-panel" aria-labelledby="input-title">
+              <div class="panel-title"><div><div class="eyebrow">Run input</div><h3 id="input-title">Idea &amp; context</h3></div></div>
+              <div id="run-input" class="run-input-body"><div class="empty-inline">No input recorded for this run.</div></div>
+            </section>
 
-        <section class="panel timeline-panel" aria-labelledby="timeline-title">
-          <div class="panel-title"><div><div class="eyebrow">Live activity</div><h3 id="timeline-title">Timeline</h3></div><span class="live-label"><i></i> SSE</span></div>
-          <ol id="events" class="event-list"><li class="empty-event">Run events will stream here.</li></ol>
-        </section>
+            <section class="panel telemetry-panel" aria-labelledby="telemetry-title">
+              <div class="panel-title"><div><div class="eyebrow">Provider telemetry</div><h3 id="telemetry-title">Usage &amp; cost</h3></div><span id="telemetry-coverage" class="count">0 sessions</span></div>
+              <div id="usage-summary" class="metric-grid"><div class="empty-inline">No usage reported yet.</div></div>
+              <div id="usage-breakdown" class="table-wrap"></div>
+            </section>
+
+            <section id="errors-panel" class="panel errors-panel hidden" aria-labelledby="errors-title">
+              <div class="panel-title"><div><div class="eyebrow">Failure detail</div><h3 id="errors-title">Errors</h3></div><span id="error-count" class="count danger">0</span></div>
+              <div id="errors" class="error-list"><div class="empty-inline">No errors recorded for this run.</div></div>
+            </section>
+
+            <section class="panel action-panel" aria-labelledby="action-title">
+              <div class="panel-title"><div><div class="eyebrow">Operator gate</div><h3 id="action-title">User action</h3></div><span class="attention-mark" aria-hidden="true">!</span></div>
+              <div id="action" class="empty-state"><div class="empty-symbol">◇</div><strong>No operator action required</strong><p>Required decisions and approvals will appear here.</p></div>
+              <div id="run-actions" class="run-actions"></div>
+            </section>
+          </div>
+        </div>
+
+        <div id="run-tab-timeline" class="run-tab-panel" role="tabpanel" aria-labelledby="run-tab-timeline-btn" hidden>
+          <section class="panel timeline-panel" aria-labelledby="timeline-title">
+            <div class="panel-title"><div><div class="eyebrow">Live activity</div><h3 id="timeline-title">Timeline</h3></div><span class="live-label"><i></i> SSE</span></div>
+            <ol id="events" class="event-list"><li class="empty-event">Run events will stream here.</li></ol>
+          </section>
+        </div>
+
+        <div id="run-tab-sessions" class="run-tab-panel" role="tabpanel" aria-labelledby="run-tab-sessions-btn" hidden>
+          <section class="panel sessions-panel" aria-labelledby="sessions-title">
+            <div class="panel-title"><div><div class="eyebrow">Agent execution</div><h3 id="sessions-title">Sessions</h3></div><span id="session-count" class="count">0</span></div>
+            <div id="sessions" class="session-list"><div class="empty-inline">Agent sessions will appear here.</div></div>
+          </section>
+        </div>
+
+        <div id="run-tab-outputs" class="run-tab-panel" role="tabpanel" aria-labelledby="run-tab-outputs-btn" hidden>
+          <section class="panel artifacts-panel" aria-labelledby="artifacts-title">
+            <div class="panel-title"><div><div class="eyebrow">Durable run data</div><h3 id="artifacts-title">Outputs &amp; artifacts</h3></div><span id="artifact-count" class="count">0</span></div>
+            <div id="artifacts" class="artifact-grid"><div class="empty-inline">Step outputs and written artifacts will appear here.</div></div>
+          </section>
+        </div>
+
+        <div id="run-tab-technical" class="run-tab-panel" role="tabpanel" aria-labelledby="run-tab-technical-btn" hidden>
+          <section class="panel diagnostics-panel" aria-labelledby="diagnostics-title">
+            <div class="panel-title"><div><div class="eyebrow">Technical detail</div><h3 id="diagnostics-title">Diagnostics</h3></div></div>
+            <pre id="diagnostics">Select a run to inspect its durable state.</pre>
+          </section>
+        </div>
       </div>
-
-      <div class="observability-grid">
-        <section class="panel telemetry-panel" aria-labelledby="telemetry-title">
-          <div class="panel-title"><div><div class="eyebrow">Provider telemetry</div><h3 id="telemetry-title">Usage &amp; cost</h3></div><span id="telemetry-coverage" class="count">0 sessions</span></div>
-          <div id="usage-summary" class="metric-grid"><div class="empty-inline">Select a run to inspect usage.</div></div>
-          <div id="usage-breakdown" class="table-wrap"></div>
-        </section>
-
-        <section class="panel sessions-panel" aria-labelledby="sessions-title">
-          <div class="panel-title"><div><div class="eyebrow">Agent execution</div><h3 id="sessions-title">Sessions</h3></div><span id="session-count" class="count">0</span></div>
-          <div id="sessions" class="session-list"><div class="empty-inline">Agent sessions will appear here.</div></div>
-        </section>
-      </div>
-
-      <section class="panel artifacts-panel" aria-labelledby="artifacts-title">
-        <div class="panel-title"><div><div class="eyebrow">Durable run data</div><h3 id="artifacts-title">Outputs &amp; artifacts</h3></div><span id="artifact-count" class="count">0</span></div>
-        <div id="artifacts" class="artifact-grid"><div class="empty-inline">Step outputs and written artifacts will appear here.</div></div>
-      </section>
-
-      <details class="panel diagnostics-panel">
-        <summary><span><span class="eyebrow">Technical detail</span><strong>Diagnostics</strong></span><span class="disclosure">Show details</span></summary>
-        <pre id="diagnostics">Select a run to inspect its durable state.</pre>
-      </details>
 
       <section id="settings-panel" class="panel settings-panel hidden" aria-labelledby="settings-title">
         <div class="panel-heading">

@@ -16,7 +16,7 @@ export class SpecifyStep implements WorkflowStep<StepInput, State, Output> {
     const value = result.output as Partial<Documents> & { approvedSpecification?: unknown };
     if (![value.glossary, value.plan, value.requirements, value.scenarios].every((item) => typeof item === "string") || !value.approvedSpecification) return blocked<State>("invalid_specification", "Specifier output is incomplete");
     const documents = { glossary: value.glossary!, plan: value.plan!, requirements: value.requirements!, scenarios: value.scenarios! };
-    return { type: "await-user" as const, state: { ...state, stage: "approval" as const, documents, approvedSpecification: value.approvedSpecification, sessionId: result.sessionId }, gate: { id: `specification-approval-${state.ordinal}`, title: "Edit and approve specification", editableArtifacts: Object.keys(documents), questions: [{ id: "decision", prompt: "Enter approve, or describe requested changes", required: true }] } };
+    return { type: "await-user" as const, state: { ...state, stage: "approval" as const, documents, approvedSpecification: value.approvedSpecification, sessionId: result.sessionId }, gate: { id: `specification-approval-${state.ordinal}`, title: "Edit and approve specification", documents, editableArtifacts: Object.keys(documents), questions: [{ id: "decision", prompt: "Enter approve, or describe requested changes", required: true }] } };
   }
   onUser(state: State, answers: UserAnswers) {
     if (state.stage !== "approval" || !state.documents) return blocked<State>("unexpected_answers", "Specification is not awaiting approval");

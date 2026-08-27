@@ -66,10 +66,12 @@ export class ClarifyStep implements WorkflowStep<StepInput, State, Output> {
   onUser(state: State, answers: UserAnswers) {
     if (state.stage === "brief-gate") {
       const flatBrief = answers.answers.brief?.trim();
-      const reflect = state.reflect
+      const structuredKeys = ["proposedTitle", "restatement", "goal", "users", "inScope", "outOfScope", "assumptions", "unknowns", "summary"];
+      const hasStructuredEdits = structuredKeys.some((key) => answers.answers[key] !== undefined);
+      const reflect = state.reflect && hasStructuredEdits
         ? applyReflectEdits(state.reflect, answers.answers)
         : undefined;
-      const brief = reflect ? formatReflectRestatement(reflect) : flatBrief;
+      const brief = flatBrief && (!state.reflect || !hasStructuredEdits) ? flatBrief : reflect ? formatReflectRestatement(reflect) : flatBrief;
       if (!brief) return blocked<State>("invalid_answers", "The confirmed brief cannot be empty");
       const next = { ...state, stage: "grill" as const, brief, ...(reflect ? { reflect } : {}) };
       return { type: "invoke-agent" as const, state: next, request: agentRequest("griller", state.ordinal, `Find material unresolved unknowns in this confirmed brief. Ask one structured batch, or mark resolved and return the clarified brief.\n\n${brief}`, grillSchema) };

@@ -54,12 +54,20 @@ export type ReflectGatePayload = {
   unknowns: string[];
 };
 
+export type SpecificationGateDocuments = {
+  glossary: string;
+  plan: string;
+  requirements: string;
+  scenarios: string;
+};
+
 export type UserGate = {
   id: string;
   title: string;
   questions: UserQuestion[];
   editableArtifacts?: string[];
   reflect?: ReflectGatePayload;
+  documents?: SpecificationGateDocuments;
 };
 export type UserAnswers = { gateId: string; answers: Record<string, string> };
 export type StepError = { code: string; message: string; detail?: unknown; retryable: boolean };

@@ -2,6 +2,8 @@ const elements = {
   runs: document.querySelector("#runs"),
   runCount: document.querySelector("#run-count"),
   action: document.querySelector("#action"),
+  actionTitle: document.querySelector("#action-title"),
+  actionPanel: document.querySelector(".action-panel"),
   runActions: document.querySelector("#run-actions"),
   events: document.querySelector("#events"),
   diagnostics: document.querySelector("#diagnostics"),
@@ -85,6 +87,17 @@ let settingsState = null;
 let guidanceRole = null;
 let guidanceDoc = null;
 let settingsTab = "runtime";
+const gateDrafts = new Map();
+
+function emptyGateDraft() {
+  return { answers: {}, parked: {}, notes: "", clarifications: {}, batchFeedback: "", gateFeedback: "" };
+}
+
+function ensureGateDraft(runId) {
+  const draft = gateDrafts.get(runId) || emptyGateDraft();
+  gateDrafts.set(runId, draft);
+  return draft;
+}
 
 async function request(url, options) {
   const response = await fetch(url, options);
@@ -489,7 +502,8 @@ const REFLECT_FIELDS = [
   { id: "unknowns", label: "Unknowns", list: true, single: false },
 ];
 
-function reflectFieldValue(reflect, id) {
+function reflectFieldValue(reflect, draft, id) {
+  if (draft?.answers[id] != null) return draft.answers[id];
   const raw = reflect?.[id];
   if (Array.isArray(raw)) return raw.join("\n");
   return raw == null ? "" : String(raw);
@@ -506,8 +520,8 @@ function autosizeTextarea(node) {
   node.style.height = `${Math.max(node.scrollHeight, 52)}px`;
 }
 
-function autosizeReflectFields(root) {
-  root?.querySelectorAll(".reflect-fields textarea, .brief-gate-notes").forEach(autosizeTextarea);
+function autosizeGateTextareas(root) {
+  root?.querySelectorAll("textarea").forEach(autosizeTextarea);
 }
 
 function syncReflectListAnswers(form, fieldId) {
@@ -560,19 +574,20 @@ function reflectListRow(fieldId, index, entry, count) {
   return row;
 }
 
-function reflectFieldNode(field, reflect) {
+function reflectFieldNode(field, reflect, draft) {
+  const value = reflectFieldValue(reflect, draft, field.id);
   const wrap = document.createElement("div");
   wrap.className = "field";
   const label = document.createElement("label");
   label.textContent = field.label;
   if (field.list) {
-    label.append(reflectListNode(field.id, reflectFieldValue(reflect, field.id)));
+    label.append(reflectListNode(field.id, value));
   } else if (field.single) {
     const input = document.createElement("input");
     input.type = "text";
     input.name = field.id;
     input.dataset.reflectField = field.id;
-    input.value = reflectFieldValue(reflect, field.id);
+    input.value = value;
     input.placeholder = "Short imperative run label";
     label.append(input);
   } else {
@@ -580,29 +595,55 @@ function reflectFieldNode(field, reflect) {
     textarea.name = field.id;
     textarea.dataset.reflectField = field.id;
     textarea.rows = 1;
-    textarea.value = reflectFieldValue(reflect, field.id);
+    textarea.value = value;
     label.append(textarea);
   }
   wrap.append(label);
   return wrap;
 }
 
-function readBriefGateAnswers(form) {
+function readReflectGateAnswers(form) {
   const answers = {};
   for (const field of REFLECT_FIELDS) {
     if (field.list) answers[field.id] = syncReflectListAnswers(form, field.id);
     else answers[field.id] = form.elements[field.id]?.value ?? "";
   }
-  const notes = form.querySelector(".brief-gate-notes");
+  const notes = form.querySelector("#gate-notes");
   if (notes?.value?.trim()) answers.notes = notes.value.trim();
   return answers;
 }
 
-function wireBriefGateForm(form, run) {
+function gateNotesFooter(notesValue = "") {
+  const footer = document.createElement("div");
+  footer.className = "gate-footer";
+  const notesLabel = document.createElement("label");
+  notesLabel.textContent = "Extra notes for the agent";
+  const notes = document.createElement("textarea");
+  notes.id = "gate-notes";
+  notes.rows = 1;
+  notes.placeholder = "Optional context for the next agent turn";
+  notes.value = notesValue;
+  notesLabel.append(notes);
+  footer.append(notesLabel);
+  return footer;
+}
+
+async function submitGateAnswers(run, answers, button, successMessage) {
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "Submitting…";
+  try {
+    await command(run.id, "submit-answers", { gateId: run.gate.id, answers });
+    elements.action.replaceChildren(Object.assign(document.createElement("p"), { className: "gate-submitted", textContent: successMessage }));
+  } catch (error) {
+    button.textContent = error.message;
+    button.disabled = false;
+  }
+}
+
+function wireReflectListControls(form) {
   form.addEventListener("input", (event) => {
-    const target = event.target;
-    if (target instanceof HTMLTextAreaElement && target.dataset.reflectField) autosizeTextarea(target);
-    if (target instanceof HTMLTextAreaElement && target.classList.contains("brief-gate-notes")) autosizeTextarea(target);
+    if (event.target instanceof HTMLTextAreaElement) autosizeTextarea(event.target);
   });
   form.addEventListener("click", (event) => {
     const add = event.target.closest("[data-reflect-list-add]");
@@ -611,9 +652,8 @@ function wireBriefGateForm(form, run) {
       const entries = reflectListEntries(syncReflectListAnswers(form, fieldId));
       entries.push("");
       replaceReflectList(form, fieldId, entries.join("\n"));
-      autosizeReflectFields(form);
-      const inputs = form.querySelectorAll(`[data-reflect-list-item="${CSS.escape(fieldId)}"]`);
-      inputs.at(-1)?.focus();
+      autosizeGateTextareas(form);
+      form.querySelectorAll(`[data-reflect-list-item="${CSS.escape(fieldId)}"]`).at(-1)?.focus();
       return;
     }
     const remove = event.target.closest("[data-reflect-list-remove]");
@@ -625,96 +665,388 @@ function wireBriefGateForm(form, run) {
         entries.splice(Number(remove.dataset.index), 1);
         replaceReflectList(form, fieldId, entries.join("\n"));
       }
-      autosizeReflectFields(form);
+      autosizeGateTextareas(form);
     }
   });
-  form.onsubmit = async (event) => {
-    event.preventDefault();
-    const submit = form.querySelector("button[type=submit]");
-    submit.disabled = true;
-    submit.textContent = "Submitting…";
-    try {
-      await command(run.id, "submit-answers", { gateId: run.gate.id, answers: readBriefGateAnswers(form) });
-      elements.action.textContent = "Brief confirmed. The coordinator is resuming the run.";
-    } catch (error) {
-      submit.textContent = error.message;
-      submit.disabled = false;
-    }
-  };
-  autosizeReflectFields(form);
 }
 
-function renderBriefGate(run) {
-  const reflect = run.gate.reflect;
+function renderReflectGate(run, gate, draft) {
+  const reflect = gate.reflect || {};
+  for (const field of REFLECT_FIELDS) {
+    if (draft.answers[field.id] == null) draft.answers[field.id] = reflectFieldValue(reflect, draft, field.id);
+  }
+  const section = document.createElement("section");
+  section.className = "gate reflect-gate";
   const form = document.createElement("form");
-  form.className = "reflect-fields brief-gate-form";
-  form.id = "briefGateForm";
-  for (const field of REFLECT_FIELDS) form.append(reflectFieldNode(field, reflect));
-  const footer = document.createElement("div");
-  footer.className = "brief-gate-footer";
-  const notesLabel = document.createElement("label");
-  notesLabel.textContent = "Extra notes for the agent";
-  const notes = document.createElement("textarea");
-  notes.className = "brief-gate-notes";
-  notes.rows = 1;
-  notes.placeholder = "Optional context for the next agent turn";
-  notesLabel.append(notes);
+  form.className = "reflect-fields";
+  form.id = "reflectFields";
+  for (const field of REFLECT_FIELDS) form.append(reflectFieldNode(field, reflect, draft));
+  const footer = gateNotesFooter(draft.notes);
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.className = "primary";
   submit.textContent = "Confirm brief";
-  footer.append(notesLabel, submit);
+  footer.append(submit);
   form.append(footer);
-  wireBriefGateForm(form, run);
-  return form;
+  wireReflectListControls(form);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void submitGateAnswers(run, readReflectGateAnswers(form), submit, "Brief confirmed. The coordinator is resuming the run.");
+  });
+  section.append(form);
+  autosizeGateTextareas(section);
+  return section;
 }
 
-function renderDefaultGate(run) {
+function renderFlatBriefGate(run, gate, draft) {
+  const briefQuestion = gate.questions.find((question) => question.id === "brief") || gate.questions[0];
+  if (draft.answers.brief == null) draft.answers.brief = briefQuestion?.prompt || "";
+  const section = document.createElement("section");
+  section.className = "gate flat-brief-gate";
   const form = document.createElement("form");
-  const heading = document.createElement("h3");
-  heading.textContent = run.gate.title;
-  form.append(heading);
-  for (const question of run.gate.questions) {
+  form.className = "reflect-fields";
+  const field = document.createElement("div");
+  field.className = "field";
+  const label = document.createElement("label");
+  label.textContent = "Brief";
+  const textarea = document.createElement("textarea");
+  textarea.name = "brief";
+  textarea.required = true;
+  textarea.value = draft.answers.brief;
+  label.append(textarea);
+  field.append(label);
+  form.append(field);
+  const footer = gateNotesFooter(draft.notes);
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.className = "primary";
+  submit.textContent = "Confirm brief";
+  footer.append(submit);
+  form.append(footer);
+  form.addEventListener("input", (event) => {
+    if (event.target instanceof HTMLTextAreaElement) autosizeTextarea(event.target);
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const answers = { brief: textarea.value.trim() };
+    const notes = form.querySelector("#gate-notes");
+    if (notes?.value?.trim()) answers.notes = notes.value.trim();
+    void submitGateAnswers(run, answers, submit, "Brief confirmed. The coordinator is resuming the run.");
+  });
+  section.append(form);
+  autosizeGateTextareas(section);
+  return section;
+}
+
+function grillQuestionAnswered(question, draft) {
+  if (draft.parked[question.id]) return true;
+  if (draft.clarifications[question.id] != null) return true;
+  return Boolean(String(draft.answers[question.id] || "").trim());
+}
+
+function renderGrillGate(run, gate, draft) {
+  const questions = gate.questions || [];
+  const section = document.createElement("section");
+  section.className = "gate batch-card";
+  const hint = document.createElement("p");
+  hint.className = "keyboard-hint";
+  hint.textContent = "Answer each material unknown below. Skip any question you want to defer.";
+  section.append(hint);
+  for (const [index, question] of questions.entries()) {
+    if (draft.answers[question.id] == null) draft.answers[question.id] = "";
+    const card = document.createElement("article");
+    card.className = "batch-question";
+    if (draft.parked[question.id]) card.classList.add("parked");
+    if (draft.clarifications[question.id] != null) card.classList.add("clarifying");
+    const head = document.createElement("div");
+    head.className = "item-head";
+    const label = document.createElement("div");
+    label.className = "card-label";
+    label.textContent = `Question ${index + 1} of ${questions.length}`;
+    const tag = document.createElement("span");
+    tag.className = `tag${grillQuestionAnswered(question, draft) ? " hitl" : ""}`;
+    tag.textContent = draft.parked[question.id] ? "Skipped" : (grillQuestionAnswered(question, draft) ? "Answered" : "Unanswered");
+    head.append(label, tag);
+    const prompt = document.createElement("div");
+    prompt.className = "prompt";
+    prompt.textContent = question.prompt;
+    card.append(head, prompt);
+    if (draft.clarifications[question.id] != null) {
+      const clarify = document.createElement("textarea");
+      clarify.dataset.batchClarifyText = question.id;
+      clarify.placeholder = "What is unclear? Ask the griller to rephrase or add precision…";
+      clarify.value = draft.clarifications[question.id];
+      card.append(clarify);
+    } else {
+      const answer = document.createElement("textarea");
+      answer.dataset.batchAnswer = question.id;
+      answer.placeholder = "Optional notes, or answer in your own words…";
+      answer.value = draft.answers[question.id];
+      card.append(answer);
+    }
+    const foot = document.createElement("div");
+    foot.className = "batch-question-foot";
+    const clarifyButton = document.createElement("button");
+    clarifyButton.type = "button";
+    clarifyButton.className = "quiet";
+    clarifyButton.dataset.batchClarify = question.id;
+    clarifyButton.textContent = draft.clarifications[question.id] != null ? "Cancel Wait what?" : "Wait what?";
+    const skipButton = document.createElement("button");
+    skipButton.type = "button";
+    skipButton.className = "quiet";
+    skipButton.dataset.batchSkip = question.id;
+    skipButton.textContent = draft.parked[question.id] ? "Unskip" : "Skip for now";
+    foot.append(clarifyButton, skipButton);
+    card.append(foot);
+    section.append(card);
+  }
+  const footer = document.createElement("div");
+  footer.className = "batch-footer";
+  const count = document.createElement("span");
+  count.className = "muted";
+  count.dataset.batchCount = "true";
+  count.textContent = `${questions.filter((question) => grillQuestionAnswered(question, draft)).length} of ${questions.length} answered`;
+  const actions = document.createElement("div");
+  actions.className = "batch-footer-actions";
+  const submit = document.createElement("button");
+  submit.type = "button";
+  submit.className = "primary";
+  submit.textContent = "Submit answers";
+  actions.append(submit);
+  footer.append(count, actions);
+  section.append(footer, gateNotesFooter(draft.notes));
+  section.addEventListener("click", (event) => {
+    const clarifyToggle = event.target.closest("[data-batch-clarify]");
+    if (clarifyToggle) {
+      const id = clarifyToggle.dataset.batchClarify;
+      if (draft.clarifications[id] != null) delete draft.clarifications[id];
+      else draft.clarifications[id] = "";
+      renderGate(run);
+      return;
+    }
+    const skipToggle = event.target.closest("[data-batch-skip]");
+    if (skipToggle) {
+      const id = skipToggle.dataset.batchSkip;
+      draft.parked[id] = !draft.parked[id];
+      renderGate(run);
+      return;
+    }
+    if (event.target === submit) {
+      const answers = {};
+      for (const question of questions) {
+        if (draft.parked[question.id]) continue;
+        if (draft.clarifications[question.id] != null) answers[question.id] = draft.clarifications[question.id];
+        else answers[question.id] = section.querySelector(`[data-batch-answer="${CSS.escape(question.id)}"]`)?.value || draft.answers[question.id] || "";
+      }
+      const notes = section.querySelector("#gate-notes");
+      if (notes?.value?.trim()) answers.notes = notes.value.trim();
+      void submitGateAnswers(run, answers, submit, "Answers submitted. The coordinator is resuming the run.");
+    }
+  });
+  section.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLTextAreaElement)) return;
+    autosizeTextarea(target);
+    if (target.dataset.batchAnswer) draft.answers[target.dataset.batchAnswer] = target.value;
+    if (target.dataset.batchClarifyText) draft.clarifications[target.dataset.batchClarifyText] = target.value;
+    const answered = questions.filter((question) => grillQuestionAnswered(question, draft)).length;
+    count.textContent = `${answered} of ${questions.length} answered`;
+    section.querySelectorAll(".batch-question").forEach((node, index) => {
+      const question = questions[index];
+      const tag = node.querySelector(".tag");
+      if (!tag || !question) return;
+      tag.className = `tag${grillQuestionAnswered(question, draft) ? " hitl" : ""}`;
+      tag.textContent = draft.parked[question.id] ? "Skipped" : (grillQuestionAnswered(question, draft) ? "Answered" : "Unanswered");
+    });
+  });
+  autosizeGateTextareas(section);
+  return section;
+}
+
+function formatGateText(value) {
+  const body = document.createElement("div");
+  body.className = "artifact-body";
+  body.textContent = String(value ?? "");
+  return body;
+}
+
+function formatGateScenarios(value) {
+  let list = Array.isArray(value) ? value : null;
+  if (!list && value && typeof value === "object" && Array.isArray(value.scenarios)) list = value.scenarios;
+  if (!list?.length) {
+    const missing = document.createElement("div");
+    missing.className = "gate-review-missing";
+    missing.textContent = "Missing";
+    return missing;
+  }
+  const wrap = document.createElement("div");
+  for (const item of list) {
+    const row = item && typeof item === "object" ? item : {};
+    const block = document.createElement("div");
+    block.className = "gate-scenario";
+    const title = document.createElement("h5");
+    title.textContent = String(row.title || row.id || "Scenario");
+    block.append(title);
+    if (Array.isArray(row.steps) && row.steps.length) {
+      const steps = document.createElement("ol");
+      for (const step of row.steps) {
+        const li = document.createElement("li");
+        li.textContent = String(step);
+        steps.append(li);
+      }
+      block.append(steps);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "empty-inline";
+      empty.textContent = "No steps.";
+      block.append(empty);
+    }
+    wrap.append(block);
+  }
+  return wrap;
+}
+
+function reviewBlock(title, content) {
+  const block = document.createElement("div");
+  block.className = "gate-review-block";
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  block.append(heading, content);
+  return block;
+}
+
+function renderSpecificationGate(run, gate, draft) {
+  const documents = gate.documents || {};
+  const section = document.createElement("section");
+  section.className = "gate operator-gate";
+  const review = document.createElement("div");
+  review.className = "gate-review";
+  review.append(
+    reviewBlock("Plan", formatGateText(documents.plan)),
+    reviewBlock("Requirements", formatGateText(documents.requirements)),
+    reviewBlock("Scenarios", formatGateScenarios(documents.scenarios)),
+  );
+  section.append(review);
+  const footer = gateNotesFooter(draft.notes);
+  footer.classList.add("operator-gate-footer");
+  const actions = document.createElement("div");
+  actions.className = "gate-actions";
+  const requestChanges = document.createElement("button");
+  requestChanges.type = "button";
+  requestChanges.className = "secondary";
+  requestChanges.textContent = "Request changes";
+  const approve = document.createElement("button");
+  approve.type = "button";
+  approve.className = "primary";
+  approve.textContent = "Approve";
+  actions.append(requestChanges, approve);
+  footer.append(actions);
+  section.append(footer);
+  requestChanges.addEventListener("click", () => {
+    const notes = section.querySelector("#gate-notes")?.value.trim();
+    if (!notes) {
+      draft.gateFeedback = "Describe the requested changes in Notes before submitting.";
+      renderGate(run);
+      return;
+    }
+    void submitGateAnswers(run, { decision: notes }, requestChanges, "Requested changes submitted. The coordinator is revising the specification.");
+  });
+  approve.addEventListener("click", () => {
+    void submitGateAnswers(run, { decision: "approve" }, approve, "Specification approved. The coordinator is continuing the run.");
+  });
+  autosizeGateTextareas(section);
+  return section;
+}
+
+function renderPublishGate(run, gate, draft) {
+  const section = document.createElement("section");
+  section.className = "gate publish-gate";
+  const form = document.createElement("form");
+  form.className = "reflect-fields";
+  for (const question of gate.questions) {
+    if (draft.answers[question.id] == null) draft.answers[question.id] = question.prompt;
+    const field = document.createElement("div");
+    field.className = "field";
     const label = document.createElement("label");
-    label.textContent = question.prompt.length > 120 ? question.id : question.prompt;
+    label.textContent = words(question.id);
     const textarea = document.createElement("textarea");
     textarea.name = question.id;
     textarea.required = question.required;
-    if (question.prompt.length > 120 || question.id === "brief") {
-      textarea.value = question.prompt;
-      label.textContent = question.id === "brief" ? "Brief" : words(question.id);
-    }
-    textarea.placeholder = question.required ? "Required response" : "Optional response";
+    textarea.value = draft.answers[question.id];
     label.append(textarea);
-    form.append(label);
+    field.append(label);
+    form.append(field);
   }
+  const footer = gateNotesFooter(draft.notes);
   const submit = document.createElement("button");
   submit.type = "submit";
-  submit.textContent = "Submit answers";
-  form.append(submit);
-  form.onsubmit = async (event) => {
+  submit.className = "primary";
+  submit.textContent = "Approve pull request";
+  footer.append(submit);
+  form.append(footer);
+  form.addEventListener("input", (event) => {
+    if (event.target instanceof HTMLTextAreaElement) autosizeTextarea(event.target);
+  });
+  form.addEventListener("submit", (event) => {
     event.preventDefault();
-    submit.disabled = true;
-    submit.textContent = "Submitting…";
-    try {
-      const answers = Object.fromEntries(new FormData(form));
-      await command(run.id, "submit-answers", { gateId: run.gate.id, answers });
-      elements.action.textContent = "Answers submitted. The coordinator is resuming the run.";
-    } catch (error) {
-      submit.textContent = error.message;
-      submit.disabled = false;
+    const answers = Object.fromEntries(new FormData(form));
+    void submitGateAnswers(run, answers, submit, "Pull request draft approved. The coordinator is continuing the run.");
+  });
+  section.append(form);
+  autosizeGateTextareas(section);
+  return section;
+}
+
+function renderQuestionGate(run, gate, draft) {
+  const section = document.createElement("section");
+  section.className = "gate question-gate";
+  const questions = document.createElement("div");
+  questions.className = "questions";
+  for (const question of gate.questions) {
+    if (draft.answers[question.id] == null) draft.answers[question.id] = "";
+    const block = document.createElement("div");
+    block.className = "question";
+    const title = document.createElement("div");
+    title.className = "question-title";
+    title.textContent = question.prompt;
+    const textarea = document.createElement("textarea");
+    textarea.name = question.id;
+    textarea.required = question.required;
+    textarea.placeholder = question.required ? "Required response" : "Optional response";
+    textarea.value = draft.answers[question.id];
+    block.append(title, textarea);
+    questions.append(block);
+  }
+  section.append(questions);
+  const footer = document.createElement("div");
+  footer.className = "gate-footer";
+  const submit = document.createElement("button");
+  submit.type = "button";
+  submit.className = "primary";
+  submit.textContent = "Submit answers";
+  footer.append(submit);
+  section.append(footer);
+  submit.addEventListener("click", () => {
+    const answers = {};
+    for (const question of gate.questions) {
+      answers[question.id] = section.querySelector(`textarea[name="${CSS.escape(question.id)}"]`)?.value ?? "";
     }
-  };
-  return form;
+    void submitGateAnswers(run, answers, submit, "Answers submitted. The coordinator is resuming the run.");
+  });
+  section.addEventListener("input", (event) => {
+    if (event.target instanceof HTMLTextAreaElement) {
+      autosizeTextarea(event.target);
+      if (event.target.name) draft.answers[event.target.name] = event.target.value;
+    }
+  });
+  autosizeGateTextareas(section);
+  return section;
 }
 
 function renderGate(run) {
-  const actionPanel = elements.action.closest(".action-panel");
-  const briefGate = run.gate?.id === "clarify-brief" && run.gate.reflect;
-  actionPanel?.classList.toggle("brief-gate-active", Boolean(briefGate));
-
+  elements.actionPanel?.classList.toggle("gate-active", Boolean(run.gate));
   if (!run.gate) {
-    actionPanel?.classList.remove("brief-gate-active");
+    elements.actionTitle.textContent = "User action";
     const empty = document.createElement("div");
     empty.className = "empty-state";
     const symbol = document.createElement("div");
@@ -731,7 +1063,28 @@ function renderGate(run) {
     return;
   }
 
-  elements.action.replaceChildren(briefGate ? renderBriefGate(run) : renderDefaultGate(run));
+  elements.actionTitle.textContent = run.gate.title;
+  const draft = ensureGateDraft(run.id);
+  let node;
+  if (run.gate.id === "clarify-brief") {
+    node = run.gate.reflect ? renderReflectGate(run, run.gate, draft) : renderFlatBriefGate(run, run.gate, draft);
+  } else if (run.gate.id.startsWith("clarify-questions-")) {
+    node = renderGrillGate(run, run.gate, draft);
+  } else if (run.gate.id.startsWith("specification-approval-")) {
+    node = renderSpecificationGate(run, run.gate, draft);
+  } else if (run.gate.id === "publish-approval") {
+    node = renderPublishGate(run, run.gate, draft);
+  } else {
+    node = renderQuestionGate(run, run.gate, draft);
+  }
+  if (draft.gateFeedback) {
+    const feedback = document.createElement("div");
+    feedback.className = "gate-feedback";
+    feedback.textContent = draft.gateFeedback;
+    node.prepend(feedback);
+    draft.gateFeedback = "";
+  }
+  elements.action.replaceChildren(node);
 }
 
 function renderRunActions(run) {

@@ -30,20 +30,19 @@
         <span class="plus">+</span><span><strong>Start a new run</strong><small>Turn an idea into a pull request</small></span>
       </button>
 
-      <section class="project-section" aria-labelledby="projects-title">
-        <div class="section-head"><h2 id="projects-title">Projects</h2><span id="project-count" class="count">0</span></div>
+      <details class="project-section" open aria-labelledby="projects-title">
+        <summary class="section-head"><h2 id="projects-title">Projects</h2><span id="project-count" class="count">0</span></summary>
+        <details class="project-box">
+          <summary><span>Add project</span><span class="summary-action">Register</span></summary>
+          <form id="add-project" class="compact-form">
+            <label>Name<input name="name" required placeholder="Example"></label>
+            <label>Repository path<input name="repositoryPath" required placeholder="D:\path\to\repository"></label>
+            <label>Base branch<input name="baseBranch" value="main" required></label>
+            <button class="secondary full" type="submit">Register project</button>
+          </form>
+          <p id="project-result" class="form-result" role="status"></p>
+        </details>
         <div id="projects" class="project-list"><div class="empty-inline">Loading projects…</div></div>
-      </section>
-
-      <details class="project-box">
-        <summary><span>Add project</span><span class="summary-action">Register</span></summary>
-        <form id="add-project" class="compact-form">
-          <label>Name<input name="name" required placeholder="Example"></label>
-          <label>Repository path<input name="repositoryPath" required placeholder="D:\path\to\repository"></label>
-          <label>Base branch<input name="baseBranch" value="main" required></label>
-          <button class="secondary full" type="submit">Register project</button>
-        </form>
-        <p id="project-result" class="form-result" role="status"></p>
       </details>
 
       <section class="run-section" aria-labelledby="runs-title">
@@ -87,7 +86,6 @@
       <section id="new-run-panel" class="panel launch-panel">
         <div class="panel-heading">
           <div><div class="eyebrow">New run</div><h3>What should the agents build?</h3></div>
-          <p>Describe the outcome. The harness will clarify, specify, implement, validate, and prepare publication.</p>
         </div>
         <form id="start-run" class="start-form">
           <label class="idea-field">Idea<textarea id="idea" name="idea" required placeholder="Describe the capability, change, or problem to solve…"></textarea></label>

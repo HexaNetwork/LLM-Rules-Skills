@@ -4,23 +4,37 @@ A single-user, local coordinator that durably carries an idea or ticket through 
 
 Requirements: Node 22.5+, Git, Docker, GitHub CLI, and `CURSOR_API_KEY`.
 
+## Quick start
+
 ```sh
 npm install
 npm run build
-agent-harness serve
+agent-harness serve --open
 ```
 
-Use the WebUI for Docker/image setup, project registration, and run creation. The following commands remain optional API-client equivalents; every client command talks to the running coordinator and returns immediately for long-running work.
+That starts the coordinator and opens the **WebUI** at `http://127.0.0.1:8787`. Everything else happens there:
 
-```sh
-agent-harness project add --name example --repository /path/to/repo --base-branch main
-agent-harness project list
-agent-harness start --project PROJECT_ID --idea "Add the requested capability"
-agent-harness status --run-id RUN_ID
-```
+- verify Docker and build the neutral runner image
+- register projects (repository path and default base branch)
+- start runs (pick project, base branch, idea; optional fresh project)
+- answer operator gates as the workflow progresses
+- inspect timeline, sessions, usage, artifacts, and diagnostics
+- retry or cancel blocked runs
 
-Open `http://127.0.0.1:8787`. The Docker setup panel verifies the host daemon and builds or rebuilds the neutral runner image, so image setup, project registration, and run creation can all be completed in the WebUI. The UI also provides operator gates, live activity, provider token and cost telemetry, agent-session details, step outputs, artifacts, and diagnostics, and updates over SSE while work is active.
+See [`design.md`](./design.md) for architecture and [`docs/plans/lean-harness-rebuild.md`](../../docs/plans/lean-harness-rebuild.md) for the full rebuild specification.
 
-Run detail is also available to local API clients at `/api/runs/:id`. Compatibility endpoints expose `/activity`, `/sessions`, `/usage`, and `/artifacts` for that run, while `/api/telemetry` reports usage across all runs. Reported totals come from provider telemetry and are not estimates.
+## CLI (optional)
+
+The CLI is a thin HTTP client plus two bootstrap commands. Normal operation does not require it.
+
+| Command | Purpose |
+| --- | --- |
+| `agent-harness serve` | Start the coordinator and WebUI |
+| `agent-harness reset-home` | Development-only: wipe the harness home |
+| `agent-harness project …`, `start`, `status`, `answer`, `retry`, `cancel`, `publish` | Optional API shortcuts when the coordinator is already running |
+
+## API
+
+The WebUI uses the same HTTP/SSE API documented implicitly by `src/api-server.ts`. Run detail: `GET /api/runs/:id`. Per-run slices: `/activity`, `/sessions`, `/usage`, `/artifacts`. Global usage: `GET /api/telemetry`. Reported totals come from provider telemetry and are not estimates.
 
 Configuration lives in `<harness-home>/config.json`; see the exported `EffectiveConfig` type for supported values.

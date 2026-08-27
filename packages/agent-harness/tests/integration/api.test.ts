@@ -18,6 +18,9 @@ describe("API command boundary", () => {
     expect(dashboardHtml).toContain('id="add-project"');
     expect(dashboardHtml).toContain('class="shell"');
     expect(dashboardHtml).toContain('id="run-status"');
+    expect(dashboardHtml).toContain('id="usage-summary"');
+    expect(dashboardHtml).toContain('id="sessions"');
+    expect(dashboardHtml).toContain('id="artifacts"');
     const stylesheet = await fetch(`${url}/ui/style.css`);
     expect(stylesheet.status).toBe(200);
     expect(stylesheet.headers.get("content-type")).toContain("text/css");
@@ -30,6 +33,16 @@ describe("API command boundary", () => {
     const runResponse = await fetch(`${url}/api/runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, idea: "Add a health check" }) });
     expect(runResponse.status).toBe(202);
     expect(store.listRuns()).toHaveLength(1);
+    const run = await runResponse.json() as { id: string };
+    const request = { turnId: "turn-1", role: "specifier", prompt: "Specify it", outputSchema: { type: "object" } };
+    store.createTurn(run.id, "specify", "action-1", request);
+    store.finishTurn("action-1", { turnId: "turn-1", sessionId: "session-1", output: { specification: true }, usage: { inputTokens: 80, outputTokens: 20 } });
+    const detail = await (await fetch(`${url}/api/runs/${run.id}`)).json() as { turns: unknown[]; usage: { total: { usage: { totalTokens: number } } }; outputs: object; artifacts: unknown[] };
+    expect(detail.turns).toHaveLength(1);
+    expect(detail.usage.total.usage.totalTokens).toBe(100);
+    expect(detail).toMatchObject({ outputs: {}, artifacts: [] });
+    expect(await (await fetch(`${url}/api/runs/${run.id}/sessions`)).json()).toHaveLength(1);
+    expect((await (await fetch(`${url}/api/runs/${run.id}/usage`)).json()).total.sessions).toBe(1);
     await api.close(); store.close();
   });
 

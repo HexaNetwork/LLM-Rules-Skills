@@ -20,4 +20,8 @@ agent-harness start --project PROJECT_ID --idea "Add the requested capability"
 agent-harness status --run-id RUN_ID
 ```
 
-Open `http://127.0.0.1:8787` for gates, the timeline, and concise diagnostics. Configuration lives in `<harness-home>/config.json`; see the exported `EffectiveConfig` type for supported values.
+Open `http://127.0.0.1:8787` for operator gates, live activity, provider token and cost telemetry, agent-session details, step outputs, artifacts, and diagnostics. The UI updates over SSE while a run is active.
+
+Run detail is also available to local API clients at `/api/runs/:id`. Compatibility endpoints expose `/activity`, `/sessions`, `/usage`, and `/artifacts` for that run, while `/api/telemetry` reports usage across all runs. Reported totals come from provider telemetry and are not estimates.
+
+Configuration lives in `<harness-home>/config.json`; see the exported `EffectiveConfig` type for supported values.

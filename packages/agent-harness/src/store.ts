@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { AgentTurnRequest, AgentTurnResult, DurableCommand, EventRecord, JsonObject, Project, Run, RunStatus, StepTransition, UserAnswers, UserGate } from "./types.js";
+import type { AgentTurnRequest, AgentTurnResult, ArtifactRecord, DurableCommand, EventRecord, JsonObject, Project, Run, RunStatus, StepTransition, TurnRecord, UserAnswers, UserGate } from "./types.js";
 
 const SCHEMA_VERSION = 1;
 const now = () => new Date().toISOString();
@@ -247,6 +247,13 @@ export class Store {
   }
   failTurn(actionKey: string, status: "stalled" | "blocked", error: string): void { this.db.prepare("UPDATE turns SET status=?,error=?,updated_at=? WHERE action_key=?").run(status, error, now(), actionKey); }
 
+  turns(runId?: string): TurnRecord[] {
+    const rows = runId
+      ? this.db.prepare("SELECT * FROM turns WHERE run_id=? ORDER BY created_at").all(runId)
+      : this.db.prepare("SELECT * FROM turns ORDER BY created_at").all();
+    return (rows as Row[]).map(turnFromRow);
+  }
+
   saveGate(runId: string, stepId: string, gate: UserGate): void {
     this.db.prepare(`INSERT INTO gates(id,run_id,step_id,gate_json,status,created_at) VALUES(?,?,?,?,?,?)
       ON CONFLICT(run_id,id) DO UPDATE SET gate_json=excluded.gate_json,status='open'`)
@@ -292,9 +299,18 @@ export class Store {
     return target;
   }
   async readArtifact(runId: string, stepId: string, name: string): Promise<string> { const row = this.db.prepare("SELECT path FROM artifacts WHERE run_id=? AND step_id=? AND name=?").get(runId, stepId, name) as Row | undefined; if (!row) throw new Error(`Artifact not found: ${name}`); return readFile(String(row.path), "utf8"); }
+  artifacts(runId: string): ArtifactRecord[] {
+    return (this.db.prepare("SELECT * FROM artifacts WHERE run_id=? ORDER BY step_id,name").all(runId) as Row[]).map((row) => ({
+      id: String(row.id), runId: String(row.run_id), stepId: String(row.step_id), name: String(row.name), path: String(row.path), mediaType: String(row.media_type), createdAt: String(row.created_at),
+    }));
+  }
 }
 
 type Row = Record<string, unknown>;
 function projectFromRow(row: Row): Project { return { id: String(row.id), name: String(row.name), repositoryPath: String(row.repository_path), baseBranch: String(row.base_branch), createdAt: String(row.created_at) }; }
 function runFromRow(row: Row): Run { return { id: String(row.id), projectId: String(row.project_id), workflowId: String(row.workflow_id), currentStep: String(row.current_step), status: String(row.status) as RunStatus, revision: Number(row.revision), input: parse(row.input_json), createdAt: String(row.created_at), updatedAt: String(row.updated_at) }; }
 function commandFromRow(row: Row): DurableCommand { return { id: String(row.id), runId: String(row.run_id), kind: String(row.kind), payload: parse(row.payload_json), status: String(row.status) as DurableCommand["status"], idempotencyKey: String(row.idempotency_key), priority: Number(row.priority), leaseOwner: row.lease_owner ? String(row.lease_owner) : undefined, leaseExpiresAt: row.lease_expires_at ? String(row.lease_expires_at) : undefined, createdAt: String(row.created_at) }; }
+function turnFromRow(row: Row): TurnRecord {
+  const request = parse<AgentTurnRequest>(row.request_json);
+  return { id: String(row.id), runId: String(row.run_id), stepId: String(row.step_id), actionKey: String(row.action_key), role: request.role, sessionId: row.session_id ? String(row.session_id) : undefined, request, output: row.output_json ? parse(row.output_json) : undefined, usage: row.usage_json ? parse(row.usage_json) : undefined, status: String(row.status) as TurnRecord["status"], attempt: Number(row.attempt), error: row.error ? String(row.error) : undefined, createdAt: String(row.created_at), updatedAt: String(row.updated_at) };
+}

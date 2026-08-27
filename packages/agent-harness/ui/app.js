@@ -17,6 +17,13 @@ const elements = {
   newRunPanel: document.querySelector("#new-run-panel"),
   sidebar: document.querySelector("#sidebar"),
   navToggle: document.querySelector("#nav-toggle"),
+  usageSummary: document.querySelector("#usage-summary"),
+  usageBreakdown: document.querySelector("#usage-breakdown"),
+  telemetryCoverage: document.querySelector("#telemetry-coverage"),
+  sessions: document.querySelector("#sessions"),
+  sessionCount: document.querySelector("#session-count"),
+  artifacts: document.querySelector("#artifacts"),
+  artifactCount: document.querySelector("#artifact-count"),
 };
 
 let selected;
@@ -98,10 +105,85 @@ async function selectRun(id) {
   renderRunHeader(run);
   elements.diagnostics.textContent = JSON.stringify({ id: run.id, status: run.status, step: run.currentStep, revision: run.revision, workflow: run.workflowId }, null, 2);
   renderEvents(run.events);
+  renderTelemetry(run.usage);
+  renderSessions(run.turns || []);
+  renderArtifacts(run.outputs || {}, run.artifacts || []);
   renderRunActions(run);
   renderGate(run);
   closeMobileNav();
 }
+
+function renderTelemetry(report) {
+  const total = report?.total;
+  if (!total) return;
+  elements.telemetryCoverage.textContent = `${total.usageReportedSessions} / ${total.sessions} reported`;
+  const metrics = [
+    ["Total tokens", formatNumber(total.usage.totalTokens)],
+    ["Input tokens", formatNumber(total.usage.inputTokens)],
+    ["Output tokens", formatNumber(total.usage.outputTokens)],
+    ["Provider cost", formatCost(total.usage.costUsd)],
+  ];
+  elements.usageSummary.replaceChildren(...metrics.map(([label, value]) => {
+    const item = document.createElement("div"); item.className = "metric";
+    const name = document.createElement("span"); name.textContent = label;
+    const amount = document.createElement("strong"); amount.textContent = value;
+    item.append(name, amount); return item;
+  }));
+  if (!report.byRole?.length) { elements.usageBreakdown.replaceChildren(); return; }
+  const table = document.createElement("table");
+  const head = document.createElement("thead"); const header = document.createElement("tr");
+  for (const label of ["Role", "Sessions", "Input", "Output", "Total"]) { const cell = document.createElement("th"); cell.textContent = label; header.append(cell); }
+  head.append(header); const body = document.createElement("tbody");
+  for (const row of report.byRole) {
+    const tr = document.createElement("tr");
+    for (const value of [words(row.key), row.sessions, formatNumber(row.usage.inputTokens), formatNumber(row.usage.outputTokens), formatNumber(row.usage.totalTokens)]) { const cell = document.createElement("td"); cell.textContent = String(value); tr.append(cell); }
+    body.append(tr);
+  }
+  table.append(head, body); elements.usageBreakdown.replaceChildren(table);
+}
+
+function renderSessions(turns) {
+  elements.sessionCount.textContent = String(turns.length);
+  if (!turns.length) { const empty = document.createElement("div"); empty.className = "empty-inline"; empty.textContent = "No agent sessions recorded yet."; elements.sessions.replaceChildren(empty); return; }
+  elements.sessions.replaceChildren(...[...turns].reverse().map((turn) => {
+    const detail = document.createElement("details"); detail.className = "session";
+    const summary = document.createElement("summary");
+    const identity = document.createElement("span"); identity.className = "session-identity";
+    const title = document.createElement("strong"); title.textContent = words(turn.role);
+    const meta = document.createElement("small"); meta.textContent = `${words(turn.stepId)} · ${relativeTime(turn.updatedAt)}`;
+    identity.append(title, meta);
+    const status = document.createElement("span"); status.className = `session-status ${turn.status}`; status.textContent = words(turn.status);
+    summary.append(identity, status);
+    const body = document.createElement("div"); body.className = "session-body";
+    body.append(detailBlock("Session", turn.sessionId || "Not assigned"), detailBlock("Provider telemetry", turn.usage || "Not reported"), detailBlock("Submitted prompt", turn.request?.prompt), detailBlock("Output", turn.output), detailBlock("Error", turn.error));
+    detail.append(summary, body); return detail;
+  }));
+}
+
+function renderArtifacts(outputs, artifacts) {
+  const entries = [
+    ...Object.entries(outputs).map(([name, value]) => ({ stepId: name, name: "Step output", value })),
+    ...artifacts.map((artifact) => ({ stepId: artifact.stepId, name: artifact.name, value: { path: artifact.path, mediaType: artifact.mediaType, createdAt: artifact.createdAt } })),
+  ];
+  elements.artifactCount.textContent = String(entries.length);
+  if (!entries.length) { const empty = document.createElement("div"); empty.className = "empty-inline"; empty.textContent = "No durable outputs or artifacts yet."; elements.artifacts.replaceChildren(empty); return; }
+  elements.artifacts.replaceChildren(...entries.map((entry) => {
+    const detail = document.createElement("details"); detail.className = "artifact";
+    const summary = document.createElement("summary"); const title = document.createElement("strong"); title.textContent = entry.name;
+    const step = document.createElement("span"); step.textContent = words(entry.stepId); summary.append(title, step);
+    const pre = document.createElement("pre"); pre.textContent = serialize(entry.value); detail.append(summary, pre); return detail;
+  }));
+}
+
+function detailBlock(label, value) {
+  const section = document.createElement("section"); if (value === undefined || value === null || value === "") { section.hidden = true; return section; }
+  const heading = document.createElement("h4"); heading.textContent = label;
+  const pre = document.createElement("pre"); pre.textContent = serialize(value); section.append(heading, pre); return section;
+}
+
+function serialize(value) { return typeof value === "string" ? value : JSON.stringify(value, null, 2); }
+function formatNumber(value) { return new Intl.NumberFormat().format(Number(value || 0)); }
+function formatCost(value) { return Number(value || 0).toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 }); }
 
 function renderRunHeader(run) {
   elements.runTitle.textContent = runLabel(run);
@@ -292,12 +374,8 @@ source.onerror = () => {
 source.onmessage = (message) => {
   const event = JSON.parse(message.data);
   if (event.runId === selected) {
-    const previousEmpty = elements.events.querySelector(".empty-event");
-    if (previousEmpty) previousEmpty.remove();
-    elements.events.append(eventNode(event));
-    elements.events.scrollTop = elements.events.scrollHeight;
-  }
-  void loadRuns();
+    void selectRun(selected);
+  } else void loadRuns();
 };
 
 void Promise.all([loadProjects(), loadRuns()]).catch((error) => {

@@ -15,7 +15,11 @@ export type AgentTurnRequest = {
   outputSchema: JsonSchema;
 };
 
-export type Usage = { inputTokens?: number; outputTokens?: number; costUsd?: number };
+export type Usage = {
+  inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number;
+  totalTokens?: number; reasoningTokens?: number; costUsd?: number; rawCostUsd?: number;
+  provider?: string; model?: string; providerRunId?: string; requestId?: string; durationMs?: number;
+};
 export type AgentTurnResult = {
   turnId: string;
   sessionId: string;
@@ -79,6 +83,18 @@ export type DurableCommand = {
   idempotencyKey: string; priority: number; leaseOwner?: string; leaseExpiresAt?: string; createdAt: string;
 };
 export type EventRecord = { id: number; runId?: string; kind: string; message: string; data?: unknown; createdAt: string };
+export type TurnRecord = {
+  id: string; runId: string; stepId: string; actionKey: string; role: string; sessionId?: string;
+  request: AgentTurnRequest; output?: unknown; usage?: Usage;
+  status: "starting" | "completed" | "stalled" | "blocked"; attempt: number; error?: string;
+  createdAt: string; updatedAt: string;
+};
+export type ArtifactRecord = { id: string; runId: string; stepId: string; name: string; path: string; mediaType: string; createdAt: string };
+export type UsageBreakdown = {
+  key: string; sessions: number; completedSessions: number; failedSessions: number; usageReportedSessions: number;
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number; costUsd: number };
+};
+export type UsageReport = { total: UsageBreakdown; byRole: UsageBreakdown[]; byStep: UsageBreakdown[] };
 
 export type WorkflowDefinition = { id: string; steps: readonly WorkflowStep<unknown, unknown, unknown>[] };
 export type EffectiveConfig = {

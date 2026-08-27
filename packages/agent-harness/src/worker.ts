@@ -23,7 +23,23 @@ async function main(): Promise<void> {
     if (providerResult.status === "error") throw new Error(providerResult.error?.message ?? "Cursor agent failed");
     raw = providerResult.result ?? "";
     const providerUsage = providerResult.usage ?? run.usage;
-    usage = providerUsage ? { inputTokens: providerUsage.inputTokens, outputTokens: providerUsage.outputTokens } : undefined;
+    const billed = await agent.getUsage({ runId: run.id }).catch(() => undefined);
+    const cost = billed?.cost;
+    usage = providerUsage || cost ? {
+      inputTokens: providerUsage?.inputTokens,
+      outputTokens: providerUsage?.outputTokens,
+      cacheReadTokens: providerUsage?.cacheReadTokens,
+      cacheWriteTokens: providerUsage?.cacheWriteTokens,
+      totalTokens: providerUsage?.totalTokens,
+      reasoningTokens: providerUsage?.reasoningTokens,
+      costUsd: cost ? cost.chargedCents / 100 : undefined,
+      rawCostUsd: cost ? cost.rawCostCents / 100 : undefined,
+      provider: "cursor",
+      model: providerResult.model?.id ?? run.model?.id ?? input.model,
+      providerRunId: run.id,
+      requestId: run.requestId,
+      durationMs: providerResult.durationMs ?? run.durationMs,
+    } : undefined;
     const output = JSON.parse(raw) as unknown;
     const envelope: AgentTurnResult = { turnId: input.request.turnId, sessionId: agent.agentId, output, usage };
     process.stdout.write(JSON.stringify({ protocolVersion: 1, result: envelope }));

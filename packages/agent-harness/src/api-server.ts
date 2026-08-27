@@ -8,6 +8,7 @@ import type { Coordinator } from "./coordinator.js";
 import type { Store } from "./store.js";
 import type { JsonObject, UserAnswers } from "./types.js";
 import { mergeConfig, readConfig } from "./config.js";
+import { summarizeUsage } from "./telemetry.js";
 
 export class ApiServer {
   private readonly server = createServer((request, response) => void this.route(request, response));
@@ -24,6 +25,7 @@ export class ApiServer {
         const body = await bodyJson(request); const project = this.store.addProject({ name: String(body.name), repositoryPath: String(body.repositoryPath), baseBranch: String(body.baseBranch ?? "main"), settings: body.settings as JsonObject | undefined }); return send(response, 201, project);
       }
       if (request.method === "GET" && url.pathname === "/api/runs") return send(response, 200, this.store.listRuns());
+      if (request.method === "GET" && url.pathname === "/api/telemetry") return send(response, 200, summarizeUsage(this.store.turns()));
       if (request.method === "POST" && url.pathname === "/api/runs") {
         const body = await bodyJson(request); const workflowId = String(body.workflowId ?? "complete");
         const projectId = String(body.projectId);
@@ -33,7 +35,18 @@ export class ApiServer {
         this.store.enqueueCommand(run.id, "start-run", {}, `${run.id}/run/start/0`); this.coordinator.notify(); return send(response, 202, run);
       }
       const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
-      if (request.method === "GET" && runMatch) return send(response, 200, { ...this.store.getRun(runMatch[1]!), gate: this.store.openGate(runMatch[1]!), events: this.store.events(0, runMatch[1]!) });
+      if (request.method === "GET" && runMatch) {
+        const runId = runMatch[1]!; const turns = this.store.turns(runId);
+        return send(response, 200, { ...this.store.getRun(runId), gate: this.store.openGate(runId), events: this.store.events(0, runId), turns, usage: summarizeUsage(turns), outputs: this.store.outputs(runId), artifacts: this.store.artifacts(runId) });
+      }
+      const detailMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/(activity|sessions|usage|artifacts)$/);
+      if (request.method === "GET" && detailMatch) {
+        const runId = detailMatch[1]!; this.store.getRun(runId);
+        if (detailMatch[2] === "activity") return send(response, 200, this.store.events(0, runId));
+        if (detailMatch[2] === "sessions") return send(response, 200, this.store.turns(runId));
+        if (detailMatch[2] === "artifacts") return send(response, 200, this.store.artifacts(runId));
+        return send(response, 200, summarizeUsage(this.store.turns(runId)));
+      }
       const commandMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/commands$/);
       if (request.method === "POST" && commandMatch) {
         const runId = commandMatch[1]!; const body = await bodyJson(request); const kind = String(body.kind);

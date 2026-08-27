@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Coordinator } from "./coordinator.js";
 import type { ContainerRuntime, DockerSetupStatus } from "./container-runtime.js";
+import type { GitRuntime } from "./git-runtime.js";
 import type { Store } from "./store.js";
 import type { JsonObject, UserAnswers } from "./types.js";
 import { mergeConfig, readConfig } from "./config.js";
@@ -16,7 +17,7 @@ type RunnerBuildStatus = { status: "idle" | "building" | "succeeded" | "failed";
 export class ApiServer {
   private readonly server = createServer((request, response) => void this.route(request, response));
   private runnerBuild: RunnerBuildStatus = { status: "idle" };
-  constructor(private readonly store: Store, private readonly coordinator: Coordinator, private readonly home: string, private readonly containers: ContainerRuntime) {}
+  constructor(private readonly store: Store, private readonly coordinator: Coordinator, private readonly home: string, private readonly containers: ContainerRuntime, private readonly git: GitRuntime) {}
   async listen(port: number, host = "127.0.0.1"): Promise<string> { await new Promise<void>((resolve, reject) => { this.server.once("error", reject); this.server.listen(port, host, resolve); }); const address = this.server.address(); const actual = typeof address === "object" && address ? address.port : port; return `http://${host}:${actual}`; }
   async close(): Promise<void> { await new Promise<void>((resolve, reject) => this.server.close((error) => error ? reject(error) : resolve())); }
 
@@ -33,6 +34,11 @@ export class ApiServer {
       if (request.method === "POST" && url.pathname === "/api/projects") {
         const body = await bodyJson(request); const project = this.store.addProject({ name: String(body.name), repositoryPath: String(body.repositoryPath), baseBranch: String(body.baseBranch ?? "main"), settings: body.settings as JsonObject | undefined }); return send(response, 201, project);
       }
+      const projectBranches = url.pathname.match(/^\/api\/projects\/([^/]+)\/branches$/);
+      if (request.method === "GET" && projectBranches) {
+        const project = this.store.getProject(projectBranches[1]!);
+        return send(response, 200, await this.git.listLocalBranches(project.repositoryPath));
+      }
       if (request.method === "GET" && url.pathname === "/api/runs") return send(response, 200, this.store.listRuns());
       if (request.method === "GET" && url.pathname === "/api/telemetry") return send(response, 200, summarizeUsage(this.store.turns()));
       if (request.method === "POST" && url.pathname === "/api/runs") {
@@ -40,9 +46,12 @@ export class ApiServer {
         if (!setup.ready) return send(response, 409, { error: setup.build.status === "building" ? "Runner image build is still in progress" : "Complete Docker and runner image setup in the WebUI before starting a run", setup });
         const body = await bodyJson(request); const workflowId = String(body.workflowId ?? "complete");
         const projectId = String(body.projectId);
+        const project = this.store.getProject(projectId);
+        const baseBranch = String(body.baseBranch ?? project.baseBranch).trim();
+        if (!baseBranch) return send(response, 400, { error: "baseBranch is required" });
         const projectConfig = await readConfig(this.home, this.store.projectSettings(projectId));
         const effectiveConfig = mergeConfig(projectConfig, (body.config ?? {}) as JsonObject);
-        const run = this.store.createRun({ projectId, workflowId, firstStep: "clarify", input: { idea: body.idea, title: body.title, fresh: Boolean(body.fresh) }, effectiveConfig: effectiveConfig as unknown as JsonObject });
+        const run = this.store.createRun({ projectId, workflowId, firstStep: "clarify", input: { idea: body.idea, title: body.title, fresh: Boolean(body.fresh), baseBranch }, effectiveConfig: effectiveConfig as unknown as JsonObject });
         this.store.enqueueCommand(run.id, "start-run", {}, `${run.id}/run/start/0`); this.coordinator.notify(); return send(response, 202, run);
       }
       const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)$/);

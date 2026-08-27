@@ -1,9 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Store } from "../../src/store.js";
 import { ApiServer } from "../../src/api-server.js";
+import { GitRuntime } from "../../src/git-runtime.js";
+import { checked } from "../../src/process.js";
 
 const homes: string[] = [];
 afterEach(async () => Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true }))));
@@ -13,11 +15,25 @@ function containerRuntime(ready = true) {
     installRunner: async () => ({ image: "runner:test", digest: "sha256:test", log: "built in test" }),
   } as never;
 }
+function apiServer(store: Store, home: string, ready = true) {
+  const git = new GitRuntime(path.join(home, "worktrees"));
+  return new ApiServer(store, { notify() {} } as never, home, containerRuntime(ready), git);
+}
+async function initRepo(repo: string, branches: string[] = ["main"]) {
+  await mkdir(repo, { recursive: true });
+  await checked("git", ["init", "--initial-branch", branches[0]!], { cwd: repo });
+  await checked("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+  await checked("git", ["config", "user.name", "Test"], { cwd: repo });
+  await checked("git", ["commit", "--allow-empty", "-m", "init"], { cwd: repo });
+  for (const branch of branches.slice(1)) {
+    await checked("git", ["branch", branch], { cwd: repo });
+  }
+}
 
 describe("API command boundary", () => {
   it("serves a dashboard that can add projects and start runs", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "harness-ui-")); homes.push(home); const store = await Store.open(home);
-    const coordinator = { notify() {} }; const api = new ApiServer(store, coordinator as never, home, containerRuntime()); const url = await api.listen(0);
+    const api = apiServer(store, home); const url = await api.listen(0);
     const dashboard = await fetch(url);
     expect(dashboard.status).toBe(200);
     const dashboardHtml = await dashboard.text();
@@ -29,6 +45,7 @@ describe("API command boundary", () => {
     expect(dashboardHtml).toContain('id="sessions"');
     expect(dashboardHtml).toContain('id="artifacts"');
     expect(dashboardHtml).toContain('id="setup-panel"');
+    expect(dashboardHtml).toContain('id="base-branch"');
     const stylesheet = await fetch(`${url}/ui/style.css`);
     expect(stylesheet.status).toBe(200);
     expect(stylesheet.headers.get("content-type")).toContain("text/css");
@@ -61,7 +78,7 @@ describe("API command boundary", () => {
 
   it("returns 202 and deduplicates identical operator commands", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "harness-api-")); homes.push(home); const store = await Store.open(home);
-    const coordinator = { notify() {} }; const api = new ApiServer(store, coordinator as never, home, containerRuntime()); const url = await api.listen(0);
+    const api = apiServer(store, home); const url = await api.listen(0);
     const project = store.addProject({ name: "p", repositoryPath: path.join(home, "repo"), baseBranch: "main" });
     const run = store.createRun({ projectId: project.id, workflowId: "complete", firstStep: "clarify", input: { idea: "x" }, effectiveConfig: {} });
     const body = JSON.stringify({ kind: "cancel-run", payload: {} });
@@ -73,12 +90,39 @@ describe("API command boundary", () => {
 
   it("requires WebUI Docker and runner setup before accepting a run", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "harness-setup-")); homes.push(home); const store = await Store.open(home);
-    const api = new ApiServer(store, { notify() {} } as never, home, containerRuntime(false)); const url = await api.listen(0);
+    const api = apiServer(store, home, false); const url = await api.listen(0);
     const project = store.addProject({ name: "p", repositoryPath: path.join(home, "repo"), baseBranch: "main" });
     const response = await fetch(`${url}/api/runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, idea: "x" }) });
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: expect.stringContaining("WebUI") });
     expect(store.listRuns()).toHaveLength(0);
+    await api.close(); store.close();
+  });
+
+  it("lists project branches and stores a per-run base branch override", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "harness-branches-")); homes.push(home);
+    const repo = path.join(home, "repo");
+    await initRepo(repo, ["main", "feature-base"]);
+    const store = await Store.open(home);
+    const api = apiServer(store, home);
+    const url = await api.listen(0);
+    const projectResponse = await fetch(`${url}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Example", repositoryPath: repo, baseBranch: "main" }),
+    });
+    const project = await projectResponse.json() as { id: string };
+    const branches = await (await fetch(`${url}/api/projects/${project.id}/branches`)).json() as { branches: string[]; current?: string };
+    expect(branches.branches).toEqual(expect.arrayContaining(["main", "feature-base"]));
+    expect(branches.current).toBe("main");
+    const runResponse = await fetch(`${url}/api/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: project.id, idea: "Branch override", baseBranch: "feature-base" }),
+    });
+    expect(runResponse.status).toBe(202);
+    const run = await runResponse.json() as { id: string; input: { baseBranch: string } };
+    expect(run.input.baseBranch).toBe("feature-base");
     await api.close(); store.close();
   });
 });

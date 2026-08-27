@@ -6,6 +6,15 @@ import { checked, runProcess } from "./process.js";
 export class GitRuntime {
   constructor(private readonly worktreeRoot: string) {}
 
+  async listLocalBranches(cwd: string): Promise<{ branches: string[]; current?: string }> {
+    const listed = await runProcess("git", ["-C", cwd, "branch", "--format=%(refname:short)"]);
+    if (listed.exitCode !== 0) throw new Error(listed.stderr.trim() || "Failed to list branches");
+    const branches = [...new Set(listed.stdout.split("\n").map((line) => line.trim()).filter(Boolean))].filter((name) => !name.startsWith("remotes/"));
+    const currentResult = await runProcess("git", ["-C", cwd, "branch", "--show-current"]);
+    const current = currentResult.exitCode === 0 ? currentResult.stdout.trim() || undefined : undefined;
+    return { branches, current };
+  }
+
   async createWorktree(input: { runId: string; repositoryPath: string; baseBranch: string; fresh?: boolean }): Promise<string> {
     const target = path.join(this.worktreeRoot, input.runId);
     await mkdir(this.worktreeRoot, { recursive: true });

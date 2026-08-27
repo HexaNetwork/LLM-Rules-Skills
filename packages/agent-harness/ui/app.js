@@ -9,6 +9,7 @@ const elements = {
   projects: document.querySelector("#projects"),
   projectCount: document.querySelector("#project-count"),
   projectSelect: document.querySelector("#project"),
+  baseBranchSelect: document.querySelector("#base-branch"),
   projectForm: document.querySelector("#add-project"),
   projectResult: document.querySelector("#project-result"),
   startForm: document.querySelector("#start-run"),
@@ -39,6 +40,7 @@ const elements = {
 
 let selected;
 let projects = new Map();
+let preferredBaseBranch = "";
 let setupReady = false;
 let setupPolling;
 
@@ -60,11 +62,54 @@ async function loadProjects(selectId) {
     return option;
   }));
   if (selectId) elements.projectSelect.value = selectId;
+  await loadProjectBranches(elements.projectSelect.value);
   updateStartAvailability();
   if (values.length === 0) {
     const option = document.createElement("option");
     option.textContent = "Register a project first";
     elements.projectSelect.replaceChildren(option);
+    await loadProjectBranches("");
+  }
+}
+
+function branchOption(label, value) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  return option;
+}
+
+async function loadProjectBranches(projectId) {
+  const select = elements.baseBranchSelect;
+  if (!projectId) {
+    select.replaceChildren(branchOption("Select a project first", ""));
+    select.disabled = true;
+    return;
+  }
+  const project = projects.get(projectId);
+  select.disabled = true;
+  select.replaceChildren(branchOption("Loading branches…", ""));
+  try {
+    const listed = await request(`/api/projects/${encodeURIComponent(projectId)}/branches`);
+    const branches = listed.branches || [];
+    if (branches.length === 0) {
+      select.replaceChildren(branchOption("No local branches", ""));
+      select.disabled = true;
+      return;
+    }
+    select.replaceChildren(...branches.map((name) => branchOption(name, name)));
+    const pick = (preferredBaseBranch && branches.includes(preferredBaseBranch))
+      ? preferredBaseBranch
+      : (project?.baseBranch && branches.includes(project.baseBranch))
+        ? project.baseBranch
+        : (listed.current && branches.includes(listed.current))
+          ? listed.current
+          : branches[0];
+    select.value = pick;
+    select.disabled = false;
+  } catch (error) {
+    select.replaceChildren(branchOption(error.message, ""));
+    select.disabled = true;
   }
 }
 
@@ -413,6 +458,14 @@ elements.projectForm.onsubmit = async (event) => {
   }
 };
 
+elements.projectSelect.onchange = () => {
+  preferredBaseBranch = "";
+  void loadProjectBranches(elements.projectSelect.value);
+};
+elements.baseBranchSelect.onchange = () => {
+  preferredBaseBranch = elements.baseBranchSelect.value;
+};
+
 elements.startForm.onsubmit = async (event) => {
   event.preventDefault();
   const submit = elements.startForm.querySelector("button[type=submit]");
@@ -420,7 +473,9 @@ elements.startForm.onsubmit = async (event) => {
   elements.startResult.textContent = "Starting run…";
   try {
     const values = Object.fromEntries(new FormData(elements.startForm));
-    const run = await request("/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: values.projectId, idea: values.idea, fresh: values.fresh === "on" }) });
+    const baseBranch = String(values.baseBranch ?? "").trim();
+    if (!baseBranch) throw new Error("Choose a base branch.");
+    const run = await request("/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: values.projectId, idea: values.idea, fresh: values.fresh === "on", baseBranch }) });
     elements.startForm.querySelector("textarea").value = "";
     elements.startResult.textContent = `Started run ${run.id.slice(0, 8)}.`;
     await selectRun(run.id);

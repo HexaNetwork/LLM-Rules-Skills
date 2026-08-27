@@ -9,7 +9,8 @@ async function main(): Promise<void> {
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8")) as WorkerRequest;
   if (input.protocolVersion !== 1) throw new Error("Unsupported worker protocol");
-  const options = { apiKey: process.env.CURSOR_API_KEY, ...(input.model ? { model: { id: input.model } } : {}), local: { cwd: "/workspace" } };
+  const modelId = input.model ?? process.env.AGENT_HARNESS_MODEL ?? "composer-2.5";
+  const options = { apiKey: process.env.CURSOR_API_KEY, model: { id: modelId }, local: { cwd: "/workspace" } };
   let agent;
   if (input.request.sessionId) {
     try { agent = await Agent.resume(input.request.sessionId, options); }
@@ -50,4 +51,8 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((error) => { process.stderr.write(error instanceof Error ? error.stack ?? error.message : String(error)); process.exitCode = 1; });
+void main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stdout.write(JSON.stringify({ protocolVersion: 1, error: { message } }));
+  process.exitCode = 1;
+});

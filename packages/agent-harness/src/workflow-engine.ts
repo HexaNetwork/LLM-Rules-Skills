@@ -7,6 +7,7 @@ import type { GitRuntime } from "./git-runtime.js";
 import { deliveryBranch } from "./git-runtime.js";
 import type { Store } from "./store.js";
 import type { AgentTurnRequest, AgentTurnResult, CommandResult, DurableCommand, JsonObject, StepTransition, UserAnswers, WorkflowDefinition, WorkflowStep } from "./types.js";
+import { resolveModel } from "./config.js";
 import { validateJsonSchema } from "./schemas.js";
 
 type Dependencies = { store: Store; workflows: Map<string, WorkflowDefinition>; agent: AgentDriver; containers: ContainerRuntime; environments: EnvironmentManager; git: GitRuntime; worktreeRoot: string };
@@ -44,7 +45,9 @@ export class WorkflowEngine {
   private async startRun(command: DurableCommand, input: JsonObject): Promise<void> {
     const run = this.deps.store.getRun(command.runId);
     const project = this.deps.store.getProject(run.projectId);
-    await this.deps.git.createWorktree({ runId: run.id, repositoryPath: project.repositoryPath, baseBranch: project.baseBranch, fresh: Boolean(input.fresh) });
+    const baseBranch = String(input.baseBranch ?? project.baseBranch).trim();
+    if (!baseBranch) throw new Error("baseBranch is required");
+    await this.deps.git.createWorktree({ runId: run.id, repositoryPath: project.repositoryPath, baseBranch, fresh: Boolean(input.fresh) });
     this.deps.store.setRunStatus(run.id, "queued", "Run worktree is ready");
     this.queueContinue(run.id, run.currentStep, run.revision + 1);
   }
@@ -87,9 +90,16 @@ export class WorkflowEngine {
     const config = this.deps.store.effectiveConfig(runId);
     const workspace = this.workspace(runId);
     const containerName = ["implement", "validate", "publish"].includes(stepId) ? this.deps.containers.containerName(runId) : undefined;
-    const result = await this.deps.agent.invoke(canonical, { runId, workspace, containerName, deadlineMs: Number(config.agentDeadlineMs), model: (config.models as Record<string, string> | undefined)?.[request.role] });
-    this.deps.store.finishTurn(actionKey, result);
-    return result;
+    const model = resolveModel((config.models ?? {}) as Record<string, string>, request.role);
+    try {
+      const result = await this.deps.agent.invoke(canonical, { runId, workspace, containerName, deadlineMs: Number(config.agentDeadlineMs), model });
+      this.deps.store.finishTurn(actionKey, result);
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.deps.store.failTurn(actionKey, error instanceof AgentDeadlineError ? "stalled" : "blocked", message);
+      throw error;
+    }
   }
 
   private scheduleCorrection(runId: string, stepId: string, state: unknown, request: AgentTurnRequest, result: AgentTurnResult, errors: string[]): void {

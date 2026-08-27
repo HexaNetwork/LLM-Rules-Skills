@@ -91,6 +91,7 @@
         </div>
         <form id="start-run" class="start-form">
           <label class="project-field">Project<select id="project" name="projectId" required></select></label>
+          <label class="branch-field">Base branch<select id="base-branch" name="baseBranch" required disabled><option value="">Select a project first</option></select></label>
           <label class="idea-field">Idea<textarea name="idea" required placeholder="Describe the capability, change, or problem to solve…"></textarea></label>
           <label class="check"><input type="checkbox" name="fresh"><span><strong>Fresh project</strong><small>Start from an empty repository instead of the selected base branch.</small></span></label>
           <button class="primary" type="submit"><span>Begin wayfinding</span><span aria-hidden="true">→</span></button>

@@ -85,14 +85,19 @@ export class ContainerRuntime {
     return result.exitCode === 0 && result.stdout.trim() === "true";
   }
 
-  async exec(name: string, command: string, timeoutMs?: number, input?: string): Promise<CommandResult> {
+  async exec(name: string, command: string, timeoutMs?: number, input?: string, model?: string): Promise<CommandResult> {
     const actionId = createHash("sha256").update(`${name}\0${command}`).digest("hex").slice(0, 24);
-    const result = await runProcess("docker", ["exec", "-i", name, "sh", "-lc", command], { input, timeoutMs, maxOutput: 64_000 });
+    const args = ["exec", "-i"];
+    if (model) args.push("-e", `AGENT_HARNESS_MODEL=${model}`);
+    args.push(name, "sh", "-lc", command);
+    const result = await runProcess("docker", args, { input, timeoutMs, maxOutput: 64_000, env: credentialEnvironment() });
     return { actionId, ...result };
   }
 
-  async invokeInRunner(runId: string, workspace: string, input: string, timeoutMs: number): Promise<CommandResult> {
-    const args = ["run", "--rm", "--name", `${this.containerName(runId)}-agent`, "--interactive", "--workdir", "/workspace", "--mount", `type=bind,src=${path.resolve(workspace)},dst=/workspace,readonly`, "--env", "CURSOR_API_KEY", this.options.runnerImage, "node", "/opt/harness/worker.js"];
+  async invokeInRunner(runId: string, workspace: string, input: string, timeoutMs: number, model?: string): Promise<CommandResult> {
+    const args = ["run", "--rm", "--name", `${this.containerName(runId)}-agent`, "--interactive", "--workdir", "/workspace", "--mount", `type=bind,src=${path.resolve(workspace)},dst=/workspace,readonly`, "--env", "CURSOR_API_KEY"];
+    if (model) args.push("--env", `AGENT_HARNESS_MODEL=${model}`);
+    args.push(this.options.runnerImage, "node", "/opt/harness/worker.js");
     const result = await runProcess("docker", args, { input, timeoutMs, env: credentialEnvironment(), maxOutput: 128_000 });
     return { actionId: "runner-agent", ...result };
   }

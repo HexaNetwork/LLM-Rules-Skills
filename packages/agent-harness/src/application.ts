@@ -9,12 +9,14 @@ import { Coordinator } from "./coordinator.js";
 import { ApiServer } from "./api-server.js";
 import { WORKFLOWS } from "./workflows/index.js";
 import { readConfig } from "./config.js";
+import { GuidanceService } from "./guidance.js";
 
 export async function createApplication(home: string) {
   const config = await readConfig(home); const store = await Store.open(home); const worktreeRoot = path.join(home, "worktrees");
   const containers = new ContainerRuntime({ runnerImage: config.runnerImage, buildRoot: path.join(home, "builds") });
   const agent = new AgentRuntime(containers); const environments = new EnvironmentManager(containers, store); const git = new GitRuntime(worktreeRoot);
-  const engine = new WorkflowEngine({ store, workflows: WORKFLOWS, agent, containers, environments, git, worktreeRoot });
+  const guidance = new GuidanceService(home);
+  const engine = new WorkflowEngine({ store, workflows: WORKFLOWS, agent, containers, environments, git, worktreeRoot, guidance });
   const coordinator = new Coordinator(store, engine, environments, worktreeRoot); const api = new ApiServer(store, coordinator, home, containers, git);
   return { store, containers, agent, environments, git, engine, coordinator, api, async close() { await api.close().catch(() => undefined); await coordinator.stop(); store.close(); } };
 }

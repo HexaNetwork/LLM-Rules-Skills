@@ -37,6 +37,18 @@ const elements = {
   refreshSetup: document.querySelector("#refresh-setup"),
   setupLog: document.querySelector("#setup-log"),
   ideaInput: document.querySelector("#idea"),
+  errorsPanel: document.querySelector("#errors-panel"),
+  errors: document.querySelector("#errors"),
+  errorCount: document.querySelector("#error-count"),
+  settingsPanel: document.querySelector("#settings-panel"),
+  settingsToggle: document.querySelector("#settings-toggle"),
+  settingsClose: document.querySelector("#settings-close"),
+  settingsResult: document.querySelector("#settings-result"),
+  settingsRuntimeForm: document.querySelector("#settings-runtime-form"),
+  settingsModelsForm: document.querySelector("#settings-models-form"),
+  guidanceRoles: document.querySelector("#guidance-roles"),
+  guidanceDetail: document.querySelector("#guidance-detail"),
+  workspaceMain: document.querySelector(".workspace"),
 };
 
 function autosizeIdeaInput() {
@@ -54,6 +66,10 @@ let projects = new Map();
 let preferredBaseBranch = "";
 let setupReady = false;
 let setupPolling;
+let settingsState = null;
+let guidanceRole = null;
+let guidanceDoc = null;
+let settingsTab = "runtime";
 
 async function request(url, options) {
   const response = await fetch(url, options);
@@ -196,10 +212,12 @@ function runLabel(run) {
 
 async function selectRun(id) {
   selected = id;
+  hideSettings();
   const run = await request(`/api/runs/${id}`);
   await loadRuns();
   renderRunHeader(run);
   elements.diagnostics.textContent = JSON.stringify({ id: run.id, status: run.status, step: run.currentStep, revision: run.revision, workflow: run.workflowId }, null, 2);
+  renderErrors(run.errors || []);
   renderEvents(run.events);
   renderTelemetry(run.usage);
   renderSessions(run.turns || []);
@@ -207,6 +225,46 @@ async function selectRun(id) {
   renderRunActions(run);
   renderGate(run);
   closeMobileNav();
+}
+
+function renderErrors(errors) {
+  const count = errors.length;
+  elements.errorCount.textContent = String(count);
+  elements.errorsPanel.classList.toggle("hidden", count === 0);
+  elements.errorsPanel.classList.toggle("has-errors", count > 0);
+  if (!count) {
+    elements.errors.replaceChildren();
+    return;
+  }
+  elements.errors.replaceChildren(...errors.map((entry) => {
+    const article = document.createElement("article");
+    article.className = "error-card";
+    const head = document.createElement("header");
+    const title = document.createElement("strong");
+    title.textContent = errorTitle(entry);
+    const meta = document.createElement("span");
+    meta.className = "error-meta";
+    meta.textContent = `${words(entry.source)} · ${relativeTime(entry.createdAt)}`;
+    head.append(title, meta);
+    const message = document.createElement("pre");
+    message.textContent = entry.message;
+    article.append(head, message);
+    if (entry.detail !== undefined && entry.detail !== null && entry.detail !== "") {
+      const detail = document.createElement("pre");
+      detail.className = "error-detail";
+      detail.textContent = serialize(entry.detail);
+      article.append(detail);
+    }
+    return article;
+  }));
+}
+
+function errorTitle(entry) {
+  const parts = [];
+  if (entry.stepId) parts.push(words(entry.stepId));
+  if (entry.role) parts.push(words(entry.role));
+  if (!parts.length) parts.push(words(entry.source));
+  return parts.join(" · ");
 }
 
 function updateStartAvailability() {
@@ -344,7 +402,9 @@ function renderGate(run) {
     const title = document.createElement("strong");
     title.textContent = run.status === "blocked" ? "Run needs intervention" : "No operator action required";
     const copy = document.createElement("p");
-    copy.textContent = run.status === "blocked" ? "Inspect diagnostics, then retry or cancel the run." : "The coordinator will surface the next decision here.";
+    copy.textContent = run.status === "blocked"
+      ? "Review the Errors panel above, then retry or cancel the run."
+      : "The coordinator will surface the next decision here.";
     empty.append(symbol, title, copy);
     elements.action.replaceChildren(empty);
     return;
@@ -430,6 +490,7 @@ function renderEvents(values) {
 
 function eventNode(event) {
   const item = document.createElement("li");
+  if (event.kind?.startsWith("run.blocked") || event.kind?.startsWith("run.stalled")) item.className = "event-error";
   const time = document.createElement("span");
   time.className = "event-time";
   time.textContent = new Date(event.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -437,6 +498,250 @@ function eventNode(event) {
   message.textContent = event.message;
   item.append(time, message);
   return item;
+}
+
+async function loadSettings() {
+  settingsState = await request("/api/settings");
+  renderSettings();
+}
+
+function renderSettings() {
+  if (!settingsState) return;
+  const config = settingsState.config;
+  elements.settingsRuntimeForm.replaceChildren(
+    field("Coordinator URL", "coordinatorUrl", config.coordinatorUrl),
+    field("Runner image", "runnerImage", config.runnerImage),
+    field("Agent deadline (ms)", "agentDeadlineMs", String(config.agentDeadlineMs)),
+    field("Default model", "models.default", config.models?.default ?? ""),
+    field("Publication remote", "publication.remote", config.publication?.remote ?? "origin"),
+    checkboxField("Draft pull requests", "publication.draft", Boolean(config.publication?.draft)),
+    settingsSubmit("Save runtime settings", saveRuntimeSettings),
+  );
+  elements.settingsModelsForm.replaceChildren(
+    ...(settingsState.roles || []).flatMap((role) => [field(`${words(role)} model`, `models.${role}`, config.models?.[role] ?? "", false)]),
+    settingsSubmit("Save model overrides", saveModelSettings),
+  );
+  renderGuidanceRoles(settingsState.guidanceRoles || []);
+}
+
+function field(label, name, value, required = true) {
+  const node = document.createElement("label");
+  node.textContent = label;
+  const input = document.createElement("input");
+  input.name = name;
+  input.value = value ?? "";
+  if (required) input.required = true;
+  node.append(input);
+  return node;
+}
+
+function checkboxField(label, name, checked) {
+  const node = document.createElement("label");
+  node.className = "check";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.name = name;
+  input.checked = checked;
+  const text = document.createElement("span");
+  text.innerHTML = `<strong>${label}</strong>`;
+  node.append(input, text);
+  return node;
+}
+
+function settingsSubmit(label, handler) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "primary full";
+  button.textContent = label;
+  button.onclick = () => void handler(button);
+  return button;
+}
+
+function readNestedForm(form) {
+  const values = Object.fromEntries(new FormData(form));
+  const config = {};
+  for (const [key, value] of Object.entries(values)) {
+    const parts = key.split(".");
+    let cursor = config;
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const part = parts[index];
+      cursor[part] = cursor[part] ?? {};
+      cursor = cursor[part];
+    }
+    const leaf = parts.at(-1);
+    if (leaf === "draft") cursor[leaf] = value === "on";
+    else if (leaf === "agentDeadlineMs") cursor[leaf] = Number(value);
+    else cursor[leaf] = String(value).trim();
+  }
+  return config;
+}
+
+async function saveRuntimeSettings(button) {
+  button.disabled = true;
+  elements.settingsResult.textContent = "Saving…";
+  try {
+    const config = readNestedForm(elements.settingsRuntimeForm);
+    settingsState = await request("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ config }) });
+    elements.settingsResult.textContent = "Runtime settings saved.";
+    renderSettings();
+    await loadSetup();
+  } catch (error) {
+    elements.settingsResult.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function saveModelSettings(button) {
+  button.disabled = true;
+  elements.settingsResult.textContent = "Saving…";
+  try {
+    const partial = readNestedForm(elements.settingsModelsForm);
+    const models = { ...(settingsState.config.models ?? {}), ...(partial.models ?? {}) };
+    for (const [role, model] of Object.entries(models)) {
+      if (role !== "default" && !String(model ?? "").trim()) delete models[role];
+    }
+    settingsState = await request("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ config: { models } }) });
+    elements.settingsResult.textContent = "Model overrides saved.";
+    renderSettings();
+  } catch (error) {
+    elements.settingsResult.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderGuidanceRoles(roles) {
+  if (!roles.length) {
+    elements.guidanceRoles.replaceChildren(Object.assign(document.createElement("div"), { className: "empty-inline", textContent: "No roles found." }));
+    return;
+  }
+  elements.guidanceRoles.replaceChildren(...roles.map((entry) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `guidance-role${entry.role === guidanceRole ? " active" : ""}`;
+    button.dataset.role = entry.role;
+    const name = document.createElement("span");
+    name.textContent = entry.role;
+    const source = document.createElement("small");
+    source.textContent = entry.hasOverride ? words(entry.source) : "Packaged";
+    button.append(name, source);
+    button.onclick = () => void selectGuidanceRole(entry.role);
+    return button;
+  }));
+}
+
+async function selectGuidanceRole(role) {
+  guidanceRole = role;
+  renderGuidanceRoles(settingsState?.guidanceRoles || []);
+  elements.guidanceDetail.innerHTML = '<div class="empty-inline">Loading guidance…</div>';
+  guidanceDoc = await request(`/api/guidance/roles/${encodeURIComponent(role)}`);
+  renderGuidanceDetail();
+}
+
+function renderGuidanceDetail() {
+  if (!guidanceDoc) return;
+  elements.guidanceDetail.replaceChildren();
+  const title = document.createElement("h4");
+  title.textContent = guidanceDoc.role;
+  const meta = document.createElement("p");
+  meta.className = "settings-copy";
+  meta.textContent = `Source: ${words(guidanceDoc.source)}`;
+  const editor = document.createElement("textarea");
+  editor.id = "guidance-editor";
+  editor.spellcheck = false;
+  editor.value = guidanceDoc.body || "";
+  const scope = document.createElement("label");
+  scope.className = "settings-copy";
+  scope.textContent = "Save to ";
+  const select = document.createElement("select");
+  select.id = "guidance-scope";
+  select.append(
+    Object.assign(document.createElement("option"), { value: "home", textContent: "Harness home" }),
+    Object.assign(document.createElement("option"), { value: "project", textContent: "Selected project" }),
+  );
+  scope.append(select);
+  const actions = document.createElement("div");
+  actions.className = "setup-actions";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "primary";
+  save.textContent = "Save guidance";
+  save.onclick = () => void saveGuidance(save);
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "secondary";
+  reset.textContent = "Reset override";
+  reset.onclick = () => void resetGuidance(reset);
+  actions.append(save, reset);
+  const preview = document.createElement("details");
+  preview.className = "setup-log";
+  preview.innerHTML = "<summary>Prompt preview</summary>";
+  const pre = document.createElement("pre");
+  pre.textContent = guidanceDoc.promptPreview || "";
+  preview.append(pre);
+  elements.guidanceDetail.append(title, meta, editor, scope, actions, preview);
+}
+
+async function saveGuidance(button) {
+  if (!guidanceRole) return;
+  button.disabled = true;
+  elements.settingsResult.textContent = "Saving guidance…";
+  try {
+    const body = document.querySelector("#guidance-editor")?.value ?? "";
+    const scope = document.querySelector("#guidance-scope")?.value ?? "home";
+    const payload = { body, scope };
+    if (scope === "project") {
+      const projectId = elements.projectSelect.value;
+      if (!projectId) throw new Error("Select a project in the sidebar before saving project-scoped guidance.");
+      payload.projectId = projectId;
+    }
+    guidanceDoc = await request(`/api/guidance/roles/${encodeURIComponent(guidanceRole)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+    settingsState.guidanceRoles = (await request("/api/guidance/roles")).roles;
+    renderGuidanceRoles(settingsState.guidanceRoles);
+    renderGuidanceDetail();
+    elements.settingsResult.textContent = `Saved guidance for ${guidanceRole}.`;
+  } catch (error) {
+    elements.settingsResult.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function resetGuidance(button) {
+  if (!guidanceRole) return;
+  button.disabled = true;
+  try {
+    const scope = document.querySelector("#guidance-scope")?.value ?? "home";
+    const query = scope === "project" && elements.projectSelect.value ? `?projectId=${encodeURIComponent(elements.projectSelect.value)}` : "";
+    guidanceDoc = await request(`/api/guidance/roles/${encodeURIComponent(guidanceRole)}${query}`, { method: "DELETE" });
+    settingsState.guidanceRoles = (await request("/api/guidance/roles")).roles;
+    renderGuidanceRoles(settingsState.guidanceRoles);
+    renderGuidanceDetail();
+    elements.settingsResult.textContent = `Reset guidance for ${guidanceRole}.`;
+  } catch (error) {
+    elements.settingsResult.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function showSettings(tab = settingsTab) {
+  settingsTab = tab;
+  for (const button of document.querySelectorAll(".settings-tab")) {
+    button.classList.toggle("active", button.dataset.settingsTab === tab);
+  }
+  document.querySelector("#settings-runtime").classList.toggle("hidden", tab !== "runtime");
+  document.querySelector("#settings-models").classList.toggle("hidden", tab !== "models");
+  document.querySelector("#settings-guidance").classList.toggle("hidden", tab !== "guidance");
+  elements.workspaceMain.classList.add("settings-open");
+  elements.settingsPanel.classList.remove("hidden");
+  void loadSettings().catch((error) => { elements.settingsResult.textContent = error.message; });
+}
+
+function hideSettings() {
+  elements.workspaceMain.classList.remove("settings-open");
+  elements.settingsPanel.classList.add("hidden");
 }
 
 function words(value) {
@@ -515,6 +820,11 @@ elements.buildRunner.onclick = async () => {
   catch (error) { renderSetupError(error); }
 };
 elements.refreshSetup.onclick = () => void loadSetup().catch(renderSetupError);
+elements.settingsToggle.onclick = () => showSettings("runtime");
+elements.settingsClose.onclick = () => hideSettings();
+document.querySelectorAll(".settings-tab").forEach((button) => {
+  button.addEventListener("click", () => showSettings(button.dataset.settingsTab));
+});
 
 function closeMobileNav() {
   elements.sidebar.classList.remove("open");

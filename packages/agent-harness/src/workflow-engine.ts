@@ -7,10 +7,11 @@ import type { GitRuntime } from "./git-runtime.js";
 import { deliveryBranch } from "./git-runtime.js";
 import type { Store } from "./store.js";
 import type { AgentTurnRequest, AgentTurnResult, CommandResult, DurableCommand, JsonObject, StepTransition, UserAnswers, WorkflowDefinition, WorkflowStep } from "./types.js";
+import type { GuidanceService } from "./guidance.js";
 import { resolveModel } from "./config.js";
 import { validateJsonSchema } from "./schemas.js";
 
-type Dependencies = { store: Store; workflows: Map<string, WorkflowDefinition>; agent: AgentDriver; containers: ContainerRuntime; environments: EnvironmentManager; git: GitRuntime; worktreeRoot: string };
+type Dependencies = { store: Store; workflows: Map<string, WorkflowDefinition>; agent: AgentDriver; containers: ContainerRuntime; environments: EnvironmentManager; git: GitRuntime; worktreeRoot: string; guidance: GuidanceService };
 
 export class WorkflowEngine {
   constructor(private readonly deps: Dependencies) {}
@@ -88,11 +89,16 @@ export class WorkflowEngine {
     if (existing) return existing;
     this.deps.store.createTurn(runId, stepId, actionKey, canonical);
     const config = this.deps.store.effectiveConfig(runId);
+    const run = this.deps.store.getRun(runId);
     const workspace = this.workspace(runId);
     const containerName = ["implement", "validate", "publish"].includes(stepId) ? this.deps.containers.containerName(runId) : undefined;
     const model = resolveModel((config.models ?? {}) as Record<string, string>, request.role);
+    const contextText = await this.deps.guidance.compileContext(request.role, run.projectId).catch(() => "");
+    const enriched: AgentTurnRequest = contextText
+      ? { ...canonical, prompt: `${contextText}\n\nTask:\n${canonical.prompt}` }
+      : canonical;
     try {
-      const result = await this.deps.agent.invoke(canonical, { runId, workspace, containerName, deadlineMs: Number(config.agentDeadlineMs), model });
+      const result = await this.deps.agent.invoke(enriched, { runId, workspace, containerName, deadlineMs: Number(config.agentDeadlineMs), model, projectId: run.projectId });
       this.deps.store.finishTurn(actionKey, result);
       return result;
     } catch (error) {

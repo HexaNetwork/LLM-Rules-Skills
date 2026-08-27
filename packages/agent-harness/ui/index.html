@@ -50,7 +50,10 @@
         <div id="runs" class="run-list"><div class="empty-inline">Loading runs…</div></div>
       </section>
 
-      <footer class="sidebar-foot"><span>Local control plane</span><span class="local-dot"></span></footer>
+      <footer class="sidebar-foot">
+        <button id="settings-toggle" class="sidebar-link" type="button">Harness settings</button>
+        <span class="local-dot"></span>
+      </footer>
     </aside>
 
     <main class="workspace">
@@ -100,6 +103,11 @@
       </section>
 
       <div class="detail-grid">
+        <section id="errors-panel" class="panel errors-panel hidden" aria-labelledby="errors-title">
+          <div class="panel-title"><div><div class="eyebrow">Failure detail</div><h3 id="errors-title">Errors</h3></div><span id="error-count" class="count danger">0</span></div>
+          <div id="errors" class="error-list"><div class="empty-inline">No errors recorded for this run.</div></div>
+        </section>
+
         <section class="panel action-panel" aria-labelledby="action-title">
           <div class="panel-title"><div><div class="eyebrow">Operator gate</div><h3 id="action-title">Next action</h3></div><span class="attention-mark" aria-hidden="true">!</span></div>
           <div id="action" class="empty-state"><div class="empty-symbol">◇</div><strong>Select a run</strong><p>Required decisions and approvals will appear here.</p></div>
@@ -134,6 +142,41 @@
         <summary><span><span class="eyebrow">Technical detail</span><strong>Diagnostics</strong></span><span class="disclosure">Show details</span></summary>
         <pre id="diagnostics">Select a run to inspect its durable state.</pre>
       </details>
+
+      <section id="settings-panel" class="panel settings-panel hidden" aria-labelledby="settings-title">
+        <div class="panel-heading">
+          <div><div class="eyebrow">Harness configuration</div><h3 id="settings-title">Settings</h3></div>
+          <button id="settings-close" class="secondary" type="button">Back to runs</button>
+        </div>
+        <div class="settings-layout">
+          <aside class="settings-nav" id="settings-nav">
+            <button type="button" class="settings-tab active" data-settings-tab="runtime">Runtime</button>
+            <button type="button" class="settings-tab" data-settings-tab="models">Models</button>
+            <button type="button" class="settings-tab" data-settings-tab="guidance">Agent guidance</button>
+          </aside>
+          <div class="settings-body">
+            <section id="settings-runtime" class="settings-section">
+              <h4>Coordinator &amp; execution</h4>
+              <form id="settings-runtime-form" class="compact-form"></form>
+            </section>
+            <section id="settings-models" class="settings-section hidden">
+              <h4>Model overrides</h4>
+              <p class="settings-copy">Per-role model IDs override the default. Leave blank to inherit <code>models.default</code>.</p>
+              <form id="settings-models-form" class="compact-form"></form>
+            </section>
+            <section id="settings-guidance" class="settings-section hidden">
+              <div class="guidance-layout">
+                <aside>
+                  <h4>Agent roles</h4>
+                  <div id="guidance-roles" class="guidance-roles"><div class="empty-inline">Loading roles…</div></div>
+                </aside>
+                <div id="guidance-detail" class="guidance-detail"><div class="empty-inline">Select a role to inspect or edit guidance.</div></div>
+              </div>
+            </section>
+            <p id="settings-result" class="form-result" role="status"></p>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 

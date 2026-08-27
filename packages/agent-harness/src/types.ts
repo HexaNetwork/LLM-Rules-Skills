@@ -95,6 +95,15 @@ export type UsageBreakdown = {
   usage: { inputTokens: number; outputTokens: number; totalTokens: number; costUsd: number };
 };
 export type UsageReport = { total: UsageBreakdown; byRole: UsageBreakdown[]; byStep: UsageBreakdown[] };
+export type RunError = {
+  id: string;
+  source: "run" | "agent" | "step" | "command";
+  stepId?: string;
+  role?: string;
+  message: string;
+  detail?: unknown;
+  createdAt: string;
+};
 
 export type WorkflowDefinition = { id: string; steps: readonly WorkflowStep<unknown, unknown, unknown>[] };
 export type EffectiveConfig = {

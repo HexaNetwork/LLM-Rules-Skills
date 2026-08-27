@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { EffectiveConfig, JsonObject } from "./types.js";
 
@@ -31,5 +31,13 @@ export function mergeConfig(...values: Array<Partial<EffectiveConfig> | JsonObje
   merged.models = Object.assign({}, DEFAULT_CONFIG.models, ...values.map((v) => v.models ?? {}));
   merged.publication = Object.assign({}, DEFAULT_CONFIG.publication, ...values.map((v) => v.publication ?? {}));
   if (!Number.isFinite(merged.agentDeadlineMs) || merged.agentDeadlineMs <= 0) throw new Error("agentDeadlineMs must be positive");
+  return merged;
+}
+
+export async function writeConfig(home: string, updates: Partial<EffectiveConfig> | JsonObject): Promise<EffectiveConfig> {
+  const current = await readConfig(home);
+  const merged = mergeConfig(current, updates);
+  await mkdir(home, { recursive: true });
+  await writeFile(path.join(home, "config.json"), `${JSON.stringify(merged, null, 2)}\n`, "utf8");
   return merged;
 }

@@ -34,7 +34,8 @@ describe("restart recovery", () => {
 
 function makeEngine(store: Store, worktreeRoot: string, agent: AgentDriver): WorkflowEngine {
   const containers = { containerName: (id: string) => `container-${id}`, destroy: async () => undefined, inspect: async () => false };
-  return new WorkflowEngine({ store, workflows: WORKFLOWS, agent, containers: containers as never, environments: {} as never, git: new GitRuntime(worktreeRoot), worktreeRoot });
+  const guidance = { compileContext: async () => "" };
+  return new WorkflowEngine({ store, workflows: WORKFLOWS, agent, containers: containers as never, environments: {} as never, git: new GitRuntime(worktreeRoot), worktreeRoot, guidance: guidance as never });
 }
 
 async function drainUntil(store: Store, engine: WorkflowEngine, done: () => boolean): Promise<void> {

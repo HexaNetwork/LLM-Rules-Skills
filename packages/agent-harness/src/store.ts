@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { AgentTurnRequest, AgentTurnResult, ArtifactRecord, DurableCommand, EventRecord, JsonObject, Project, Run, RunStatus, StepTransition, TurnRecord, UserAnswers, UserGate } from "./types.js";
+import type { AgentTurnRequest, AgentTurnResult, ArtifactRecord, DurableCommand, EventRecord, JsonObject, Project, Run, RunError, RunStatus, StepTransition, TurnRecord, UserAnswers, UserGate } from "./types.js";
 
 const SCHEMA_VERSION = 1;
 const now = () => new Date().toISOString();
@@ -303,6 +303,56 @@ export class Store {
     return (this.db.prepare("SELECT * FROM artifacts WHERE run_id=? ORDER BY step_id,name").all(runId) as Row[]).map((row) => ({
       id: String(row.id), runId: String(row.run_id), stepId: String(row.step_id), name: String(row.name), path: String(row.path), mediaType: String(row.media_type), createdAt: String(row.created_at),
     }));
+  }
+
+  runErrors(runId: string): RunError[] {
+    const errors: RunError[] = [];
+    for (const turn of this.turns(runId)) {
+      if (!turn.error) continue;
+      errors.push({
+        id: turn.actionKey,
+        source: "agent",
+        stepId: turn.stepId,
+        role: turn.role,
+        message: turn.error,
+        createdAt: turn.updatedAt,
+      });
+    }
+    const stepRows = this.db.prepare("SELECT step_id,transition_json,updated_at FROM step_states WHERE run_id=?").all(runId) as Row[];
+    for (const row of stepRows) {
+      const transition = row.transition_json ? parse<StepTransition<unknown, unknown>>(row.transition_json) : undefined;
+      if (transition?.type !== "blocked") continue;
+      errors.push({
+        id: `${runId}/${String(row.step_id)}/blocked`,
+        source: "step",
+        stepId: String(row.step_id),
+        message: transition.error.message,
+        detail: transition.error.detail,
+        createdAt: String(row.updated_at),
+      });
+    }
+    for (const row of this.db.prepare("SELECT id,error,completed_at,created_at FROM commands WHERE run_id=? AND error IS NOT NULL ORDER BY completed_at DESC").all(runId) as Row[]) {
+      errors.push({
+        id: `command:${String(row.id)}`,
+        source: "command",
+        message: String(row.error),
+        createdAt: String(row.completed_at ?? row.created_at),
+      });
+    }
+    const run = this.getRun(runId);
+    if (["blocked", "stalled"].includes(run.status)) {
+      const latest = this.db.prepare("SELECT message,created_at FROM events WHERE run_id=? AND kind IN ('run.blocked','run.stalled') ORDER BY id DESC LIMIT 1").get(runId) as Row | undefined;
+      if (latest && !errors.some((entry) => entry.message === String(latest.message))) {
+        errors.unshift({
+          id: `${runId}/status`,
+          source: "run",
+          stepId: run.currentStep,
+          message: String(latest.message),
+          createdAt: String(latest.created_at),
+        });
+      }
+    }
+    return errors.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 }
 

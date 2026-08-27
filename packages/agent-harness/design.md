@@ -51,6 +51,25 @@ Status badges, labels, eyebrows, section headers, table headers, timestamps, and
 
 Write indicator text in sentence case or title case in source (HTML, JS, CSS). Use weight, color, spacing, and monospace accents for hierarchy — not shouting. API enum values may be formatted for display (for example `running` → `Running`), but the rendered result must stay mixed case.
 
+### Expose adjustable config in settings menus
+
+Operator-adjustable values must be reachable from the WebUI settings surface — not CLI-only, not hidden in `config.json` edits, and not buried in diagnostics.
+
+The settings panel is the home for anything an operator may tune between runs:
+
+- **Models** — default and per-role model IDs (`models.*`).
+- **Agent guidance** — role prompt bodies and scope (home vs project overrides).
+- **Limits and budgets** — agent deadlines, attempt limits, token/context budgets, Docker build concurrency.
+- **Publication** — remote, draft PR defaults, and related delivery knobs.
+- **Verification** — command overrides and coverage settings when a project needs them.
+- **Per-project overrides** — project-scoped settings that differ from harness defaults.
+
+When adding a new field to `EffectiveConfig`, project settings, or guidance overrides, add or extend a settings tab/section in the same change. Group related fields under clear section headings (Runtime, Models, Agent guidance, etc.) and use labels that match the config key semantics.
+
+If a value is intentionally not operator-facing (internal defaults, secrets, derived state), document why in the API or type — do not leave it as an undocumented file-only knob.
+
+CLI and `config.json` remain supported for automation and bootstrap, but the WebUI must expose every operator-facing adjustment the API accepts. A setting that exists only on the CLI is a product gap (see **Known WebUI gaps** above).
+
 ## Related documents
 
 | Document | Scope |

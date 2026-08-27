@@ -9,15 +9,20 @@ import type { ContainerRuntime, DockerSetupStatus } from "./container-runtime.js
 import type { GitRuntime } from "./git-runtime.js";
 import type { Store } from "./store.js";
 import type { JsonObject, UserAnswers } from "./types.js";
-import { mergeConfig, readConfig } from "./config.js";
+import { mergeConfig, readConfig, writeConfig } from "./config.js";
 import { summarizeUsage } from "./telemetry.js";
+import { GuidanceService } from "./guidance.js";
+import { WORKFLOW_ROLES } from "./roles.js";
 
 type RunnerBuildStatus = { status: "idle" | "building" | "succeeded" | "failed"; startedAt?: string; finishedAt?: string; log?: string; error?: string };
 
 export class ApiServer {
   private readonly server = createServer((request, response) => void this.route(request, response));
   private runnerBuild: RunnerBuildStatus = { status: "idle" };
-  constructor(private readonly store: Store, private readonly coordinator: Coordinator, private readonly home: string, private readonly containers: ContainerRuntime, private readonly git: GitRuntime) {}
+  private readonly guidance: GuidanceService;
+  constructor(private readonly store: Store, private readonly coordinator: Coordinator, private readonly home: string, private readonly containers: ContainerRuntime, private readonly git: GitRuntime) {
+    this.guidance = new GuidanceService(home);
+  }
   async listen(port: number, host = "127.0.0.1"): Promise<string> { await new Promise<void>((resolve, reject) => { this.server.once("error", reject); this.server.listen(port, host, resolve); }); const address = this.server.address(); const actual = typeof address === "object" && address ? address.port : port; return `http://${host}:${actual}`; }
   async close(): Promise<void> { await new Promise<void>((resolve, reject) => this.server.close((error) => error ? reject(error) : resolve())); }
 
@@ -41,6 +46,35 @@ export class ApiServer {
       }
       if (request.method === "GET" && url.pathname === "/api/runs") return send(response, 200, this.store.listRuns());
       if (request.method === "GET" && url.pathname === "/api/telemetry") return send(response, 200, summarizeUsage(this.store.turns()));
+      if (request.method === "GET" && url.pathname === "/api/settings") {
+        const config = await readConfig(this.home);
+        return send(response, 200, { config, roles: WORKFLOW_ROLES, guidanceRoles: await this.guidance.listRoles() });
+      }
+      if (request.method === "PUT" && url.pathname === "/api/settings") {
+        const body = await bodyJson(request);
+        const config = await writeConfig(this.home, body.config as JsonObject ?? body);
+        return send(response, 200, { config });
+      }
+      if (request.method === "GET" && url.pathname === "/api/guidance/roles") {
+        const projectId = url.searchParams.get("projectId") ?? undefined;
+        return send(response, 200, { roles: await this.guidance.listRoles(projectId) });
+      }
+      const guidanceRole = url.pathname.match(/^\/api\/guidance\/roles\/([^/]+)$/);
+      if (guidanceRole) {
+        const role = decodeURIComponent(guidanceRole[1]!);
+        const projectId = url.searchParams.get("projectId") ?? undefined;
+        if (request.method === "GET") return send(response, 200, await this.guidance.read(role, projectId));
+        if (request.method === "PUT") {
+          const body = await bodyJson(request);
+          const scopeProjectId = String(body.scope ?? "home") === "project" ? String(body.projectId ?? projectId ?? "") : undefined;
+          if (String(body.scope ?? "home") === "project" && !scopeProjectId) return send(response, 400, { error: "projectId is required for project-scoped guidance" });
+          return send(response, 200, await this.guidance.writeOverride(role, String(body.body ?? ""), scopeProjectId));
+        }
+        if (request.method === "DELETE") {
+          const projectIdForReset = url.searchParams.get("projectId") ?? undefined;
+          return send(response, 200, await this.guidance.resetOverride(role, projectIdForReset));
+        }
+      }
       if (request.method === "POST" && url.pathname === "/api/runs") {
         const setup = await this.setupStatus();
         if (!setup.ready) return send(response, 409, { error: setup.build.status === "building" ? "Runner image build is still in progress" : "Complete Docker and runner image setup in the WebUI before starting a run", setup });
@@ -57,7 +91,7 @@ export class ApiServer {
       const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
       if (request.method === "GET" && runMatch) {
         const runId = runMatch[1]!; const turns = this.store.turns(runId);
-        return send(response, 200, { ...this.store.getRun(runId), gate: this.store.openGate(runId), events: this.store.events(0, runId), turns, usage: summarizeUsage(turns), outputs: this.store.outputs(runId), artifacts: this.store.artifacts(runId) });
+        return send(response, 200, { ...this.store.getRun(runId), gate: this.store.openGate(runId), events: this.store.events(0, runId), turns, usage: summarizeUsage(turns), outputs: this.store.outputs(runId), artifacts: this.store.artifacts(runId), errors: this.store.runErrors(runId) });
       }
       const detailMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/(activity|sessions|usage|artifacts)$/);
       if (request.method === "GET" && detailMatch) {

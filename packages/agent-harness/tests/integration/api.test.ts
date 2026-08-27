@@ -14,7 +14,16 @@ describe("API command boundary", () => {
     const coordinator = { notify() {} }; const api = new ApiServer(store, coordinator as never, home); const url = await api.listen(0);
     const dashboard = await fetch(url);
     expect(dashboard.status).toBe(200);
-    expect(await dashboard.text()).toContain('id="add-project"');
+    const dashboardHtml = await dashboard.text();
+    expect(dashboardHtml).toContain('id="add-project"');
+    expect(dashboardHtml).toContain('class="shell"');
+    expect(dashboardHtml).toContain('id="run-status"');
+    const stylesheet = await fetch(`${url}/ui/style.css`);
+    expect(stylesheet.status).toBe(200);
+    expect(stylesheet.headers.get("content-type")).toContain("text/css");
+    const css = await stylesheet.text();
+    expect(css).toContain("--accent: #b6f236");
+    expect(css).toContain(".status.awaiting_user");
     const projectResponse = await fetch(`${url}/api/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Example", repositoryPath: path.join(home, "repo"), baseBranch: "main" }) });
     expect(projectResponse.status).toBe(201);
     const project = await projectResponse.json() as { id: string };

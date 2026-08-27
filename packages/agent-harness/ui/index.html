@@ -1,8 +1,98 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Harness</title><link rel="stylesheet" href="/ui/style.css"></head>
-<body><header><h1>Agent Harness</h1><span id="connection">connecting</span></header><main>
-<section><h2>Start a run</h2><form id="start-run"><label>Project<select id="project" name="projectId" required></select></label><label>Idea<textarea name="idea" required placeholder="Describe the capability or change"></textarea></label><label class="check"><input type="checkbox" name="fresh"> Start from a fresh branch</label><button type="submit">Start run</button></form><p id="start-result" role="status"></p></section>
-<section><h2>Add a project</h2><form id="add-project"><label>Name<input name="name" required placeholder="Example"></label><label>Repository path<input name="repositoryPath" required placeholder="D:\path\to\repository"></label><label>Base branch<input name="baseBranch" value="main" required></label><button type="submit">Add project</button></form><p id="project-result" role="status"></p></section>
-<section><h2>Runs</h2><div id="runs"></div></section><section><h2>Next action</h2><div id="action">Select a run.</div><div id="run-actions"></div></section><section><h2>Timeline</h2><ol id="events"></ol></section><section><h2>Diagnostics</h2><pre id="diagnostics"></pre></section>
-</main><script type="module" src="/ui/app.js"></script></body></html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111318">
+  <title>HexAgent Harness</title>
+  <link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+  <div class="mobile-head">
+    <div class="brand-mark">
+      <svg class="waypoint" viewBox="0 0 16 18" aria-hidden="true"><polygon points="8,1 15,4.5 15,13.5 8,17 1,13.5 1,4.5"/><polygon class="hex-core" points="8,6.5 10.5,7.75 10.5,10.25 8,11.5 5.5,10.25 5.5,7.75"/></svg>
+      <strong>HexAgent Harness</strong>
+    </div>
+    <button id="nav-toggle" class="icon-button" type="button" aria-controls="sidebar" aria-expanded="false">Runs</button>
+  </div>
+
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <header class="brand">
+        <div class="brand-mark">
+          <svg class="waypoint" viewBox="0 0 16 18" aria-hidden="true"><polygon points="8,1 15,4.5 15,13.5 8,17 1,13.5 1,4.5"/><polygon class="hex-core" points="8,6.5 10.5,7.75 10.5,10.25 8,11.5 5.5,10.25 5.5,7.75"/></svg>
+          <div><h1>HexAgent</h1><span>Agent Harness</span></div>
+        </div>
+        <span id="connection" class="connection" role="status"><i></i> Connecting</span>
+      </header>
+
+      <button id="new-run-toggle" class="new-run-toggle" type="button">
+        <span class="plus">+</span><span><strong>Start a new run</strong><small>Turn an idea into a pull request</small></span>
+      </button>
+
+      <details class="project-box">
+        <summary><span>Projects</span><span class="summary-action">Add project</span></summary>
+        <form id="add-project" class="compact-form">
+          <label>Name<input name="name" required placeholder="Example"></label>
+          <label>Repository path<input name="repositoryPath" required placeholder="D:\path\to\repository"></label>
+          <label>Base branch<input name="baseBranch" value="main" required></label>
+          <button class="secondary full" type="submit">Register project</button>
+        </form>
+        <p id="project-result" class="form-result" role="status"></p>
+      </details>
+
+      <section class="run-section" aria-labelledby="runs-title">
+        <div class="section-head"><h2 id="runs-title">Runs</h2><span id="run-count" class="count">0</span></div>
+        <div id="runs" class="run-list"><div class="empty-inline">Loading runs…</div></div>
+      </section>
+
+      <footer class="sidebar-foot"><span>Local control plane</span><span class="local-dot"></span></footer>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Coordinator</div>
+          <h2 id="run-title">Ready to chart a run</h2>
+          <p id="run-meta" class="lede">Choose an existing run or describe a new outcome below.</p>
+        </div>
+        <span id="run-status" class="status idle"><i></i> Idle</span>
+      </header>
+
+      <section id="new-run-panel" class="panel launch-panel">
+        <div class="panel-heading">
+          <div><div class="eyebrow">New run</div><h3>What should the agents build?</h3></div>
+          <p>Describe the outcome. The harness will clarify, specify, implement, validate, and prepare publication.</p>
+        </div>
+        <form id="start-run" class="start-form">
+          <label class="project-field">Project<select id="project" name="projectId" required></select></label>
+          <label class="idea-field">Idea<textarea name="idea" required placeholder="Describe the capability, change, or problem to solve…"></textarea></label>
+          <label class="check"><input type="checkbox" name="fresh"><span><strong>Fresh project</strong><small>Start from an empty repository instead of the selected base branch.</small></span></label>
+          <button class="primary" type="submit"><span>Begin wayfinding</span><span aria-hidden="true">→</span></button>
+        </form>
+        <p id="start-result" class="form-result" role="status"></p>
+      </section>
+
+      <div class="detail-grid">
+        <section class="panel action-panel" aria-labelledby="action-title">
+          <div class="panel-title"><div><div class="eyebrow">Operator gate</div><h3 id="action-title">Next action</h3></div><span class="attention-mark" aria-hidden="true">!</span></div>
+          <div id="action" class="empty-state"><div class="empty-symbol">◇</div><strong>Select a run</strong><p>Required decisions and approvals will appear here.</p></div>
+          <div id="run-actions" class="run-actions"></div>
+        </section>
+
+        <section class="panel timeline-panel" aria-labelledby="timeline-title">
+          <div class="panel-title"><div><div class="eyebrow">Live activity</div><h3 id="timeline-title">Timeline</h3></div><span class="live-label"><i></i> SSE</span></div>
+          <ol id="events" class="event-list"><li class="empty-event">Run events will stream here.</li></ol>
+        </section>
+      </div>
+
+      <details class="panel diagnostics-panel">
+        <summary><span><span class="eyebrow">Technical detail</span><strong>Diagnostics</strong></span><span class="disclosure">Show details</span></summary>
+        <pre id="diagnostics">Select a run to inspect its durable state.</pre>
+      </details>
+    </main>
+  </div>
+
+  <script type="module" src="/ui/app.js"></script>
+</body>
+</html>
